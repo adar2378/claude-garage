@@ -3,6 +3,7 @@ import { promisify } from "node:util";
 import { EventEmitter } from "node:events";
 import { listSessions } from "./tmux.js";
 import { setStatus, getStatus, dropSession } from "./status.js";
+import { upsertSessionMeta } from "./registry.js";
 
 const run = promisify(execFile);
 const POLL_MS = 2000;
@@ -93,6 +94,17 @@ async function tick() {
     const agent = panePid !== undefined ? agentByPid.get(panePid) : undefined;
     if (agent) {
       applyAgentStatus(session.id, agent.status);
+      // D-resume-meta: only on the pid-join succeeding do we have a trusted
+      // sessionId for this garage session; upsertSessionMeta itself is a
+      // no-op write when nothing changed. Never let a meta-write failure
+      // interrupt status polling for the rest of the tick.
+      if (agent.sessionId) {
+        await upsertSessionMeta(session.id, {
+          claudeSessionId: agent.sessionId,
+          workspace: session.workspace,
+          label: session.label,
+        }).catch(() => {});
+      }
     } else {
       unmatched.push(session);
     }

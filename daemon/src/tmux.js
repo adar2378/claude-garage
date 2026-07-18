@@ -44,8 +44,12 @@ export async function hasSession(id) {
   }
 }
 
-export async function createSession(id, dir, command) {
-  await run("tmux", ["new-session", "-d", "-s", id, "-c", dir, command]);
+// extraArgs are appended as separate argv entries after `command` — tmux
+// joins the trailing shell-command words itself (e.g. `command, "--resume",
+// sessionId` becomes the pane's `claude --resume <sessionId>`), so callers
+// must not pre-join them into a single string.
+export async function createSession(id, dir, command, extraArgs = []) {
+  await run("tmux", ["new-session", "-d", "-s", id, "-c", dir, command, ...extraArgs]);
 }
 
 export async function killSession(id) {
