@@ -1,0 +1,780 @@
+<title>helm — Claude session deck (TUI concept)</title>
+<style>
+  :root{
+    --bg:#0B0E14; --panel:#10141D; --panel2:#0D1119; --line:#1E2633;
+    --ink:#C6CFDB; --dim:#556070; --faint:#39424F;
+    --amber:#E2A75E; --green:#79B26E; --red:#CC6B6B; --blue:#6E9ECC;
+    --sel:#161D2A;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{
+    margin:0; background:var(--bg); color:var(--ink);
+    font:13px/1.55 ui-monospace,"SF Mono","JetBrains Mono","Cascadia Mono",Menlo,Consolas,monospace;
+    -webkit-font-smoothing:antialiased;
+  }
+  .app{height:100vh; display:flex; flex-direction:column; padding:10px 12px 0; gap:10px; max-width:1500px; margin:0 auto}
+
+  /* ── top bar ─────────────────────────────── */
+  .top{display:flex; align-items:baseline; gap:14px; padding:2px 4px; flex:none}
+  .top .logo{color:var(--amber); font-weight:700; letter-spacing:.08em}
+  .top .tag{color:var(--dim)}
+  .top .right{margin-left:auto; color:var(--faint)}
+
+  /* ── panes ───────────────────────────────── */
+  .main{flex:1; display:grid; grid-template-columns:250px 1fr 400px; gap:10px; min-height:0}
+  @media (max-width:1050px){ .main{grid-template-columns:220px 1fr} .ctx{display:none} }
+  @media (max-width:660px){ .main{grid-template-columns:1fr} .wsp{display:none} }
+
+  .pane{
+    position:relative; background:var(--panel); border:1px solid var(--line);
+    border-radius:6px; display:flex; flex-direction:column; min-height:0;
+  }
+  .pane>.cap{
+    position:absolute; top:-9px; left:12px; padding:0 7px; background:var(--bg);
+    color:var(--dim); font-size:10px; letter-spacing:.22em; text-transform:uppercase; z-index:1;
+  }
+  .pane>.cap .key{color:var(--faint)}
+  .pane.focused{border-color:#3A4557}
+  .pane.focused>.cap{color:var(--amber)}
+
+  /* ── workspace / session list ────────────── */
+  .wsp{padding:16px 6px 6px; overflow-y:auto}
+  .ws-head{
+    display:flex; gap:8px; align-items:baseline; width:100%; text-align:left;
+    background:transparent; border:0; color:var(--ink); font:inherit; cursor:pointer;
+    padding:7px 10px 4px; border-radius:4px;
+  }
+  .ws-head:hover{background:#131926}
+  .ws-head:focus-visible{outline:1px solid var(--amber)}
+  .ws-head .idx{color:var(--faint)}
+  .ws-head .name{font-weight:700; letter-spacing:.03em}
+  .ws-head .count{margin-left:auto; color:var(--faint); font-size:11px}
+  .ws[data-active="true"] .ws-head .idx{color:var(--amber)}
+  .ws[data-active="true"] .ws-head .name{color:var(--amber)}
+
+  .ws .rail{border-left:1px solid var(--line); margin:0 0 6px 15px; padding-left:4px}
+  .sess{
+    display:grid; grid-template-columns:14px 1fr; column-gap:8px; align-items:start;
+    width:100%; text-align:left; padding:5px 8px; border:0; border-radius:4px;
+    background:transparent; color:var(--ink); font:inherit; font-size:12px; cursor:pointer;
+  }
+  .sess:hover{background:#131926}
+  .sess[aria-current="true"]{background:var(--sel); outline:1px solid #263043}
+  .sess:focus-visible{outline:1px solid var(--amber)}
+  .sess .branch{font-weight:600}
+  .sess .meta{grid-column:2; color:var(--dim); font-size:11px; display:flex; gap:8px; flex-wrap:wrap}
+  .sess .meta .plus{color:var(--green)} .sess .meta .minus{color:var(--red)}
+  .dot{margin-top:1px}
+  .dot.wait{color:var(--amber); animation:pulse 1.2s ease-in-out infinite}
+  .dot.run{color:var(--blue); animation:pulse 2s ease-in-out infinite}
+  .dot.idle{color:var(--faint)}
+  .dot.done{color:var(--green)}
+  @keyframes pulse{50%{opacity:.35}}
+  @media (prefers-reduced-motion:reduce){ .dot.wait,.dot.run{animation:none} }
+  .attn{
+    margin:12px 10px 8px; padding:8px 10px; border:1px dashed #3B3324; border-radius:4px;
+    color:var(--amber); font-size:11px; line-height:1.5;
+  }
+  .attn b{font-weight:600}
+
+  /* ── terminal group ──────────────────────── */
+  .termgrp{padding:16px 10px 10px; gap:10px; overflow:hidden}
+  .termgrid{flex:1; display:grid; gap:10px; min-height:0}
+  .termgrid[data-n="1"]{grid-template-rows:1fr}
+  .termgrid[data-n="2"]{grid-template-rows:1fr 1fr}
+  .termgrid[data-n="3"]{grid-template-rows:1fr 1fr 1fr}
+
+  .mini{
+    position:relative; display:flex; flex-direction:column; min-height:0;
+    background:var(--panel2); border:1px solid var(--line); border-radius:5px;
+    text-align:left; padding:0; color:var(--ink); font:inherit; cursor:pointer;
+  }
+  .mini[aria-current="true"]{border-color:var(--amber)}
+  .mini:focus-visible{outline:1px solid var(--amber); outline-offset:2px}
+  .mini .mcap{
+    flex:none; display:flex; gap:10px; align-items:center; padding:6px 12px;
+    border-bottom:1px solid var(--line); font-size:11px; color:var(--dim);
+  }
+  .mini[aria-current="true"] .mcap .mb{color:var(--amber)}
+  .mini .mcap .mb{font-weight:700; color:var(--ink)}
+  .mini .mcap .mst{margin-left:auto}
+  .mini .mcap .mst.wait{color:var(--amber)} .mini .mcap .mst.run{color:var(--blue)}
+  .mini .mcap .mst.done{color:var(--green)} .mini .mcap .mst.idle{color:var(--faint)}
+  .mini .scroll{flex:1; overflow-y:auto; padding:8px 14px; min-height:0}
+  .mini .line{white-space:pre-wrap; word-break:break-word}
+  .mini .u::before{content:"❯ "; color:var(--green)}
+  .mini .c{color:#9AA7B8}
+  .mini .tool{color:var(--dim); font-size:12px}
+  .mini .tool::before{content:"⏺ "; color:var(--faint)}
+  .mini .ask{color:var(--amber)}
+  .mini .ask::before{content:"◆ "}
+  .mini .ok{color:var(--green)}
+  .mini .gap{height:8px}
+  .mini .mprompt{
+    flex:none; display:flex; gap:8px; align-items:center; margin:6px 10px 10px;
+    border:1px solid var(--line); border-radius:4px; padding:5px 10px; background:var(--bg);
+    color:var(--faint); font-size:12px;
+  }
+  .mini[aria-current="true"] .mprompt{border-color:#33405A}
+  .mini .mprompt .chev{color:var(--green)}
+  .caret{display:inline-block; width:6px; height:13px; background:var(--ink); vertical-align:-2px}
+  .mini[aria-current="true"] .caret{animation:blink 1.1s steps(1) infinite}
+  .mini:not([aria-current="true"]) .caret{opacity:.25}
+  @keyframes blink{50%{opacity:0}}
+  @media (prefers-reduced-motion:reduce){ .caret{animation:none} }
+
+  /* ── context pane (diff/files) ───────────── */
+  .ctx{padding:16px 0 0}
+  .tabs{flex:none; display:flex; gap:2px; padding:2px 10px 8px}
+  .tab{
+    border:0; background:transparent; color:var(--dim); font:inherit; font-size:12px;
+    padding:3px 10px; border-radius:4px; cursor:pointer;
+  }
+  .tab[aria-selected="true"]{background:var(--sel); color:var(--ink); outline:1px solid #263043}
+  .tab:focus-visible{outline:1px solid var(--amber)}
+  .tabs .stat{margin-left:auto; align-self:center; font-size:11px; color:var(--dim)}
+  .tabs .stat .plus{color:var(--green)} .tabs .stat .minus{color:var(--red)}
+
+  .filelist{flex:none; border-top:1px solid var(--line); max-height:160px; overflow-y:auto}
+  .file{
+    display:flex; gap:8px; width:100%; text-align:left; background:transparent; border:0;
+    color:var(--ink); font:inherit; font-size:12px; padding:5px 14px; cursor:pointer;
+  }
+  .file:hover{background:#131926}
+  .file[aria-current="true"]{background:var(--sel)}
+  .file:focus-visible{outline:1px solid var(--amber)}
+  .file .st{width:12px; flex:none}
+  .file .st.M{color:var(--amber)} .file .st.A{color:var(--green)} .file .st.D{color:var(--red)}
+  .file .path{flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+  .file .path b{font-weight:600}
+  .file .n{color:var(--dim)}
+
+  .diff{flex:1; overflow:auto; border-top:1px solid var(--line); background:var(--panel2); border-radius:0 0 6px 6px}
+  .diff pre{margin:0; padding:10px 0 14px; font:12px/1.6 inherit; min-width:max-content}
+  .dl{display:block; padding:0 16px; white-space:pre}
+  .dl.h{color:var(--blue); padding-top:6px}
+  .dl.add{color:var(--green); background:#122013}
+  .dl.del{color:var(--red); background:#231313}
+  .dl.ctx2{color:#7C8798}
+  .empty{flex:1; display:grid; place-items:center; color:var(--faint); border-top:1px solid var(--line); font-size:12px; padding:20px; text-align:center}
+
+  /* ── review mode (full-screen) ───────────── */
+  .overlay{position:fixed; inset:0; background:var(--bg); display:flex; flex-direction:column; padding:10px 12px; gap:12px; z-index:10}
+  .overlay[hidden]{display:none}
+  .rev-top{display:flex; gap:14px; align-items:baseline; padding:2px 4px; flex:none}
+  .rev-top .mode{color:var(--faint); font-size:10px; letter-spacing:.22em; text-transform:uppercase}
+  .rev-top .crumb{color:var(--amber); font-weight:700}
+  .rev-top .progress{color:var(--dim); font-size:12px}
+  .rev-top .close{margin-left:auto; background:transparent; border:1px solid var(--line); color:var(--dim); font:inherit; font-size:12px; border-radius:4px; padding:2px 10px; cursor:pointer}
+  .rev-top .close:hover{color:var(--ink); border-color:#3A4557}
+  .rev-body{flex:1; display:grid; grid-template-columns:320px 1fr; gap:10px; min-height:0}
+  @media (max-width:800px){ .rev-body{grid-template-columns:1fr} .rev-rail{display:none} }
+  .rev-rail{padding:16px 6px 6px; overflow-y:auto}
+  .rev-file{
+    display:flex; gap:8px; align-items:baseline; width:100%; text-align:left; background:transparent;
+    border:0; color:var(--ink); font:inherit; font-size:12px; padding:6px 10px; border-radius:4px; cursor:pointer;
+  }
+  .rev-file:hover{background:#131926}
+  .rev-file[aria-current="true"]{background:var(--sel); outline:1px solid #263043}
+  .rev-file:focus-visible{outline:1px solid var(--amber)}
+  .rev-file .vd{width:14px; flex:none; color:var(--faint)}
+  .rev-file.isviewed .vd{color:var(--green)}
+  .rev-file.isviewed .path{color:var(--dim)}
+  .rev-file .st{width:12px; flex:none}
+  .rev-file .st.M{color:var(--amber)} .rev-file .st.A{color:var(--green)} .rev-file .st.D{color:var(--red)}
+  .rev-file .path{flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+  .rev-file .path b{font-weight:600}
+  .rev-file .n{color:var(--dim); font-size:11px}
+  .rev-hint{margin:14px 10px 8px; color:var(--faint); font-size:11px; line-height:1.6}
+  .rev-main{overflow:auto; background:var(--panel2)}
+  .rev-main pre{margin:0; padding:14px 0 30px; font:13px/1.75 inherit; min-width:max-content}
+  .rev-main .dl{padding:0 22px}
+  .rev-main .fhead{
+    display:block; padding:14px 22px 4px; color:var(--ink); font-weight:700; white-space:pre;
+  }
+  .rev-main .fhead .fst{color:var(--dim); font-weight:400}
+  .rev-main .fsec.isviewed{opacity:.45}
+  .toast{
+    position:fixed; left:50%; bottom:30px; transform:translateX(-50%);
+    background:#1A2130; border:1px solid #283245; color:var(--ink);
+    padding:7px 16px; border-radius:5px; font-size:12px; z-index:20;
+  }
+
+  /* ── status bar ──────────────────────────── */
+  .status{
+    flex:none; display:flex; gap:16px; align-items:center; padding:7px 4px 9px;
+    color:var(--dim); font-size:11px; border-top:1px solid var(--line); flex-wrap:wrap;
+  }
+  .status .k{color:var(--ink); background:#1A2130; border:1px solid #283245; border-radius:3px; padding:0 5px; margin-right:5px}
+  .status .cwd{margin-left:auto; color:var(--faint); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:38%}
+</style>
+
+<div class="app">
+  <div class="top">
+    <span class="logo">helm</span>
+    <span class="tag">every claude session · one screen</span>
+    <span class="right">concept mock — click around or use keys</span>
+  </div>
+
+  <div class="main">
+    <!-- workspaces + sessions -->
+    <section class="pane wsp" aria-label="Workspaces">
+      <span class="cap">Workspaces <span class="key">1–4</span></span>
+      <div id="ws-list"></div>
+      <div class="attn" id="attn"></div>
+    </section>
+
+    <!-- terminal group for focused workspace -->
+    <section class="pane termgrp focused" aria-label="Terminals">
+      <span class="cap" id="term-cap">Terminals — kowboy</span>
+      <div class="termgrid" id="termgrid"></div>
+    </section>
+
+    <!-- context: diff / files, scoped to focused session -->
+    <section class="pane ctx" aria-label="Changes">
+      <span class="cap" id="ctx-cap">Changes</span>
+      <div class="tabs" role="tablist">
+        <button class="tab" id="tab-diff" role="tab" aria-selected="true">diff</button>
+        <button class="tab" id="tab-files" role="tab" aria-selected="false">files</button>
+        <button class="tab" id="btn-review" title="full-screen review (r)">⛶ review</button>
+        <span class="stat" id="ctx-stat"></span>
+      </div>
+      <div class="filelist" id="filelist"></div>
+      <div class="diff" id="diffview"><pre id="diffpre"></pre></div>
+      <div class="empty" id="ctx-empty" hidden></div>
+    </section>
+  </div>
+
+  <div class="status">
+    <span><span class="k">1–4</span>workspace</span>
+    <span><span class="k">[ ]</span>terminal in group</span>
+    <span><span class="k">j/k</span>file</span>
+    <span><span class="k">tab</span>diff ⇄ files</span>
+    <span><span class="k">r</span>review mode</span>
+    <span><span class="k">a</span>jump to blocked session</span>
+    <span class="cwd" id="cwd"></span>
+  </div>
+</div>
+
+<!-- full-screen review mode -->
+<div class="overlay" id="overlay" hidden>
+  <div class="rev-top">
+    <span class="mode">Review</span>
+    <span class="crumb" id="rev-crumb"></span>
+    <span class="progress" id="rev-progress"></span>
+    <button class="close" id="rev-close">esc ⨯</button>
+  </div>
+  <div class="rev-body">
+    <section class="pane rev-rail" aria-label="Files to review">
+      <span class="cap">Files</span>
+      <div id="rev-files"></div>
+      <div class="rev-hint">v marks a file viewed and jumps to the next unviewed one — same rhythm as ticking boxes in a GitHub PR.</div>
+    </section>
+    <section class="pane rev-main" aria-label="Diff">
+      <span class="cap">Full diff</span>
+      <pre id="rev-pre"></pre>
+    </section>
+  </div>
+  <div class="status">
+    <span><span class="k">j/k</span>next/prev file</span>
+    <span><span class="k">v</span>mark viewed</span>
+    <span><span class="k">o</span>open file in editor</span>
+    <span><span class="k">esc</span>back to deck</span>
+  </div>
+</div>
+<div class="toast" id="toast" hidden></div>
+
+<script>
+const W = [
+  {
+    id:"kowboy", cwd:"~/dev/devmonks/kowboy",
+    sessions:[
+      {
+        branch:"feat/checkout-v2", status:"wait", add:48, del:12,
+        term:[
+          ["u","refactor the checkout flow to support the new payment provider"],
+          ["tool","Edit lib/features/checkout/checkout_controller.dart (+31 −8)"],
+          ["tool","Edit lib/core/payments/provider.dart (+17 −4)"],
+          ["c","Controller now routes through PaymentProvider; retry logic moved into the provider layer."],
+          ["gap",""],
+          ["ask","PaymentMethod enum still has `bkash` hardcoded in two switches. Migrate those to the registry too, or keep for now?"],
+        ],
+        files:[
+          {st:"M", path:"lib/features/checkout/checkout_controller.dart", n:"+31 −8"},
+          {st:"M", path:"lib/core/payments/provider.dart", n:"+17 −4"},
+          {st:"A", path:"lib/core/payments/provider_registry.dart", n:"+22"},
+          {st:"D", path:"lib/features/checkout/legacy_pay.dart", n:"−12"},
+        ],
+        diffs:{
+          "lib/features/checkout/checkout_controller.dart":[
+            ["h","@@ -41,9 +41,12 @@ class CheckoutController {"],
+            ["ctx2","   Future<void> submit(Cart cart) async {"],
+            ["del","-    final result = await LegacyPay.charge(cart.total);"],
+            ["del","-    if (result.failed) _retry(cart);"],
+            ["add","+    final provider = PaymentProvider.of(cart.method);"],
+            ["add","+    final result = await provider.charge("],
+            ["add","+      amount: cart.total,"],
+            ["add","+      retryPolicy: RetryPolicy.standard,"],
+            ["add","+    );"],
+            ["ctx2","     _emit(CheckoutState.from(result));"],
+            ["ctx2","   }"],
+          ],
+          "lib/core/payments/provider.dart":[
+            ["h","@@ -12,6 +12,10 @@ abstract class PaymentProvider {"],
+            ["ctx2","   Future<ChargeResult> charge({required int amount});"],
+            ["add","+  static PaymentProvider of(PaymentMethod m) =>"],
+            ["add","+      ProviderRegistry.resolve(m);"],
+            ["add","+"],
+            ["add","+  RetryPolicy get retryPolicy => RetryPolicy.none;"],
+            ["ctx2"," }"],
+          ],
+          "lib/core/payments/provider_registry.dart":[
+            ["h","@@ -0,0 +1,22 @@"],
+            ["add","+class ProviderRegistry {"],
+            ["add","+  static final _map = <PaymentMethod, PaymentProvider>{"],
+            ["add","+    PaymentMethod.card: StripeProvider(),"],
+            ["add","+    PaymentMethod.bkash: BkashProvider(),"],
+            ["add","+  };"],
+            ["add","+  static PaymentProvider resolve(PaymentMethod m) => _map[m]!;"],
+            ["add","+}"],
+          ],
+          "lib/features/checkout/legacy_pay.dart":[
+            ["h","@@ -1,12 +0,0 @@"],
+            ["del","-class LegacyPay {"],
+            ["del","-  static Future<ChargeResult> charge(int amount) async {"],
+            ["del","-    // TODO: remove after provider migration"],
+            ["del","-  }"],
+            ["del","-}"],
+          ],
+        },
+      },
+      {
+        branch:"fix/push-notifs", status:"run", add:14, del:6,
+        term:[
+          ["u","iOS push notifications arrive twice after the FCM upgrade — find and fix"],
+          ["tool","Grep \"onMessage\" — 3 matches in 2 files"],
+          ["tool","Read lib/core/notifications/push_service.dart (140 lines)"],
+          ["c","Found a duplicate listener: push_service registers onMessage and main.dart registers it again after hot-restart guard was removed."],
+          ["tool","Bash flutter test test/notifications — running… (40s)"],
+        ],
+        files:[
+          {st:"M", path:"lib/core/notifications/push_service.dart", n:"+10 −5"},
+          {st:"M", path:"lib/main.dart", n:"+4 −1"},
+        ],
+        diffs:{
+          "lib/core/notifications/push_service.dart":[
+            ["h","@@ -31,8 +31,13 @@ class PushService {"],
+            ["del","-  void init() {"],
+            ["del","-    FirebaseMessaging.onMessage.listen(_handle);"],
+            ["add","+  StreamSubscription? _sub;"],
+            ["add","+  void init() {"],
+            ["add","+    _sub?.cancel(); // idempotent: hot-restart re-entry"],
+            ["add","+    _sub = FirebaseMessaging.onMessage.listen(_handle);"],
+            ["ctx2","   }"],
+          ],
+          "lib/main.dart":[
+            ["h","@@ -18,7 +18,10 @@ Future<void> main() async {"],
+            ["del","-  FirebaseMessaging.onMessage.listen(showBanner);"],
+            ["add","+  // listener lives in PushService only — main.dart no longer"],
+            ["add","+  // registers its own (double-delivery bug)"],
+            ["add","+  await PushService.instance.init();"],
+            ["ctx2","   runApp(const KowboyApp());"],
+          ],
+        },
+      },
+    ],
+  },
+  {
+    id:"estate-studio", cwd:"~/dev/devmonks/estate-studio",
+    sessions:[
+      {
+        branch:"fix/listing-map", status:"run", add:51, del:4,
+        term:[
+          ["u","the map pins render behind the listing cards on mobile, fix the stacking"],
+          ["tool","Edit components/map/ListingMap.tsx (+9 −3)"],
+          ["tool","Edit app/listings/page.tsx (+4 −1)"],
+          ["c","The card drawer creates a stacking context with transform. Moved the pin layer into a portal, normalized the z-scale."],
+          ["tool","Bash npm run test:e2e — running… (2m 10s)"],
+        ],
+        files:[
+          {st:"M", path:"components/map/ListingMap.tsx", n:"+9 −3"},
+          {st:"M", path:"app/listings/page.tsx", n:"+4 −1"},
+          {st:"A", path:"components/map/PinPortal.tsx", n:"+38"},
+        ],
+        diffs:{
+          "components/map/ListingMap.tsx":[
+            ["h","@@ -58,8 +58,14 @@ export function ListingMap({ pins }: Props) {"],
+            ["ctx2","   return ("],
+            ["ctx2","     <MapCanvas>"],
+            ["del","-      {pins.map((p) => ("],
+            ["del","-        <Pin key={p.id} {...p} style={{ zIndex: 999 }} />"],
+            ["del","-      ))}"],
+            ["add","+      <PinPortal>"],
+            ["add","+        {pins.map((p) => ("],
+            ["add","+          <Pin key={p.id} {...p} layer=\"pins\" />"],
+            ["add","+        ))}"],
+            ["add","+      </PinPortal>"],
+            ["ctx2","     </MapCanvas>"],
+            ["ctx2","   );"],
+          ],
+          "app/listings/page.tsx":[
+            ["h","@@ -21,7 +21,10 @@ export default function ListingsPage() {"],
+            ["ctx2","   return ("],
+            ["del","-    <main className=\"relative\">"],
+            ["add","+    <main className=\"relative isolate\">"],
+            ["add","+      {/* isolate: one stacking context for map + drawer */}"],
+            ["ctx2","       <ListingMap pins={pins} />"],
+            ["ctx2","     </main>"],
+          ],
+          "components/map/PinPortal.tsx":[
+            ["h","@@ -0,0 +1,38 @@"],
+            ["add","+\"use client\";"],
+            ["add","+import { createPortal } from \"react-dom\";"],
+            ["add","+"],
+            ["add","+export function PinPortal({ children }: React.PropsWithChildren) {"],
+            ["add","+  const host = usePinLayerHost();"],
+            ["add","+  return host ? createPortal(children, host) : null;"],
+            ["add","+}"],
+          ],
+        },
+      },
+      {
+        branch:"chore/seo-meta", status:"done", add:26, del:9,
+        term:[
+          ["u","add open-graph + twitter meta to all listing pages, pull from the CMS"],
+          ["tool","Edit app/listings/[id]/page.tsx (+18 −6)"],
+          ["tool","Edit lib/cms/listing.ts (+8 −3)"],
+          ["ok","Done — generateMetadata now builds OG/Twitter tags from CMS fields. Build passes, 3 pages spot-checked."],
+          ["gap",""],
+          ["c","Ready to commit when you are."],
+        ],
+        files:[
+          {st:"M", path:"app/listings/[id]/page.tsx", n:"+18 −6"},
+          {st:"M", path:"lib/cms/listing.ts", n:"+8 −3"},
+        ],
+        diffs:{
+          "app/listings/[id]/page.tsx":[
+            ["h","@@ -9,6 +9,18 @@ export async function generateMetadata({ params }) {"],
+            ["add","+  const listing = await getListing(params.id);"],
+            ["add","+  return {"],
+            ["add","+    title: listing.seoTitle ?? listing.title,"],
+            ["add","+    openGraph: {"],
+            ["add","+      title: listing.seoTitle ?? listing.title,"],
+            ["add","+      images: [listing.heroImage],"],
+            ["add","+    },"],
+            ["add","+    twitter: { card: \"summary_large_image\" },"],
+            ["add","+  };"],
+            ["ctx2"," }"],
+          ],
+          "lib/cms/listing.ts":[
+            ["h","@@ -14,6 +14,11 @@ export async function getListing(id: string) {"],
+            ["del","-  return cms.fetch(`listing/${id}`);"],
+            ["add","+  const raw = await cms.fetch(`listing/${id}`);"],
+            ["add","+  return { ...raw, seoTitle: raw.seo?.title ?? null };"],
+            ["ctx2"," }"],
+          ],
+        },
+      },
+    ],
+  },
+  {
+    id:"powerweb", cwd:"~/dev/devmonks/powerweb",
+    sessions:[
+      {
+        branch:"main", status:"done", add:8, del:2,
+        term:[
+          ["u","bump the sitemap to include the new case-study pages"],
+          ["tool","Edit app/sitemap.ts (+8 −2)"],
+          ["tool","Bash npm run build — ✓ compiled in 41s"],
+          ["ok","Done. Sitemap now emits /work/[slug] from the CMS at build time."],
+          ["gap",""],
+          ["c","Ready to commit when you are."],
+        ],
+        files:[{st:"M", path:"app/sitemap.ts", n:"+8 −2"}],
+        diffs:{
+          "app/sitemap.ts":[
+            ["h","@@ -4,8 +4,14 @@ export default async function sitemap() {"],
+            ["del","-  const routes = [\"/\", \"/services\", \"/contact\"];"],
+            ["add","+  const studies = await cms.caseStudies();"],
+            ["add","+  const routes = ["],
+            ["add","+    \"/\", \"/services\", \"/contact\","],
+            ["add","+    ...studies.map((s) => `/work/${s.slug}`),"],
+            ["add","+  ];"],
+            ["ctx2","   return routes.map((url) => ({ url: BASE + url }));"],
+            ["ctx2"," }"],
+          ],
+        },
+      },
+    ],
+  },
+  {
+    id:"tatlist", cwd:"~/dev/devmonks/tatlist",
+    sessions:[
+      {
+        branch:"main", status:"idle", add:0, del:0,
+        term:[
+          ["c","Session idle. Last activity 2h ago — artist onboarding flow shipped and committed."],
+        ],
+        files:[], diffs:{},
+      },
+    ],
+  },
+];
+
+const icon = {wait:"●", run:"◐", done:"✓", idle:"○"};
+const statusWord = {wait:"needs input", run:"working", done:"review ready", idle:"idle"};
+let cur = 0, curS = 0, curFile = 0, tab = "diff";
+
+const $ = (id) => document.getElementById(id);
+const sess = () => W[cur].sessions[curS];
+
+function renderWorkspaces(){
+  const box = $("ws-list"); box.innerHTML = "";
+  W.forEach((w,i)=>{
+    const g = document.createElement("div");
+    g.className = "ws"; g.dataset.active = (i===cur);
+
+    const h = document.createElement("button");
+    h.className = "ws-head";
+    h.innerHTML = `<span class="idx">${i+1}</span><span class="name">${w.id}</span>`+
+      `<span class="count">${w.sessions.length}×</span>`;
+    h.onclick = ()=>select(i,0);
+    g.appendChild(h);
+
+    const rail = document.createElement("div");
+    rail.className = "rail";
+    w.sessions.forEach((s,j)=>{
+      const b = document.createElement("button");
+      b.className = "sess";
+      b.setAttribute("aria-current", (i===cur && j===curS) ? "true":"false");
+      b.innerHTML =
+        `<span class="dot ${s.status}">${icon[s.status]}</span>`+
+        `<span class="branch">${s.branch}</span>`+
+        `<span class="meta">`+
+        (s.add||s.del ? `<span><span class="plus">+${s.add}</span> <span class="minus">−${s.del}</span></span>`:"")+
+        `<span>${statusWord[s.status]}</span></span>`;
+      b.onclick = ()=>select(i,j);
+      rail.appendChild(b);
+    });
+    g.appendChild(rail);
+    box.appendChild(g);
+  });
+
+  const waiting = [];
+  W.forEach(w=>w.sessions.forEach(s=>{ if(s.status==="wait") waiting.push(`${w.id}:${s.branch}`); }));
+  $("attn").innerHTML = waiting.length
+    ? `<b>${waiting.length} session needs you</b> — ${waiting.join(", ")} is blocked on a question. Press <b>a</b>.`
+    : `Nothing is blocked on you right now.`;
+}
+
+function renderTerms(){
+  const w = W[cur];
+  $("term-cap").textContent = `Terminals — ${w.id}`;
+  const grid = $("termgrid");
+  grid.innerHTML = "";
+  grid.dataset.n = Math.min(w.sessions.length,3);
+
+  w.sessions.forEach((s,j)=>{
+    const m = document.createElement("div");
+    m.className = "mini"; m.tabIndex = 0; m.setAttribute("role","button");
+    m.setAttribute("aria-current", j===curS ? "true":"false");
+    m.setAttribute("aria-label", `terminal ${s.branch}`);
+
+    const cap = document.createElement("div");
+    cap.className = "mcap";
+    cap.innerHTML = `<span class="mb">❯ ${s.branch}</span>`+
+      (s.add||s.del ? `<span><span style="color:var(--green)">+${s.add}</span> <span style="color:var(--red)">−${s.del}</span></span>`:"")+
+      `<span class="mst ${s.status}">${icon[s.status]} ${statusWord[s.status]}</span>`;
+    m.appendChild(cap);
+
+    const sc = document.createElement("div");
+    sc.className = "scroll";
+    s.term.forEach(([cls,txt])=>{
+      const d = document.createElement("div");
+      if(cls==="gap"){ d.className="gap"; }
+      else { d.className = `line ${cls}`; d.textContent = txt; }
+      sc.appendChild(d);
+    });
+    m.appendChild(sc);
+
+    const p = document.createElement("div");
+    p.className = "mprompt";
+    p.innerHTML = `<span class="chev">❯</span><span>${s.status==="wait"?"reply to claude…":"message claude…"}</span><span class="caret"></span>`;
+    m.appendChild(p);
+
+    const focusMe = ()=>select(cur,j);
+    m.onclick = focusMe;
+    m.onkeydown = (e)=>{ if(e.key==="Enter"||e.key===" "){ e.preventDefault(); focusMe(); } };
+    grid.appendChild(m);
+    sc.scrollTop = sc.scrollHeight;
+  });
+
+  $("cwd").textContent = `${w.cwd} · ${sess().branch}${sess().add||sess().del?"*":""}`;
+}
+
+function renderCtx(){
+  const s = sess();
+  $("ctx-cap").textContent = `Changes — ${W[cur].id} : ${s.branch}`;
+  $("ctx-stat").innerHTML = s.files.length
+    ? `${s.files.length} files · <span class="plus">+${s.add}</span> <span class="minus">−${s.del}</span>` : "";
+  const fl = $("filelist"); fl.innerHTML = "";
+  const empty = $("ctx-empty"), dv = $("diffview");
+
+  if(!s.files.length){
+    empty.hidden = false; dv.hidden = true; fl.hidden = true;
+    empty.textContent = "working tree clean — nothing to review in this session";
+    return;
+  }
+  empty.hidden = true; fl.hidden = false;
+
+  s.files.forEach((f,i)=>{
+    const b = document.createElement("button");
+    b.className = "file";
+    b.setAttribute("aria-current", (tab==="diff" && i===curFile) ? "true":"false");
+    const parts = f.path.split("/"); const base = parts.pop();
+    b.innerHTML = `<span class="st ${f.st}">${f.st}</span>`+
+      `<span class="path">${parts.join("/")}${parts.length?"/":""}<b>${base}</b></span>`+
+      `<span class="n">${f.n}</span>`;
+    b.onclick = ()=>{ curFile=i; tab="diff"; renderCtx(); };
+    fl.appendChild(b);
+  });
+
+  dv.hidden = (tab!=="diff");
+  if(tab==="diff"){
+    const pre = $("diffpre"); pre.innerHTML = "";
+    const f = s.files[curFile];
+    const head = document.createElement("span");
+    head.className = "dl h"; head.textContent = `── ${f.path}`;
+    pre.appendChild(head);
+    (s.diffs[f.path]||[]).forEach(([cls,txt])=>{
+      const l = document.createElement("span");
+      l.className = `dl ${cls}`; l.textContent = txt;
+      pre.appendChild(l);
+    });
+  }
+  $("tab-diff").setAttribute("aria-selected", tab==="diff");
+  $("tab-files").setAttribute("aria-selected", tab==="files");
+}
+
+function select(i,j){
+  cur = i; curS = j ?? 0; curFile = 0;
+  renderWorkspaces(); renderTerms(); renderCtx();
+}
+
+/* ── full-screen review mode ── */
+let review = false;
+const viewed = new Set();
+const vkey = (p)=>`${W[cur].id}:${sess().branch}:${p}`;
+let toastTimer = null;
+
+function toast(msg){
+  const t = $("toast"); t.textContent = msg; t.hidden = false;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(()=>{ t.hidden = true; }, 1800);
+}
+
+function renderReview(){
+  const s = sess();
+  $("rev-crumb").textContent = `${W[cur].id} : ${s.branch}`;
+  const done = s.files.filter(f=>viewed.has(vkey(f.path))).length;
+  $("rev-progress").textContent =
+    `${done}/${s.files.length} reviewed · +${s.add} −${s.del}`;
+
+  const rail = $("rev-files"); rail.innerHTML = "";
+  s.files.forEach((f,i)=>{
+    const isV = viewed.has(vkey(f.path));
+    const b = document.createElement("button");
+    b.className = "rev-file" + (isV ? " isviewed":"");
+    b.setAttribute("aria-current", i===curFile ? "true":"false");
+    const parts = f.path.split("/"); const base = parts.pop();
+    b.innerHTML = `<span class="vd">${isV?"✓":"·"}</span>`+
+      `<span class="st ${f.st}">${f.st}</span>`+
+      `<span class="path">${parts.join("/")}${parts.length?"/":""}<b>${base}</b></span>`+
+      `<span class="n">${f.n}</span>`;
+    b.onclick = ()=>{ curFile=i; renderReview(); scrollToFile(i); };
+    rail.appendChild(b);
+  });
+
+  const pre = $("rev-pre"); pre.innerHTML = "";
+  s.files.forEach((f,i)=>{
+    const sec = document.createElement("span");
+    sec.className = "fsec" + (viewed.has(vkey(f.path)) ? " isviewed":"");
+    sec.id = `fsec-${i}`;
+    const head = document.createElement("span");
+    head.className = "fhead";
+    head.innerHTML = `── ${f.path} <span class="fst">${f.n}</span>`;
+    sec.appendChild(head);
+    (s.diffs[f.path]||[]).forEach(([cls,txt])=>{
+      const l = document.createElement("span");
+      l.className = `dl ${cls}`; l.textContent = txt;
+      sec.appendChild(l);
+    });
+    pre.appendChild(sec);
+  });
+}
+
+function scrollToFile(i){
+  const el = document.getElementById(`fsec-${i}`);
+  if(el) el.scrollIntoView({block:"start", behavior:"auto"});
+}
+
+function openReview(){
+  if(!sess().files.length){ toast("working tree clean — nothing to review"); return; }
+  review = true; curFile = 0;
+  $("overlay").hidden = false;
+  renderReview(); scrollToFile(0);
+}
+function closeReview(){
+  review = false; $("overlay").hidden = true;
+  renderCtx();
+}
+
+$("btn-review").onclick = openReview;
+$("rev-close").onclick = closeReview;
+
+$("tab-diff").onclick = ()=>{ tab="diff"; renderCtx(); };
+$("tab-files").onclick = ()=>{ tab="files"; renderCtx(); };
+
+document.addEventListener("keydown",(e)=>{
+  if(e.metaKey||e.ctrlKey||e.altKey) return;
+
+  if(review){
+    const files = sess().files.length;
+    if(e.key==="Escape"){ closeReview(); return; }
+    if(e.key==="j" && files){ curFile=(curFile+1)%files; renderReview(); scrollToFile(curFile); }
+    if(e.key==="k" && files){ curFile=(curFile-1+files)%files; renderReview(); scrollToFile(curFile); }
+    if(e.key==="v" && files){
+      const p = sess().files[curFile].path;
+      const k = vkey(p);
+      if(viewed.has(k)) viewed.delete(k); else viewed.add(k);
+      const next = sess().files.findIndex((f,i)=>i>curFile && !viewed.has(vkey(f.path)));
+      if(viewed.has(k) && next>=0) curFile = next;
+      renderReview(); scrollToFile(curFile);
+    }
+    if(e.key==="o"){
+      toast(`would run: code --goto ${sess().files[curFile].path}`);
+    }
+    return;
+  }
+
+  const n = parseInt(e.key,10);
+  if(n>=1 && n<=W.length){ select(n-1,0); return; }
+  const count = W[cur].sessions.length;
+  if(e.key==="]"){ select(cur,(curS+1)%count); return; }
+  if(e.key==="["){ select(cur,(curS-1+count)%count); return; }
+  const files = sess().files.length;
+  if(e.key==="j" && files){ curFile=(curFile+1)%files; renderCtx(); }
+  if(e.key==="k" && files){ curFile=(curFile-1+files)%files; renderCtx(); }
+  if(e.key==="Tab"){ e.preventDefault(); tab = tab==="diff"?"files":"diff"; renderCtx(); }
+  if(e.key==="r"){ openReview(); return; }
+  if(e.key==="a"){
+    for(let i=0;i<W.length;i++){
+      const j = W[i].sessions.findIndex(s=>s.status==="wait");
+      if(j>=0){ select(i,j); return; }
+    }
+  }
+});
+
+select(0,0);
+</script>
