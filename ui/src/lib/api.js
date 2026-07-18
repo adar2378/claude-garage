@@ -80,6 +80,26 @@ export async function openEditor(workspace, file, line) {
   return resBody;
 }
 
+// {id} restores a single restorable session; {all: true} restores every
+// currently-restorable one in a single daemon-side call. Per-workspace
+// "restore all" in the rail deliberately does NOT use {all:true} — it
+// issues one restoreSession({id}) per session in that workspace so a
+// failure in one workspace's deck can't be conflated with another's (see
+// WorkspaceRail). 409 (workspace/dir missing, name collision) surfaces via
+// the thrown Error's message.
+export async function restoreSession(payload) {
+  const res = await fetch("/api/sessions/restore", {
+    method: "POST",
+    headers: JSON_HEADERS,
+    body: JSON.stringify(payload),
+  });
+  const body = await parseJsonSafe(res);
+  if (!res.ok) {
+    throw new Error(body.error || body.reason || `could not restore session (${res.status})`);
+  }
+  return body;
+}
+
 export function reportVisibility(clientId, visible) {
   fetch("/api/ui/visibility", {
     method: "POST",

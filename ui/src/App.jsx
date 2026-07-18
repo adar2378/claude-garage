@@ -5,6 +5,7 @@ import HooksBanner from "./components/HooksBanner.jsx";
 import AddWorkspaceForm from "./components/AddWorkspaceForm.jsx";
 import ChangesPane from "./components/ChangesPane.jsx";
 import ReviewMode from "./components/ReviewMode.jsx";
+import HelpOverlay from "./components/HelpOverlay.jsx";
 import { fetchSessions, fetchWorkspaces, reportVisibility, fetchDiff, openEditor } from "./lib/api.js";
 import { buildGroups } from "./lib/groups.js";
 import { loadViewedMap, markViewed, pruneViewed, hashContent } from "./lib/viewed.js";
@@ -35,6 +36,8 @@ export default function App() {
   const [reviewMode, setReviewMode] = useState(false);
   const [viewedMap, setViewedMap] = useState({});
   const [editorError, setEditorError] = useState(null);
+  // p3-restore-and-ship: D-help
+  const [helpOpen, setHelpOpen] = useState(false);
 
   const groups = useMemo(() => buildGroups(workspaces, sessions), [workspaces, sessions]);
 
@@ -354,13 +357,26 @@ export default function App() {
         return;
       }
       if (e.key === "Escape") {
-        // Esc only acts when review mode is open — never intercept Esc
-        // destined for a terminal (the suppression rule above already
-        // guarantees no terminal has focus here regardless).
+        // Esc only acts when help or review mode is open — never intercept
+        // Esc destined for a terminal (the suppression rule above already
+        // guarantees no terminal has focus here regardless). design
+        // D-help: if both are open, Esc closes the topmost (help) first.
+        if (helpOpen) {
+          e.preventDefault();
+          setHelpOpen(false);
+          return;
+        }
         if (reviewMode) {
           e.preventDefault();
           setReviewMode(false);
         }
+        return;
+      }
+      if (e.key === "?") {
+        // design D-help: suppressed while a terminal has focus by the same
+        // top-of-function rule as every other chrome binding.
+        e.preventDefault();
+        setHelpOpen((v) => !v);
         return;
       }
       if (e.key === "v") {
@@ -384,6 +400,7 @@ export default function App() {
     cycleFocusedCell,
     jumpToNeedsInput,
     reviewMode,
+    helpOpen,
     changesPaneCollapsed,
     stepSelectedFile,
     markViewedAndAdvance,
@@ -445,12 +462,14 @@ export default function App() {
           onSessionCreated={refreshSessions}
           onOpenRoot={openWorkspaceRoot}
           onBlurChrome={blurActiveTerminal}
+          onSessionsRestored={refreshSessions}
         />
         <TerminalGrid
           group={focusedGroup}
           focusedSessionId={focusedSessionId}
           onFocusCell={setFocusedSessionId}
           onBlurChrome={blurActiveTerminal}
+          onSessionsRestored={refreshSessions}
         />
         <ChangesPane
           workspace={focusedWorkspace}
@@ -479,6 +498,8 @@ export default function App() {
           onOpenRoot={openWorkspaceRoot}
         />
       )}
+
+      {helpOpen && <HelpOverlay onClose={() => setHelpOpen(false)} />}
 
       {editorError && (
         <div className="fixed bottom-4 right-4 z-[60] flex max-w-sm items-start gap-2 border border-garage-red bg-garage-panel px-3 py-2 text-xs text-garage-red shadow-lg">

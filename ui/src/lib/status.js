@@ -6,6 +6,7 @@ export const STATUS_GLYPH = {
   working: "◐",
   done: "✓",
   idle: "○",
+  restorable: "⟳",
 };
 
 export const STATUS_COLOR = {
@@ -13,6 +14,7 @@ export const STATUS_COLOR = {
   working: "text-garage-blue",
   done: "text-garage-green",
   idle: "text-garage-dim",
+  restorable: "text-garage-dim",
 };
 
 export function glyphFor(status) {

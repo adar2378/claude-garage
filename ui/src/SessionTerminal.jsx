@@ -19,6 +19,22 @@ export default function SessionTerminal({ id }) {
     term.open(hostRef.current);
     fit.fit();
 
+    // design D-blur-chord: Ctrl+` is the only keyboard-only path back to
+    // chrome-navigation mode while a terminal has DOM focus. App.jsx's
+    // window-level keydown listener can't intercept this — xterm.js
+    // handles keydown on its own internal node before that listener would
+    // ever see it — so it has to be caught here, per xterm.js instance,
+    // via attachCustomKeyEventHandler. Returning false suppresses xterm's
+    // own processing of that one keystroke; every other key returns true
+    // and is left untouched.
+    term.attachCustomKeyEventHandler((e) => {
+      if (e.type === "keydown" && e.ctrlKey && e.key === "`") {
+        document.activeElement?.blur();
+        return false;
+      }
+      return true;
+    });
+
     const proto = location.protocol === "https:" ? "wss" : "ws";
     const ws = new WebSocket(
       `${proto}://${location.host}/term/${encodeURIComponent(id)}`
