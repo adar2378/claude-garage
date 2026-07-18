@@ -1,10 +1,14 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import WorkspaceRail from "./components/WorkspaceRail.jsx";
 import TerminalGrid from "./components/TerminalGrid.jsx";
 import HooksBanner from "./components/HooksBanner.jsx";
 import AddWorkspaceForm from "./components/AddWorkspaceForm.jsx";
-import { fetchSessions, fetchWorkspaces, reportVisibility } from "./lib/api.js";
+import ChangesPane from "./components/ChangesPane.jsx";
+import ReviewMode from "./components/ReviewMode.jsx";
+import { fetchSessions, fetchWorkspaces, reportVisibility, fetchDiff, openEditor } from "./lib/api.js";
 import { buildGroups } from "./lib/groups.js";
+import { loadViewedMap, markViewed, pruneViewed, hashContent } from "./lib/viewed.js";
+import { firstHunkLine } from "./lib/diff.js";
 
 // Kept for the page's lifetime (module scope, not persisted) — see API
 // contract for POST /api/ui/visibility.
@@ -19,6 +23,18 @@ export default function App() {
   const [focusedWorkspace, setFocusedWorkspace] = useState(null);
   const [focusedSessionId, setFocusedSessionId] = useState(null);
   const [showAddWorkspace, setShowAddWorkspace] = useState(false);
+
+  // ---- p2-diff-review: changes pane + review mode state ----
+  const [diffFiles, setDiffFiles] = useState([]);
+  const [diffTruncated, setDiffTruncated] = useState(false);
+  const [diffLoading, setDiffLoading] = useState(false);
+  const [diffError, setDiffError] = useState(null);
+  const [changesPaneCollapsed, setChangesPaneCollapsed] = useState(false);
+  const [paneEmphasis, setPaneEmphasis] = useState("list"); // "list" | "diff" (Tab toggles)
+  const [selectedFilePath, setSelectedFilePath] = useState(null);
+  const [reviewMode, setReviewMode] = useState(false);
+  const [viewedMap, setViewedMap] = useState({});
+  const [editorError, setEditorError] = useState(null);
 
   const groups = useMemo(() => buildGroups(workspaces, sessions), [workspaces, sessions]);
 
@@ -60,6 +76,43 @@ export default function App() {
       .catch((e) => setLoadError(e.message));
   }, []);
 
+  // ---- p2-diff-review: diff fetch, kept in refs so the SSE effect below
+  // (which only wants to (re)subscribe on refreshSessions changing) can
+  // read the *latest* focused workspace / session list without reopening
+  // the EventSource every time focus moves (design D-freshness).
+  const focusedWorkspaceRef = useRef(focusedWorkspace);
+  useEffect(() => {
+    focusedWorkspaceRef.current = focusedWorkspace;
+  }, [focusedWorkspace]);
+
+  const sessionsRef = useRef(sessions);
+  useEffect(() => {
+    sessionsRef.current = sessions;
+  }, [sessions]);
+
+  const fetchDiffForWorkspace = useCallback((name) => {
+    if (!name) return;
+    setDiffLoading(true);
+    fetchDiff(name)
+      .then((data) => {
+        const files = data.files ?? [];
+        setDiffFiles(files);
+        setDiffTruncated(!!data.truncated);
+        setDiffError(null);
+        pruneViewed(name, files.map((f) => f.path));
+      })
+      .catch((e) => {
+        setDiffError(e.message);
+        setDiffFiles([]);
+      })
+      .finally(() => setDiffLoading(false));
+  }, []);
+
+  // Fetch on focused-workspace change (spec: "Pane updates when focus moves").
+  useEffect(() => {
+    if (focusedWorkspace) fetchDiffForWorkspace(focusedWorkspace);
+  }, [focusedWorkspace, fetchDiffForWorkspace]);
+
   // ---- SSE: live status pushes drive the rail/grid without reload ----
   useEffect(() => {
     const es = new EventSource("/api/events");
@@ -81,13 +134,23 @@ export default function App() {
         return;
       }
       const { id, status } = payload;
+      // Diff freshness trigger 1/3 (design D-freshness): a session in the
+      // *focused* workspace flipping to done refetches the diff. Read from
+      // refs so this doesn't force the SSE connection to reopen on every
+      // focus/session change.
+      if (status === "done") {
+        const session = sessionsRef.current.find((s) => s.id === id);
+        if (session && session.workspace === focusedWorkspaceRef.current) {
+          fetchDiffForWorkspace(focusedWorkspaceRef.current);
+        }
+      }
       setSessions((prev) => prev.map((s) => (s.id === id ? { ...s, status } : s)));
     });
 
     es.addEventListener("sessions", refreshSessions);
 
     return () => es.close();
-  }, [refreshSessions]);
+  }, [refreshSessions, fetchDiffForWorkspace]);
 
   // ---- visibility reporting (contract: on load, on visibilitychange, every 30s while visible) ----
   useEffect(() => {
@@ -148,7 +211,88 @@ export default function App() {
     }
   }, [groups]);
 
-  // ---- single window keydown listener (spec: 3.3 / design D-keys) ----
+  // Clicking rail/header/gutter returns to chrome-navigation mode by
+  // blurring whatever terminal currently holds DOM focus (design D-keys:
+  // there's no keyboard-only blur in P1, so this is the only way back).
+  // Defined ahead of the keydown listener below since review-mode entry
+  // (the "r" binding) also calls it.
+  const blurActiveTerminal = useCallback(() => {
+    const active = document.activeElement;
+    if (active && active.closest(".xterm")) active.blur();
+  }, []);
+
+  // ---- p2-diff-review: selection, viewed-state, and editor helpers ----
+
+  // Keep the selected file valid as the diff refetches (initial pick, or
+  // the previously-selected path disappearing from the list).
+  useEffect(() => {
+    if (diffFiles.length === 0) {
+      setSelectedFilePath(null);
+      return;
+    }
+    if (!diffFiles.some((f) => f.path === selectedFilePath)) {
+      setSelectedFilePath(diffFiles[0].path);
+    }
+  }, [diffFiles, selectedFilePath]);
+
+  // Reload the viewed map whenever the workspace changes or the diff
+  // refetches (pruneViewed above already reconciled stale entries).
+  useEffect(() => {
+    setViewedMap(loadViewedMap(focusedWorkspace));
+  }, [focusedWorkspace, diffFiles]);
+
+  const stepSelectedFile = useCallback(
+    (direction) => {
+      if (diffFiles.length === 0) return;
+      const idx = diffFiles.findIndex((f) => f.path === selectedFilePath);
+      const next = idx === -1 ? 0 : (idx + direction + diffFiles.length) % diffFiles.length;
+      setSelectedFilePath(diffFiles[next].path);
+    },
+    [diffFiles, selectedFilePath]
+  );
+
+  // v (review-mode only): mark the selected file viewed, then advance to
+  // the next not-yet-viewed file in rail order; if none remain, selection
+  // stays put (spec: "Marking the last unviewed file leaves selection in place").
+  const markViewedAndAdvance = useCallback(() => {
+    if (!focusedWorkspace || !selectedFilePath) return;
+    const idx = diffFiles.findIndex((f) => f.path === selectedFilePath);
+    if (idx === -1) return;
+    const file = diffFiles[idx];
+    const hash = hashContent(file.diff ?? "");
+    const nextMap = markViewed(focusedWorkspace, selectedFilePath, hash);
+    setViewedMap(nextMap);
+
+    for (let step = 1; step < diffFiles.length; step++) {
+      const candidate = diffFiles[(idx + step) % diffFiles.length];
+      if (nextMap[candidate.path] !== hashContent(candidate.diff ?? "")) {
+        setSelectedFilePath(candidate.path);
+        return;
+      }
+    }
+  }, [focusedWorkspace, selectedFilePath, diffFiles]);
+
+  const openSelectedFileInEditor = useCallback(() => {
+    if (!focusedWorkspace || !selectedFilePath) return;
+    const file = diffFiles.find((f) => f.path === selectedFilePath);
+    if (!file) return;
+    openEditor(focusedWorkspace, file.path, firstHunkLine(file.diff)).catch((e) =>
+      setEditorError(e.message)
+    );
+  }, [focusedWorkspace, selectedFilePath, diffFiles]);
+
+  const openWorkspaceRoot = useCallback((name) => {
+    openEditor(name).catch((e) => setEditorError(e.message));
+  }, []);
+
+  // 501/400/404 from open-editor auto-dismiss so the toast doesn't linger.
+  useEffect(() => {
+    if (!editorError) return;
+    const timer = setTimeout(() => setEditorError(null), 5_000);
+    return () => clearTimeout(timer);
+  }, [editorError]);
+
+  // ---- single window keydown listener (spec: 3.3 / design D-keys, extended per p2 D-keys) ----
   useEffect(() => {
     function onKeyDown(e) {
       if (e.metaKey || e.ctrlKey || e.altKey) return;
@@ -177,19 +321,77 @@ export default function App() {
       if (e.key === "a") {
         e.preventDefault();
         jumpToNeedsInput();
+        return;
+      }
+      if (e.key === "Tab") {
+        // preventDefault (avoid focus-walk) only when the changes pane is
+        // actually visible for it to act on (p2 D-keys).
+        if (!reviewMode && !changesPaneCollapsed) {
+          e.preventDefault();
+          setPaneEmphasis((v) => (v === "list" ? "diff" : "list"));
+        }
+        return;
+      }
+      if (e.key === "j") {
+        e.preventDefault();
+        stepSelectedFile(1);
+        return;
+      }
+      if (e.key === "k") {
+        e.preventDefault();
+        stepSelectedFile(-1);
+        return;
+      }
+      if (e.key === "r") {
+        e.preventDefault();
+        if (!focusedWorkspace) return;
+        // Review-mode entry always refetches unconditionally (design
+        // D-freshness trigger 3/3), after blurring any terminal focus so
+        // Esc works on the very next keypress (design D-keys).
+        blurActiveTerminal();
+        fetchDiffForWorkspace(focusedWorkspace);
+        setReviewMode(true);
+        return;
+      }
+      if (e.key === "Escape") {
+        // Esc only acts when review mode is open — never intercept Esc
+        // destined for a terminal (the suppression rule above already
+        // guarantees no terminal has focus here regardless).
+        if (reviewMode) {
+          e.preventDefault();
+          setReviewMode(false);
+        }
+        return;
+      }
+      if (e.key === "v") {
+        // Review-mode only (p2 spec: "j/k navigate files within review mode").
+        if (reviewMode) {
+          e.preventDefault();
+          markViewedAndAdvance();
+        }
+        return;
+      }
+      if (e.key === "o") {
+        e.preventDefault();
+        openSelectedFileInEditor();
       }
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [groups, selectWorkspace, cycleFocusedCell, jumpToNeedsInput]);
-
-  // Clicking rail/header/gutter returns to chrome-navigation mode by
-  // blurring whatever terminal currently holds DOM focus (design D-keys:
-  // there's no keyboard-only blur in P1, so this is the only way back).
-  const blurActiveTerminal = useCallback(() => {
-    const active = document.activeElement;
-    if (active && active.closest(".xterm")) active.blur();
-  }, []);
+  }, [
+    groups,
+    selectWorkspace,
+    cycleFocusedCell,
+    jumpToNeedsInput,
+    reviewMode,
+    changesPaneCollapsed,
+    stepSelectedFile,
+    markViewedAndAdvance,
+    openSelectedFileInEditor,
+    focusedWorkspace,
+    blurActiveTerminal,
+    fetchDiffForWorkspace,
+  ]);
 
   const focusedGroup = groups.find((g) => g.name === focusedWorkspace) ?? null;
 
@@ -229,7 +431,11 @@ export default function App() {
 
       <HooksBanner sessions={sessions} />
 
-      <div className="grid min-h-0 flex-1 grid-cols-[240px_1fr]">
+      <div
+        className={`grid min-h-0 flex-1 ${
+          changesPaneCollapsed ? "grid-cols-[240px_1fr_32px]" : "grid-cols-[240px_1fr_360px]"
+        }`}
+      >
         <WorkspaceRail
           groups={groups}
           focusedWorkspace={focusedWorkspace}
@@ -237,6 +443,7 @@ export default function App() {
           onSelectWorkspace={selectWorkspace}
           onSelectSession={selectSession}
           onSessionCreated={refreshSessions}
+          onOpenRoot={openWorkspaceRoot}
           onBlurChrome={blurActiveTerminal}
         />
         <TerminalGrid
@@ -245,7 +452,46 @@ export default function App() {
           onFocusCell={setFocusedSessionId}
           onBlurChrome={blurActiveTerminal}
         />
+        <ChangesPane
+          workspace={focusedWorkspace}
+          files={diffFiles}
+          truncated={diffTruncated}
+          loading={diffLoading}
+          error={diffError}
+          collapsed={changesPaneCollapsed}
+          onToggleCollapse={() => setChangesPaneCollapsed((v) => !v)}
+          emphasis={paneEmphasis}
+          selectedPath={selectedFilePath}
+          onSelectFile={setSelectedFilePath}
+          onRefresh={() => fetchDiffForWorkspace(focusedWorkspace)}
+          onBlurChrome={blurActiveTerminal}
+        />
       </div>
+
+      {reviewMode && (
+        <ReviewMode
+          workspace={focusedWorkspace}
+          files={diffFiles}
+          truncated={diffTruncated}
+          selectedPath={selectedFilePath}
+          onSelectFile={setSelectedFilePath}
+          viewedMap={viewedMap}
+          onOpenRoot={openWorkspaceRoot}
+        />
+      )}
+
+      {editorError && (
+        <div className="fixed bottom-4 right-4 z-[60] flex max-w-sm items-start gap-2 border border-garage-red bg-garage-panel px-3 py-2 text-xs text-garage-red shadow-lg">
+          <span>{editorError}</span>
+          <button
+            type="button"
+            onClick={() => setEditorError(null)}
+            className="ml-auto text-garage-dim hover:text-garage-ink"
+          >
+            ×
+          </button>
+        </div>
+      )}
     </main>
   );
 }

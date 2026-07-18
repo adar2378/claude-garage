@@ -56,6 +56,30 @@ export async function createSession(workspace, label) {
   return body;
 }
 
+export async function fetchDiff(workspace) {
+  const res = await fetch(`/api/diff/${encodeURIComponent(workspace)}`);
+  if (!res.ok) throw new Error(`GET /api/diff/${workspace} failed (${res.status})`);
+  return res.json();
+}
+
+// {workspace} opens the workspace root; {workspace, file, line} opens a
+// specific file at a line. 501 (editor CLI missing) and 400 (path
+// traversal) surface via the thrown Error's message — callers show it
+// inline (design D-editor).
+export async function openEditor(workspace, file, line) {
+  const body = file ? { workspace, file, line: line ?? 1 } : { workspace };
+  const res = await fetch("/api/open-editor", {
+    method: "POST",
+    headers: JSON_HEADERS,
+    body: JSON.stringify(body),
+  });
+  const resBody = await parseJsonSafe(res);
+  if (!res.ok) {
+    throw new Error(resBody.error || `could not open editor (${res.status})`);
+  }
+  return resBody;
+}
+
 export function reportVisibility(clientId, visible) {
   fetch("/api/ui/visibility", {
     method: "POST",

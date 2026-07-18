@@ -12,6 +12,7 @@ export default function WorkspaceRail({
   onSelectWorkspace,
   onSelectSession,
   onSessionCreated,
+  onOpenRoot,
   onBlurChrome,
 }) {
   return (
@@ -51,6 +52,16 @@ export default function WorkspaceRail({
                   {group.sessions.length}×
                 </span>
               </button>
+              {group.registered && (
+                <button
+                  type="button"
+                  onClick={() => onOpenRoot(group.name)}
+                  title={`open ${group.name} root in editor`}
+                  className="shrink-0 px-1 text-garage-faint hover:text-garage-amber"
+                >
+                  ⧉
+                </button>
+              )}
               <AddSessionControl workspaceName={group.name} onCreated={onSessionCreated} />
             </div>
             <div className="ml-3 border-l border-garage-line pl-2">
