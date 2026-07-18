@@ -6,13 +6,29 @@
   "engines": {
     "node": ">=20"
   },
+  "bin": {
+    "claude-garage": "bin/garage.js"
+  },
+  "files": [
+    "bin",
+    "daemon/src",
+    "daemon/package.json",
+    "ui/dist"
+  ],
   "workspaces": [
     "daemon",
     "ui"
   ],
   "scripts": {
     "dev": "concurrently -n daemon,ui -c blue,magenta \"npm:dev --workspace daemon\" \"npm:dev --workspace ui\"",
-    "postinstall": "chmod +x node_modules/node-pty/prebuilds/darwin-*/spawn-helper 2>/dev/null || true"
+    "postinstall": "chmod +x node_modules/node-pty/prebuilds/darwin-*/spawn-helper 2>/dev/null || true",
+    "prepack": "npm run build --workspace ui"
+  },
+  "dependencies": {
+    "@fastify/static": "^10.1.0",
+    "fastify": "^5.3.0",
+    "node-pty": "^1.1.0",
+    "ws": "^8.18.0"
   },
   "devDependencies": {
     "concurrently": "^10.0.3"
