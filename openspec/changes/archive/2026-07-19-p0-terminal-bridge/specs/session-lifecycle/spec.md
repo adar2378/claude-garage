@@ -13,6 +13,17 @@ The daemon SHALL expose `GET /api/health` returning HTTP 200 with a JSON body, a
 - **WHEN** the daemon's listen address is inspected (e.g. `lsof -i -P` for the daemon pid)
 - **THEN** the socket is bound to `127.0.0.1`, not `0.0.0.0` or a LAN address
 
+### Requirement: Foreign browser origins rejected
+State-changing requests (POST/PUT/PATCH/DELETE) carrying an `Origin` header outside the UI allowlist SHALL be rejected with 403. Requests without an `Origin` header (curl, local scripts) SHALL be allowed — they are ordinary local processes, not confused-deputy browsers.
+
+#### Scenario: Cross-site request forgery blocked
+- **WHEN** `POST /api/sessions` arrives with `Origin: http://evil.example`
+- **THEN** the daemon responds 403 and no tmux session is created
+
+#### Scenario: Header-less local tooling still works
+- **WHEN** `POST /api/sessions` arrives from curl with no `Origin` header
+- **THEN** the request is processed normally
+
 ### Requirement: Spawn a garage session
 The daemon SHALL create sessions via `POST /api/sessions` with body `{workspace, label, dir}`, by running `tmux new-session -d -s "garage/<workspace>/<label>" -c <dir> claude`. `workspace` and `label` MUST match `[a-z0-9-]+`; invalid names SHALL be rejected with 400. A name collision with an existing tmux session SHALL be rejected with 409.
 

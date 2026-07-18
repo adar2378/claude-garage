@@ -44,7 +44,7 @@ Detached from birth — the daemon never owns the process. If `claude` exits, th
 - [node-pty is a native module; build breakage across Node/macOS versions] → pin Node ≥ 20 LTS in engines, commit a lockfile, document `xcode-select --install` as prerequisite.
 - [Session name collision on spawn] → daemon returns 409 if `tmux has-session -t` matches; UI surfaces the error.
 - [tmux "smallest client wins" sizing can shrink the browser terminal when an iTerm attach coexists] → accepted for P0; document it. Revisit with per-client window sizing later.
-- [No auth on loopback] → accepted: bind `127.0.0.1` explicitly and assert it in a test; any 0.0.0.0 bind is a P0 bug.
+- [No auth on loopback] → accepted for local processes (they already have the user's privileges and tmux itself), but NOT for browsers: any webpage can reach 127.0.0.1, and WebSockets bypass CORS entirely. Mitigation: Origin-header allowlist (`GARAGE_UI_ORIGINS`, default Vite dev origins) enforced on all state-changing HTTP methods and on every WS upgrade; requests without an Origin header (curl/scripts) pass. Bearer tokens deferred to P3 packaging as defense-in-depth.
 - [Killing the pty on WS close could orphan ptys if close events are missed] → attach pty lifetime to the socket via a single owner object; add a sweep that kills ptys whose socket readyState is closed.
 
 ## Open Questions

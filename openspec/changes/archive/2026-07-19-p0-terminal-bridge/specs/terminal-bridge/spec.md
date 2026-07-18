@@ -13,6 +13,13 @@ The daemon SHALL expose `WS /term/:id` which spawns a `node-pty` process running
 - **WHEN** the client sends a text frame `{"type":"resize","cols":120,"rows":40}`
 - **THEN** the daemon resizes that connection's pty to 120×40 and the terminal reflows
 
+### Requirement: WebSocket upgrades validate Origin
+WebSockets bypass CORS, so the upgrade handler SHALL destroy any connection whose `Origin` header is present but outside the UI allowlist, before attaching a pty. Connections without an `Origin` header SHALL be allowed.
+
+#### Scenario: Cross-site WebSocket hijack blocked
+- **WHEN** a WebSocket upgrade for `/term/garage/...` arrives with `Origin: http://evil.example`
+- **THEN** the socket is destroyed and no `tmux attach` pty is spawned
+
 ### Requirement: Session survives client disconnect
 Closing the WebSocket (browser tab closed, refresh, network drop) SHALL kill only the attach pty — never the tmux session. A subsequent connection to the same id SHALL reattach to the live session with tmux's current screen content (including scrollback state held by tmux).
 
