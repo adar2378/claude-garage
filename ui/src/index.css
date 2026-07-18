@@ -1,0 +1,19 @@
+@import "tailwindcss";
+
+/* Design tokens — single source of truth, lifted from mock/session-deck.html.
+   Use as Tailwind utilities: bg-garage-bg, text-garage-ink, border-garage-line… */
+@theme {
+  --font-mono: "SF Mono", Menlo, Monaco, monospace;
+
+  --color-garage-bg: #0b0e14;
+  --color-garage-panel: #10141d;
+  --color-garage-line: #1e2633;
+  --color-garage-ink: #c6cfdb;
+  --color-garage-dim: #556070;
+  --color-garage-faint: #39424f;
+  --color-garage-amber: #e2a75e;
+  --color-garage-green: #79b26e;
+  --color-garage-red: #cc6b6b;
+  --color-garage-blue: #6e9ecc;
+  --color-garage-sel: #161d2a;
+}
