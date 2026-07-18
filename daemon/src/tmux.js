@@ -50,6 +50,12 @@ export async function hasSession(id) {
 // must not pre-join them into a single string.
 export async function createSession(id, dir, command, extraArgs = []) {
   await run("tmux", ["new-session", "-d", "-s", id, "-c", dir, command, ...extraArgs]);
+  // The pit wall renders its own session title bars, so tmux's status line
+  // is visual noise in every grid cell. Per-session option — a plain
+  // `tmux attach` escape-hatch user can restore it with `set status on`.
+  // set-option does not accept the `=` exact-match target prefix; the full
+  // freshly-created name is unambiguous here.
+  await run("tmux", ["set-option", "-t", id, "status", "off"]).catch(() => {});
 }
 
 export async function killSession(id) {
