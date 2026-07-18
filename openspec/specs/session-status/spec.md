@@ -38,6 +38,10 @@ The daemon SHALL expose `GET /api/events` as a Server-Sent Events stream that de
 ### Requirement: Status source is pluggable
 The daemon SHALL determine session status from one or more status sources — a hook receiver endpoint and/or a poller — without the observable status API (`GET /api/sessions` status field, `/api/events` stream) depending on which source produced the signal. `POST /api/hooks/claude` SHALL accept Claude Code hook payloads and SHALL update the corresponding session's status based on the payload's event type and project directory.
 
+#### Scenario: Hook posts require the per-install token
+- **WHEN** `POST /api/hooks/claude` arrives without the per-install token (generated once, embedded in the snippet URL, persisted in `~/.garage/state.json`) or with a wrong token
+- **THEN** the daemon responds 401 and no session status changes
+
 #### Scenario: Hook payload updates status
 - **WHEN** `POST /api/hooks/claude` receives a `Notification` hook payload for a project directory mapped to session `garage/kowboy/checkout`
 - **THEN** that session's status becomes `needs-input`, observable via `GET /api/sessions` and via `/api/events`

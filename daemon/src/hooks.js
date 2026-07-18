@@ -1,11 +1,20 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { timingSafeEqual } from "node:crypto";
 import { listSessions } from "./tmux.js";
 import { setStatus } from "./status.js";
+import { getHookToken } from "./registry.js";
 
 const run = promisify(execFile);
 const PORT = Number(process.env.GARAGE_PORT ?? 4747);
 const HOOK_URL = `http://127.0.0.1:${PORT}/api/hooks/claude`;
+
+function tokenMatches(given, expected) {
+  if (typeof given !== "string") return false;
+  const a = Buffer.from(given);
+  const b = Buffer.from(expected);
+  return a.length === b.length && timingSafeEqual(a, b);
+}
 
 const EVENT_TO_STATE = {
   Notification: "needs-input",
@@ -63,20 +72,29 @@ async function resolveSessionIds({ session_id, cwd }) {
   return [];
 }
 
-export function hookSnippet() {
+export async function hookSnippet() {
+  const token = await getHookToken();
+  const url = `${HOOK_URL}?token=${token}`;
   return {
     hooks: {
-      Notification: [{ hooks: [{ type: "http", url: HOOK_URL }] }],
-      Stop: [{ hooks: [{ type: "http", url: HOOK_URL }] }],
+      Notification: [{ hooks: [{ type: "http", url }] }],
+      Stop: [{ hooks: [{ type: "http", url }] }],
     },
     allowedHttpHookUrls: [`http://127.0.0.1:${PORT}/*`],
   };
 }
 
 export default async function hookRoutes(app) {
-  // Exempt from the Origin allowlist in security.js — hook posts come from
-  // the claude CLI, not a browser.
+  // Auth: per-install token in the URL (claude's HTTP hooks are URL-only
+  // config, so the token rides as a query param). Combined with the normal
+  // Origin allowlist — no exemption — a foreign browser page is stopped by
+  // Origin, and anything else without the token is stopped here.
   app.post("/api/hooks/claude", async (req, reply) => {
+    const expected = await getHookToken();
+    if (!tokenMatches(req.query?.token, expected)) {
+      return reply.code(401).send({ error: "missing or invalid hook token" });
+    }
+
     const payload = req.body ?? {};
     const state = EVENT_TO_STATE[payload.hook_event_name];
     if (!state) {

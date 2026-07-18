@@ -58,3 +58,17 @@ export async function upsertWorkspace(name, dir) {
   await writeState(state);
   return { name, dir };
 }
+
+// Per-install shared secret for the hook endpoint (CSRF defense-in-depth):
+// generated once, embedded in the hook snippet URL, persisted so daemon
+// restarts don't invalidate hooks already installed in ~/.claude/settings.json.
+export async function getHookToken() {
+  const state = await readState();
+  if (typeof state.hookToken === "string" && state.hookToken.length >= 32) {
+    return state.hookToken;
+  }
+  const { randomBytes } = await import("node:crypto");
+  state.hookToken = randomBytes(32).toString("hex");
+  await writeState(state);
+  return state.hookToken;
+}
