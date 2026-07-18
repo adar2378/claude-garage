@@ -4,6 +4,8 @@ import workspaceRoutes from "./workspaces.js";
 import hookRoutes from "./hooks.js";
 import eventRoutes from "./events.js";
 import notifyRoutes from "./notify.js";
+import diffRoutes from "./diff.js";
+import editorRoutes from "./editor.js";
 import { attachTermServer } from "./term.js";
 import { rejectForeignOrigins } from "./security.js";
 import { startPoller } from "./poller.js";
@@ -20,6 +22,8 @@ app.register(workspaceRoutes);
 app.register(hookRoutes);
 app.register(eventRoutes);
 app.register(notifyRoutes);
+app.register(diffRoutes);
+app.register(editorRoutes);
 attachTermServer(app);
 
 // Poller feeds StatusStore (busy/idle baseline); hooks.js and notify.js
