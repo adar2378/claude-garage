@@ -39,6 +39,12 @@ Plus **full-screen review mode** (`r`) for bigger diffs — file rail with GitHu
 | `v` | mark file viewed (review mode), auto-advance to next unviewed |
 | `o` | open current file in VS Code (`code --goto file:line`) |
 
+### Surface decision (2026-07-19)
+
+Browser is the primary pit wall (multi-terminal grid + diff review are cheap there, painful in TUIs — the exact gap every TUI competitor has). A terminal-compatible version comes later and costs little on this architecture: since tmux owns the sessions, `garage deck <workspace>` can compose a tiled tmux layout (mouse mode on) as a native pit-wall-lite. Deliberately deferred, not rejected. P1 retro question guards the decision: "did I reach for the browser UI this week, or fall back to iTerm?"
+
+Attention routing must also work when the pit wall is NOT visible: daemon fires a macOS notification (terminal-notifier / osascript) when a session flips to needs-input — planned into P1.
+
 ### VS Code integration (escape hatch, not a cage)
 
 - Per-workspace button: **open project root** → `code <dir>`
