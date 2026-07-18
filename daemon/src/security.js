@@ -16,8 +16,18 @@ export function originAllowed(origin) {
 
 const STATE_CHANGING = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 
+// Hook posts come from the claude CLI's HTTP hook delivery, not a browser —
+// there is no Origin header to check and no confused-deputy risk (nothing
+// about a state-changing POST here is browser-reachable in a way the
+// allowlist protects against). Every other state-changing route, including
+// the browser-originated /api/ui/visibility, stays behind the allowlist.
+const EXEMPT_PATHS = new Set(["/api/hooks/claude"]);
+
 export async function rejectForeignOrigins(req, reply) {
-  if (STATE_CHANGING.has(req.method) && !originAllowed(req.headers.origin)) {
+  if (!STATE_CHANGING.has(req.method)) return;
+  const path = req.url.split("?")[0];
+  if (EXEMPT_PATHS.has(path)) return;
+  if (!originAllowed(req.headers.origin)) {
     return reply.code(403).send({ error: "origin not allowed" });
   }
 }
