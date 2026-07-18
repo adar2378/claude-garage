@@ -1,0 +1,20 @@
+{
+  "name": "claude-garage",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "workspaces": [
+    "daemon",
+    "ui"
+  ],
+  "scripts": {
+    "dev": "concurrently -n daemon,ui -c blue,magenta \"npm:dev --workspace daemon\" \"npm:dev --workspace ui\"",
+    "postinstall": "chmod +x node_modules/node-pty/prebuilds/darwin-*/spawn-helper 2>/dev/null || true"
+  },
+  "devDependencies": {
+    "concurrently": "^10.0.3"
+  }
+}
