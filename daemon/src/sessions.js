@@ -4,6 +4,8 @@ import {
   NAME_RE,
   sessionId,
   listSessions,
+  listPanePaths,
+  resolveBranch,
   hasSession,
   createSession,
   killSession,
@@ -16,7 +18,32 @@ const CLAUDE_CMD = process.env.GARAGE_CLAUDE_CMD ?? "claude";
 export default async function sessionRoutes(app) {
   app.get("/api/sessions", async () => {
     const sessions = await listSessions();
-    const live = sessions.map((s) => ({ ...s, status: getStatus(s.id) }));
+    const panePaths = await listPanePaths();
+
+    // D-branch: this route is re-hit on every SSE-driven refetch, so the
+    // git calls it triggers must stay cheap — one execFile per unique
+    // directory per request, not per session. `getBranch` memoizes on
+    // that dir for the lifetime of this single request only (a fresh Map
+    // per call, no cross-request caching); resolveBranch itself already
+    // swallows errors and returns null, so a bad/non-git dir never surfaces
+    // here as a rejection.
+    const branchCache = new Map();
+    const getBranch = (dir) => {
+      if (!dir) return Promise.resolve(null);
+      if (!branchCache.has(dir)) branchCache.set(dir, resolveBranch(dir));
+      return branchCache.get(dir);
+    };
+
+    const live = await Promise.all(
+      sessions.map(async (s) => ({
+        ...s,
+        status: getStatus(s.id),
+        // Live pane cwd, not session_path (see listPanePaths) — falls back
+        // to session_path only if the pane vanished between the two tmux
+        // calls above (a session that died mid-request).
+        branch: await getBranch(panePaths.get(s.id) ?? s.dir),
+      }))
+    );
     const liveIds = new Set(live.map((s) => s.id));
 
     // D-restore-flow: append one entry per resume-metadata record whose id
@@ -28,14 +55,18 @@ export default async function sessionRoutes(app) {
     for (const meta of metas) {
       if (liveIds.has(meta.id)) continue;
       const registered = await getWorkspace(meta.workspace);
+      const dir = registered?.dir ?? null;
       restorable.push({
         id: meta.id,
         workspace: meta.workspace,
         label: meta.label,
-        dir: registered?.dir ?? null,
+        dir,
         attached: false,
         status: "restorable",
         restorable: true,
+        // No live pane to read a cwd from — resolve against the
+        // registered workspace dir instead; null if that's gone too.
+        branch: await getBranch(dir),
       });
     }
 

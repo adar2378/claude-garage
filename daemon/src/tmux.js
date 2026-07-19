@@ -35,6 +35,60 @@ export async function listSessions() {
     });
 }
 
+// D-branch: live pane cwd per garage session, keyed by session name — NOT
+// `session_path` (that's the session's *starting* dir, frozen at creation;
+// a user who `cd`s into a worktree inside the pane changes pane_current_path
+// but not session_path). `-a` lists every pane on the server across every
+// session, so results are filtered to the garage prefix same as
+// listSessions(). A session can have multiple panes/windows if the user
+// split it manually — only the first pane encountered per session is kept,
+// there's no principled way to pick "the" cwd of a multi-pane session.
+export async function listPanePaths() {
+  let stdout;
+  try {
+    ({ stdout } = await run("tmux", [
+      "list-panes",
+      "-a",
+      "-F",
+      "#{session_name}\t#{pane_current_path}",
+    ]));
+  } catch {
+    // No tmux server running — no panes.
+    return new Map();
+  }
+  const paths = new Map();
+  for (const line of stdout.split("\n")) {
+    if (!line.startsWith(GARAGE_PREFIX)) continue;
+    const [name, panePath] = line.split("\t");
+    if (!paths.has(name)) paths.set(name, panePath);
+  }
+  return paths;
+}
+
+// D-branch: shared by sessions.js (per-session, keyed off live pane cwd)
+// and workspaces.js (per-workspace, keyed off the registered dir) — both
+// just need "what branch is HEAD at in this directory", so the git call
+// lives here once. `null` for anything that isn't a usable git working
+// dir (no dir, not a repo, dir vanished, etc.) rather than throwing —
+// callers render it as "no chip" and must never let a git failure break
+// the sessions/workspaces list response.
+export async function resolveBranch(dir) {
+  if (!dir) return null;
+  try {
+    const { stdout } = await run("git", ["-C", dir, "rev-parse", "--abbrev-ref", "HEAD"]);
+    const branch = stdout.trim();
+    if (branch && branch !== "HEAD") return branch;
+    // Detached HEAD — abbrev-ref returns the literal string "HEAD" — fall
+    // back to a short sha, prefixed so it's visually distinct from a real
+    // branch name in the UI chip.
+    const { stdout: sha } = await run("git", ["-C", dir, "rev-parse", "--short", "HEAD"]);
+    const short = sha.trim();
+    return short ? `@${short}` : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function hasSession(id) {
   try {
     await run("tmux", ["has-session", "-t", exact(id)]);

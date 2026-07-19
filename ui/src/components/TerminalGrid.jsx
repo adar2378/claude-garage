@@ -387,6 +387,14 @@ function SessionCellTab({ api }) {
     >
       <span className={colorFor(s.status)}>{glyphFor(s.status)}</span>
       <span className={focused ? "font-semibold text-garage-amber" : "text-garage-ink"}>{s.label}</span>
+      {s.branch && (
+        <span
+          className="max-w-[90px] shrink-0 truncate text-[10px] text-garage-faint"
+          title={s.branch}
+        >
+          ⎇ {s.branch}
+        </span>
+      )}
       <span className="ml-auto text-garage-faint">{s.status}</span>
       {closeError && (
         <span className="max-w-[9rem] truncate text-garage-red" title={closeError}>

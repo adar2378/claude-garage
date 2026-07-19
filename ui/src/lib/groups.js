@@ -19,6 +19,7 @@ export function buildGroups(workspaces, sessions) {
     byName.set(ws.name, {
       name: ws.name,
       dir: ws.dir,
+      branch: ws.branch ?? null,
       registered: true,
       sessions: [],
     });

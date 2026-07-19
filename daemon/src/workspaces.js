@@ -1,5 +1,5 @@
 import { stat } from "node:fs/promises";
-import { GARAGE_PREFIX, NAME_RE, listSessions, renameSession } from "./tmux.js";
+import { GARAGE_PREFIX, NAME_RE, listSessions, renameSession, resolveBranch } from "./tmux.js";
 import {
   listWorkspaces,
   upsertWorkspace,
@@ -9,7 +9,18 @@ import {
 } from "./registry.js";
 
 export default async function workspaceRoutes(app) {
-  app.get("/api/workspaces", async () => listWorkspaces());
+  // D-branch: same helper as sessions.js's per-session branch (tmux.js's
+  // resolveBranch), keyed off the registered dir instead of a live pane
+  // cwd — a registered workspace has no pane of its own. This route isn't
+  // hit on every SSE tick the way GET /api/sessions is, so no per-request
+  // dedup here; a plain per-workspace resolve is cheap enough at this
+  // scale (one execFile pair per registered workspace).
+  app.get("/api/workspaces", async () => {
+    const workspaces = await listWorkspaces();
+    return Promise.all(
+      workspaces.map(async (w) => ({ ...w, branch: await resolveBranch(w.dir) }))
+    );
+  });
 
   app.put("/api/workspaces", async (req, reply) => {
     const { name, dir } = req.body ?? {};

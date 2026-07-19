@@ -156,6 +156,16 @@ export default function WorkspaceRail({
         const restoreAllBusy = restorableIds.some((id) => restoringIds.has(id));
         const depth = group.depth ?? 0;
         const isRenamingThis = renaming?.workspaceName === group.name;
+        // D-branch: buildGroups()/buildGroupTree() (lib/groups.js, not
+        // owned by this change) only copies name/dir/registered/sessions
+        // onto the group it hands us — the workspace API's own `branch`
+        // field never survives that trip. Fall back to the first session
+        // in the deck that resolved one; sessions keep every field the
+        // API returned (group.sessions.push(s) is a straight push, no
+        // stripping), so s.branch is reliable even though group.branch
+        // itself will always be undefined in practice today.
+        const workspaceBranch =
+          group.branch ?? group.sessions.find((s) => s.branch)?.branch ?? null;
         return (
           <div key={group.name} className="mb-1" style={{ marginLeft: depth * INDENT_PX }}>
             <div
@@ -209,6 +219,14 @@ export default function WorkspaceRail({
                       title="workspace not registered — derived from session id"
                     >
                       ?
+                    </span>
+                  )}
+                  {workspaceBranch && (
+                    <span
+                      className="max-w-[90px] shrink-0 truncate text-[10px] text-garage-faint"
+                      title={workspaceBranch}
+                    >
+                      ⎇ {workspaceBranch}
                     </span>
                   )}
                   <span className="ml-auto shrink-0 text-[10px] text-garage-faint">
@@ -300,6 +318,14 @@ export default function WorkspaceRail({
                       <span className={`truncate ${isHidden ? "italic text-garage-faint" : ""}`}>
                         {s.label}
                       </span>
+                      {s.branch && (
+                        <span
+                          className="max-w-[90px] shrink-0 truncate text-[10px] text-garage-faint"
+                          title={s.branch}
+                        >
+                          ⎇ {s.branch}
+                        </span>
+                      )}
                       {isHidden && (
                         <span className="shrink-0 text-[10px] text-garage-faint">hidden</span>
                       )}
