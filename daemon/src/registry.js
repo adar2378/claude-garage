@@ -100,13 +100,16 @@ export async function renameWorkspace(oldName, newName) {
   return { name: newName, dir: entry.dir };
 }
 
-// D-resume-meta: sessions map, keyed by garage session id, {claudeSessionId,
-// workspace, label}. Written opportunistically by the poller whenever it
-// observes a session's Claude Code sessionId (see poller.js), deleted only on
-// a deliberate DELETE /api/sessions/:id (see sessions.js) — a session
-// vanishing from tmux any other way (reboot, `tmux kill-server`, an
-// out-of-band `tmux kill-session`) leaves its meta in place so it can be
-// offered as restorable.
+// D-resume-meta / D-wt-meta: sessions map, keyed by garage session id,
+// {claudeSessionId, workspace, label, worktree}. `claudeSessionId`/
+// `workspace`/`label` are written opportunistically by the poller whenever
+// it observes a session's Claude Code sessionId (see poller.js); `worktree`
+// (`{path, branch, repoDir}` or `null`) is written once, at spawn, by
+// sessions.js and never touched by the poller — see upsertSessionMeta's
+// field-level merge below. Deleted only on a deliberate DELETE
+// /api/sessions/:id (see sessions.js) — a session vanishing from tmux any
+// other way (reboot, `tmux kill-server`, an out-of-band `tmux kill-session`)
+// leaves its meta in place so it can be offered as restorable.
 export async function getSessionMeta(id) {
   const state = await readState();
   return state.sessions[id] ?? null;
@@ -123,19 +126,26 @@ export async function listSessionMetas() {
 // session's lifetime in the common case, mirroring getHookToken()'s
 // generate-and-persist-once discipline and avoiding the write-amplification
 // D-registry (P0) was careful to avoid.
+//
+// D-wt-meta: field-level merge, not a blind overwrite. Two independent
+// writers share this record — sessions.js writes `worktree` once, at spawn,
+// and never touches `claudeSessionId`/`label`/`workspace` again; poller.js
+// writes `claudeSessionId`/`workspace`/`label` on every tick once it learns
+// the Claude Code sessionId, and never mentions `worktree`. A field absent
+// (`undefined`) from the incoming `meta` falls back to whatever's already on
+// disk, so neither writer can clobber the other's field — only a caller that
+// explicitly passes a field (including `null`) can change or clear it.
 export async function upsertSessionMeta(id, meta) {
   const state = await readState();
-  const next = {
-    claudeSessionId: meta.claudeSessionId,
-    workspace: meta.workspace,
-    label: meta.label,
-  };
   const existing = state.sessions[id];
-  const unchanged =
-    existing &&
-    existing.claudeSessionId === next.claudeSessionId &&
-    existing.workspace === next.workspace &&
-    existing.label === next.label;
+  const next = {
+    claudeSessionId:
+      meta.claudeSessionId !== undefined ? meta.claudeSessionId : (existing?.claudeSessionId ?? null),
+    workspace: meta.workspace !== undefined ? meta.workspace : existing?.workspace,
+    label: meta.label !== undefined ? meta.label : existing?.label,
+    worktree: meta.worktree !== undefined ? meta.worktree : (existing?.worktree ?? null),
+  };
+  const unchanged = existing && JSON.stringify(existing) === JSON.stringify(next);
   if (unchanged) return existing;
 
   state.sessions[id] = next;

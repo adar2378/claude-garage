@@ -1,8 +1,9 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { readFile } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
-import { getWorkspace } from "./registry.js";
+import { getWorkspace, getSessionMeta } from "./registry.js";
+import { listPanePaths, resolveBranch } from "./tmux.js";
 
 // D-diff-cmd (openspec/changes/p2-diff-review/design.md): every git
 // invocation here is read-only — status/diff/rev-parse only, never `add -N`
@@ -169,32 +170,65 @@ async function noIndexDiff(dir, relPath) {
   }
 }
 
+// D-wt-diff: `?sessionId=` overrides the diff root when the named session's
+// live pane cwd (or, failing that, its worktree meta) sits outside the
+// registry dir. Live pane cwd is preferred — it reflects wherever the user's
+// shell/claude actually is right now, same source as the sessions list's
+// branch chip — falling back to the recorded worktree path only if the pane
+// is gone (session died between kill and finish, or was already dead when
+// this request landed). Returns registeredDir unchanged if no override
+// applies (no sessionId, unknown session, override path vanished, or the
+// resolved path IS the registry dir).
+async function resolveDiffRoot(registeredDir, sessionId) {
+  if (!sessionId) return registeredDir;
+
+  const panePaths = await listPanePaths();
+  const paneCwd = panePaths.get(sessionId);
+  if (paneCwd && paneCwd !== registeredDir) {
+    const s = await stat(paneCwd).catch(() => null);
+    if (s?.isDirectory()) return paneCwd;
+  }
+
+  const meta = await getSessionMeta(sessionId).catch(() => null);
+  const wtPath = meta?.worktree?.path;
+  if (wtPath && wtPath !== registeredDir) {
+    const s = await stat(wtPath).catch(() => null);
+    if (s?.isDirectory()) return wtPath;
+  }
+
+  return registeredDir;
+}
+
 export default async function diffRoutes(app) {
   app.get("/api/diff/:workspace", async (req, reply) => {
     const { workspace } = req.params;
+    const { sessionId } = req.query ?? {};
     const registered = await getWorkspace(workspace);
     if (!registered) {
       return reply.code(404).send({ error: `unknown workspace: ${workspace}` });
     }
-    const dir = registered.dir;
+    const dir = await resolveDiffRoot(registered.dir, sessionId);
+    const root = dir;
 
     // One gate covers both "not a git repo" and "registered dir no longer
     // exists" — both mean the same observable thing: nothing to diff.
     try {
       await git(dir, ["rev-parse", "--is-inside-work-tree"]);
     } catch {
-      return { files: [], truncated: false };
+      return { files: [], truncated: false, root, branch: null };
     }
+
+    const branch = await resolveBranch(dir);
 
     let statusRaw;
     try {
       ({ stdout: statusRaw } = await git(dir, ["status", "--porcelain=v2", "-z"]));
     } catch {
-      return { files: [], truncated: false };
+      return { files: [], truncated: false, root, branch };
     }
 
     const entries = parseStatus(statusRaw);
-    if (entries.length === 0) return { files: [], truncated: false };
+    if (entries.length === 0) return { files: [], truncated: false, root, branch };
 
     // Repos with zero commits have no HEAD to diff against — every
     // status-reported path is treated the same as an untracked file.
@@ -359,6 +393,6 @@ export default async function diffRoutes(app) {
       });
     }
 
-    return { files, truncated };
+    return { files, truncated, root, branch };
   });
 }

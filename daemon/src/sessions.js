@@ -10,8 +10,15 @@ import {
   createSession,
   killSession,
 } from "./tmux.js";
-import { getWorkspace, listSessionMetas, removeSessionMeta } from "./registry.js";
+import {
+  getWorkspace,
+  listSessionMetas,
+  getSessionMeta,
+  upsertSessionMeta,
+  removeSessionMeta,
+} from "./registry.js";
 import { getStatus } from "./status.js";
+import { createWorktree } from "./worktrees.js";
 
 const CLAUDE_CMD = process.env.GARAGE_CLAUDE_CMD ?? "claude";
 
@@ -74,7 +81,7 @@ export default async function sessionRoutes(app) {
   });
 
   app.post("/api/sessions", async (req, reply) => {
-    const { workspace, label } = req.body ?? {};
+    const { workspace, label, worktree: wantWorktree } = req.body ?? {};
 
     if (!NAME_RE.test(workspace ?? "") || !NAME_RE.test(label ?? "")) {
       return reply
@@ -99,8 +106,34 @@ export default async function sessionRoutes(app) {
       return reply.code(409).send({ error: `session already exists: ${id}` });
     }
 
-    await createSession(id, registered.dir, CLAUDE_CMD);
-    return reply.code(201).send({ id, workspace, label, dir: registered.dir });
+    // D-wt-meta: worktree creation happens before any tmux state exists —
+    // createWorktree throws (400, with git's stderr) on a non-git repoDir or
+    // a failed `git worktree add`, and nothing has been spawned yet to clean
+    // up in that case.
+    let worktree = null;
+    if (wantWorktree) {
+      try {
+        worktree = await createWorktree({ repoDir: registered.dir, workspace, label });
+      } catch (err) {
+        return reply.code(err.statusCode ?? 400).send({ error: err.message });
+      }
+    }
+
+    const spawnDir = worktree?.path ?? registered.dir;
+    await createSession(id, spawnDir, CLAUDE_CMD);
+
+    if (worktree) {
+      // Written immediately, at spawn — not by the poller. The poller's own
+      // upserts (claudeSessionId/workspace/label, once it observes the
+      // agent) merge alongside this without clobbering it; see registry.js.
+      await upsertSessionMeta(id, {
+        workspace,
+        label,
+        worktree: { ...worktree, repoDir: registered.dir },
+      });
+    }
+
+    return reply.code(201).send({ id, workspace, label, dir: spawnDir, worktree });
   });
 
   // D-restore-flow: {id} restores one restorable session; {all:true}
@@ -138,16 +171,23 @@ export default async function sessionRoutes(app) {
           return { failed: { id: meta.id, reason: "workspace no longer registered" } };
         }
 
-        const dirStat = await stat(registered.dir).catch(() => null);
+        // D-wt-meta: a worktree session restores INTO its worktree, not the
+        // registered workspace dir. The stat-gate keeps the metadata
+        // (neither the session nor the worktree record is removed on
+        // failure) so a later retry — or a manual `finish` with the
+        // recorded path/branch — can still recover.
+        const spawnDir = meta.worktree?.path ?? registered.dir;
+        const dirStat = await stat(spawnDir).catch(() => null);
         if (!dirStat?.isDirectory()) {
-          return { failed: { id: meta.id, reason: "registered dir no longer exists" } };
+          const reason = meta.worktree ? "worktree missing" : "registered dir no longer exists";
+          return { failed: { id: meta.id, reason } };
         }
 
         if (await hasSession(meta.id)) {
           return { failed: { id: meta.id, reason: "session already running" } };
         }
 
-        await createSession(meta.id, registered.dir, CLAUDE_CMD, [
+        await createSession(meta.id, spawnDir, CLAUDE_CMD, [
           "--resume",
           meta.claudeSessionId,
         ]);
@@ -164,7 +204,7 @@ export default async function sessionRoutes(app) {
         }
         if (!(await hasSession(meta.id))) {
           resumed = false;
-          await createSession(meta.id, registered.dir, CLAUDE_CMD);
+          await createSession(meta.id, spawnDir, CLAUDE_CMD);
         }
 
         return {
@@ -172,7 +212,8 @@ export default async function sessionRoutes(app) {
             id: meta.id,
             workspace: meta.workspace,
             label: meta.label,
-            dir: registered.dir,
+            dir: spawnDir,
+            worktree: meta.worktree ?? null,
             resumed,
           },
         };
@@ -199,10 +240,16 @@ export default async function sessionRoutes(app) {
       return reply.code(404).send({ error: `no such session: ${id}` });
     }
 
+    // D-wt-meta: capture the meta BEFORE removing it — the worktree record
+    // (if any) rides the response body so the caller can drive
+    // POST /api/worktrees/finish afterward, since by then the session (and
+    // its metadata) are already gone.
+    const meta = await getSessionMeta(id).catch(() => null);
+
     await killSession(id);
     // Deliberate kill: the user is done with this conversation, so there's
     // nothing to offer restoring later.
     await removeSessionMeta(id).catch(() => {});
-    return reply.code(204).send();
+    return reply.code(200).send({ deleted: true, worktree: meta?.worktree ?? null });
   });
 }

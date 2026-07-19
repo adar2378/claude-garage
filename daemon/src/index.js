@@ -11,6 +11,7 @@ import eventRoutes from "./events.js";
 import notifyRoutes from "./notify.js";
 import diffRoutes from "./diff.js";
 import editorRoutes from "./editor.js";
+import worktreeRoutes from "./worktrees.js";
 import { attachTermServer } from "./term.js";
 import { rejectForeignOrigins } from "./security.js";
 import { startPoller } from "./poller.js";
@@ -37,6 +38,7 @@ app.register(eventRoutes);
 app.register(notifyRoutes);
 app.register(diffRoutes);
 app.register(editorRoutes);
+app.register(worktreeRoutes);
 attachTermServer(app);
 
 // D-packaging: flag-gated so dev mode (Vite on :5173 proxying to this
