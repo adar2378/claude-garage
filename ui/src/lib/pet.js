@@ -10,11 +10,18 @@
 // exactly one flap; the pup runs fastest, bounces big, and celebrates
 // with zoomies. Validated in the design-mockup artifact before landing.
 
+// The family, by name (named by the user, 2026-07-19).
+export const PET_NAMES = {
+  cat: "Arthur",
+  duck: "Papito",
+  pup: "Segan",
+};
+
 export const PET_OPTIONS = [
   { value: "off", label: "no pet", description: "the strip stays empty" },
-  { value: "cat", label: "shop cat", description: "aloof; saunters over when you're needed, kneads when all clear" },
-  { value: "duck", label: "rubber duck", description: "deadpan; waddles, and alerts with a single motionless stare" },
-  { value: "pup", label: "pit pup", description: "eager; sprints to problems, zoomies when the wall is clear" },
+  { value: "cat", label: "Arthur the shop cat", description: "aloof; saunters over when you're needed, kneads when all clear" },
+  { value: "duck", label: "Papito the rubber duck", description: "deadpan; waddles, and alerts with a single motionless stare" },
+  { value: "pup", label: "Segan the pit pup", description: "eager; sprints to problems, zoomies when the wall is clear" },
 ];
 
 // Movement/cadence per species. speed = px per 300ms tick; frameEvery =

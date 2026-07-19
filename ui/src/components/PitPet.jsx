@@ -1,6 +1,6 @@
 import React, { useEffect, useRef } from "react";
 import { useSettings } from "../lib/settings.js";
-import { PET_FRAMES, PET_PROFILES, petMood } from "../lib/pet.js";
+import { PET_FRAMES, PET_PROFILES, PET_NAMES, petMood } from "../lib/pet.js";
 
 const TICK_MS = 300;
 
@@ -77,10 +77,11 @@ export default function PitPet({ sessions, connState, onJump }) {
         profile.alertBounce === "bounce-big" && (mood === "alert" || (mood === "celebrate" && profile.zoomies))
       );
       el.classList.toggle("bounce-small", profile.alertBounce === "bounce-small" && mood === "alert");
+      const name = PET_NAMES[kind] ?? "pit pet";
       el.title =
         mood === "alert"
           ? `${needs} session${needs === 1 ? "" : "s"} need${needs === 1 ? "s" : ""} input — click to jump`
-          : `pit pet — ${
+          : `${name} — ${
               mood === "box" ? "hiding until the daemon is back" : mood === "celebrate" ? "all clear!" : `${mood}ing`
             }`;
     }
