@@ -2,8 +2,9 @@
 
 <img src="docs/banner.png" alt="claude-garage: a pit wall for your Claude Code agents" width="100%" />
 
-Run many Claude Code sessions across many projects, live and side by side,
-and know the instant one needs you.
+**Multiple Claude agents driving you crazy? Park them all in one
+garage.** Every session, every project, on one live wall: no window
+juggling, no tab hunting, and you know the instant one needs you.
 
 [![npm](https://img.shields.io/npm/v/claude-garage?color=e2a75e&label=npm)](https://www.npmjs.com/package/claude-garage)
 [![license](https://img.shields.io/badge/license-MIT-79b26e)](LICENSE)
@@ -24,8 +25,8 @@ terminal windows and editor windows. There is no single place to see:
   count, it's attention routing
 - **what each session changed**, reviewable without hunting
 
-claude-garage is that single place: one screen, built around four things that
-rarely coexist.
+claude-garage is that single place: the garage your agents are parked in,
+one screen, built around four things that rarely coexist.
 
 1. 🔌 **Real terminals that survive the tool.** tmux owns every session, not
    the app. Close the tab, kill the daemon, reboot the Mac:
