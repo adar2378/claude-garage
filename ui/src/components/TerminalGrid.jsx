@@ -1056,7 +1056,11 @@ function SessionCellPanel({ api }) {
       data-dim-zone=""
       data-session-id={id}
       className={`flex h-full min-h-0 flex-col overflow-hidden border ${
-        focused ? "border-garage-amber" : "border-garage-line"
+        s.status === "needs-input"
+          ? "border-garage-amber"
+          : focused
+            ? "cell-border-focused"
+            : "border-garage-line"
       } ${isRestorable || isPoppedOut ? "opacity-70" : ""} ${
         s.status === "needs-input" ? "dim-exempt" : ""
       } ${ctx.columnActive ? "dim-focused" : ""}`}

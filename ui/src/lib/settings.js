@@ -20,6 +20,9 @@ const DEFAULTS = Object.freeze({
   // pit-pet: "off" | "cat" | "duck" | "pup" — see lib/pet.js. Off by
   // default; nobody gets a surprise duck.
   pet: "off",
+  // Browser notifications when a session flips to needs-input while this
+  // tab is hidden; clicking the notification focuses the tab and jumps.
+  notifyBrowser: false,
 });
 
 function readFromStorage() {

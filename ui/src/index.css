@@ -32,6 +32,14 @@ button {
   cursor: pointer;
 }
 
+/* Focused-cell perimeter: findable, not shouting — a full accent border
+   on the focused cell read as an alarm (user feedback 2026-07-19). Focus
+   alone gets a 40% accent mix into the line color; the full accent
+   perimeter is reserved for needs-input cells, which ARE an alarm. */
+.cell-border-focused {
+  border-color: color-mix(in srgb, var(--color-garage-amber) 40%, var(--color-garage-line));
+}
+
 /* pit-pet (lib/pet.js, components/PitPet.jsx): a small ASCII creature on
    the footer key strip whose mood is derived wall state. Species-true
    motion: the pup bounces big and fast, the cat barely deigns to, the

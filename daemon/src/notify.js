@@ -1,17 +1,44 @@
 import { execFile } from "node:child_process";
 import { statusEvents } from "./status.js";
 
-// D-notify: osascript on transition INTO needs-input, edge-triggered (the
-// store only emits "transition" on an actual state change, so this handler
-// naturally fires once per transition, not once per poll tick). Darwin
-// only; a no-op elsewhere. Never throws — a notification failure must not
-// affect the daemon.
+const PORT = Number(process.env.GARAGE_PORT ?? 4747);
+const UI_URL = `http://127.0.0.1:${PORT}`;
+
+// D-notify: notification on transition INTO needs-input, edge-triggered
+// (the store only emits "transition" on an actual state change, so this
+// handler naturally fires once per transition, not once per poll tick).
+// Darwin only; a no-op elsewhere. Never throws — a notification failure
+// must not affect the daemon.
+//
+// Clickability: osascript's `display notification` cannot carry a click
+// action — it is a dead-end toast. When terminal-notifier is installed
+// (brew install terminal-notifier), use it instead: its -open flag makes
+// clicking the notification open the pit wall. Checked once, lazily.
+let hasTerminalNotifier = null; // null = not yet probed
+function probeTerminalNotifier(cb) {
+  if (hasTerminalNotifier !== null) return cb(hasTerminalNotifier);
+  execFile("which", ["terminal-notifier"], (err) => {
+    hasTerminalNotifier = !err;
+    cb(hasTerminalNotifier);
+  });
+}
+
 function notifyDarwin(id) {
   if (process.platform !== "darwin") return;
   const message = `${id} needs input`;
-  const script = `display notification ${JSON.stringify(message)} with title "claude-garage"`;
   try {
-    execFile("osascript", ["-e", script], () => {});
+    probeTerminalNotifier((available) => {
+      if (available) {
+        execFile(
+          "terminal-notifier",
+          ["-title", "claude-garage", "-message", message, "-open", UI_URL],
+          () => {}
+        );
+      } else {
+        const script = `display notification ${JSON.stringify(message)} with title "claude-garage"`;
+        execFile("osascript", ["-e", script], () => {});
+      }
+    });
   } catch {
     // never throw
   }

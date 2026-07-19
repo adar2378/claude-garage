@@ -19,6 +19,19 @@ const ROWS = [
     label: "focus dimming",
     description: "dim everything except the focused surface; needs-input never dims",
   },
+  {
+    key: "notifyBrowser",
+    label: "browser notifications",
+    description:
+      "notify when a session needs input while this tab is hidden — clicking jumps to it",
+    // Notification permission must be requested from a user gesture;
+    // enabling the toggle IS that gesture.
+    onEnable: () => {
+      if (typeof Notification !== "undefined" && Notification.permission === "default") {
+        Notification.requestPermission().catch(() => {});
+      }
+    },
+  },
 ];
 
 export default function SettingsPopover() {
@@ -76,7 +89,10 @@ export default function SettingsPopover() {
                 type="button"
                 role="menuitemcheckbox"
                 aria-checked={checked}
-                onClick={() => update({ [row.key]: !checked })}
+                onClick={() => {
+                  if (!checked) row.onEnable?.();
+                  update({ [row.key]: !checked });
+                }}
                 className="flex w-full items-start gap-2 px-1 py-1 text-left hover:bg-garage-sel"
               >
                 {/* whitespace-nowrap + shrink-0: the marker contains a

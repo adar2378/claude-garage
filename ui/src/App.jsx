@@ -523,6 +523,42 @@ export default function App() {
     document.title = needsCount > 0 ? `(${needsCount}) claude-garage` : "claude-garage";
   }, [needsCount]);
 
+  // Browser notifications (opt-in; settings → browser notifications):
+  // fired only for sessions NEWLY flipping to needs-input while this tab
+  // is hidden — a visible tab already has the badge, title, and pet.
+  // Clicking the notification focuses the tab and performs the `a` jump.
+  // The daemon's own macOS notification covers the no-page-open case;
+  // this covers open-but-buried, cross-platform.
+  const prevNeedsIdsRef = useRef(new Set());
+  const jumpRef = useRef(null);
+  useEffect(() => {
+    const current = new Set(
+      sessions.filter((s) => s.status === "needs-input").map((s) => s.id)
+    );
+    const prev = prevNeedsIdsRef.current;
+    prevNeedsIdsRef.current = current;
+    if (!settings.notifyBrowser) return;
+    if (typeof Notification === "undefined" || Notification.permission !== "granted") return;
+    if (document.visibilityState !== "hidden") return;
+    const fresh = [...current].filter((id) => !prev.has(id));
+    if (fresh.length === 0) return;
+    const label = sessions.find((s) => s.id === fresh[0])?.label ?? fresh[0];
+    const body =
+      fresh.length === 1 ? `${label} needs input` : `${fresh.length} sessions need input`;
+    try {
+      // tag coalesces bursts into one notification instead of a stack
+      const n = new Notification("claude-garage", { body, tag: "garage-needs-input" });
+      n.onclick = () => {
+        window.focus();
+        jumpRef.current?.();
+        n.close();
+      };
+    } catch {
+      // Notification constructor can throw in odd contexts — never let
+      // the notifier break the app
+    }
+  }, [sessions, settings.notifyBrowser]);
+
   // ---- p7 (spec: "Changes pane auto-collapse on narrow viewports"):
   // media-query listener rather than pure CSS because the pane's collapsed
   // state is React state driving the grid template. Remembers the
@@ -644,6 +680,12 @@ export default function App() {
     },
     [groups, focusedWorkspace, focusedSessionId, hiddenIds]
   );
+
+  // Late-bound for the notification onclick above (jumpToNeedsInput is
+  // defined below the effect that captures it).
+  useEffect(() => {
+    jumpRef.current = jumpToNeedsInput;
+  });
 
   const jumpToNeedsInput = useCallback(() => {
     for (const g of groups) {
