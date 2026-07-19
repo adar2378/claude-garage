@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="docs/icon.svg" width="110" alt="claude-garage: the shop cat on watch" />
+<img src="docs/icon.png" width="120" alt="claude-garage: the shop cat, on watch" />
 
 # claude-garage
 
