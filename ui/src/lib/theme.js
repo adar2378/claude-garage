@@ -67,21 +67,81 @@ export function useApplyTheme() {
 export const MONO_STACK =
   '"Google Sans Code", ui-monospace, "SF Mono", SFMono-Regular, Menlo, Monaco, Consolas, monospace';
 
-// xterm.js theme objects, one per palette. The light palette overrides
-// the ANSI colors too — xterm's defaults are designed for dark
-// backgrounds and are unreadable on ivory.
+// xterm.js theme objects, one per palette. EVERY palette overrides the 16
+// ANSI colors — terminal content (Claude Code's diffs, ls, test output)
+// renders through this palette, and xterm's defaults are garishly
+// saturated against all three of our grounds (user feedback 2026-07-19:
+// diff green/red screaming out of an otherwise muted theme). Each also
+// remaps the classic 256-palette diff-background indices via
+// extendedAnsi. Note the honest limit: if a program emits truecolor RGB,
+// no terminal palette can remap it — that content colors itself.
+function extendedAnsi(map) {
+  const arr = [];
+  for (const [idx, color] of Object.entries(map)) arr[Number(idx) - 16] = color;
+  return arr;
+}
+
 export const TERMINAL_THEMES = {
   garage: {
     background: "#0b0e14",
     foreground: "#c6cfdb",
     cursor: "#c6cfdb",
     selectionBackground: "#2a3646",
+    black: "#10141d",
+    red: "#cc6b6b",
+    green: "#79b26e",
+    yellow: "#e2a75e",
+    blue: "#6e9ecc",
+    magenta: "#a98bc4",
+    cyan: "#6fb3a8",
+    white: "#c6cfdb",
+    brightBlack: "#556070",
+    brightRed: "#d98d8d",
+    brightGreen: "#93c489",
+    brightYellow: "#edbf85",
+    brightBlue: "#8ab4dd",
+    brightMagenta: "#bda1d6",
+    brightCyan: "#8ac4ba",
+    brightWhite: "#e6ecf3",
+    // muted diff-background slots (256-color indices git/Claude diffs use)
+    extendedAnsi: extendedAnsi({
+      22: "#1c2b19", // dark green bg
+      28: "#243c20",
+      65: "#33452e",
+      52: "#301b1b", // dark red bg
+      88: "#3e211f",
+      124: "#4d2a26",
+    }),
   },
   "claude-dark": {
     background: "#141413",
     foreground: "#c2c0b6",
     cursor: "#c2c0b6",
     selectionBackground: "#3a3937",
+    black: "#1f1e1d",
+    red: "#dd5353",
+    green: "#6aa84f",
+    yellow: "#d97757",
+    blue: "#2c84db",
+    magenta: "#a179c9",
+    cyan: "#5ba8a0",
+    white: "#c2c0b6",
+    brightBlack: "#6f6d64",
+    brightRed: "#e57e7e",
+    brightGreen: "#86bd6d",
+    brightYellow: "#e39a80",
+    brightBlue: "#5fa1e4",
+    brightMagenta: "#b494d6",
+    brightCyan: "#7abcb5",
+    brightWhite: "#faf9f5",
+    extendedAnsi: extendedAnsi({
+      22: "#20301c",
+      28: "#294024",
+      65: "#37452f",
+      52: "#362020",
+      88: "#452824",
+      124: "#54312a",
+    }),
   },
   "claude-light": {
     background: "#faf9f5",
@@ -105,6 +165,14 @@ export const TERMINAL_THEMES = {
     brightMagenta: "#a06ad0",
     brightCyan: "#12939f",
     brightWhite: "#141413",
+    extendedAnsi: extendedAnsi({
+      22: "#dcebd2", // light diff-green bg
+      28: "#cfe3c2",
+      194: "#e3eeda",
+      52: "#f0d2cd", // light diff-red bg
+      88: "#e9c6bf",
+      224: "#f5ddd6",
+    }),
   },
 };
 
