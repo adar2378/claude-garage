@@ -64,3 +64,14 @@ The grid header SHALL provide a `+` control with a menu offering "new session" a
 #### Scenario: Spawning a worktree session from the grid header
 - **WHEN** the user opens the grid header's `+` menu and chooses "new worktree session"
 - **THEN** a session is spawned with `worktree: true` in the focused workspace and its terminal joins the grid beside the focused cell
+
+### Requirement: Float a cell within the page
+Each cell SHALL offer a float control that lifts it out of the grid tiling into a draggable, resizable floating window layered above the grid in the same page (distinct from the pop-out control, which opens a separate browser window). The control SHALL toggle: floating a cell swaps it to a dock-back affordance that returns the cell to the grid beside an existing tile, and dragging the floating window's tab into the grid SHALL also re-dock it. Floating state SHALL persist with the workspace layout across reloads. The maximize control SHALL only act on grid-located cells.
+
+#### Scenario: Float and dock round-trip
+- **WHEN** the user activates a cell's float control, then its dock-back control
+- **THEN** the cell first renders as a floating window above the grid with its terminal live, and afterwards returns to the grid tiling
+
+#### Scenario: Floating state survives reload
+- **WHEN** a cell is floating and the page reloads
+- **THEN** the cell renders floating again, with a live terminal, restored from the persisted layout

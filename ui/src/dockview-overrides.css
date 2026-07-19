@@ -79,3 +79,13 @@
 .garage-dock .dv-watermark-container {
   color: var(--color-garage-dim);
 }
+
+/* p8 float-in-page: dockview floating groups (the ❐ control on a cell
+   tab) — accent-bordered, lifted with a shadow so a floated terminal
+   reads as a window above the wall. The tab remains the drag handle and
+   dockview's own resize edges keep working. */
+.garage-dock .dv-resize-container {
+  border: 1px solid var(--color-garage-amber);
+  box-shadow: 0 10px 36px rgba(0, 0, 0, 0.5);
+  background: var(--color-garage-panel);
+}

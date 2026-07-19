@@ -219,7 +219,9 @@ export default function TerminalGrid({
       return;
     }
     const panel = focusedSessionId ? api.getPanel(focusedSessionId) : null;
-    if (panel) api.maximizeGroup(panel);
+    // Floating cells are outside the tiling — maximize only applies to
+    // grid-located groups.
+    if (panel && panel.group.api.location.type === "grid") api.maximizeGroup(panel);
   }, [focusedSessionId]);
 
   // App's keydown listener owns `\` and `m` (single-listener design
@@ -681,10 +683,40 @@ export default function TerminalGrid({
 // focused/needs-input/columnActive inputs as SessionCellPanel's content
 // zone below, so the merged bar dims and un-dims in lockstep with the rest
 // of the cell rather than as a separately-lit strip above a dimmed body.
-function SessionCellTab({ api }) {
+function SessionCellTab({ api, containerApi }) {
   const ctx = useContext(GridContext);
   const id = api.id;
   const s = ctx.sessionsById.get(id);
+
+  // p8 float-in-page: is this cell currently a floating group rather than
+  // a grid tile? Driven by dockview's own location events so the toggle
+  // stays correct however the cell got there (button, or dragging a
+  // floating group back into the grid by its tab).
+  const [isFloating, setIsFloating] = useState(() => api.location.type === "floating");
+  useEffect(() => {
+    const disposable = api.onDidLocationChange((e) =>
+      setIsFloating(e.location.type === "floating")
+    );
+    return () => disposable.dispose();
+  }, [api]);
+
+  // Float ⇄ dock. Floating uses dockview's native floating groups — the
+  // cell lifts out of the tiling into a draggable/resizable window INSIDE
+  // the page (unlike ⇱ pop-out, which opens a separate browser window).
+  // Docking back tucks it beside an existing grid tile; with no grid tile
+  // left, dragging the tab onto the empty grid still works natively.
+  function toggleFloat() {
+    const panel = containerApi.getPanel(id);
+    if (!panel) return;
+    if (panel.group.api.location.type === "floating") {
+      const target = containerApi.panels.find(
+        (p) => p.id !== id && p.group.api.location.type === "grid"
+      );
+      if (target) panel.api.moveTo({ group: target.group, position: "right" });
+      return;
+    }
+    containerApi.addFloatingGroup(panel, { x: 48, y: 32, width: 640, height: 420 });
+  }
 
   // Two-step confirm for the close (✕) button — click 1 arms it ("sure?",
   // text-garage-red) for 3s, click 2 within that window actually deletes.
@@ -809,6 +841,22 @@ function SessionCellTab({ api }) {
           ⬒
         </button>
       )}
+      <button
+        type="button"
+        onMouseDown={(e) => e.stopPropagation()}
+        onClick={(e) => {
+          e.stopPropagation();
+          toggleFloat();
+        }}
+        title={
+          isFloating
+            ? "dock back into the grid"
+            : "float this cell — a draggable window above the grid, same page"
+        }
+        className={isFloating ? "text-garage-amber" : "text-garage-dim hover:text-garage-amber"}
+      >
+        {isFloating ? "⇲" : "❐"}
+      </button>
       <button
         type="button"
         onMouseDown={(e) => e.stopPropagation()}
