@@ -15,6 +15,10 @@ juggling, no tab hunting, and you know the instant one needs you.
 
 </div>
 
+**▶ 60-second reveal** — the wall, needs-input triage, diff review, and the pit pet, beat by beat:
+
+https://github.com/user-attachments/assets/b19defa0-a60d-4082-9ca5-9b8ce9480b18
+
 ## Why
 
 Running multiple Claude Code sessions across multiple projects means juggling
