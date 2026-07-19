@@ -75,10 +75,14 @@ export default function SessionTerminal({ id, onConnectionChange, reconnectSigna
       // Shift — Enter is just \r — which is why /terminal-setup exists: it
       // teaches iTerm2/VS Code to send Claude Code's escaped-newline
       // sequence (backslash + CR) instead. xterm.js is neither, so we do
-      // the same mapping here. (`ws`/`encoder` are declared below in this
-      // effect; the handler only fires after the effect has fully run.)
-      if (e.type === "keydown" && e.key === "Enter" && e.shiftKey && !e.ctrlKey && !e.metaKey) {
-        if (ws && ws.readyState === WebSocket.OPEN) {
+      // the same mapping here. IMPORTANT: this handler fires for keydown
+      // AND keypress AND keyup of the same chord — every one of them must
+      // return false, or xterm processes the leftover keypress and sends a
+      // bare \r that submits the prompt anyway. Bytes go out on keydown
+      // only. (`ws`/`encoder` are declared below in this effect; the
+      // handler only fires after the effect has fully run.)
+      if (e.key === "Enter" && e.shiftKey && !e.ctrlKey && !e.metaKey) {
+        if (e.type === "keydown" && ws && ws.readyState === WebSocket.OPEN) {
           ws.send(encoder.encode("\\\r"));
         }
         return false;
