@@ -55,7 +55,8 @@ npx claude-garage
 Opens the pit wall at `http://127.0.0.1:4747`. Add a workspace, spawn
 sessions with the `+` next to its name, and press `?` for the keys.
 
-**Requirements:** macOS · [tmux](https://github.com/tmux/tmux) ≥ 3.2 ·
+**Requirements:** macOS · [tmux](https://github.com/tmux/tmux) ≥ 3.2 (garage
+offers to `brew install` it if missing) ·
 [Claude Code](https://docs.claude.com/en/docs/claude-code) CLI · Node ≥ 20
 
 **Hooks (recommended):** status updates poll every 2s by default. Click

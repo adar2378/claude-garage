@@ -4,7 +4,8 @@
 // UI+API serving — see daemon/src/index.js), then prints and best-effort
 // opens the URL. Never touches tmux on shutdown — SIGINT/SIGTERM close the
 // HTTP server only, so live garage sessions survive the process exiting.
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
+import readline from "node:readline/promises";
 
 const PORT = Number(process.env.GARAGE_PORT ?? 4747);
 const HEALTH_URL = `http://127.0.0.1:${PORT}/api/health`;
@@ -36,8 +37,57 @@ async function requireBinary(bin, versionArgs, installHint) {
   }
 }
 
+// tmux missing: offer to install it — consent-gated, never silent (the
+// README promises garage touches nothing without asking). Only when this
+// is an interactive terminal AND Homebrew is present; any other situation
+// falls back to the plain instruction. Streams brew's own output so the
+// user watches exactly what runs.
+async function offerTmuxInstall() {
+  if (!process.stdin.isTTY || !process.stdout.isTTY) return false;
+  try {
+    await execFileP("brew", ["--version"]);
+  } catch {
+    return false;
+  }
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  let answer;
+  try {
+    answer = (await rl.question("tmux not found. Install it now with Homebrew? [y/N] "))
+      .trim()
+      .toLowerCase();
+  } finally {
+    rl.close();
+  }
+  if (answer !== "y" && answer !== "yes") return false;
+  console.log("→ brew install tmux");
+  const ok = await new Promise((resolve) => {
+    const child = spawn("brew", ["install", "tmux"], { stdio: "inherit" });
+    child.on("exit", (code) => resolve(code === 0));
+    child.on("error", () => resolve(false));
+  });
+  if (!ok) return false;
+  try {
+    await execFileP("tmux", ["-V"]);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 async function main() {
-  await requireBinary("tmux", ["-V"], "brew install tmux");
+  try {
+    await execFileP("tmux", ["-V"]);
+  } catch (err) {
+    if (err && err.code === "ENOENT") {
+      const installed = await offerTmuxInstall();
+      if (!installed) {
+        console.error("tmux not found — install: brew install tmux");
+        process.exit(1);
+      }
+    }
+    // any other failure (odd version-flag behavior) — treat as present,
+    // same discipline as requireBinary below
+  }
   await requireBinary(
     "claude",
     ["--version"],
