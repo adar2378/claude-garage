@@ -11,15 +11,26 @@ import { loadOrBuildLayout, reconcile, resetLayout, saveLayout } from "../lib/la
 const SAVE_DEBOUNCE_MS = 300;
 
 // Threads live per-session state down into dockview's panel components.
-// Dockview (react) mounts panel content through React portals owned by
-// DockviewReact's own render tree (see dockview-react's
-// ReactPanelContentPart) — that tree stays inside this component's
-// subtree, so a normal Context crosses the portal boundary exactly like it
-// would for any other child. That's what lets a panel's content react to
-// session-state changes (status, restore-in-flight, popped-out) without
-// ever calling `panel.api.updateParameters()`: each panel's own identity
-// (the only thing dockview needs to persist) is just its session id —
-// everything else is read fresh from context on every render.
+// Dockview (react) mounts panel content *and* panel tabs through React
+// portals owned by DockviewReact's own render tree (see dockview-react's
+// ReactPanelContentPart / ReactPanelHeaderPart) — that tree stays inside
+// this component's subtree, so a normal Context crosses the portal
+// boundary exactly like it would for any other child. That's what lets a
+// panel's content (SessionCellPanel) *and* its tab (SessionCellTab) react
+// to session-state changes (status, restore-in-flight, popped-out,
+// app-level focus) without ever calling `panel.api.updateParameters()`:
+// each panel's own identity (the only thing dockview needs to persist) is
+// just its session id — everything else is read fresh from context on
+// every render.
+//
+// The cell's title bar (status glyph + label + status text + pop-out
+// button) used to be rendered twice — once (unlabeled, squeezed) as
+// dockview's own tab, once for real inside the panel's content — which
+// produced two stacked bars per cell. It's now rendered exactly once, as
+// SessionCellTab, wired in as dockview's `defaultTabComponent`: that tab
+// *is* dockview's native drag handle, so it doubles as the title bar and
+// the thing you drag to redock. SessionCellPanel's content is just the
+// terminal / placeholder body below it.
 const GridContext = createContext(null);
 
 // Center pane (spec: 3.2, extended by p4-layout-focus-workspace-ux's
@@ -235,6 +246,17 @@ export default function TerminalGrid({
             className="garage-dock dockview-theme-abyss"
             theme={themeAbyss}
             components={{ terminal: SessionCellPanel }}
+            // Every panel in this grid is the same "terminal" content
+            // component, so one tab component covers all of them —
+            // `defaultTabComponent` is dockview-react's fallback used
+            // whenever a panel doesn't name its own `tabComponent`
+            // (layout.js's addPanel calls never do), which means this is
+            // wired without layout.js needing to know a tab component
+            // exists. `singleTabMode="fullwidth"` is dockview's own
+            // built-in for "stretch the (one) tab to fill the tab strip" —
+            // see dockview-overrides.css for the CSS that backstops it.
+            defaultTabComponent={SessionCellTab}
+            singleTabMode="fullwidth"
             onReady={handleReady}
           />
         </GridContext.Provider>
@@ -243,12 +265,71 @@ export default function TerminalGrid({
   );
 }
 
-// A dockview panel's content. `props.api.id` is the dockview panel id,
-// which is always a session id (see layout.js — every addPanel call uses
-// the session id as the panel id). Everything else needed to render the
-// cell — the session record, focus state, restore/popout state — comes
-// from GridContext, not from dockview's own params (see that context's
-// definition for why).
+// Dockview's per-panel tab — now the ONE bar per cell, and also dockview's
+// native drag handle. `props.api.id` is the dockview panel id, which is
+// always a session id (see layout.js — every addPanel call uses the
+// session id as the panel id); `props` otherwise follows
+// IDockviewPanelHeaderProps (api/containerApi/params/tabLocation), but
+// everything this needs — the session record, focus state, popout state —
+// comes from GridContext instead, same as SessionCellPanel below.
+//
+// This is rendered inside dockview's `.dv-tab` element (see
+// dockview-core's `Tab` class), which is what dockview attaches its
+// drag-and-drop listeners to — so dragging this tab to redock a panel
+// keeps working automatically as long as nothing here swallows the
+// mousedown that starts it. The one thing that must never start a drag is
+// the pop-out button, hence `stopPropagation` on both its `onMouseDown`
+// (dockview's HTML5 drag source arms on mousedown/dragstart, before
+// `onClick` ever fires) and its `onClick`.
+//
+// D-dim: the tab is its own dim zone (`data-dim-zone`), driven by the same
+// focused/needs-input/columnActive inputs as SessionCellPanel's content
+// zone below, so the merged bar dims and un-dims in lockstep with the rest
+// of the cell rather than as a separately-lit strip above a dimmed body.
+function SessionCellTab({ api }) {
+  const ctx = useContext(GridContext);
+  const id = api.id;
+  const s = ctx.sessionsById.get(id);
+
+  if (!s) return null;
+
+  const focused = id === ctx.focusedSessionId;
+  const isPoppedOut = ctx.poppedOutIds?.has(id) ?? false;
+
+  return (
+    <div
+      data-dim-zone=""
+      className={`flex h-full w-full items-center gap-2 border-b bg-garage-panel px-2 text-xs ${
+        focused ? "border-garage-amber" : "border-garage-line"
+      } ${s.status === "needs-input" ? "dim-exempt" : ""} ${ctx.columnActive ? "dim-focused" : ""}`}
+    >
+      <span className={colorFor(s.status)}>{glyphFor(s.status)}</span>
+      <span className={focused ? "font-semibold text-garage-amber" : "text-garage-ink"}>{s.label}</span>
+      <span className="ml-auto text-garage-faint">{s.status}</span>
+      <button
+        type="button"
+        onMouseDown={(e) => e.stopPropagation()}
+        onClick={(e) => {
+          e.stopPropagation();
+          ctx.onPopOut?.(id);
+        }}
+        disabled={isPoppedOut}
+        title="Pop out into a separate window"
+        className="text-garage-dim hover:text-garage-amber disabled:opacity-30"
+      >
+        ⇱
+      </button>
+    </div>
+  );
+}
+
+// A dockview panel's content — now just the terminal / placeholder body;
+// the title bar lives in the tab (SessionCellTab above). `props.api.id` is
+// the dockview panel id, which is always a session id (see layout.js —
+// every addPanel call uses the session id as the panel id). Everything
+// else needed to render the cell — the session record, focus state,
+// restore/popout state — comes from GridContext, not from dockview's own
+// params (see that context's definition for why).
 //
 // D-dim (column semantics): every cell is a dim zone (`data-dim-zone`),
 // exempt when its session is needs-input, and `dim-focused` whenever the
@@ -290,23 +371,6 @@ function SessionCellPanel({ api }) {
         s.status === "needs-input" ? "dim-exempt" : ""
       } ${ctx.columnActive ? "dim-focused" : ""}`}
     >
-      <div className="flex flex-none items-center gap-2 border-b border-garage-line px-2 py-1 text-xs">
-        <span className={colorFor(s.status)}>{glyphFor(s.status)}</span>
-        <span className={focused ? "font-semibold text-garage-amber" : "text-garage-ink"}>{s.label}</span>
-        <span className="ml-auto text-garage-faint">{s.status}</span>
-        <button
-          type="button"
-          onClick={(e) => {
-            e.stopPropagation();
-            ctx.onPopOut?.(id);
-          }}
-          disabled={isPoppedOut}
-          title="Pop out into a separate window"
-          className="text-garage-dim hover:text-garage-amber disabled:opacity-30"
-        >
-          ⇱
-        </button>
-      </div>
       <div className="min-h-0 flex-1 p-1">
         {isPoppedOut ? (
           <button
