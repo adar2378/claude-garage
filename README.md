@@ -109,6 +109,12 @@ jump), hiding in a box if the daemon drops, and celebrating when the last
 blocked session is answered. **Clicking it when nothing is wrong pets it.**
 It appreciates this.
 
+<div align="center">
+<img src="docs/pet-cat.png" width="130" alt="shop cat" />
+<img src="docs/pet-duck.png" width="130" alt="rubber duck" />
+<img src="docs/pet-pup.png" width="130" alt="pit pup" />
+</div>
+
 Turn it on (or off again) anytime in ⚙ settings under *pit pet*. It's
 **off by default**: nobody gets a surprise duck. Each species plays its
 state in character:
