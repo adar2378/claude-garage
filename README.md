@@ -1,10 +1,6 @@
 <div align="center">
 
-<img src="docs/icon.png" width="120" alt="claude-garage: the shop cat, on watch" />
-
-# claude-garage
-
-**A pit wall for your Claude Code agents.**
+<img src="docs/banner.png" alt="claude-garage: a pit wall for your Claude Code agents" width="100%" />
 
 Run many Claude Code sessions across many projects, live and side by side,
 and know the instant one needs you.
@@ -110,20 +106,22 @@ blocked session is answered. **Clicking it when nothing is wrong pets it.**
 It appreciates this.
 
 <div align="center">
-<img src="docs/pet-cat.png" width="130" alt="shop cat" />
-<img src="docs/pet-duck.png" width="130" alt="rubber duck" />
-<img src="docs/pet-pup.png" width="130" alt="pit pup" />
+<img src="docs/pet-cat.png" width="130" alt="Arthur the shop cat" />
+<img src="docs/pet-duck.png" width="130" alt="Papito the rubber duck" />
+<img src="docs/pet-pup.png" width="130" alt="Segan the pit pup" />
+
+<b>Arthur</b> &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; <b>Papito</b> &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; <b>Segan</b>
 </div>
 
 Turn it on (or off again) anytime in ⚙ settings under *pit pet*. It's
-**off by default**: nobody gets a surprise duck. Each species plays its
+**off by default**: nobody gets a surprise Papito. Each species plays its
 state in character:
 
 | Pet | Personality |
 |---|---|
-| **shop cat** | saunters, barely deigns to bounce, ignores about 40% of your strolls, and celebrates by kneading in place. Cats don't jump for joy in front of you |
-| **rubber duck** | deadpan: waddles, **never** bounces, and alerts with a single motionless stare; celebration is exactly one flap |
-| **pit pup** | maximum enthusiasm: fastest runner, biggest bounce, and celebrates with zoomies across the strip |
+| **Arthur** (shop cat) | saunters, barely deigns to bounce, ignores about 40% of your strolls, and celebrates by kneading in place. Cats don't jump for joy in front of you |
+| **Papito** (rubber duck) | deadpan: waddles, **never** bounces, and alerts with a single motionless stare; celebration is exactly one flap |
+| **Segan** (pit pup) | maximum enthusiasm: fastest runner, biggest bounce, and celebrates with zoomies across the strip |
 
 ## Keybindings
 
