@@ -11,6 +11,7 @@
     "build": "vite build"
   },
   "dependencies": {
+    "@fontsource/google-sans-code": "^5.3.0",
     "@xterm/addon-fit": "^0.10.0",
     "@xterm/xterm": "^5.5.0",
     "dockview": "^7.0.2",

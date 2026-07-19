@@ -34,7 +34,9 @@
   --dv-separator-border: var(--color-garage-line);
   --dv-sash-color: transparent;
   --dv-active-sash-color: var(--color-garage-amber);
-  --dv-drag-over-background-color: rgba(226, 167, 94, 0.18); /* garage-amber @ ~18% */
+  /* accent @ ~18% — color-mix so it follows the active theme's accent
+     (garage amber / Claude terracotta) instead of a hardcoded rgba */
+  --dv-drag-over-background-color: color-mix(in srgb, var(--color-garage-amber) 18%, transparent);
   --dv-drag-over-border-color: var(--color-garage-amber);
   --dv-icon-hover-background-color: var(--color-garage-sel);
 }

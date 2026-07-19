@@ -15,6 +15,7 @@ import { loadViewedMap, markViewed, pruneViewed, hashContent } from "./lib/viewe
 import { firstHunkLine } from "./lib/diff.js";
 import { listPoppedOut, openPopout, clearPopout, subscribe as subscribePopouts } from "./lib/popouts.js";
 import { loadPaneSizes, savePaneSizes, startDrag } from "./lib/panes.js";
+import { useApplyTheme } from "./lib/theme.js";
 
 // Kept for the page's lifetime (module scope, not persisted) — see API
 // contract for POST /api/ui/visibility.
@@ -195,6 +196,9 @@ export default function App() {
     [workspaces, sessions]
   );
   const [settings] = useSettings();
+  // p8-theming: stamps data-theme on <html> from the theme setting (and
+  // tracks the OS while set to "system").
+  useApplyTheme();
 
   // ---- initial load, with resilience against the daemon not being up yet ----
   useEffect(() => {

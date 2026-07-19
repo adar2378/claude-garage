@@ -2,8 +2,12 @@
 
 /* Design tokens — single source of truth, lifted from mock/session-deck.html.
    Use as Tailwind utilities: bg-garage-bg, text-garage-ink, border-garage-line… */
+/* p8-theming: Google Sans Code is bundled via @fontsource (imported in
+   main.jsx; OFL-licensed, so shippable — unlike Anthropic Sans, see
+   CLAUDE-THEME.md). Keep --font-mono in sync with MONO_STACK in
+   lib/theme.js. */
 @theme {
-  --font-mono: "SF Mono", Menlo, Monaco, monospace;
+  --font-mono: "Google Sans Code", ui-monospace, "SF Mono", Menlo, Monaco, monospace;
 
   --color-garage-bg: #0b0e14;
   --color-garage-panel: #10141d;
@@ -26,6 +30,43 @@
    chrome, so signal it. */
 button {
   cursor: pointer;
+}
+
+/* p8-theming: the two Claude Desktop palettes (values from
+   CLAUDE-THEME.md), painted over the same token set the whole UI and the
+   dockview skin already consume. lib/theme.js stamps data-theme on the
+   html element; no attribute = the garage default above. Utilities
+   resolve their var() at use time, so overriding here re-skins the app
+   without touching components. xterm paints a canvas that CSS variables
+   never reach — lib/theme.js carries matching terminal theme objects.
+   The amber slot IS the accent slot: in the Claude palettes it holds the
+   terracotta brand orange, so needs-input keeps its meaning. */
+:root[data-theme="claude-dark"] {
+  --color-garage-bg: #141413;
+  --color-garage-panel: #1f1e1d;
+  --color-garage-line: rgba(220, 217, 197, 0.15);
+  --color-garage-ink: #c2c0b6;
+  --color-garage-dim: #9c9a91;
+  --color-garage-faint: #6f6d64;
+  --color-garage-amber: #d97757;
+  --color-garage-green: #6aa84f;
+  --color-garage-red: #dd5353;
+  --color-garage-blue: #2c84db;
+  --color-garage-sel: #30302e;
+}
+
+:root[data-theme="claude-light"] {
+  --color-garage-bg: #faf9f5;
+  --color-garage-panel: #f0eee2;
+  --color-garage-line: rgba(31, 30, 29, 0.15);
+  --color-garage-ink: #3d3d3a;
+  --color-garage-dim: #73726c;
+  --color-garage-faint: #9c9a91;
+  --color-garage-amber: #c96442;
+  --color-garage-green: #2f7613;
+  --color-garage-red: #b53232;
+  --color-garage-blue: #1a6fc4;
+  --color-garage-sel: #e8e5d5;
 }
 
 /* xterm.js renders each terminal's scrollback in a .xterm-viewport with a

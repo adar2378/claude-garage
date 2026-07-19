@@ -13,6 +13,10 @@ const STORAGE_KEY = "garage-settings";
 
 const DEFAULTS = Object.freeze({
   focusDim: false,
+  // p8-theming: "garage" | "claude-dark" | "claude-light" | "system"
+  // (system follows the OS between the two Claude palettes) — see
+  // lib/theme.js for resolution and index.css for the palettes.
+  theme: "garage",
 });
 
 function readFromStorage() {

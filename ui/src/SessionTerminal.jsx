@@ -3,6 +3,8 @@ import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
 import { fetchSessions } from "./lib/api.js";
+import { useSettings } from "./lib/settings.js";
+import { useEffectiveTheme, terminalThemeFor, MONO_STACK } from "./lib/theme.js";
 
 // p7 connection-resilience (design D-reconnect): reconnect backoff caps.
 const BACKOFF_BASE_MS = 500;
@@ -20,18 +22,41 @@ export default function SessionTerminal({ id, onConnectionChange, reconnectSigna
     onConnectionChangeRef.current = onConnectionChange;
   }, [onConnectionChange]);
 
+  // p8-theming: xterm paints a canvas — CSS variables can't reach it, so
+  // the theme object comes from lib/theme.js and is swapped live below
+  // without recreating the terminal.
+  const [settings] = useSettings();
+  const theme = useEffectiveTheme(settings.theme);
+  const termRef = useRef(null);
+  const themeRef = useRef(theme);
+  useEffect(() => {
+    themeRef.current = theme;
+  }, [theme]);
+
   useEffect(() => {
     const term = new Terminal({
-      fontFamily: "SF Mono, Menlo, monospace",
+      fontFamily: MONO_STACK,
       fontSize: 13,
       cursorBlink: true,
-      // xterm theme is JS-side; keep in sync with --color-garage-bg in index.css
-      theme: { background: "#0b0e14" },
+      theme: terminalThemeFor(themeRef.current),
     });
+    termRef.current = term;
     const fit = new FitAddon();
     term.loadAddon(fit);
     term.open(hostRef.current);
     fit.fit();
+
+    // Google Sans Code loads async (@fontsource @font-face) — if xterm
+    // measured cell metrics against the fallback font before it arrived,
+    // refit once fonts settle so glyph widths are correct.
+    if (document.fonts?.ready) {
+      document.fonts.ready.then(() => {
+        if (!disposed) {
+          fit.fit();
+          sendResize();
+        }
+      });
+    }
 
     // design D-blur-chord: Ctrl+` is the only keyboard-only path back to
     // chrome-navigation mode while a terminal has DOM focus. App.jsx's
@@ -138,12 +163,19 @@ export default function SessionTerminal({ id, onConnectionChange, reconnectSigna
       disposed = true;
       clearTimeout(retryTimer);
       connRef.current = null;
+      termRef.current = null;
       ro.disconnect();
       dataSub.dispose();
       if (ws) ws.close();
       term.dispose();
     };
   }, [id]);
+
+  // Live theme swap — xterm re-renders in place when options.theme is
+  // reassigned; no terminal recreation, scrollback intact.
+  useEffect(() => {
+    if (termRef.current) termRef.current.options.theme = terminalThemeFor(theme);
+  }, [theme]);
 
   useEffect(() => {
     if (reconnectSignal > 0) connRef.current?.reconnectNow();

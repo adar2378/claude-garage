@@ -3,6 +3,7 @@ import SessionTerminal from "../SessionTerminal.jsx";
 import { glyphFor, colorFor } from "../lib/status.js";
 import { fetchSessions } from "../lib/api.js";
 import { registerHeartbeat } from "../lib/popouts.js";
+import { useApplyTheme } from "../lib/theme.js";
 
 // design D-popout: rendered by App.jsx instead of the pit wall when the
 // page loads with `?solo=<id>` — the URL a pop-out window is opened at
@@ -16,6 +17,10 @@ export default function SoloView({ id }) {
   // null until the one-shot fetch (or the first SSE patch) resolves — no
   // glyph shown meanwhile, which is fine; it's a nicety, not load-bearing.
   const [status, setStatus] = useState(null);
+
+  // p8-theming: popouts follow the main window's theme automatically —
+  // settings sync across windows via `storage` events.
+  useApplyTheme();
 
   useEffect(() => registerHeartbeat(id), [id]);
 
