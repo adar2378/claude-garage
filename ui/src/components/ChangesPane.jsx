@@ -21,6 +21,12 @@ const CHANGE_COLOR = {
 // Collapsed to a thin toggle strip via `collapsed`; App.jsx sizes the grid
 // track to match (32px / 360px) — this component just fills whatever width
 // the grid gives it.
+//
+// D-dim (column semantics): unlike the rail/grid (many small zones), the
+// whole pane is a single dim zone — one `data-dim-zone` on the outer
+// container, `dim-focused` whenever the pane is the `activeColumn`
+// (`columnActive`). No needs-input exemption inside: that signal lives on
+// rail rows / grid cells, not diff content.
 export default function ChangesPane({
   workspace,
   files,
@@ -34,12 +40,15 @@ export default function ChangesPane({
   onSelectFile,
   onRefresh,
   onBlurChrome,
+  columnActive,
+  onActivateColumn,
 }) {
   if (collapsed) {
     return (
       <button
         type="button"
         onClick={onToggleCollapse}
+        onMouseDownCapture={onActivateColumn}
         title="expand changes pane"
         aria-label="expand changes pane"
         className="flex h-full w-full flex-col items-center gap-2 border-l border-garage-line bg-garage-panel py-2 text-garage-dim hover:text-garage-amber"
@@ -53,7 +62,11 @@ export default function ChangesPane({
   return (
     <div
       onMouseDown={onBlurChrome}
-      className="flex h-full min-h-0 flex-col border-l border-garage-line bg-garage-panel"
+      onMouseDownCapture={onActivateColumn}
+      data-dim-zone
+      className={`flex h-full min-h-0 flex-col border-l border-garage-line bg-garage-panel ${
+        columnActive ? "dim-focused" : ""
+      }`}
     >
       <div className="flex flex-none items-center gap-2 border-b border-garage-line px-2 py-1 text-xs">
         <span className="truncate font-semibold text-garage-ink">{workspace ?? "—"}</span>

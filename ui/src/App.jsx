@@ -1,15 +1,19 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import WorkspaceRail from "./components/WorkspaceRail.jsx";
 import TerminalGrid from "./components/TerminalGrid.jsx";
+import SoloView from "./components/SoloView.jsx";
 import HooksBanner from "./components/HooksBanner.jsx";
 import AddWorkspaceForm from "./components/AddWorkspaceForm.jsx";
 import ChangesPane from "./components/ChangesPane.jsx";
 import ReviewMode from "./components/ReviewMode.jsx";
 import HelpOverlay from "./components/HelpOverlay.jsx";
 import { fetchSessions, fetchWorkspaces, reportVisibility, fetchDiff, openEditor } from "./lib/api.js";
-import { buildGroups } from "./lib/groups.js";
+import { buildGroupTree } from "./lib/groups.js";
+import SettingsPopover from "./components/SettingsPopover.jsx";
+import { useSettings } from "./lib/settings.js";
 import { loadViewedMap, markViewed, pruneViewed, hashContent } from "./lib/viewed.js";
 import { firstHunkLine } from "./lib/diff.js";
+import { listPoppedOut, openPopout, clearPopout, subscribe as subscribePopouts } from "./lib/popouts.js";
 
 // Kept for the page's lifetime (module scope, not persisted) — see API
 // contract for POST /api/ui/visibility.
@@ -17,13 +21,43 @@ const CLIENT_ID = crypto.randomUUID();
 const VISIBILITY_INTERVAL_MS = 30_000;
 const LOAD_RETRY_MS = 3_000;
 
+// design D-popout: a popout window is opened at `/?solo=<id>` (see
+// lib/popouts.js#openPopout) and never navigates elsewhere for the rest of
+// its life, so this is stable for the whole lifetime of whichever branch
+// of App a given mount takes below — reading it before any hooks run and
+// branching on it is safe (every render of a single mounted instance takes
+// the same branch; React's hooks-order rule is about a single instance,
+// not about App-the-component-type in the abstract).
+function readSoloId() {
+  if (typeof window === "undefined") return null;
+  return new URLSearchParams(window.location.search).get("solo");
+}
+
 export default function App() {
+  const soloId = readSoloId();
+  if (soloId) {
+    return <SoloView id={soloId} />;
+  }
+
   const [workspaces, setWorkspaces] = useState([]);
   const [sessions, setSessions] = useState([]);
   const [loadError, setLoadError] = useState(null);
   const [focusedWorkspace, setFocusedWorkspace] = useState(null);
   const [focusedSessionId, setFocusedSessionId] = useState(null);
   const [showAddWorkspace, setShowAddWorkspace] = useState(false);
+
+  // ---- p4-layout-focus-workspace-ux: D-dim (reworked to column-level
+  // semantics) — which of the three grid columns ('rail' | 'grid' | 'pane')
+  // is the dimming spotlight's target. Tracked by last interaction: a
+  // pointer mousedown inside a column's own wrapper (capture-phase so it
+  // fires ahead of any inner stopPropagation — see the three
+  // onMouseDownCapture handlers below) or a chrome keybinding that clearly
+  // targets one column (see the keydown handler further down). Defaults to
+  // 'grid' since that's the primary working surface on first load.
+  const [activeColumn, setActiveColumn] = useState("grid");
+  const activateRailColumn = useCallback(() => setActiveColumn("rail"), []);
+  const activateGridColumn = useCallback(() => setActiveColumn("grid"), []);
+  const activatePaneColumn = useCallback(() => setActiveColumn("pane"), []);
 
   // ---- p2-diff-review: changes pane + review mode state ----
   const [diffFiles, setDiffFiles] = useState([]);
@@ -39,7 +73,38 @@ export default function App() {
   // p3-restore-and-ship: D-help
   const [helpOpen, setHelpOpen] = useState(false);
 
-  const groups = useMemo(() => buildGroups(workspaces, sessions), [workspaces, sessions]);
+  // ---- p4-layout-focus-workspace-ux: popout tracking (design D-popout) ----
+  // `poppedOutIds` re-derives from localStorage on every change the
+  // subscription notices (cross-window writes via `storage`, plus a 5s
+  // poll for same-window writes and pure staleness timeouts — see
+  // lib/popouts.js) so TerminalGrid always renders live-vs-placeholder
+  // cells off the same source of truth a popout window itself reads.
+  const [poppedOutIds, setPoppedOutIds] = useState(() => listPoppedOut());
+
+  useEffect(() => {
+    const unsubscribe = subscribePopouts(() => setPoppedOutIds(listPoppedOut()));
+    return unsubscribe;
+  }, []);
+
+  // openPopout/clearPopout write synchronously but don't themselves fire a
+  // `storage` event in *this* window (that only fires in other
+  // tabs/windows) — so these wrappers refresh local state immediately
+  // rather than waiting on the next poll tick.
+  const handlePopOut = useCallback((id) => {
+    openPopout(id);
+    setPoppedOutIds(listPoppedOut());
+  }, []);
+
+  const handleReclaim = useCallback((id) => {
+    clearPopout(id);
+    setPoppedOutIds(listPoppedOut());
+  }, []);
+
+  const { flattenedGroups: groups } = useMemo(
+    () => buildGroupTree(workspaces, sessions),
+    [workspaces, sessions]
+  );
+  const [settings] = useSettings();
 
   // ---- initial load, with resilience against the daemon not being up yet ----
   useEffect(() => {
@@ -308,22 +373,28 @@ export default function App() {
         if (groups[idx]) {
           e.preventDefault();
           selectWorkspace(groups[idx].name);
+          // D-dim: workspace-select keybindings target the grid column —
+          // selecting a workspace is a precursor to working in its cells.
+          setActiveColumn("grid");
         }
         return;
       }
       if (e.key === "]") {
         e.preventDefault();
         cycleFocusedCell(1);
+        setActiveColumn("grid");
         return;
       }
       if (e.key === "[") {
         e.preventDefault();
         cycleFocusedCell(-1);
+        setActiveColumn("grid");
         return;
       }
       if (e.key === "a") {
         e.preventDefault();
         jumpToNeedsInput();
+        setActiveColumn("grid");
         return;
       }
       if (e.key === "Tab") {
@@ -333,16 +404,22 @@ export default function App() {
           e.preventDefault();
           setPaneEmphasis((v) => (v === "list" ? "diff" : "list"));
         }
+        // D-dim: Tab/j/k target the pane column whenever it's visible,
+        // even if this particular press didn't toggle emphasis (e.g.
+        // review mode is open) — they're unambiguously pane-directed keys.
+        if (!changesPaneCollapsed) setActiveColumn("pane");
         return;
       }
       if (e.key === "j") {
         e.preventDefault();
         stepSelectedFile(1);
+        if (!changesPaneCollapsed) setActiveColumn("pane");
         return;
       }
       if (e.key === "k") {
         e.preventDefault();
         stepSelectedFile(-1);
+        if (!changesPaneCollapsed) setActiveColumn("pane");
         return;
       }
       if (e.key === "r") {
@@ -413,14 +490,27 @@ export default function App() {
   const focusedGroup = groups.find((g) => g.name === focusedWorkspace) ?? null;
 
   return (
-    <main className="flex h-screen flex-col bg-garage-bg font-mono text-sm text-garage-ink">
+    // P4-WIRE: settings/focus-dim — useSettings() gates a `focus-dim`
+    // class here (design D-dim, column semantics: `.focus-dim
+    // [data-dim-zone]:not(.dim-exempt):not(.dim-focused) { opacity: .45 }`).
+    // The header above is never a zone, so it's exempt from this whole
+    // mechanism regardless of `activeColumn`.
+    <main
+      className={`flex h-screen flex-col bg-garage-bg font-mono text-sm text-garage-ink ${
+        settings.focusDim ? "focus-dim" : ""
+      }`}
+    >
       <header
         onMouseDown={blurActiveTerminal}
         className="flex flex-none items-center gap-3 border-b border-garage-line bg-garage-panel px-4 py-2"
       >
         <span className="font-bold tracking-wide text-garage-amber">claude-garage</span>
         <span className="text-garage-dim">pit wall</span>
-        <div className="relative ml-auto">
+        <div className="relative ml-auto flex items-center gap-2">
+          <SettingsPopover />
+          {/* P4-WIRE: settings/focus-dim — gear button opens the settings
+              popover (design D-settings) belongs here, left of "+ add
+              workspace". */}
           <button
             type="button"
             onClick={() => setShowAddWorkspace((v) => !v)}
@@ -431,6 +521,7 @@ export default function App() {
           {showAddWorkspace && (
             <AddWorkspaceForm
               onClose={() => setShowAddWorkspace(false)}
+              existingNames={workspaces.map((w) => w.name)}
               onCreated={() => {
                 refreshWorkspaces();
                 setShowAddWorkspace(false);
@@ -463,6 +554,12 @@ export default function App() {
           onOpenRoot={openWorkspaceRoot}
           onBlurChrome={blurActiveTerminal}
           onSessionsRestored={refreshSessions}
+          onWorkspaceRenamed={() => {
+            refreshWorkspaces();
+            refreshSessions();
+          }}
+          columnActive={activeColumn === "rail"}
+          onActivateColumn={activateRailColumn}
         />
         <TerminalGrid
           group={focusedGroup}
@@ -470,6 +567,11 @@ export default function App() {
           onFocusCell={setFocusedSessionId}
           onBlurChrome={blurActiveTerminal}
           onSessionsRestored={refreshSessions}
+          poppedOutIds={poppedOutIds}
+          onPopOut={handlePopOut}
+          onReclaim={handleReclaim}
+          columnActive={activeColumn === "grid"}
+          onActivateColumn={activateGridColumn}
         />
         <ChangesPane
           workspace={focusedWorkspace}
@@ -484,6 +586,8 @@ export default function App() {
           onSelectFile={setSelectedFilePath}
           onRefresh={() => fetchDiffForWorkspace(focusedWorkspace)}
           onBlurChrome={blurActiveTerminal}
+          columnActive={activeColumn === "pane"}
+          onActivateColumn={activatePaneColumn}
         />
       </div>
 

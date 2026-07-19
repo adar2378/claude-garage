@@ -1,11 +1,16 @@
 import React, { useState } from "react";
 import { glyphFor, colorFor } from "../lib/status.js";
-import { restoreSession } from "../lib/api.js";
+import { restoreSession, renameWorkspace } from "../lib/api.js";
 import AddSessionControl from "./AddSessionControl.jsx";
 
-// Left pane (spec: 3.1). Groups are pre-ordered needs-you-first by
-// lib/groups.js; this component only renders. Index hints (1-9) reflect
-// the same rail order the "1"-"9" keybindings switch to.
+const INDENT_PX = 14;
+
+// Left pane (spec: 3.1). `groups` is expected to be lib/groups.js's
+// flattenedGroups (design D-nesting) — pre-ordered needs-you-first at
+// every level, with nested workspaces already walked into render order and
+// each entry carrying a `depth` (0 = top-level) this component indents by.
+// Index hints (1-9) reflect that same flattened order the "1"-"9"
+// keybindings switch to — callers must index into the identical array.
 //
 // p3-restore-and-ship: restorable sessions (status "restorable", no live
 // tmux/pty behind them) render dimmed with a restore control; a
@@ -14,6 +19,23 @@ import AddSessionControl from "./AddSessionControl.jsx";
 // "Restorable sessions in the rail"). Restore-all issues the per-id calls
 // in parallel rather than a single {all:true} request, so it only ever
 // touches this workspace's own deck.
+//
+// p4-layout-focus-workspace-ux:
+//  - D-rename: the ✎ button on a registered workspace's header row swaps
+//    it for an inline text input; Enter calls renameWorkspace(), Esc
+//    cancels, 404/409/etc surface inline next to the input. On success the
+//    caller is notified via onWorkspaceRenamed so it can refetch
+//    workspaces/sessions (a rename changes every live session id under
+//    that workspace, so the caller — not this component — owns deciding
+//    what else needs to move, e.g. focus).
+//  - D-dim (column semantics): each *session* row is a dim zone
+//    (`data-dim-zone`), exempt from dimming when that session is
+//    needs-input, and `dim-focused` whenever the rail as a whole is the
+//    `activeColumn` (`columnActive`, passed down from App) — not tied to
+//    which individual session is focused anymore (that's what
+//    `focusedSessionId` is still used for: the `bg-garage-sel` "you are
+//    here" highlight). The rail container and workspace header rows are
+//    NOT zones.
 export default function WorkspaceRail({
   groups,
   focusedWorkspace,
@@ -24,9 +46,39 @@ export default function WorkspaceRail({
   onOpenRoot,
   onBlurChrome,
   onSessionsRestored,
+  onWorkspaceRenamed,
+  columnActive,
+  onActivateColumn,
 }) {
   const [restoringIds, setRestoringIds] = useState(() => new Set());
   const [restoreError, setRestoreError] = useState(null);
+  const [renaming, setRenaming] = useState(null); // { workspaceName, value, error, busy } | null
+
+  function startRename(name) {
+    setRenaming({ workspaceName: name, value: name, error: null, busy: false });
+  }
+
+  function cancelRename() {
+    setRenaming(null);
+  }
+
+  async function submitRename() {
+    if (!renaming || renaming.busy) return;
+    const oldName = renaming.workspaceName;
+    const newName = renaming.value.trim();
+    if (!newName || newName === oldName) {
+      setRenaming(null);
+      return;
+    }
+    setRenaming((r) => ({ ...r, busy: true, error: null }));
+    try {
+      await renameWorkspace(oldName, newName);
+      setRenaming(null);
+      onWorkspaceRenamed?.(oldName, newName);
+    } catch (err) {
+      setRenaming((r) => ({ ...r, busy: false, error: err.message }));
+    }
+  }
 
   function markRestoring(ids, restoring) {
     setRestoringIds((prev) => {
@@ -67,6 +119,7 @@ export default function WorkspaceRail({
   return (
     <nav
       onMouseDown={onBlurChrome}
+      onMouseDownCapture={onActivateColumn}
       aria-label="Workspaces"
       className="min-h-0 overflow-y-auto border-r border-garage-line bg-garage-panel px-1 py-2"
     >
@@ -81,33 +134,80 @@ export default function WorkspaceRail({
         const allRestorable =
           group.sessions.length > 0 && restorableIds.length === group.sessions.length;
         const restoreAllBusy = restorableIds.some((id) => restoringIds.has(id));
+        const depth = group.depth ?? 0;
+        const isRenamingThis = renaming?.workspaceName === group.name;
         return (
-          <div key={group.name} className="mb-1">
+          <div key={group.name} className="mb-1" style={{ marginLeft: depth * INDENT_PX }}>
             <div
               className={`flex items-center gap-1 px-2 py-1 ${
                 active ? "text-garage-amber" : "text-garage-ink"
               }`}
             >
-              <button
-                type="button"
-                onClick={() => onSelectWorkspace(group.name)}
-                className="flex min-w-0 flex-1 items-center gap-2 text-left"
-              >
-                {i < 9 && <span className="text-garage-faint">{i + 1}</span>}
-                <span className="truncate font-semibold">{group.name}</span>
-                {!group.registered && (
-                  <span
-                    className="text-[10px] text-garage-faint"
-                    title="workspace not registered — derived from session id"
-                  >
-                    ?
+              {isRenamingThis ? (
+                <form
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    submitRename();
+                  }}
+                  className="flex min-w-0 flex-1 items-center gap-2"
+                >
+                  {i < 9 && <span className="text-garage-faint">{i + 1}</span>}
+                  <input
+                    autoFocus
+                    value={renaming.value}
+                    disabled={renaming.busy}
+                    onChange={(e) =>
+                      setRenaming((r) => (r ? { ...r, value: e.target.value } : r))
+                    }
+                    onKeyDown={(e) => {
+                      e.stopPropagation();
+                      if (e.key === "Escape") cancelRename();
+                    }}
+                    onBlur={cancelRename}
+                    className="min-w-0 flex-1 border border-garage-amber bg-garage-bg px-1 py-0.5 text-xs text-garage-ink outline-none"
+                  />
+                  {renaming.error && (
+                    <span
+                      className="shrink-0 truncate text-[10px] text-garage-red"
+                      title={renaming.error}
+                    >
+                      {renaming.error}
+                    </span>
+                  )}
+                </form>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => onSelectWorkspace(group.name)}
+                  className="flex min-w-0 flex-1 items-center gap-2 text-left"
+                >
+                  {i < 9 && <span className="text-garage-faint">{i + 1}</span>}
+                  <span className="truncate font-semibold">{group.name}</span>
+                  {!group.registered && (
+                    <span
+                      className="text-[10px] text-garage-faint"
+                      title="workspace not registered — derived from session id"
+                    >
+                      ?
+                    </span>
+                  )}
+                  <span className="ml-auto shrink-0 text-[10px] text-garage-faint">
+                    {group.sessions.length}×
                   </span>
-                )}
-                <span className="ml-auto shrink-0 text-[10px] text-garage-faint">
-                  {group.sessions.length}×
-                </span>
-              </button>
-              {group.registered && (
+                </button>
+              )}
+              {!isRenamingThis && group.registered && (
+                <button
+                  type="button"
+                  onMouseDown={(e) => e.stopPropagation()}
+                  onClick={() => startRename(group.name)}
+                  title={`rename ${group.name}`}
+                  className="shrink-0 px-1 text-garage-faint hover:text-garage-amber"
+                >
+                  ✎
+                </button>
+              )}
+              {!isRenamingThis && group.registered && (
                 <button
                   type="button"
                   onClick={() => onOpenRoot(group.name)}
@@ -117,7 +217,7 @@ export default function WorkspaceRail({
                   ⧉
                 </button>
               )}
-              {allRestorable && (
+              {!isRenamingThis && allRestorable && (
                 <button
                   type="button"
                   onClick={() => restoreAll(restorableIds)}
@@ -128,19 +228,25 @@ export default function WorkspaceRail({
                   restore all
                 </button>
               )}
-              <AddSessionControl workspaceName={group.name} onCreated={onSessionCreated} />
+              {!isRenamingThis && (
+                <AddSessionControl workspaceName={group.name} onCreated={onSessionCreated} />
+              )}
             </div>
             <div className="ml-3 border-l border-garage-line pl-2">
               {group.sessions.map((s) => {
                 const isFocused = s.id === focusedSessionId;
                 const isRestorable = s.status === "restorable";
+                const isNeedsInput = s.status === "needs-input";
                 const busy = restoringIds.has(s.id);
                 return (
                   <div
                     key={s.id}
+                    data-dim-zone
                     className={`flex w-full items-start gap-1 px-2 py-1 text-xs ${
                       isFocused ? "bg-garage-sel" : "hover:bg-garage-sel"
-                    } ${isRestorable ? "opacity-60" : ""}`}
+                    } ${isRestorable ? "opacity-60" : ""} ${columnActive ? "dim-focused" : ""} ${
+                      isNeedsInput ? "dim-exempt" : ""
+                    }`}
                   >
                     <button
                       type="button"

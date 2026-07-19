@@ -100,6 +100,44 @@ export async function restoreSession(payload) {
   return body;
 }
 
+// Daemon-side native folder picker (design D-picker — browsers never
+// expose absolute filesystem paths, so this can't be done client-side).
+// Resolves {dir} on a choice or {cancelled:true} on user-cancel (both 200
+// per contract); 501 (non-darwin) surfaces via the thrown Error's message
+// so callers can fall back to manual path entry.
+export async function pickDirectory() {
+  const res = await fetch("/api/pick-directory", { method: "POST" });
+  const body = await parseJsonSafe(res);
+  if (!res.ok) {
+    throw new Error(body.error || `directory picker unavailable (${res.status})`);
+  }
+  return body;
+}
+
+// Renames a workspace and everything that embeds its name (live tmux
+// sessions, resume metadata) — design D-rename. Resolves
+// {name, dir, renamedSessions, failedSessions?}. 404 (unknown workspace)
+// and 409 (name taken) surface via the thrown Error's message for inline
+// display next to the rename control.
+export async function renameWorkspace(oldName, newName) {
+  const res = await fetch(`/api/workspaces/${encodeURIComponent(oldName)}`, {
+    method: "PATCH",
+    headers: JSON_HEADERS,
+    body: JSON.stringify({ name: newName }),
+  });
+  const body = await parseJsonSafe(res);
+  if (!res.ok) {
+    if (res.status === 404) {
+      throw new Error(body.error || `unknown workspace "${oldName}"`);
+    }
+    if (res.status === 409) {
+      throw new Error(body.error || `workspace name already taken: ${newName}`);
+    }
+    throw new Error(body.error || `could not rename workspace (${res.status})`);
+  }
+  return body;
+}
+
 export function reportVisibility(clientId, visible) {
   fetch("/api/ui/visibility", {
     method: "POST",

@@ -17,3 +17,29 @@
   --color-garage-blue: #6e9ecc;
   --color-garage-sel: #161d2a;
 }
+
+/* p4-layout-focus-workspace-ux / design D-dim — focus-dimming mode,
+   COLUMN-level semantics. `<main>` gets a `focus-dim` class when the
+   setting is on. The dimming *unit* is one of the three layout columns
+   (workspace rail | terminal grid | changes pane) — the `activeColumn`
+   tracked in App.jsx. The mechanism is still per-zone (never opacity on a
+   container with exempt children — CSS can't un-dim a child inside a
+   dimmed parent): every rail row, grid cell, and the changes-pane content
+   are tagged `data-dim-zone` by the component that owns them. When a
+   zone's column is the active one, that component adds `.dim-focused` to
+   ALL of its zones (not just the "current" row/cell) — the whole column
+   lights up together. A zone also stays at full opacity if it's
+   `.dim-exempt` regardless of column (a rail row or grid cell whose
+   session is needs-input — the product's core attention signal must never
+   dim, even inside a dimmed column). The changes pane has no exemption,
+   just the one whole-pane zone. The app header is never a zone, so it's
+   always full brightness. 0.45 keeps dimmed content readable but visually
+   recessive; tune here only. */
+.focus-dim [data-dim-zone] {
+  opacity: 0.45;
+  transition: opacity 120ms;
+}
+.focus-dim [data-dim-zone].dim-focused,
+.focus-dim [data-dim-zone].dim-exempt {
+  opacity: 1;
+}
