@@ -53,3 +53,14 @@ The workspace registry SHALL only store the name-to-directory mapping. Registeri
 #### Scenario: Registering a workspace creates no tmux session
 - **WHEN** a client registers workspace `{name:"solo", dir:"<existing dir>"}` and no session has been spawned for it
 - **THEN** `tmux ls` shows no session named `garage/solo/*` as a result of the registration call alone
+
+### Requirement: Workspace removal, with optional session shutdown
+`DELETE /api/workspaces/:name` SHALL, by default, remove only the registry entry (and the workspace's resume metadata): live tmux sessions keep running and reappear as an unregistered group. When called with `?sessions=kill`, the daemon SHALL first kill every live `garage/<name>/*` tmux session, then remove the registry entry and resume metadata; per-session kill failures SHALL be reported in the response without aborting the remaining kills or the registry removal. Worktree directories and branches SHALL be left untouched in both modes — bulk removal must never silently discard branch work.
+
+#### Scenario: Default removal keeps sessions running
+- **WHEN** `DELETE /api/workspaces/kowboy` is called while `garage/kowboy/checkout` is live
+- **THEN** the registry entry is removed, the tmux session keeps running, and the rail lists `kowboy` as an unregistered group
+
+#### Scenario: Kill mode shuts the workspace down
+- **WHEN** `DELETE /api/workspaces/kowboy?sessions=kill` is called with two live sessions
+- **THEN** both tmux sessions are killed, the registry entry and resume metadata are removed, and the response lists the killed session ids

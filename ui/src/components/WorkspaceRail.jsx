@@ -54,20 +54,22 @@ export default function WorkspaceRail({
   const [restoringIds, setRestoringIds] = useState(() => new Set());
   const [restoreError, setRestoreError] = useState(null);
   const [renaming, setRenaming] = useState(null); // { workspaceName, value, error, busy } | null
-  // Two-step confirm for workspace removal: first ✕ arms it ("sure?"),
-  // second click within 3s deletes. Removal never kills tmux sessions —
-  // live ones reappear as an unregistered group.
+  // Two-step confirm for workspace removal. Arming `unreg` swaps it for
+  // TWO choices (p7 follow-up): `unreg` = registry-only removal (live
+  // sessions keep running, group reappears unregistered — the original
+  // semantics) vs `kill N×` = close every live session, then unregister.
+  // 4s window (two choices need a beat more than the single "sure?").
   const [confirmingDelete, setConfirmingDelete] = useState(null); // workspace name | null
 
-  async function handleDelete(name) {
-    if (confirmingDelete !== name) {
-      setConfirmingDelete(name);
-      setTimeout(() => setConfirmingDelete((c) => (c === name ? null : c)), 3000);
-      return;
-    }
+  function armDelete(name) {
+    setConfirmingDelete(name);
+    setTimeout(() => setConfirmingDelete((c) => (c === name ? null : c)), 4000);
+  }
+
+  async function handleDelete(name, killSessions) {
     setConfirmingDelete(null);
     try {
-      await deleteWorkspace(name);
+      await deleteWorkspace(name, { killSessions });
       onWorkspaceRenamed?.(name, null); // same refetch path as rename
     } catch (err) {
       setRestoreError(err.message);
@@ -255,24 +257,45 @@ export default function WorkspaceRail({
                   ⧉
                 </button>
               )}
-              {/* p7 (spec: "Chrome affordance standards"): this action is
-                  SAFE (unregisters, sessions keep running) — it must never
-                  share the ✕ vocabulary with the session-kill control, so
-                  it reads "unreg" instead. Same two-step arm as before. */}
-              {!isRenamingThis && group.registered && (
+              {/* p7 (spec: "Chrome affordance standards"): the default
+                  action is SAFE (unregisters, sessions keep running) — it
+                  must never share the ✕ vocabulary with session kill, so
+                  it reads "unreg". Arming it reveals the second, explicit
+                  choice: kill every live session AND unregister. */}
+              {!isRenamingThis && group.registered && confirmingDelete !== group.name && (
                 <button
                   type="button"
                   onMouseDown={(e) => e.stopPropagation()}
-                  onClick={() => handleDelete(group.name)}
-                  title={`unregister ${group.name} — sessions keep running in tmux`}
-                  className={`shrink-0 px-1.5 py-0.5 text-[10px] ${
-                    confirmingDelete === group.name
-                      ? "text-garage-red"
-                      : "text-garage-faint hover:text-garage-red"
-                  }`}
+                  onClick={() => armDelete(group.name)}
+                  title={`remove ${group.name} — click to choose: unregister only, or close all sessions too`}
+                  className="shrink-0 px-1.5 py-0.5 text-[10px] text-garage-faint hover:text-garage-red"
                 >
-                  {confirmingDelete === group.name ? "sure?" : "unreg"}
+                  unreg
                 </button>
+              )}
+              {!isRenamingThis && group.registered && confirmingDelete === group.name && (
+                <>
+                  <button
+                    type="button"
+                    onMouseDown={(e) => e.stopPropagation()}
+                    onClick={() => handleDelete(group.name, false)}
+                    title={`unregister ${group.name} only — sessions keep running in tmux and reappear as an unregistered group`}
+                    className="shrink-0 px-1.5 py-0.5 text-[10px] text-garage-amber"
+                  >
+                    unreg
+                  </button>
+                  <button
+                    type="button"
+                    onMouseDown={(e) => e.stopPropagation()}
+                    onClick={() => handleDelete(group.name, true)}
+                    title={`close all ${
+                      group.sessions.filter((s) => s.status !== "restorable").length
+                    } live session(s) — kills their tmux sessions — then unregister ${group.name}`}
+                    className="shrink-0 px-1.5 py-0.5 text-[10px] text-garage-red"
+                  >
+                    kill {group.sessions.filter((s) => s.status !== "restorable").length}×
+                  </button>
+                </>
               )}
               {!isRenamingThis && allRestorable && (
                 <button

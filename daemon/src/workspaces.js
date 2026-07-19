@@ -1,5 +1,12 @@
 import { stat } from "node:fs/promises";
-import { GARAGE_PREFIX, NAME_RE, listSessions, renameSession, resolveBranch } from "./tmux.js";
+import {
+  GARAGE_PREFIX,
+  NAME_RE,
+  listSessions,
+  renameSession,
+  resolveBranch,
+  killSession,
+} from "./tmux.js";
 import {
   listWorkspaces,
   upsertWorkspace,
@@ -85,16 +92,48 @@ export default async function workspaceRoutes(app) {
     return reply.code(200).send(response);
   });
 
-  // Removing a workspace NEVER touches tmux: the registry is a directory
-  // mapping, not a session store. Live sessions keep running and reappear
-  // in the rail as an unregistered group; the workspace's resume metadata
-  // is dropped so no permanently-unrestorable ghosts linger.
+  // Removing a workspace by default NEVER touches tmux: the registry is a
+  // directory mapping, not a session store. Live sessions keep running and
+  // reappear in the rail as an unregistered group; the workspace's resume
+  // metadata is dropped (removeWorkspace handles that) so no
+  // permanently-unrestorable ghosts linger.
+  //
+  // p7 follow-up: `?sessions=kill` opts into shutting the workspace down
+  // for real — every live garage/<name>/* tmux session is killed first,
+  // then the registry entry (and, via removeWorkspace, the resume
+  // metadata) is removed. Per-session kill failures are reported without
+  // aborting the rest. Worktree directories/branches are deliberately left
+  // untouched — bulk removal must never silently discard branch work; they
+  // remain recoverable via plain git.
   app.delete("/api/workspaces/:name", async (req, reply) => {
     const name = req.params.name;
     if (!(await getWorkspace(name))) {
       return reply.code(404).send({ error: `unknown workspace: ${name}` });
     }
+
+    const killMode = req.query?.sessions === "kill";
+    if (!killMode) {
+      await removeWorkspace(name);
+      return reply.code(204).send();
+    }
+
+    const prefix = `${GARAGE_PREFIX}${name}/`;
+    const live = (await listSessions()).filter((s) => s.id.startsWith(prefix));
+    const killedSessions = [];
+    const failedSessions = [];
+    for (const s of live) {
+      try {
+        await killSession(s.id);
+        killedSessions.push(s.id);
+      } catch (err) {
+        failedSessions.push({ id: s.id, error: err.message ?? String(err) });
+      }
+    }
+
     await removeWorkspace(name);
-    return reply.code(204).send();
+
+    const response = { removed: name, killedSessions };
+    if (failedSessions.length > 0) response.failedSessions = failedSessions;
+    return reply.code(200).send(response);
   });
 }

@@ -71,7 +71,18 @@ export async function createSession(workspace, label, { worktree } = {}) {
 export async function fetchDiff(workspace, sessionId) {
   const qs = sessionId ? `?sessionId=${encodeURIComponent(sessionId)}` : "";
   const res = await fetch(`/api/diff/${encodeURIComponent(workspace)}${qs}`);
-  if (!res.ok) throw new Error(`GET /api/diff/${workspace} failed (${res.status})`);
+  if (!res.ok) {
+    const body = await parseJsonSafe(res);
+    // 404 = the workspace isn't in the registry (an unregistered "?"
+    // group derived from session ids has no directory to diff) — say so
+    // and name the fix, instead of a bare status code.
+    if (res.status === 404) {
+      throw new Error(
+        `no diff — "${workspace}" isn't registered; add a workspace named "${workspace}" pointing at its project folder to enable diffs`
+      );
+    }
+    throw new Error(body.error || `GET /api/diff/${workspace} failed (${res.status})`);
+  }
   return res.json();
 }
 
@@ -175,12 +186,24 @@ export function reportVisibility(clientId, visible) {
   });
 }
 
-export async function deleteWorkspace(name) {
-  const res = await fetch(`/api/workspaces/${encodeURIComponent(name)}`, {
+// {killSessions: true} (p7 follow-up) also shuts down every live tmux
+// session under the workspace before unregistering — the daemon reports
+// which kills succeeded/failed. Default remains registry-only removal
+// (sessions keep running, group reappears unregistered).
+export async function deleteWorkspace(name, { killSessions } = {}) {
+  const qs = killSessions ? "?sessions=kill" : "";
+  const res = await fetch(`/api/workspaces/${encodeURIComponent(name)}${qs}`, {
     method: "DELETE",
   });
   if (res.status === 404) throw new Error(`unknown workspace: ${name}`);
   if (!res.ok) throw new Error(`delete failed (${res.status})`);
+  const body = res.status === 204 ? {} : await parseJsonSafe(res);
+  if (body.failedSessions?.length) {
+    throw new Error(
+      `${body.failedSessions.length} session(s) failed to close — workspace unregistered anyway`
+    );
+  }
+  return body;
 }
 
 // Kills the REAL tmux session backing {id} and drops its resume metadata
