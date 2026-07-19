@@ -1,37 +1,110 @@
+<div align="center">
+
+<img src="docs/icon.svg" width="110" alt="claude-garage — the shop cat on watch" />
+
 # claude-garage
 
-**Claude Code session manager — parallel sessions, grouped terminals, needs-input triage, diff review. A pit wall for your agents.**
+**A pit wall for your Claude Code agents.**
 
-## What it is
+Run many Claude Code sessions across many projects — live, side by side —
+and know the instant one needs you. tmux owns every session:
+close the app and nothing dies.
 
-claude-garage is a local web app for running several Claude Code sessions across several projects at once, without losing track of which one needs you. A workspace rail groups sessions by project and sorts needs-input-first; a terminal grid shows every session in the focused workspace live and simultaneously; a diff pane and full-screen review mode cover what each session changed. It never owns your sessions — tmux does. Close the app, and nothing dies: every session stays a real `tmux` session, reachable from any terminal with `tmux attach -t garage/<workspace>/<label>`, whether or not the garage UI is running. If your Mac reboots and tmux itself dies, garage can bring the conversations back too (`claude --resume`), not just the panes.
+[![npm](https://img.shields.io/npm/v/claude-garage?color=e2a75e&label=npm)](https://www.npmjs.com/package/claude-garage)
+[![license](https://img.shields.io/badge/license-MIT-79b26e)](LICENSE)
+[![node](https://img.shields.io/badge/node-%E2%89%A5%2020-6e9ecc)](package.json)
+[![platform](https://img.shields.io/badge/platform-macOS-c6cfdb)](#requirements)
 
-## Install & run
+<img src="docs/hero.png" alt="The pit wall: two workspaces, a session asking for permission (amber), a finished worktree session, and the diff pane" width="100%" />
 
-Prerequisites:
+</div>
 
-- macOS
-- [tmux](https://github.com/tmux/tmux) ≥ 3.2 — `brew install tmux`
-- the [Claude Code CLI](https://docs.claude.com/en/docs/claude-code) (`claude`) installed and on `PATH`
-- Node.js ≥ 20
+## Why
 
-Then, from anywhere:
+Running one Claude Code session is easy. Running six across three repos is a
+tab-juggling mess — you find out an agent has been **blocked on a permission
+prompt for 20 minutes** only when you happen to click its tab.
 
-```
+claude-garage puts every session on one wall:
+
+- 🚨 **Needs-input triage** — the product's core. Blocked sessions sort first
+  everywhere, light up amber, count into the header badge and the browser tab
+  title, and `a` jumps straight to whichever agent is waiting on you.
+- 🖥️ **A real terminal grid** — every session in the focused workspace is a
+  live, interactive terminal (xterm.js ⇄ tmux), all streaming at once.
+  Split, resize, maximize, float, or detach any of them — VS Code-style.
+- 🌳 **Worktree isolation** — spawn a session in its own git worktree on a
+  `garage/<label>` branch. When you close it: **merge / discard / keep**.
+  The diff pane shows everything the branch would bring, committed or not.
+- 📋 **Diff review** — per-workspace (or per-worktree) changes with a
+  full-screen review mode: `j`/`k` files, `v` marks viewed, `o` opens your
+  editor at the right line.
+- 🔌 **tmux owns everything** — garage is a viewer, not a warden. Kill the
+  app, reboot the Mac: `tmux attach -t garage/<workspace>/<label>` still
+  works, and dead sessions restore with their full conversation
+  (`claude --resume`) in one click.
+- 🐈 **A pit pet, if you want one** — an ASCII shop cat (or rubber duck, or
+  pit pup) that sleeps when all is quiet, watches while agents work, and runs
+  toward the rail when one needs you. Off by default.
+
+## Quick start
+
+```bash
 npx claude-garage
 ```
 
-This starts the daemon on `http://127.0.0.1:4747`, serves the UI from the same process, and best-effort opens the URL in your browser.
+Opens the pit wall at `http://127.0.0.1:4747`. Then click
+**＋ add workspace**, point it at a project, and spawn sessions with the `+`
+next to the workspace name.
 
-## Hook setup
+### Requirements
 
-By default garage detects "needs input" by polling `claude agents --json` every couple of seconds — it works, but it's coarse. For precise, instant detection, install Claude Code's own hooks — one click:
+- macOS (Linux: tmux core works, folder picker & notifications degrade — untested)
+- [tmux](https://github.com/tmux/tmux) ≥ 3.2 — `brew install tmux`
+- [Claude Code](https://docs.claude.com/en/docs/claude-code) CLI on `PATH`
+- Node.js ≥ 20
 
-- Click **install hooks for me** in the banner the garage UI shows (it calls `POST /api/hooks/install`, which merges the hook entries into `~/.claude/settings.json` after saving a timestamped backup next to it; running it again is a safe no-op).
+### Hooks (recommended, one click)
 
-Prefer doing it by hand? `GET http://127.0.0.1:4747/api/hooks/snippet` returns the JSON to merge into `~/.claude/settings.json` yourself.
+Garage detects agent state by polling `claude agents --json` every 2s. For
+**instant** detection, click **install hooks for me** in the banner — the
+daemon merges Claude Code's Notification/Stop hooks into
+`~/.claude/settings.json` (timestamped backup, idempotent). Prefer manual?
+`GET /api/hooks/snippet` returns the JSON to merge yourself.
 
-Without hooks installed, garage still works — status just lags behind the poller's interval instead of updating the instant Claude asks for input.
+## Session states
+
+| Glyph | State | Meaning |
+|---|---|---|
+| `●` | **needs-input** | Claude is blocked waiting on *you* — permission, question, plan approval. Never decays; sorts first everywhere. |
+| `◐` | working | Claude is running. Leave it alone. |
+| `✓` | done | Finished a turn since you last looked (auto-fades after 2 min). |
+| `○` | idle | Waiting for you to *ask*, not to *answer*. |
+| `⟳` | restorable | tmux died (reboot?) — one click resurrects the conversation. |
+
+## The grid
+
+The default layout is a balanced grid (4 sessions → 2×2). Then shape it:
+
+- **Split** — `◫`/`⬒` on any cell (or `\`) spawns a new session beside it
+- **Maximize** — `⛶` or `m` toggles the focused cell full-bleed
+- **Float** — `❐` lifts a cell into a draggable window above the grid
+- **Standalone views** — `◲` detaches a session into its own view: the rail
+  and a view strip switch the center column between arrangements, and `a`
+  still jumps across views to anything blocked
+- **Pop out** — `⇱` moves a terminal to a separate browser window
+- Drag tabs to re-dock; everything persists per workspace
+
+## Themes
+
+Settings (⚙) → theme: **garage** (default), **claude dark**, **claude
+light**, or **system**. Terminals re-skin in place — including a full ANSI
+palette per theme, so diffs stop screaming. Chrome and terminals render in
+[Google Sans Code](https://fonts.google.com/specimen/Google+Sans+Code) (bundled, OFL).
+
+<div align="center">
+<img src="docs/theme-light.png" alt="claude light theme" width="85%" />
+</div>
 
 ## Keybindings
 
@@ -39,23 +112,31 @@ Without hooks installed, garage still works — status just lags behind the poll
 |---|---|
 | `1`–`9` | switch focused workspace to the Nth in rail order |
 | `[` / `]` | cycle the focused terminal within the current workspace |
-| `a` | jump to a session that needs input, in any workspace |
-| `\` | split the focused terminal right (spawns a new session there) |
-| `m` | maximize the focused terminal ⇄ restore the grid |
+| `a` | jump to a session that needs input, in any workspace or view |
+| `\` | split the focused cell right (spawns a new session there) |
+| `m` | maximize the focused cell ⇄ restore the grid |
 | `Tab` | changes pane: toggle list ⇄ diff |
 | `j` / `k` | next / previous changed file |
-| `r` | enter full-screen review mode |
-| `Esc` | close the help overlay, else exit review mode |
+| `r` | enter full-screen review mode (or the **review** button) |
 | `v` | (review mode) mark file viewed, advance to next unviewed |
-| `o` | open the selected file (or workspace root) in your editor |
-| `Ctrl+\`` | blur the focused terminal — back to chrome-navigation mode, works even while a terminal has keyboard focus |
-| `?` | toggle this keybinding help overlay |
+| `o` | open the selected file — or the workspace root — in your editor |
+| `Ctrl+\`` | release keys from the focused terminal back to garage |
+| `?` | keybindings + status legend overlay |
 
-All bindings except `Ctrl+\`` are suppressed while a terminal has keyboard focus — keystrokes go to Claude Code's pty instead.
+All bindings except `Ctrl+\`` are suppressed while a terminal has keyboard
+focus — the header chip always shows where your keys go.
+
+## Notifications
+
+- **In the app**: header badge, tab-title count, and (optionally) the pet.
+- **Tab hidden**: opt-in browser notifications — click one to jump to the session.
+- **No page open**: macOS notification; install
+  [`terminal-notifier`](https://github.com/julienXX/terminal-notifier)
+  (`brew install terminal-notifier`) to make it clickable → opens the wall.
 
 ## How it works
 
-tmux is the source of truth for every session; garage is a thin, near-stateless viewer on top of it.
+tmux is the source of truth; garage is a thin, near-stateless viewer.
 
 ```
 tmux  (persistence — source of truth)
@@ -63,20 +144,37 @@ tmux  (persistence — source of truth)
        └─ browser UI  (React + xterm.js)
 ```
 
-- **tmux** owns the actual processes. Sessions are named `garage/<workspace>/<label>`; `tmux ls` is the list API. Killing the garage UI, or the daemon, never touches tmux.
-- **Daemon** — a thin Fastify process. It shells out to `tmux`/`git`/`claude` rather than re-implementing any of them, bridges each terminal over a WebSocket (`node-pty` ⇄ xterm.js), computes diffs on demand, and receives Claude Code's hook events. State it can't recompute (workspace → directory mapping, restore metadata) lives in one small file, `~/.garage/state.json`.
-- **UI** — React + xterm.js, rendering the rail, the live multi-terminal grid, and the diff/review panes over that daemon's HTTP + WebSocket + SSE API.
-- **Escape hatch**: garage owns orchestration and triage, not deep editing — jump to VS Code (`o`, or the per-workspace root button) or a plain terminal (`tmux attach`) whenever you want the full tool.
+- **tmux** owns the processes. Sessions are `garage/<workspace>/<label>`;
+  `tmux ls` is the list API. Killing the UI or daemon never touches tmux.
+- **Daemon** — thin Fastify, binds `127.0.0.1` only. Shells out to
+  `tmux`/`git`/`claude`, bridges terminals over WebSockets, computes diffs
+  read-only, receives hook events (token-authed). One small state file:
+  `~/.garage/state.json`.
+- **UI** — React + xterm.js over HTTP + WebSocket + SSE.
+- **Escape hatches everywhere**: `tmux attach` from any terminal, `o` into
+  your editor, plain git in `~/.garage/worktrees/…`.
 
 ## Development
 
-```
+```bash
 npm install
-npm run dev
+npm run dev     # daemon :4747 + Vite :5173
+npm test        # node:test — status store, poller mapping, hooks, layout math, views
 ```
 
-This runs the daemon (`:4747`) and Vite's dev server (`:5173`, proxying `/api` and `/term` to the daemon) concurrently. The workspace is a two-package npm workspace: `daemon/` (Fastify + tmux/git/hook integration) and `ui/` (the React app, built to `ui/dist` for the packaged `npx claude-garage` entrypoint).
+Built through spec-driven phases (see [`openspec/`](openspec/)) — every
+phase ends with a real-system e2e verification.
 
----
+## Roadmap
 
-Built through OpenSpec-driven phases (P0–P3), each verified end-to-end before moving on — see [`openspec/changes/archive/`](openspec/changes/archive/) for the full spec/design/task history of every phase.
+- `claude-garage attach` — adopt an existing tmux session onto the wall
+- Phone push (ntfy/webhook) when you're away from the machine
+- View renaming & drag-between-views
+- Linux support
+
+## License
+
+[MIT](LICENSE) © Saiful Islam
+
+*claude-garage is a community project, not affiliated with or endorsed by
+Anthropic. "Claude" and "Claude Code" are Anthropic trademarks.*

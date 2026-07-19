@@ -1,0 +1,50 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <!-- claude-garage icon: the shop cat on watch inside a terminal cell.
+       The three window dots are the status vocabulary (needs-input amber,
+       working blue, done green). Pure geometry, no font dependencies. -->
+  <defs>
+    <clipPath id="frame">
+      <rect x="16" y="16" width="480" height="480" rx="96"/>
+    </clipPath>
+  </defs>
+
+  <!-- terminal window -->
+  <rect x="16" y="16" width="480" height="480" rx="96" fill="#0b0e14"/>
+  <g clip-path="url(#frame)">
+    <rect x="16" y="16" width="480" height="96" fill="#10141d"/>
+    <rect x="16" y="108" width="480" height="4" fill="#1e2633"/>
+  </g>
+  <rect x="16" y="16" width="480" height="480" rx="96" fill="none" stroke="#1e2633" stroke-width="10"/>
+
+  <!-- status dots: ● needs-input, ◐ working, ✓ done -->
+  <circle cx="88" cy="64" r="16" fill="#e2a75e"/>
+  <circle cx="140" cy="64" r="16" fill="#6e9ecc"/>
+  <circle cx="192" cy="64" r="16" fill="#79b26e"/>
+
+  <!-- the shop cat -->
+  <g fill="#e2a75e">
+    <!-- ears -->
+    <polygon points="150,208 150,132 216,196"/>
+    <polygon points="362,208 362,132 296,196"/>
+    <!-- head -->
+    <rect x="122" y="188" width="268" height="164" rx="34"/>
+  </g>
+  <!-- eyes -->
+  <rect x="188" y="240" width="26" height="44" rx="12" fill="#0b0e14"/>
+  <rect x="298" y="240" width="26" height="44" rx="12" fill="#0b0e14"/>
+  <!-- nose -->
+  <polygon points="245,306 267,306 256,320" fill="#0b0e14"/>
+  <!-- whiskers -->
+  <g stroke="#e2a75e" stroke-width="8" stroke-linecap="round">
+    <line x1="66" y1="252" x2="112" y2="258"/>
+    <line x1="66" y1="292" x2="112" y2="286"/>
+    <line x1="446" y1="252" x2="400" y2="258"/>
+    <line x1="446" y1="292" x2="400" y2="286"/>
+  </g>
+
+  <!-- prompt line: ❯ and a block cursor -->
+  <g>
+    <polyline points="164,404 200,432 164,460" fill="none" stroke="#e2a75e" stroke-width="18" stroke-linecap="round" stroke-linejoin="round"/>
+    <rect x="236" y="406" width="30" height="52" rx="6" fill="#c6cfdb"/>
+  </g>
+</svg>
