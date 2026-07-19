@@ -25,10 +25,11 @@ This starts the daemon on `http://127.0.0.1:4747`, serves the UI from the same p
 
 ## Hook setup
 
-By default garage detects "needs input" by polling `claude agents --json` every couple of seconds — it works, but it's coarse. For precise, instant detection, install Claude Code's own hooks:
+By default garage detects "needs input" by polling `claude agents --json` every couple of seconds — it works, but it's coarse. For precise, instant detection, install Claude Code's own hooks — one click:
 
-1. `GET http://127.0.0.1:4747/api/hooks/snippet` (the running garage UI also links this from its hooks banner)
-2. Merge the returned JSON into `~/.claude/settings.json`
+- Click **install hooks for me** in the banner the garage UI shows (it calls `POST /api/hooks/install`, which merges the hook entries into `~/.claude/settings.json` after saving a timestamped backup next to it; running it again is a safe no-op).
+
+Prefer doing it by hand? `GET http://127.0.0.1:4747/api/hooks/snippet` returns the JSON to merge into `~/.claude/settings.json` yourself.
 
 Without hooks installed, garage still works — status just lags behind the poller's interval instead of updating the instant Claude asks for input.
 
@@ -39,6 +40,8 @@ Without hooks installed, garage still works — status just lags behind the poll
 | `1`–`9` | switch focused workspace to the Nth in rail order |
 | `[` / `]` | cycle the focused terminal within the current workspace |
 | `a` | jump to a session that needs input, in any workspace |
+| `\` | split the focused terminal right (spawns a new session there) |
+| `m` | maximize the focused terminal ⇄ restore the grid |
 | `Tab` | changes pane: toggle list ⇄ diff |
 | `j` / `k` | next / previous changed file |
 | `r` | enter full-screen review mode |

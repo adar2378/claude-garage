@@ -47,6 +47,24 @@ export default function App() {
   const [focusedSessionId, setFocusedSessionId] = useState(null);
   const [showAddWorkspace, setShowAddWorkspace] = useState(false);
 
+  // ---- p7 connection-resilience: daemon reachability, derived from the
+  // SSE stream alone (design D-conn-chip — per-terminal WS state stays
+  // per-cell). Starts "reconnecting" until the first open lands so a dead
+  // daemon is never presented as live.
+  const [connState, setConnState] = useState("reconnecting"); // "live" | "reconnecting"
+
+  // ---- p7 input-mode-indicator: where keystrokes go right now — null =
+  // chrome, else the session id whose terminal holds DOM focus (design
+  // D-mode-chip: document.activeElement is the source of truth, same rule
+  // the keydown suppression check already uses).
+  const [inputMode, setInputMode] = useState(null);
+  const [modeHint, setModeHint] = useState(null); // transient {label} toast
+
+  // ---- p7 grid-controls: TerminalGrid publishes its imperative actions
+  // (toggleMaximize, splitFocused) here so the single keydown listener
+  // below can drive `\` and `m` without owning any dockview state.
+  const gridActionsRef = useRef(null);
+
   // ---- p4-layout-focus-workspace-ux: D-dim (reworked to column-level
   // semantics) — which of the three grid columns ('rail' | 'grid' | 'pane')
   // is the dimming spotlight's target. Tracked by last interaction: a
@@ -204,8 +222,13 @@ export default function App() {
     };
   }, []);
 
+  // Returns the fetch promise so callers that need to act *after* the new
+  // session list is in state (e.g. TerminalGrid.splitFrom focusing a
+  // just-spawned cell — App's focus-clamp effect would revert a focus id
+  // that isn't in `sessions` yet) can await it. Fire-and-forget call sites
+  // are unaffected.
   const refreshSessions = useCallback(() => {
-    fetchSessions()
+    return fetchSessions()
       .then(setSessions)
       .catch((e) => setLoadError(e.message));
   }, []);
@@ -279,12 +302,18 @@ export default function App() {
     let hasOpenedBefore = false;
 
     es.addEventListener("open", () => {
+      setConnState("live");
       // First open is just the initial connection (we already did a GET
       // above). Any subsequent "open" means the browser reconnected after
       // a drop — resync via GET /api/sessions per design's D-push mitigation.
       if (hasOpenedBefore) refreshSessions();
       hasOpenedBefore = true;
     });
+
+    // p7 connection-resilience: EventSource retries on its own; all we add
+    // is making the retry state visible so stale status is never mistaken
+    // for fresh (spec: "SSE drop is visible in the header").
+    es.addEventListener("error", () => setConnState("reconnecting"));
 
     es.addEventListener("status", (e) => {
       let payload;
@@ -325,6 +354,84 @@ export default function App() {
       clearInterval(interval);
     };
   }, []);
+
+  // ---- p7 input-mode-indicator: focusin/focusout recompute (design
+  // D-mode-chip). The timeout lets activeElement settle — focusout fires
+  // while focus is still mid-flight between elements.
+  useEffect(() => {
+    let timer;
+    const recompute = () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        const active = document.activeElement;
+        const xt = active && active.closest ? active.closest(".xterm") : null;
+        const holder = xt ? xt.closest("[data-session-id]") : null;
+        setInputMode(holder?.dataset.sessionId ?? null);
+      }, 0);
+    };
+    window.addEventListener("focusin", recompute);
+    window.addEventListener("focusout", recompute);
+    recompute();
+    return () => {
+      clearTimeout(timer);
+      window.removeEventListener("focusin", recompute);
+      window.removeEventListener("focusout", recompute);
+    };
+  }, []);
+
+  // Transient escape hint, once per entry into a terminal (spec: "Hint
+  // appears on first focus") — auto-dismisses, never requires interaction.
+  useEffect(() => {
+    if (!inputMode) {
+      setModeHint(null);
+      return;
+    }
+    const session = sessionsRef.current.find((s) => s.id === inputMode);
+    setModeHint({ label: session?.label ?? inputMode.split("/").pop() });
+    const timer = setTimeout(() => setModeHint(null), 4200);
+    return () => clearTimeout(timer);
+  }, [inputMode]);
+
+  // ---- p7 attention-badge: derived count, never stored (design D-badge) ----
+  const needsCount = useMemo(
+    () => sessions.filter((s) => s.status === "needs-input").length,
+    [sessions]
+  );
+
+  // Mirror into the page title so a backgrounded tab is itself a status
+  // light (spec: "Title gains and loses the count").
+  useEffect(() => {
+    document.title = needsCount > 0 ? `(${needsCount}) claude-garage` : "claude-garage";
+  }, [needsCount]);
+
+  // ---- p7 (spec: "Changes pane auto-collapse on narrow viewports"):
+  // media-query listener rather than pure CSS because the pane's collapsed
+  // state is React state driving the grid template. Remembers the
+  // pre-narrow value and restores it when the viewport widens; manual
+  // expansion while narrow sticks (the listener only fires on threshold
+  // crossings).
+  const changesPaneCollapsedRef = useRef(false);
+  const preNarrowCollapsedRef = useRef(null);
+  useEffect(() => {
+    const mq = window.matchMedia("(max-width: 1080px)");
+    const apply = () => {
+      if (mq.matches) {
+        if (preNarrowCollapsedRef.current === null) {
+          preNarrowCollapsedRef.current = changesPaneCollapsedRef.current;
+          setChangesPaneCollapsed(true);
+        }
+      } else if (preNarrowCollapsedRef.current !== null) {
+        setChangesPaneCollapsed(preNarrowCollapsedRef.current);
+        preNarrowCollapsedRef.current = null;
+      }
+    };
+    apply();
+    mq.addEventListener("change", apply);
+    return () => mq.removeEventListener("change", apply);
+  }, []);
+  useEffect(() => {
+    changesPaneCollapsedRef.current = changesPaneCollapsed;
+  }, [changesPaneCollapsed]);
 
   // ---- keep focus valid as groups change (initial pick, or workspace/session disappearing) ----
   useEffect(() => {
@@ -495,9 +602,15 @@ export default function App() {
   }, [focusedWorkspace, selectedFilePath, diffFiles]);
 
   const openSelectedFileInEditor = useCallback(() => {
-    if (!focusedWorkspace || !selectedFilePath) return;
-    const file = diffFiles.find((f) => f.path === selectedFilePath);
-    if (!file) return;
+    if (!focusedWorkspace) return;
+    const file = selectedFilePath ? diffFiles.find((f) => f.path === selectedFilePath) : null;
+    if (!file) {
+      // p7 (spec: "Editor-open fallback to workspace root"): `o` with no
+      // selected diff file opens the workspace root — matching the README
+      // and help copy instead of silently doing nothing.
+      openEditor(focusedWorkspace).catch((e) => setEditorError(e.message));
+      return;
+    }
     openEditor(focusedWorkspace, file.path, firstHunkLine(file.diff)).catch((e) =>
       setEditorError(e.message)
     );
@@ -506,6 +619,17 @@ export default function App() {
   const openWorkspaceRoot = useCallback((name) => {
     openEditor(name).catch((e) => setEditorError(e.message));
   }, []);
+
+  // p7 (spec: "Visible review-mode entry"): one entry path shared by the
+  // `r` keybinding and ChangesPane's review button — blur any terminal
+  // focus (so Esc works on the very next keypress), refetch
+  // unconditionally (design D-freshness trigger 3/3), then open.
+  const enterReviewMode = useCallback(() => {
+    if (!focusedWorkspace) return;
+    blurActiveTerminal();
+    fetchDiffForWorkspace(focusedWorkspace);
+    setReviewMode(true);
+  }, [focusedWorkspace, blurActiveTerminal, fetchDiffForWorkspace]);
 
   // 501/400/404 from open-editor auto-dismiss so the toast doesn't linger.
   useEffect(() => {
@@ -578,13 +702,20 @@ export default function App() {
       }
       if (e.key === "r") {
         e.preventDefault();
-        if (!focusedWorkspace) return;
-        // Review-mode entry always refetches unconditionally (design
-        // D-freshness trigger 3/3), after blurring any terminal focus so
-        // Esc works on the very next keypress (design D-keys).
-        blurActiveTerminal();
-        fetchDiffForWorkspace(focusedWorkspace);
-        setReviewMode(true);
+        enterReviewMode();
+        return;
+      }
+      // p7 grid-controls keybindings — same suppression rule as everything
+      // above (never fire while a terminal has focus). Actions live in
+      // TerminalGrid, published via gridActionsRef.
+      if (e.key === "\\") {
+        e.preventDefault();
+        gridActionsRef.current?.splitFocused?.("right");
+        return;
+      }
+      if (e.key === "m") {
+        e.preventDefault();
+        gridActionsRef.current?.toggleMaximize?.();
         return;
       }
       if (e.key === "Escape") {
@@ -636,12 +767,16 @@ export default function App() {
     stepSelectedFile,
     markViewedAndAdvance,
     openSelectedFileInEditor,
-    focusedWorkspace,
-    blurActiveTerminal,
-    fetchDiffForWorkspace,
+    enterReviewMode,
   ]);
 
   const focusedGroup = groups.find((g) => g.name === focusedWorkspace) ?? null;
+
+  // p7 input-mode-indicator: human label for the chip/strip — prefer the
+  // session's label, fall back to the id's last segment.
+  const modeLabel = inputMode
+    ? sessions.find((s) => s.id === inputMode)?.label ?? inputMode.split("/").pop()
+    : null;
 
   return (
     // P4-WIRE: settings/focus-dim — useSettings() gates a `focus-dim`
@@ -660,7 +795,51 @@ export default function App() {
       >
         <span className="font-bold tracking-wide text-garage-amber">claude-garage</span>
         <span className="text-garage-dim">pit wall</span>
+        {/* p7 connection-resilience: daemon reachability chip (spec:
+            "Connection-state chip"). */}
+        <span
+          title="daemon connection state"
+          className={`flex items-center gap-1.5 border px-2 py-0.5 text-[11px] ${
+            connState === "live"
+              ? "border-garage-line text-garage-dim"
+              : "border-garage-amber text-garage-amber"
+          }`}
+        >
+          <span className={connState === "live" ? "text-garage-green" : ""}>
+            {connState === "live" ? "●" : "↻"}
+          </span>
+          {connState === "live" ? "live" : "reconnecting…"}
+        </span>
         <div className="relative ml-auto flex items-center gap-2">
+          {/* p7 attention-badge: aggregate needs-input count; click = same
+              jump as `a`. Quiet zero state keeps header geometry stable. */}
+          <button
+            type="button"
+            onClick={jumpToNeedsInput}
+            title="jump to a session that needs input (same as pressing a)"
+            className={`flex items-center gap-1.5 border px-2 py-0.5 text-[11px] ${
+              needsCount > 0
+                ? "border-garage-amber text-garage-amber hover:bg-garage-sel"
+                : "border-garage-line text-garage-dim"
+            }`}
+          >
+            <span className={needsCount > 0 ? "" : "text-garage-faint"}>●</span>
+            {needsCount === 0
+              ? "all clear"
+              : `${needsCount} need${needsCount === 1 ? "s" : ""} input`}
+          </button>
+          {/* p7 input-mode-indicator: the keys-routing chip (spec:
+              "Keys-routing chip"). */}
+          <span
+            title="where keystrokes go right now"
+            className={`border px-2 py-0.5 text-[11px] ${
+              inputMode
+                ? "border-garage-amber text-garage-amber"
+                : "border-garage-line text-garage-dim"
+            }`}
+          >
+            keys → {inputMode ? modeLabel : "garage"}
+          </span>
           <SettingsPopover />
           {/* P4-WIRE: settings/focus-dim — gear button opens the settings
               popover (design D-settings) belongs here, left of "+ add
@@ -747,6 +926,8 @@ export default function App() {
           onHideCell={hideSession}
           columnActive={activeColumn === "grid"}
           onActivateColumn={activateGridColumn}
+          onAddWorkspace={() => setShowAddWorkspace(true)}
+          gridActionsRef={gridActionsRef}
         />
         {!changesPaneCollapsed && (
           <div
@@ -772,7 +953,38 @@ export default function App() {
           onBlurChrome={blurActiveTerminal}
           columnActive={activeColumn === "pane"}
           onActivateColumn={activatePaneColumn}
+          onEnterReview={enterReviewMode}
         />
+      </div>
+
+      {/* p7 input-mode-indicator: persistent footer key strip (spec:
+          "Footer key strip") — core keys discoverable without knowing `?`
+          exists, plus the live key-routing note. Not a focus target. */}
+      <div
+        aria-hidden="true"
+        className="flex flex-none flex-wrap items-center gap-4 border-t border-garage-line bg-garage-panel px-4 py-1 text-[11px] text-garage-faint"
+      >
+        <span>
+          <span className="text-garage-amber">?</span> help
+        </span>
+        <span>
+          <span className="text-garage-amber">a</span> needs-input
+        </span>
+        <span>
+          <span className="text-garage-amber">1–9</span> workspace
+        </span>
+        <span>
+          <span className="text-garage-amber">\</span> split
+        </span>
+        <span>
+          <span className="text-garage-amber">m</span> maximize
+        </span>
+        <span>
+          <span className="text-garage-amber">r</span> review
+        </span>
+        <span className={`ml-auto ${inputMode ? "text-garage-amber" : ""}`}>
+          {inputMode ? `keys go to ${modeLabel} — Ctrl+\` to return` : "keys go to garage"}
+        </span>
       </div>
 
       {reviewMode && (
@@ -788,6 +1000,15 @@ export default function App() {
       )}
 
       {helpOpen && <HelpOverlay onClose={() => setHelpOpen(false)} />}
+
+      {/* p7 input-mode-indicator: transient escape hint on terminal focus
+          (spec: "Terminal-focus escape hint"). */}
+      {modeHint && (
+        <div className="fixed bottom-10 left-1/2 z-[60] -translate-x-1/2 border border-garage-line bg-garage-panel px-4 py-1.5 text-xs text-garage-dim shadow-lg">
+          keys now go to <span className="font-semibold text-garage-amber">{modeHint.label}</span>{" "}
+          — press <span className="text-garage-amber">Ctrl+`</span> to return to garage
+        </div>
+      )}
 
       {editorError && (
         <div className="fixed bottom-4 right-4 z-[60] flex max-w-sm items-start gap-2 border border-garage-red bg-garage-panel px-3 py-2 text-xs text-garage-red shadow-lg">

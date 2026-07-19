@@ -1,6 +1,9 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { timingSafeEqual } from "node:crypto";
+import { copyFile, mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { homedir } from "node:os";
+import { dirname, join } from "node:path";
 import { listSessions } from "./tmux.js";
 import { setStatus } from "./status.js";
 import { getHookToken } from "./registry.js";
@@ -84,6 +87,101 @@ export async function hookSnippet() {
   };
 }
 
+// p7 hooks-install (design D-hooks-install): merge the snippet into
+// ~/.claude/settings.json server-side so the UI can offer one-click
+// installation instead of asking users to hand-merge JSON.
+//
+// Safety order: parse-or-refuse (a corrupt file is returned as an error,
+// byte-for-byte untouched) -> timestamped backup of the pre-install file
+// -> atomic write (tmp + rename, same directory, so a crash mid-write can
+// never leave a half-written settings.json). Idempotency comes from
+// entry-level dedupe: a hook group is only appended when no existing
+// group for that event already carries one of its hook URLs (the URL
+// embeds the per-install token, which is stable — see getHookToken).
+const SETTINGS_PATH = join(homedir(), ".claude", "settings.json");
+
+function groupHasAnyUrl(group, urls) {
+  return (group?.hooks ?? []).some((h) => urls.has(h.url));
+}
+
+export function mergeHookSnippet(settings, snippet) {
+  const merged = { ...settings };
+  let changed = false;
+
+  merged.hooks = { ...(merged.hooks ?? {}) };
+  for (const [event, snippetGroups] of Object.entries(snippet.hooks)) {
+    const existing = [...(merged.hooks[event] ?? [])];
+    for (const group of snippetGroups) {
+      const urls = new Set((group.hooks ?? []).map((h) => h.url));
+      if (!existing.some((g) => groupHasAnyUrl(g, urls))) {
+        existing.push(group);
+        changed = true;
+      }
+    }
+    merged.hooks[event] = existing;
+  }
+
+  const allowed = new Set(merged.allowedHttpHookUrls ?? []);
+  for (const url of snippet.allowedHttpHookUrls ?? []) {
+    if (!allowed.has(url)) {
+      allowed.add(url);
+      changed = true;
+    }
+  }
+  merged.allowedHttpHookUrls = [...allowed];
+
+  return { merged, changed };
+}
+
+async function installHooks() {
+  let raw = null;
+  try {
+    raw = await readFile(SETTINGS_PATH, "utf8");
+  } catch (err) {
+    if (err.code !== "ENOENT") throw err;
+  }
+
+  let settings = {};
+  if (raw !== null && raw.trim() !== "") {
+    try {
+      settings = JSON.parse(raw);
+    } catch {
+      const error = new Error(
+        `~/.claude/settings.json is not valid JSON — fix it (or remove it) and retry; the file was left untouched`
+      );
+      error.statusCode = 422;
+      throw error;
+    }
+    if (typeof settings !== "object" || settings === null || Array.isArray(settings)) {
+      const error = new Error(
+        `~/.claude/settings.json is not a JSON object — the file was left untouched`
+      );
+      error.statusCode = 422;
+      throw error;
+    }
+  }
+
+  const snippet = await hookSnippet();
+  const { merged, changed } = mergeHookSnippet(settings, snippet);
+  if (!changed) {
+    return { ok: true, installed: true, alreadyInstalled: true, backup: null };
+  }
+
+  await mkdir(dirname(SETTINGS_PATH), { recursive: true });
+
+  let backup = null;
+  if (raw !== null) {
+    backup = `${SETTINGS_PATH}.garage-backup-${new Date().toISOString().replace(/[:.]/g, "-")}`;
+    await copyFile(SETTINGS_PATH, backup);
+  }
+
+  const tmp = `${SETTINGS_PATH}.garage-tmp-${process.pid}`;
+  await writeFile(tmp, `${JSON.stringify(merged, null, 2)}\n`, "utf8");
+  await rename(tmp, SETTINGS_PATH);
+
+  return { ok: true, installed: true, alreadyInstalled: false, backup };
+}
+
 export default async function hookRoutes(app) {
   // Auth: per-install token in the URL (claude's HTTP hooks are URL-only
   // config, so the token rides as a query param). Combined with the normal
@@ -108,4 +206,16 @@ export default async function hookRoutes(app) {
   });
 
   app.get("/api/hooks/snippet", async () => hookSnippet());
+
+  // p7 hooks-install: browser-called (rides the normal Origin allowlist,
+  // like every /api route except /api/hooks/claude's token scheme).
+  app.post("/api/hooks/install", async (req, reply) => {
+    try {
+      return await installHooks();
+    } catch (err) {
+      return reply
+        .code(err.statusCode ?? 500)
+        .send({ error: err.message ?? "hook install failed" });
+    }
+  });
 }

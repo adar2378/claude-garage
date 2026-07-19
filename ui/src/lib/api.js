@@ -151,6 +151,19 @@ export async function renameWorkspace(oldName, newName) {
   return body;
 }
 
+// p7 hooks-install: one-click server-side merge of the hook snippet into
+// ~/.claude/settings.json (backup + atomic write — see daemon/src/hooks.js).
+// Resolves {ok, installed, alreadyInstalled, backup}; 422 (corrupt
+// settings.json) and other failures surface via the thrown Error's message.
+export async function installHooks() {
+  const res = await fetch("/api/hooks/install", { method: "POST" });
+  const body = await parseJsonSafe(res);
+  if (!res.ok) {
+    throw new Error(body.error || `hook install failed (${res.status})`);
+  }
+  return body;
+}
+
 export function reportVisibility(clientId, visible) {
   fetch("/api/ui/visibility", {
     method: "POST",

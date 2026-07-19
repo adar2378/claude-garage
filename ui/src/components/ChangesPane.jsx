@@ -52,6 +52,7 @@ export default function ChangesPane({
   onBlurChrome,
   columnActive,
   onActivateColumn,
+  onEnterReview,
 }) {
   const [paneSplit, setPaneSplit] = useState(() => loadPaneSizes().paneSplit);
   const paneSplitRef = useRef(paneSplit);
@@ -132,11 +133,22 @@ export default function ChangesPane({
             ⎇ {branch}
           </span>
         )}
+        {/* p7 (spec: "Visible review-mode entry"): review mode was
+            keyboard-only (`r`) — one of the product's four pillars with
+            zero mouse discoverability. Same entry path as the binding. */}
+        <button
+          type="button"
+          onClick={onEnterReview}
+          title="full-screen review mode (r)"
+          className="ml-auto border border-garage-line px-2 py-0.5 text-[11px] text-garage-dim hover:border-garage-amber hover:text-garage-amber"
+        >
+          review
+        </button>
         <button
           type="button"
           onClick={onRefresh}
           title="refresh diff"
-          className="ml-auto text-garage-dim hover:text-garage-amber"
+          className="text-garage-dim hover:text-garage-amber"
         >
           ↻
         </button>

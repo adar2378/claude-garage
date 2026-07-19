@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { glyphFor, colorFor } from "../lib/status.js";
+import { glyphFor, colorFor, tipFor } from "../lib/status.js";
 import { restoreSession, renameWorkspace, deleteWorkspace } from "../lib/api.js";
 import AddSessionControl from "./AddSessionControl.jsx";
 
@@ -240,7 +240,7 @@ export default function WorkspaceRail({
                   onMouseDown={(e) => e.stopPropagation()}
                   onClick={() => startRename(group.name)}
                   title={`rename ${group.name}`}
-                  className="shrink-0 px-1 text-garage-faint hover:text-garage-amber"
+                  className="shrink-0 px-1.5 py-0.5 text-garage-faint hover:text-garage-amber"
                 >
                   ✎
                 </button>
@@ -250,24 +250,28 @@ export default function WorkspaceRail({
                   type="button"
                   onClick={() => onOpenRoot(group.name)}
                   title={`open ${group.name} root in editor`}
-                  className="shrink-0 px-1 text-garage-faint hover:text-garage-amber"
+                  className="shrink-0 px-1.5 py-0.5 text-garage-faint hover:text-garage-amber"
                 >
                   ⧉
                 </button>
               )}
+              {/* p7 (spec: "Chrome affordance standards"): this action is
+                  SAFE (unregisters, sessions keep running) — it must never
+                  share the ✕ vocabulary with the session-kill control, so
+                  it reads "unreg" instead. Same two-step arm as before. */}
               {!isRenamingThis && group.registered && (
                 <button
                   type="button"
                   onMouseDown={(e) => e.stopPropagation()}
                   onClick={() => handleDelete(group.name)}
-                  title={`remove ${group.name} from the registry (sessions keep running)`}
-                  className={`shrink-0 px-1 ${
+                  title={`unregister ${group.name} — sessions keep running in tmux`}
+                  className={`shrink-0 px-1.5 py-0.5 text-[10px] ${
                     confirmingDelete === group.name
                       ? "text-garage-red"
                       : "text-garage-faint hover:text-garage-red"
                   }`}
                 >
-                  {confirmingDelete === group.name ? "sure?" : "✕"}
+                  {confirmingDelete === group.name ? "sure?" : "unreg"}
                 </button>
               )}
               {!isRenamingThis && allRestorable && (
@@ -314,7 +318,9 @@ export default function WorkspaceRail({
                       title={isHidden ? `${s.label} — hidden, click to bring back` : undefined}
                       className="flex min-w-0 flex-1 items-start gap-2 text-left"
                     >
-                      <span className={colorFor(s.status)}>{glyphFor(s.status)}</span>
+                      <span className={colorFor(s.status)} title={tipFor(s.status)}>
+                        {glyphFor(s.status)}
+                      </span>
                       <span className={`truncate ${isHidden ? "italic text-garage-faint" : ""}`}>
                         {s.label}
                       </span>
