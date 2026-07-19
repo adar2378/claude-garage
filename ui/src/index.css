@@ -43,3 +43,51 @@
 .focus-dim [data-dim-zone].dim-exempt {
   opacity: 1;
 }
+
+/* p6-drag-resize — draggable column/row dividers (App.jsx's rail/pane
+   column boundaries, ChangesPane's list/diff split). Each is a small hit
+   area (4px) with a hairline centered inside it via ::after, so the
+   visible line stays 1px while the actual drag target is comfortably
+   wider. `.is-dragging` is toggled by the owning component for the
+   duration of a lib/panes.js#startDrag session, same amber as :hover so
+   the divider stays highlighted even when the pointer strays off the thin
+   hit area mid-drag. */
+.col-divider {
+  position: relative;
+  cursor: col-resize;
+  background: transparent;
+}
+.col-divider::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 1px;
+  transform: translateX(-50%);
+  background: var(--color-garage-line);
+}
+.col-divider:hover::after,
+.col-divider.is-dragging::after {
+  background: var(--color-garage-amber);
+}
+
+.row-divider {
+  position: relative;
+  cursor: row-resize;
+  background: transparent;
+}
+.row-divider::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  height: 1px;
+  transform: translateY(-50%);
+  background: var(--color-garage-line);
+}
+.row-divider:hover::after,
+.row-divider.is-dragging::after {
+  background: var(--color-garage-amber);
+}

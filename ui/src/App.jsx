@@ -14,6 +14,7 @@ import { useSettings } from "./lib/settings.js";
 import { loadViewedMap, markViewed, pruneViewed, hashContent } from "./lib/viewed.js";
 import { firstHunkLine } from "./lib/diff.js";
 import { listPoppedOut, openPopout, clearPopout, subscribe as subscribePopouts } from "./lib/popouts.js";
+import { loadPaneSizes, savePaneSizes, startDrag } from "./lib/panes.js";
 
 // Kept for the page's lifetime (module scope, not persisted) — see API
 // contract for POST /api/ui/visibility.
@@ -58,6 +59,62 @@ export default function App() {
   const activateRailColumn = useCallback(() => setActiveColumn("rail"), []);
   const activateGridColumn = useCallback(() => setActiveColumn("grid"), []);
   const activatePaneColumn = useCallback(() => setActiveColumn("pane"), []);
+
+  // ---- p6-drag-resize: rail/pane column widths, drag-to-resize ----
+  // `railW`/`paneW` drive the grid's column tracks via inline style
+  // (gridTemplateColumns) instead of the old grid-cols-[...] class, so they
+  // can vary continuously while dragging. Initialized once from
+  // localStorage (lib/panes.js) and persisted only on drag end — not on
+  // every mousemove — to avoid hammering localStorage mid-drag.
+  const [paneSizes, setPaneSizes] = useState(() => loadPaneSizes());
+  const { railW, paneW } = paneSizes;
+  const paneSizesRef = useRef(paneSizes);
+  useEffect(() => {
+    paneSizesRef.current = paneSizes;
+  }, [paneSizes]);
+  // Which divider (if any) is actively being dragged, purely for the
+  // `.is-dragging` amber-highlight class — dividers are not dim-zones and
+  // don't participate in activeColumn.
+  const [draggingDivider, setDraggingDivider] = useState(null);
+
+  const handleRailDividerMouseDown = useCallback((e) => {
+    e.stopPropagation();
+    const startRailW = paneSizesRef.current.railW;
+    setDraggingDivider("rail");
+    // Track the latest value in the drag closure, not the React-synced ref:
+    // a mouseup landing in the same frame as the final mousemove would read
+    // the ref one render stale and persist the wrong width.
+    let latest = startRailW;
+    startDrag(e, {
+      onMove: (dx) => {
+        latest = Math.min(420, Math.max(160, startRailW + dx));
+        setPaneSizes((prev) => ({ ...prev, railW: latest }));
+      },
+      onEnd: () => {
+        setDraggingDivider(null);
+        savePaneSizes({ railW: latest });
+      },
+    });
+  }, []);
+
+  const handlePaneDividerMouseDown = useCallback((e) => {
+    e.stopPropagation();
+    const startPaneW = paneSizesRef.current.paneW;
+    setDraggingDivider("pane");
+    let latest = startPaneW;
+    startDrag(e, {
+      // The pane column sits to the right of this divider — dragging left
+      // (negative dx) grows it, dragging right shrinks it.
+      onMove: (dx) => {
+        latest = Math.min(680, Math.max(240, startPaneW - dx));
+        setPaneSizes((prev) => ({ ...prev, paneW: latest }));
+      },
+      onEnd: () => {
+        setDraggingDivider(null);
+        savePaneSizes({ paneW: latest });
+      },
+    });
+  }, []);
 
   // ---- p2-diff-review: changes pane + review mode state ----
   const [diffFiles, setDiffFiles] = useState([]);
@@ -637,9 +694,16 @@ export default function App() {
       <HooksBanner sessions={sessions} />
 
       <div
-        className={`grid min-h-0 flex-1 ${
-          changesPaneCollapsed ? "grid-cols-[240px_1fr_32px]" : "grid-cols-[240px_1fr_360px]"
-        }`}
+        className="grid min-h-0 flex-1"
+        style={{
+          // p6-drag-resize: 3 real columns + up to 2 divider tracks. The
+          // pane's divider track is dropped entirely (not just zero-width)
+          // when collapsed — a collapsed pane is a fixed 32px toggle strip,
+          // not resizable, so there's nothing for it to drag.
+          gridTemplateColumns: changesPaneCollapsed
+            ? `${railW}px 4px 1fr 32px`
+            : `${railW}px 4px 1fr 4px ${paneW}px`,
+        }}
       >
         <WorkspaceRail
           groups={groups}
@@ -659,6 +723,17 @@ export default function App() {
           columnActive={activeColumn === "rail"}
           onActivateColumn={activateRailColumn}
         />
+        {/* p6-drag-resize: a grid sibling of the three columns, not a
+            descendant of any of them, so WorkspaceRail/TerminalGrid/
+            ChangesPane's own onMouseDownCapture never fires for it
+            regardless — stopPropagation here just stops it bubbling past
+            this divider (no data-dim-zone, no activeColumn involvement). */}
+        <div
+          role="separator"
+          aria-orientation="vertical"
+          className={`col-divider ${draggingDivider === "rail" ? "is-dragging" : ""}`}
+          onMouseDown={handleRailDividerMouseDown}
+        />
         <TerminalGrid
           group={focusedGroup}
           focusedSessionId={focusedSessionId}
@@ -673,6 +748,14 @@ export default function App() {
           columnActive={activeColumn === "grid"}
           onActivateColumn={activateGridColumn}
         />
+        {!changesPaneCollapsed && (
+          <div
+            role="separator"
+            aria-orientation="vertical"
+            className={`col-divider ${draggingDivider === "pane" ? "is-dragging" : ""}`}
+            onMouseDown={handlePaneDividerMouseDown}
+          />
+        )}
         <ChangesPane
           workspace={focusedWorkspace}
           branch={diffBranch}

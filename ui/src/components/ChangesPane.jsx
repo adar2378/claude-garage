@@ -1,5 +1,6 @@
-import React from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import DiffList from "./DiffList.jsx";
+import { loadPaneSizes, savePaneSizes, startDrag } from "../lib/panes.js";
 
 const CHANGE_GLYPH = {
   modified: "M",
@@ -27,6 +28,14 @@ const CHANGE_COLOR = {
 // container, `dim-focused` whenever the pane is the `activeColumn`
 // (`columnActive`). No needs-input exemption inside: that signal lives on
 // rail rows / grid cells, not diff content.
+//
+// p6-drag-resize: the list/diff vertical split is `paneSplit`, local state
+// initialized from localStorage (lib/panes.js) — App.jsx no longer owns the
+// split itself. `emphasis` ("list" | "diff", still owned by App and toggled
+// by the Tab key) is now just a *preset trigger*: whenever it changes, an
+// effect snaps `paneSplit` to a matching preset (0.65 / 0.25) and persists
+// it. A manual drag of the row divider overrides that split immediately and
+// sticks until the next Tab press changes `emphasis` again.
 export default function ChangesPane({
   workspace,
   branch,
@@ -44,6 +53,49 @@ export default function ChangesPane({
   columnActive,
   onActivateColumn,
 }) {
+  const [paneSplit, setPaneSplit] = useState(() => loadPaneSizes().paneSplit);
+  const paneSplitRef = useRef(paneSplit);
+  useEffect(() => {
+    paneSplitRef.current = paneSplit;
+  }, [paneSplit]);
+
+  // Skip the very first run so mounting doesn't discard a persisted custom
+  // split just because App's initial `emphasis` happens to be "list" —
+  // only actual *changes* to emphasis (a Tab press) should snap the split.
+  const isFirstEmphasisRun = useRef(true);
+  useEffect(() => {
+    if (isFirstEmphasisRun.current) {
+      isFirstEmphasisRun.current = false;
+      return;
+    }
+    const preset = emphasis === "diff" ? 0.25 : 0.65;
+    setPaneSplit(preset);
+    savePaneSizes({ paneSplit: preset });
+  }, [emphasis]);
+
+  const splitContainerRef = useRef(null);
+  const [isDraggingSplit, setIsDraggingSplit] = useState(false);
+
+  const handleSplitMouseDown = useCallback((e) => {
+    e.stopPropagation();
+    const containerHeight = splitContainerRef.current?.getBoundingClientRect().height || 1;
+    const startSplit = paneSplitRef.current;
+    setIsDraggingSplit(true);
+    // Drag-closure latest, not the React-synced ref — a same-frame mouseup
+    // would persist one render stale (see App.jsx divider handlers).
+    let latest = startSplit;
+    startDrag(e, {
+      onMove: (_dx, dy) => {
+        latest = Math.min(0.85, Math.max(0.15, startSplit + dy / containerHeight));
+        setPaneSplit(latest);
+      },
+      onEnd: () => {
+        setIsDraggingSplit(false);
+        savePaneSizes({ paneSplit: latest });
+      },
+    });
+  }, []);
+
   if (collapsed) {
     return (
       <button
@@ -109,44 +161,57 @@ export default function ChangesPane({
         </div>
       )}
 
-      <div
-        className={`min-h-0 overflow-y-auto border-b border-garage-line ${
-          emphasis === "list" ? "flex-[2]" : "flex-1"
-        }`}
-      >
-        {loading && files.length === 0 && (
-          <p className="px-2 py-2 text-[11px] text-garage-dim">loading…</p>
-        )}
-        {!loading && files.length === 0 && (
-          <p className="px-2 py-2 text-[11px] text-garage-dim">no changes</p>
-        )}
-        {files.map((f) => (
-          <button
-            key={f.path}
-            type="button"
-            onClick={() => onSelectFile(f.path)}
-            className={`flex w-full items-center gap-2 px-2 py-1 text-left text-[11px] ${
-              f.path === selectedPath ? "bg-garage-sel" : "hover:bg-garage-sel"
-            }`}
-          >
-            <span className={CHANGE_COLOR[f.changeType] ?? "text-garage-dim"}>
-              {CHANGE_GLYPH[f.changeType] ?? "?"}
-            </span>
-            <span className="min-w-0 flex-1 truncate">{f.path}</span>
-            {f.binary && <span className="shrink-0 text-garage-faint">bin</span>}
-            {f.truncated && <span className="shrink-0 text-garage-amber">trunc</span>}
-            {!f.binary && (
-              <span className="shrink-0 text-garage-faint">
-                <span className="text-garage-green">+{f.additions ?? 0}</span>{" "}
-                <span className="text-garage-red">−{f.deletions ?? 0}</span>
+      <div ref={splitContainerRef} className="flex min-h-0 flex-1 flex-col">
+        <div
+          className="min-h-0 overflow-y-auto"
+          style={{ flexBasis: `${paneSplit * 100}%`, flexGrow: 0, flexShrink: 0 }}
+        >
+          {loading && files.length === 0 && (
+            <p className="px-2 py-2 text-[11px] text-garage-dim">loading…</p>
+          )}
+          {!loading && files.length === 0 && (
+            <p className="px-2 py-2 text-[11px] text-garage-dim">no changes</p>
+          )}
+          {files.map((f) => (
+            <button
+              key={f.path}
+              type="button"
+              onClick={() => onSelectFile(f.path)}
+              className={`flex w-full items-center gap-2 px-2 py-1 text-left text-[11px] ${
+                f.path === selectedPath ? "bg-garage-sel" : "hover:bg-garage-sel"
+              }`}
+            >
+              <span className={CHANGE_COLOR[f.changeType] ?? "text-garage-dim"}>
+                {CHANGE_GLYPH[f.changeType] ?? "?"}
               </span>
-            )}
-          </button>
-        ))}
-      </div>
+              <span className="min-w-0 flex-1 truncate">{f.path}</span>
+              {f.binary && <span className="shrink-0 text-garage-faint">bin</span>}
+              {f.truncated && <span className="shrink-0 text-garage-amber">trunc</span>}
+              {!f.binary && (
+                <span className="shrink-0 text-garage-faint">
+                  <span className="text-garage-green">+{f.additions ?? 0}</span>{" "}
+                  <span className="text-garage-red">−{f.deletions ?? 0}</span>
+                </span>
+              )}
+            </button>
+          ))}
+        </div>
 
-      <div className={`min-h-0 overflow-y-auto ${emphasis === "diff" ? "flex-[2]" : "flex-1"}`}>
-        <DiffList files={files} selectedPath={selectedPath} />
+        {/* p6-drag-resize: not a dim-zone. stopPropagation only stops the
+            bubble-phase (keeps onBlurChrome on the outer container from
+            firing on every drag-start) — the outer container's
+            onMouseDownCapture still runs first regardless, same as it
+            would for any other mousedown inside the pane. */}
+        <div
+          role="separator"
+          aria-orientation="horizontal"
+          className={`row-divider ${isDraggingSplit ? "is-dragging" : ""}`}
+          onMouseDown={handleSplitMouseDown}
+        />
+
+        <div className="min-h-0 flex-1 overflow-y-auto">
+          <DiffList files={files} selectedPath={selectedPath} />
+        </div>
       </div>
     </div>
   );
