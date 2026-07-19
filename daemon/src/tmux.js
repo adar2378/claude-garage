@@ -61,3 +61,10 @@ export async function createSession(id, dir, command, extraArgs = []) {
 export async function killSession(id) {
   await run("tmux", ["kill-session", "-t", exact(id)]);
 }
+
+// D-rename: renames the tmux session entity itself. Attached clients (grid
+// ptys, iTerm) stay attached across a rename — they're bound to the session
+// entity, not its name — so this is safe to call on a live, attached session.
+export async function renameSession(oldId, newId) {
+  await run("tmux", ["rename-session", "-t", exact(oldId), newId]);
+}

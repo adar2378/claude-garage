@@ -2,6 +2,7 @@ import { readFile, writeFile, rename, mkdir, unlink } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
+import { GARAGE_PREFIX } from "./tmux.js";
 
 // D-registry: ~/.garage/state.json {workspaces:{name:{dir}}}.
 // Created lazily on first write — a user who registers nothing has no file
@@ -66,6 +67,37 @@ export async function upsertWorkspace(name, dir) {
   state.workspaces[name] = { dir };
   await writeState(state);
   return { name, dir };
+}
+
+// D-rename: moves the workspace's registry key and rewrites every
+// resume-metadata key that embeds the old name (`garage/<old>/<label>` ->
+// `garage/<new>/<label>`, plus the meta's own `workspace` field) in one
+// atomic write — mirrors the live tmux renames the caller performs
+// separately. Callers are expected to have already validated oldName exists
+// and newName is free; this function trusts its inputs.
+export async function renameWorkspace(oldName, newName) {
+  const state = await readState();
+  const entry = state.workspaces[oldName];
+  if (!entry) return null;
+
+  delete state.workspaces[oldName];
+  state.workspaces[newName] = entry;
+
+  const oldPrefix = `${GARAGE_PREFIX}${oldName}/`;
+  const newPrefix = `${GARAGE_PREFIX}${newName}/`;
+  const nextSessions = {};
+  for (const [id, meta] of Object.entries(state.sessions)) {
+    if (id.startsWith(oldPrefix)) {
+      const newId = newPrefix + id.slice(oldPrefix.length);
+      nextSessions[newId] = { ...meta, workspace: newName };
+    } else {
+      nextSessions[id] = meta;
+    }
+  }
+  state.sessions = nextSessions;
+
+  await writeState(state);
+  return { name: newName, dir: entry.dir };
 }
 
 // D-resume-meta: sessions map, keyed by garage session id, {claudeSessionId,
