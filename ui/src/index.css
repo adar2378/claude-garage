@@ -32,6 +32,78 @@ button {
   cursor: pointer;
 }
 
+/* pit-pet (lib/pet.js, components/PitPet.jsx): a small ASCII creature on
+   the footer key strip whose mood is derived wall state. Species-true
+   motion: the pup bounces big and fast, the cat barely deigns to, the
+   duck NEVER bounces — it waddles. Colors ride the theme tokens. */
+.pit-pet {
+  position: fixed;
+  bottom: 24px;
+  left: 420px;
+  z-index: 45;
+  cursor: pointer;
+  user-select: none;
+  transition: left 0.32s linear;
+}
+.pit-pet pre {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.1;
+  color: var(--color-garage-ink);
+  white-space: pre;
+}
+.pit-pet:hover pre {
+  color: var(--color-garage-amber);
+}
+.pit-pet-bubble {
+  display: none;
+  position: absolute;
+  top: -14px;
+  right: -8px;
+  color: var(--color-garage-amber);
+  font-weight: 700;
+  font-size: 13px;
+  animation: pet-bubble-pulse 1s ease-in-out infinite;
+}
+.pit-pet.alert .pit-pet-bubble {
+  display: block;
+}
+.pit-pet.deadpan .pit-pet-bubble {
+  animation: none;
+}
+.pit-pet.bounce-big pre {
+  animation: pet-bounce-big 0.38s ease infinite;
+}
+.pit-pet.bounce-small pre {
+  animation: pet-bounce-small 0.9s ease infinite;
+}
+.pit-pet.waddle pre {
+  animation: pet-waddle 0.55s ease-in-out infinite;
+  transform-origin: 50% 100%;
+}
+@keyframes pet-bounce-big {
+  50% { transform: translateY(-5px); }
+}
+@keyframes pet-bounce-small {
+  50% { transform: translateY(-2px); }
+}
+@keyframes pet-waddle {
+  25% { transform: rotate(-4deg); }
+  75% { transform: rotate(4deg); }
+}
+@keyframes pet-bubble-pulse {
+  50% { opacity: 0.35; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .pit-pet,
+  .pit-pet pre,
+  .pit-pet-bubble {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
 /* p8-theming: the two Claude Desktop palettes (values from
    CLAUDE-THEME.md), painted over the same token set the whole UI and the
    dockview skin already consume. lib/theme.js stamps data-theme on the

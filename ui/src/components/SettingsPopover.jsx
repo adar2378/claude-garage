@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { useSettings } from "../lib/settings.js";
 import { THEME_OPTIONS } from "../lib/theme.js";
+import { PET_OPTIONS } from "../lib/pet.js";
 
 // Header gear affordance (design D-settings). Self-contained: owns its own
 // open/closed state and the gear trigger button, so wiring it into the app
@@ -110,6 +111,36 @@ export default function SettingsPopover() {
                 role="menuitemradio"
                 aria-checked={selected}
                 onClick={() => update({ theme: opt.value })}
+                className="flex w-full items-start gap-2 px-1 py-1 text-left hover:bg-garage-sel"
+              >
+                <span
+                  className={`shrink-0 whitespace-nowrap font-mono ${
+                    selected ? "text-garage-amber" : "text-garage-faint"
+                  }`}
+                >
+                  {selected ? "(•)" : "( )"}
+                </span>
+                <span className="flex flex-col gap-0.5">
+                  <span className="text-xs text-garage-ink">{opt.label}</span>
+                  <span className="text-[11px] text-garage-faint">{opt.description}</span>
+                </span>
+              </button>
+            );
+          })}
+
+          {/* pit-pet roster (lib/pet.js) — same radio aesthetic. */}
+          <p className="px-1 pb-1 pt-2 text-[10px] uppercase tracking-wide text-garage-faint">
+            pit pet
+          </p>
+          {PET_OPTIONS.map((opt) => {
+            const selected = (settings.pet ?? "off") === opt.value;
+            return (
+              <button
+                key={opt.value}
+                type="button"
+                role="menuitemradio"
+                aria-checked={selected}
+                onClick={() => update({ pet: opt.value })}
                 className="flex w-full items-start gap-2 px-1 py-1 text-left hover:bg-garage-sel"
               >
                 <span

@@ -17,6 +17,9 @@ const DEFAULTS = Object.freeze({
   // (system follows the OS between the two Claude palettes) — see
   // lib/theme.js for resolution and index.css for the palettes.
   theme: "garage",
+  // pit-pet: "off" | "cat" | "duck" | "pup" — see lib/pet.js. Off by
+  // default; nobody gets a surprise duck.
+  pet: "off",
 });
 
 function readFromStorage() {

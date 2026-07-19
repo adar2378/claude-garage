@@ -7,6 +7,7 @@ import AddWorkspaceForm from "./components/AddWorkspaceForm.jsx";
 import ChangesPane from "./components/ChangesPane.jsx";
 import ReviewMode from "./components/ReviewMode.jsx";
 import HelpOverlay from "./components/HelpOverlay.jsx";
+import PitPet from "./components/PitPet.jsx";
 import { fetchSessions, fetchWorkspaces, reportVisibility, fetchDiff, openEditor } from "./lib/api.js";
 import { buildGroupTree } from "./lib/groups.js";
 import SettingsPopover from "./components/SettingsPopover.jsx";
@@ -1132,6 +1133,10 @@ export default function App() {
           onOpenRoot={openWorkspaceRoot}
         />
       )}
+
+      {/* pit-pet: off by default (settings → pit pet). Sits on the key
+          strip; clicking it while a session is blocked = the `a` jump. */}
+      <PitPet sessions={sessions} connState={connState} onJump={jumpToNeedsInput} />
 
       {helpOpen && <HelpOverlay onClose={() => setHelpOpen(false)} />}
 
