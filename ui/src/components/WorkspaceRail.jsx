@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { glyphFor, colorFor } from "../lib/status.js";
-import { restoreSession, renameWorkspace } from "../lib/api.js";
+import { restoreSession, renameWorkspace, deleteWorkspace } from "../lib/api.js";
 import AddSessionControl from "./AddSessionControl.jsx";
 
 const INDENT_PX = 14;
@@ -53,6 +53,25 @@ export default function WorkspaceRail({
   const [restoringIds, setRestoringIds] = useState(() => new Set());
   const [restoreError, setRestoreError] = useState(null);
   const [renaming, setRenaming] = useState(null); // { workspaceName, value, error, busy } | null
+  // Two-step confirm for workspace removal: first ✕ arms it ("sure?"),
+  // second click within 3s deletes. Removal never kills tmux sessions —
+  // live ones reappear as an unregistered group.
+  const [confirmingDelete, setConfirmingDelete] = useState(null); // workspace name | null
+
+  async function handleDelete(name) {
+    if (confirmingDelete !== name) {
+      setConfirmingDelete(name);
+      setTimeout(() => setConfirmingDelete((c) => (c === name ? null : c)), 3000);
+      return;
+    }
+    setConfirmingDelete(null);
+    try {
+      await deleteWorkspace(name);
+      onWorkspaceRenamed?.(name, null); // same refetch path as rename
+    } catch (err) {
+      setRestoreError(err.message);
+    }
+  }
 
   function startRename(name) {
     setRenaming({ workspaceName: name, value: name, error: null, busy: false });
@@ -215,6 +234,21 @@ export default function WorkspaceRail({
                   className="shrink-0 px-1 text-garage-faint hover:text-garage-amber"
                 >
                   ⧉
+                </button>
+              )}
+              {!isRenamingThis && group.registered && (
+                <button
+                  type="button"
+                  onMouseDown={(e) => e.stopPropagation()}
+                  onClick={() => handleDelete(group.name)}
+                  title={`remove ${group.name} from the registry (sessions keep running)`}
+                  className={`shrink-0 px-1 ${
+                    confirmingDelete === group.name
+                      ? "text-garage-red"
+                      : "text-garage-faint hover:text-garage-red"
+                  }`}
+                >
+                  {confirmingDelete === group.name ? "sure?" : "✕"}
                 </button>
               )}
               {!isRenamingThis && allRestorable && (

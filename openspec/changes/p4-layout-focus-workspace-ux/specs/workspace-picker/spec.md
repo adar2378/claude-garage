@@ -1,5 +1,16 @@
 ## ADDED Requirements
 
+### Requirement: Remove a workspace without touching sessions
+The daemon SHALL expose `DELETE /api/workspaces/:name` which removes the workspace's registry entry and its sessions' resume metadata, and SHALL NOT create, kill, or mutate any tmux session. Unknown names SHALL be rejected with 404. The rail SHALL provide a remove control on registered workspace headers with a two-step confirmation; live sessions of a removed workspace SHALL remain running and visible as an unregistered group.
+
+#### Scenario: Removing a workspace leaves its sessions running
+- **WHEN** workspace `kowboy` has a live session `garage/kowboy/checkout` and `DELETE /api/workspaces/kowboy` is called
+- **THEN** the daemon responds 204, `kowboy` is gone from the registry, and `tmux ls` still shows `garage/kowboy/checkout` running
+
+#### Scenario: Unknown workspace rejected
+- **WHEN** `DELETE /api/workspaces/never-existed` is called
+- **THEN** the daemon responds 404
+
 ### Requirement: Native folder picker endpoint
 The daemon SHALL expose `POST /api/pick-directory` which, on macOS, opens a native folder picker dialog on the daemon's host and, when the user chooses a folder, responds with `{dir}` containing the absolute path of the chosen folder.
 

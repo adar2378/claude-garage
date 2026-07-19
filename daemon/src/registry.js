@@ -150,6 +150,20 @@ export async function removeSessionMeta(id) {
   await writeState(state);
 }
 
+// Deleting a workspace drops its registry entry AND its sessions' resume
+// metadata (they could never restore without a registered dir — a 409 loop),
+// but by design never touches tmux; see workspaces.js DELETE.
+export async function removeWorkspace(name) {
+  const state = await readState();
+  if (!(name in state.workspaces)) return;
+  delete state.workspaces[name];
+  const prefix = `garage/${name}/`;
+  for (const id of Object.keys(state.sessions)) {
+    if (id.startsWith(prefix)) delete state.sessions[id];
+  }
+  await writeState(state);
+}
+
 // Per-install shared secret for the hook endpoint (CSRF defense-in-depth):
 // generated once, embedded in the hook snippet URL, persisted so daemon
 // restarts don't invalidate hooks already installed in ~/.claude/settings.json.

@@ -1,6 +1,12 @@
 import { stat } from "node:fs/promises";
 import { GARAGE_PREFIX, NAME_RE, listSessions, renameSession } from "./tmux.js";
-import { listWorkspaces, upsertWorkspace, getWorkspace, renameWorkspace } from "./registry.js";
+import {
+  listWorkspaces,
+  upsertWorkspace,
+  getWorkspace,
+  renameWorkspace,
+  removeWorkspace,
+} from "./registry.js";
 
 export default async function workspaceRoutes(app) {
   app.get("/api/workspaces", async () => listWorkspaces());
@@ -66,5 +72,18 @@ export default async function workspaceRoutes(app) {
       response.failedSessions = failedSessions;
     }
     return reply.code(200).send(response);
+  });
+
+  // Removing a workspace NEVER touches tmux: the registry is a directory
+  // mapping, not a session store. Live sessions keep running and reappear
+  // in the rail as an unregistered group; the workspace's resume metadata
+  // is dropped so no permanently-unrestorable ghosts linger.
+  app.delete("/api/workspaces/:name", async (req, reply) => {
+    const name = req.params.name;
+    if (!(await getWorkspace(name))) {
+      return reply.code(404).send({ error: `unknown workspace: ${name}` });
+    }
+    await removeWorkspace(name);
+    return reply.code(204).send();
   });
 }

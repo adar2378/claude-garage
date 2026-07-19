@@ -148,3 +148,11 @@ export function reportVisibility(clientId, visible) {
     // best-effort only — losing a visibility ping is not fatal
   });
 }
+
+export async function deleteWorkspace(name) {
+  const res = await fetch(`/api/workspaces/${encodeURIComponent(name)}`, {
+    method: "DELETE",
+  });
+  if (res.status === 404) throw new Error(`unknown workspace: ${name}`);
+  if (!res.ok) throw new Error(`delete failed (${res.status})`);
+}
