@@ -81,3 +81,14 @@ When the generated diff content exceeds the daemon's internal size budget, the d
 #### Scenario: Diff within budget is not marked truncated
 - **WHEN** a workspace's diff content is within the daemon's size budget
 - **THEN** the response's `truncated` flag is `false` (or absent) and the diff content is complete
+
+### Requirement: Worktree diffs are fork-point diffs
+When the diff root resolves to a worktree session, the diff SHALL be computed against the merge-base of the worktree's HEAD and the source repository's current HEAD — so the response reflects everything the branch would bring (committed and uncommitted changes alike), which is the delta the finish (merge/discard) decision acts on. Untracked files SHALL still be included from status. If the fork point cannot be determined (source repo gone, unrelated histories), the diff SHALL fall back to the plain uncommitted-only behavior. Non-worktree diffs SHALL keep uncommitted-only semantics unchanged.
+
+#### Scenario: Committed branch work stays visible
+- **WHEN** a worktree session's agent commits its changes on `garage/feature` (worktree status now clean) and the diff is requested scoped to that session
+- **THEN** the response lists the committed files with their full diffs against the fork point, alongside any uncommitted and untracked changes
+
+#### Scenario: Plain workspace diffs are unaffected
+- **WHEN** the diff is requested for the workspace root (no session override, or a non-worktree session)
+- **THEN** only uncommitted changes are reported, exactly as before

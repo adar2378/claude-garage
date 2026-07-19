@@ -179,24 +179,49 @@ async function noIndexDiff(dir, relPath) {
 // this request landed). Returns registeredDir unchanged if no override
 // applies (no sessionId, unknown session, override path vanished, or the
 // resolved path IS the registry dir).
+// Returns { dir, isWorktree }: isWorktree marks that the override target
+// is a worktree session (has worktree metadata), which switches the diff
+// base to the fork point (see the route) so committed-but-unmerged branch
+// work still shows.
 async function resolveDiffRoot(registeredDir, sessionId) {
-  if (!sessionId) return registeredDir;
+  if (!sessionId) return { dir: registeredDir, isWorktree: false };
+
+  const meta = await getSessionMeta(sessionId).catch(() => null);
+  const wtPath = meta?.worktree?.path;
 
   const panePaths = await listPanePaths();
   const paneCwd = panePaths.get(sessionId);
   if (paneCwd && paneCwd !== registeredDir) {
     const s = await stat(paneCwd).catch(() => null);
-    if (s?.isDirectory()) return paneCwd;
+    if (s?.isDirectory()) return { dir: paneCwd, isWorktree: !!wtPath };
   }
 
-  const meta = await getSessionMeta(sessionId).catch(() => null);
-  const wtPath = meta?.worktree?.path;
   if (wtPath && wtPath !== registeredDir) {
     const s = await stat(wtPath).catch(() => null);
-    if (s?.isDirectory()) return wtPath;
+    if (s?.isDirectory()) return { dir: wtPath, isWorktree: true };
   }
 
-  return registeredDir;
+  return { dir: registeredDir, isWorktree: false };
+}
+
+// `git diff --name-status -z` records: STATUS\0PATH\0, renames/copies:
+// Rnnn\0OLD\0NEW\0. Emitted in parseStatus's entry shape so the same
+// changeTypeFor/rendering path applies.
+function parseNameStatusZ(raw) {
+  const tokens = raw.split("\0").filter((t) => t.length > 0);
+  const entries = [];
+  let i = 0;
+  while (i < tokens.length) {
+    const status = tokens[i];
+    if (status.startsWith("R") || status.startsWith("C")) {
+      entries.push({ kind: "rename", xy: "R.", path: tokens[i + 2], origPath: tokens[i + 1] });
+      i += 3;
+    } else {
+      entries.push({ kind: "ordinary", xy: status[0], path: tokens[i + 1] });
+      i += 2;
+    }
+  }
+  return entries;
 }
 
 export default async function diffRoutes(app) {
@@ -207,7 +232,7 @@ export default async function diffRoutes(app) {
     if (!registered) {
       return reply.code(404).send({ error: `unknown workspace: ${workspace}` });
     }
-    const dir = await resolveDiffRoot(registered.dir, sessionId);
+    const { dir, isWorktree } = await resolveDiffRoot(registered.dir, sessionId);
     const root = dir;
 
     // One gate covers both "not a git repo" and "registered dir no longer
@@ -227,8 +252,7 @@ export default async function diffRoutes(app) {
       return { files: [], truncated: false, root, branch };
     }
 
-    const entries = parseStatus(statusRaw);
-    if (entries.length === 0) return { files: [], truncated: false, root, branch };
+    const statusEntries = parseStatus(statusRaw);
 
     // Repos with zero commits have no HEAD to diff against — every
     // status-reported path is treated the same as an untracked file.
@@ -239,12 +263,55 @@ export default async function diffRoutes(app) {
       hasHead = false;
     }
 
+    // Fork-point diff for worktree sessions: "what changed" means
+    // everything the branch would bring relative to where it forked from
+    // the source repo — committed AND uncommitted — because that is the
+    // delta the finish (merge/discard) decision acts on. Base = merge-base
+    // of the worktree HEAD and the source repo's current HEAD. Tracked
+    // entries are re-derived against that base (git status alone goes
+    // blank the moment the agent commits); untracked files still come from
+    // status (diff never lists them). Any failure falls back to the plain
+    // uncommitted-only behavior.
+    let baseRef = "HEAD";
+    let entries = statusEntries;
+    if (isWorktree && hasHead) {
+      try {
+        const { stdout: repoHead } = await git(registered.dir, ["rev-parse", "HEAD"]);
+        const { stdout: mergeBase } = await git(dir, ["merge-base", "HEAD", repoHead.trim()]);
+        if (mergeBase.trim()) baseRef = mergeBase.trim();
+      } catch {
+        // fork point unknown (repo dir gone, unrelated histories) — keep HEAD
+      }
+      if (baseRef !== "HEAD") {
+        try {
+          const { stdout } = await git(dir, [
+            "diff",
+            "-M",
+            "--name-status",
+            "-z",
+            baseRef,
+            "--",
+            ".",
+          ]);
+          entries = [
+            ...parseNameStatusZ(stdout),
+            ...statusEntries.filter((e) => e.kind === "untracked"),
+          ];
+        } catch {
+          entries = statusEntries;
+          baseRef = "HEAD";
+        }
+      }
+    }
+
+    if (entries.length === 0) return { files: [], truncated: false, root, branch };
+
     let diffMap = new Map();
     if (hasHead) {
       const hasTracked = entries.some((e) => e.kind !== "untracked");
       if (hasTracked) {
         try {
-          const { stdout } = await git(dir, ["diff", "-M", "--no-color", "HEAD", "--", "."]);
+          const { stdout } = await git(dir, ["diff", "-M", "--no-color", baseRef, "--", "."]);
           diffMap = splitDiffByFile(stdout);
         } catch {
           diffMap = new Map();
