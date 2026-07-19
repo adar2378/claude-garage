@@ -91,12 +91,29 @@ Everything runs on your machine and stays there.
   `garage/<label>` branch; on close: **merge / discard / keep**.
 - 🎨 **Themes** — garage, claude dark, claude light, or follow the OS;
   terminals re-skin in place, full ANSI palettes included.
-- 🐈 **A pit pet** (opt-in) — an ASCII shop cat / rubber duck / pit pup whose
-  mood mirrors the wall; it runs toward the rail when an agent needs you.
 - 🔔 **Notifications** — badge + tab title in-app, opt-in browser
   notifications (click → jump) when the tab is hidden, macOS notification
   when no page is open (clickable with
   [`terminal-notifier`](https://github.com/julienXX/terminal-notifier)).
+
+## The pit pet 🐈
+
+An optional ASCII companion on the key strip whose mood *is* the wall:
+asleep when all is quiet, watching while agents run, **sprinting toward the
+rail with a `!`** the moment a session needs you (click it — that's the `a`
+jump), hiding in a box if the daemon drops, and celebrating when the last
+blocked session is answered. **Clicking it when nothing is wrong pets it.**
+It appreciates this.
+
+Turn it on (or off again) anytime in ⚙ settings → *pit pet*. It's **off by
+default** — nobody gets a surprise duck. Each species plays its state in
+character:
+
+| Pet | Personality |
+|---|---|
+| **shop cat** | saunters, barely deigns to bounce, ignores about 40% of your strolls, and celebrates by kneading in place — cats don't jump for joy in front of you |
+| **rubber duck** | deadpan: waddles, **never** bounces, and alerts with a single motionless stare; celebration is exactly one flap |
+| **pit pup** | maximum enthusiasm: fastest runner, biggest bounce, and celebrates with zoomies across the strip |
 
 ## Keybindings
 
@@ -109,6 +126,7 @@ Everything runs on your machine and stays there.
 | `m` | maximize the focused cell ⇄ restore |
 | `Tab` / `j` / `k` | changes pane: emphasis / next / prev file |
 | `r` | full-screen review mode · `v` mark viewed · `o` open in editor |
+| `Shift+Enter` | newline in Claude Code's composer (no `/terminal-setup` needed) |
 | `Ctrl+\`` | release keys from the terminal back to garage |
 | `?` | keybindings + status legend |
 
