@@ -24,6 +24,15 @@ const EVENT_TO_STATE = {
   Stop: "done",
 };
 
+// Claude Code's Notification hook fires for real blockers (permission
+// prompts, questions, plan approvals) AND for a ~60s idle reminder
+// ("Claude is waiting for your input") after a turn ends. The reminder is
+// idle semantics — waiting for you to ASK, not to ANSWER — and mapping it
+// to needs-input raises a sticky false alarm (needs-input never decays by
+// design). Filter it by message; unknown messages stay needs-input
+// (fail toward attention, never away from it).
+const IDLE_REMINDER_RE = /waiting for your input/i;
+
 async function getAgents() {
   try {
     const { stdout } = await run("claude", ["agents", "--json"]);
@@ -197,6 +206,15 @@ export default async function hookRoutes(app) {
     const state = EVENT_TO_STATE[payload.hook_event_name];
     if (!state) {
       return reply.code(200).send({ ok: true, ignored: true });
+    }
+
+    if (
+      payload.hook_event_name === "Notification" &&
+      IDLE_REMINDER_RE.test(payload.message ?? "")
+    ) {
+      // Idle reminder — leave the state alone (Stop already set done,
+      // which decays to idle on its own).
+      return reply.code(200).send({ ok: true, ignored: "idle-reminder" });
     }
 
     const ids = await resolveSessionIds(payload);

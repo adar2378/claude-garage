@@ -68,3 +68,14 @@ When a session transitions to `needs-input` while no pit-wall UI is visible (no 
 #### Scenario: Renewed transition fires a new notification
 - **WHEN** a session that previously notified for `needs-input` transitions to `working` and then back to `needs-input`
 - **THEN** a new notification is triggered for this second `needs-input` transition
+
+### Requirement: Idle reminders are not needs-input
+Claude Code's Notification hook fires both for genuine blockers (permission prompts, questions, plan approvals) and for an idle reminder emitted after the prompt sits unused (~60s, message "Claude is waiting for your input"). The daemon SHALL ignore idle-reminder notifications — leaving the session's state untouched — and SHALL map every other Notification (including ones with no message) to `needs-input`, failing toward attention rather than away from it. This preserves the state vocabulary: `needs-input` means waiting for you to answer; a finished turn waiting for your next prompt is `done`/`idle`.
+
+#### Scenario: Idle reminder leaves state alone
+- **WHEN** a session's turn ended (Stop → `done`) and Claude Code later fires the idle-reminder Notification
+- **THEN** the session's state is unchanged (`done`, decaying to `idle`), not `needs-input`
+
+#### Scenario: Permission prompts still flag instantly
+- **WHEN** a Notification arrives with a permission-request message (or no message at all)
+- **THEN** the session transitions to `needs-input`
