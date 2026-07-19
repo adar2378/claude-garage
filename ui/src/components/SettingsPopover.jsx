@@ -78,8 +78,13 @@ export default function SettingsPopover() {
                 onClick={() => update({ [row.key]: !checked })}
                 className="flex w-full items-start gap-2 px-1 py-1 text-left hover:bg-garage-sel"
               >
+                {/* whitespace-nowrap + shrink-0: the marker contains a
+                    space ("[ ]"), and a tight flex row will happily wrap
+                    it across two lines otherwise. */}
                 <span
-                  className={`font-mono ${checked ? "text-garage-amber" : "text-garage-faint"}`}
+                  className={`shrink-0 whitespace-nowrap font-mono ${
+                    checked ? "text-garage-amber" : "text-garage-faint"
+                  }`}
                 >
                   {checked ? "[x]" : "[ ]"}
                 </span>
@@ -108,7 +113,9 @@ export default function SettingsPopover() {
                 className="flex w-full items-start gap-2 px-1 py-1 text-left hover:bg-garage-sel"
               >
                 <span
-                  className={`font-mono ${selected ? "text-garage-amber" : "text-garage-faint"}`}
+                  className={`shrink-0 whitespace-nowrap font-mono ${
+                    selected ? "text-garage-amber" : "text-garage-faint"
+                  }`}
                 >
                   {selected ? "(•)" : "( )"}
                 </span>
