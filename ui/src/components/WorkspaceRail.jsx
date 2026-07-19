@@ -50,6 +50,8 @@ export default function WorkspaceRail({
   hiddenIds,
   columnActive,
   onActivateColumn,
+  viewsByWorkspace,
+  onSelectView,
 }) {
   const [restoringIds, setRestoringIds] = useState(() => new Set());
   const [restoreError, setRestoreError] = useState(null);
@@ -313,7 +315,14 @@ export default function WorkspaceRail({
               )}
             </div>
             <div className="ml-3 border-l border-garage-line pl-2">
-              {group.sessions.map((s) => {
+              {(() => {
+                // p8 grid-views: with 2+ views, sessions group under small
+                // view-header rows (clickable — switches the grid to that
+                // view). Single-view workspaces render flat, exactly as
+                // before — zero noise for the common case.
+                const viewsEntry = viewsByWorkspace?.[group.name];
+                const multiView = (viewsEntry?.views.length ?? 0) > 1;
+                const renderSessionRow = (s) => {
                 const isFocused = s.id === focusedSessionId;
                 const isRestorable = s.status === "restorable";
                 const isNeedsInput = s.status === "needs-input";
@@ -372,7 +381,35 @@ export default function WorkspaceRail({
                     )}
                   </div>
                 );
-              })}
+                };
+
+                if (!multiView) return group.sessions.map(renderSessionRow);
+
+                return viewsEntry.views.map((v) => (
+                  <div key={v.name}>
+                    <button
+                      type="button"
+                      onClick={() => onSelectView?.(group.name, v.name)}
+                      title={`show view "${v.name}" in the grid`}
+                      className="flex w-full items-center gap-1.5 px-2 py-0.5 text-[10px]"
+                    >
+                      <span className="text-garage-faint">▸</span>
+                      <span
+                        className={
+                          v.name === viewsEntry.focused
+                            ? "font-semibold text-garage-amber"
+                            : "text-garage-dim"
+                        }
+                      >
+                        {v.name}
+                      </span>
+                      {v.needsCount > 0 && <span className="text-garage-amber">●</span>}
+                      <span className="ml-auto text-garage-faint">{v.sessions.length}×</span>
+                    </button>
+                    <div className="ml-2">{v.sessions.map(renderSessionRow)}</div>
+                  </div>
+                ));
+              })()}
               {group.sessions.length === 0 && (
                 <p className="px-2 py-1 text-[11px] text-garage-faint">no sessions</p>
               )}

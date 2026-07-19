@@ -16,6 +16,14 @@ import { firstHunkLine } from "./lib/diff.js";
 import { listPoppedOut, openPopout, clearPopout, subscribe as subscribePopouts } from "./lib/popouts.js";
 import { loadPaneSizes, savePaneSizes, startDrag } from "./lib/panes.js";
 import { useApplyTheme } from "./lib/theme.js";
+import {
+  MAIN_VIEW,
+  loadViews,
+  saveViews,
+  computeViews,
+  viewOf,
+  deriveViewName,
+} from "./lib/views.js";
 
 // Kept for the page's lifetime (module scope, not persisted) — see API
 // contract for POST /api/ui/visibility.
@@ -195,6 +203,112 @@ export default function App() {
     () => buildGroupTree(workspaces, sessions),
     [workspaces, sessions]
   );
+
+  // ---- p8 grid-views: per-workspace view assignments (lib/views.js;
+  // localStorage-backed, derived fresh per render via a version counter
+  // bumped on every mutation). viewsByWorkspace maps each group to its
+  // ordered view list + focused view + raw assignments.
+  const [viewsVersion, setViewsVersion] = useState(0);
+  const bumpViews = useCallback(() => setViewsVersion((v) => v + 1), []);
+
+  const viewsByWorkspace = useMemo(() => {
+    const map = {};
+    for (const g of groups) {
+      const state = loadViews(g.name);
+      const views = computeViews(g.sessions, state.assignments);
+      const focused = views.some((v) => v.name === state.focused)
+        ? state.focused
+        : views[0]?.name ?? MAIN_VIEW;
+      map[g.name] = { views, focused, assignments: state.assignments };
+    }
+    return map;
+    // viewsVersion is the mutation signal — loadViews reads localStorage.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [groups, viewsVersion]);
+
+  // Views of the focused workspace + which session ids the grid should
+  // actually show (the focused view's members).
+  const focusedWsViews = focusedWorkspace ? viewsByWorkspace[focusedWorkspace] : null;
+  const focusedViewName = focusedWsViews?.focused ?? MAIN_VIEW;
+  const activeViewIds = useMemo(() => {
+    if (!focusedWsViews || focusedWsViews.views.length <= 1) return null; // single view => no filtering
+    const view = focusedWsViews.views.find((v) => v.name === focusedViewName);
+    return view ? new Set(view.sessions.map((s) => s.id)) : null;
+  }, [focusedWsViews, focusedViewName]);
+
+  // Switching views: persist the choice and focus that view's first session.
+  const selectView = useCallback(
+    (workspaceName, viewName) => {
+      const entry = viewsByWorkspace[workspaceName];
+      if (!entry) return;
+      saveViews(workspaceName, { assignments: entry.assignments, focused: viewName });
+      bumpViews();
+      setFocusedWorkspace(workspaceName);
+      const view = entry.views.find((v) => v.name === viewName);
+      if (view?.sessions[0]) setFocusedSessionId(view.sessions[0].id);
+    },
+    [viewsByWorkspace, bumpViews]
+  );
+
+  // Detach: the session becomes its own standalone view (named after its
+  // label) and the wall switches to it. Rejoin: back into main.
+  const detachSession = useCallback(
+    (workspaceName, sessionId) => {
+      const entry = viewsByWorkspace[workspaceName];
+      if (!entry) return;
+      const group = groups.find((g) => g.name === workspaceName);
+      const label = group?.sessions.find((s) => s.id === sessionId)?.label ?? "view";
+      const name = deriveViewName(label, entry.views.map((v) => v.name));
+      const assignments = { ...entry.assignments, [sessionId]: name };
+      saveViews(workspaceName, { assignments, focused: name });
+      bumpViews();
+      setFocusedSessionId(sessionId);
+    },
+    [viewsByWorkspace, groups, bumpViews]
+  );
+
+  const rejoinSession = useCallback(
+    (workspaceName, sessionId) => {
+      const entry = viewsByWorkspace[workspaceName];
+      if (!entry) return;
+      const assignments = { ...entry.assignments };
+      delete assignments[sessionId];
+      saveViews(workspaceName, { assignments, focused: MAIN_VIEW });
+      bumpViews();
+      setFocusedSessionId(sessionId);
+    },
+    [viewsByWorkspace, bumpViews]
+  );
+
+  // Sessions spawned by an explicit split while a detached view is focused
+  // should land in THAT view, not silently in main (where they'd be
+  // invisible).
+  const assignNewSession = useCallback(
+    (workspaceName, sessionId) => {
+      const entry = viewsByWorkspace[workspaceName];
+      if (!entry || entry.focused === MAIN_VIEW) return;
+      const assignments = { ...entry.assignments, [sessionId]: entry.focused };
+      saveViews(workspaceName, { assignments, focused: entry.focused });
+      bumpViews();
+    },
+    [viewsByWorkspace, bumpViews]
+  );
+
+  // Focus follows into views: whenever the focused session lives in a
+  // different view than the one on screen (rail click, `a` jump, []
+  // cycling), switch to its view. This is what guarantees no layout state
+  // can trap a blocked session out of sight.
+  useEffect(() => {
+    if (!focusedWorkspace || !focusedSessionId) return;
+    const entry = viewsByWorkspace[focusedWorkspace];
+    if (!entry || entry.views.length <= 1) return;
+    const sessionView = viewOf(entry.assignments, focusedSessionId);
+    if (sessionView !== entry.focused && entry.views.some((v) => v.name === sessionView)) {
+      saveViews(focusedWorkspace, { assignments: entry.assignments, focused: sessionView });
+      bumpViews();
+    }
+  }, [focusedWorkspace, focusedSessionId, viewsByWorkspace, bumpViews]);
+
   const [settings] = useSettings();
   // p8-theming: stamps data-theme on <html> from the theme setting (and
   // tracks the OS while set to "system").
@@ -453,10 +567,16 @@ export default function App() {
     const group = groups.find((g) => g.name === focusedWorkspace);
     if (!group) return;
     if (!group.sessions.some((s) => s.id === focusedSessionId)) {
-      const firstVisible = group.sessions.find((s) => !hiddenIds.has(s.id));
+      // p8 grid-views: prefer a session in the currently-focused view, so
+      // an initial load with a persisted detached view focused doesn't get
+      // yanked back to main by the focus→view sync effect.
+      const firstVisible =
+        group.sessions.find(
+          (s) => !hiddenIds.has(s.id) && (!activeViewIds || activeViewIds.has(s.id))
+        ) ?? group.sessions.find((s) => !hiddenIds.has(s.id));
       setFocusedSessionId(firstVisible?.id ?? group.sessions[0]?.id ?? null);
     }
-  }, [groups, focusedWorkspace, focusedSessionId, hiddenIds]);
+  }, [groups, focusedWorkspace, focusedSessionId, hiddenIds, activeViewIds]);
 
   const selectWorkspace = useCallback((name) => {
     setFocusedWorkspace(name);
@@ -905,6 +1025,8 @@ export default function App() {
           hiddenIds={hiddenIds}
           columnActive={activeColumn === "rail"}
           onActivateColumn={activateRailColumn}
+          viewsByWorkspace={viewsByWorkspace}
+          onSelectView={selectView}
         />
         {/* p6-drag-resize: a grid sibling of the three columns, not a
             descendant of any of them, so WorkspaceRail/TerminalGrid/
@@ -932,6 +1054,14 @@ export default function App() {
           onActivateColumn={activateGridColumn}
           onAddWorkspace={() => setShowAddWorkspace(true)}
           gridActionsRef={gridActionsRef}
+          views={focusedWsViews?.views ?? []}
+          focusedView={focusedViewName}
+          viewAssignments={focusedWsViews?.assignments ?? {}}
+          activeViewIds={activeViewIds}
+          onSelectView={selectView}
+          onDetachCell={detachSession}
+          onRejoinCell={rejoinSession}
+          onAssignNewSession={assignNewSession}
         />
         {!changesPaneCollapsed && (
           <div

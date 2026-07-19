@@ -63,7 +63,23 @@ export default function TerminalGrid({
   onActivateColumn,
   onAddWorkspace,
   gridActionsRef,
+  views = [],
+  focusedView,
+  viewAssignments = {},
+  activeViewIds,
+  onSelectView,
+  onDetachCell,
+  onRejoinCell,
+  onAssignNewSession,
 }) {
+  // p8 grid-views: layouts persist PER VIEW — the main view keeps the
+  // workspace's original key (backward compatible with pre-views
+  // layouts), detached views get their own.
+  const layoutKey = group
+    ? focusedView && focusedView !== "main"
+      ? `${group.name}::${focusedView}`
+      : group.name
+    : null;
   const [restoringIds, setRestoringIds] = useState(() => new Set());
   const [restoreError, setRestoreError] = useState(null);
   // p7 grid-controls: spawn-from-grid failures (409 label taken, 400
@@ -195,6 +211,10 @@ export default function TerminalGrid({
       if (referenceId) registerPlacementHint(newId, referenceId, direction);
       try {
         await createSession(group.name, label, worktree ? { worktree: true } : {});
+        // p8 grid-views: register the view assignment before the refetch
+        // recomputes views, so a split inside a detached view lands there
+        // instead of invisibly in main.
+        onAssignNewSession?.(group.name, newId);
         // Focus only after the refetch resolves — App clamps focusedSessionId
         // to ids present in `sessions`, so focusing before the new session
         // lands in state would be immediately reverted.
@@ -204,7 +224,7 @@ export default function TerminalGrid({
         setSpawnError(err.message);
       }
     },
-    [group, onSessionsRestored, onFocusCell]
+    [group, onSessionsRestored, onFocusCell, onAssignNewSession]
   );
 
   // p7 task 1.3: dockview 7 ships group-maximize natively —
@@ -249,8 +269,11 @@ export default function TerminalGrid({
   // hiding removes the cell from the grid outright; the rail is the only
   // place a hidden session still shows up (App owns that split).
   const visibleSessions = useMemo(
-    () => (group?.sessions ?? []).filter((s) => !hiddenIds?.has(s.id)),
-    [group, hiddenIds]
+    () =>
+      (group?.sessions ?? []).filter(
+        (s) => !hiddenIds?.has(s.id) && (!activeViewIds || activeViewIds.has(s.id))
+      ),
+    [group, hiddenIds, activeViewIds]
   );
 
   const sessionsById = useMemo(() => {
@@ -286,6 +309,11 @@ export default function TerminalGrid({
       restoreOne,
       splitFrom,
       onSessionClosed: handleSessionClosed,
+      // p8 grid-views: per-cell detach/rejoin + view lookup
+      viewAssignments,
+      hasMultipleViews: views.length > 1,
+      onDetachCell: (id) => onDetachCell?.(group?.name, id),
+      onRejoinCell: (id) => onRejoinCell?.(group?.name, id),
     }),
     // restoreOne is intentionally omitted from deps and re-created fresh
     // every render — it only closes over restoringIds/restoreError, both
@@ -306,6 +334,11 @@ export default function TerminalGrid({
       onSessionsRestored,
       splitFrom,
       handleSessionClosed,
+      viewAssignments,
+      views,
+      onDetachCell,
+      onRejoinCell,
+      group?.name,
     ]
   );
 
@@ -330,8 +363,8 @@ export default function TerminalGrid({
   function handleReady(event) {
     const api = event.api;
     apiRef.current = api;
-    workspaceRef.current = group.name;
-    loadOrBuildLayout(api, group.name, sessionIds);
+    workspaceRef.current = layoutKey;
+    loadOrBuildLayout(api, layoutKey, sessionIds);
     if (focusedSessionId) {
       const panel = api.getPanel(focusedSessionId);
       if (panel) panel.api.setActive();
@@ -355,12 +388,14 @@ export default function TerminalGrid({
   useEffect(() => {
     const api = apiRef.current;
     if (!api || !group) return;
-    if (workspaceRef.current !== group.name) {
-      // Never carry a maximize across workspaces — the maximized group
+    // layoutKey changes on workspace switch AND view switch — both mean
+    // "load a different persisted arrangement".
+    if (workspaceRef.current !== layoutKey) {
+      // Never carry a maximize across layouts — the maximized group
       // belongs to the layout being torn down.
       if (api.hasMaximizedGroup()) api.exitMaximizedGroup();
-      workspaceRef.current = group.name;
-      loadOrBuildLayout(api, group.name, sessionIds);
+      workspaceRef.current = layoutKey;
+      loadOrBuildLayout(api, layoutKey, sessionIds);
     } else {
       reconcile(api, sessionIds);
     }
@@ -372,7 +407,7 @@ export default function TerminalGrid({
     // stable stand-in (same session set => same key => effect skipped,
     // avoiding an identity-only re-run from the useMemo above).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [group?.name, sessionIdsKey]);
+  }, [layoutKey, sessionIdsKey]);
 
   // The other half of the two-way focus binding: App-driven focus changes
   // (rail click, [ ]/a keybindings) follow through into dockview's own
@@ -395,10 +430,10 @@ export default function TerminalGrid({
 
   const handleResetLayout = useCallback(() => {
     const api = apiRef.current;
-    if (!api || !group) return;
+    if (!api || !layoutKey) return;
     if (api.hasMaximizedGroup()) api.exitMaximizedGroup();
-    resetLayout(api, group.name, sessionIds);
-  }, [group, sessionIds]);
+    resetLayout(api, layoutKey, sessionIds);
+  }, [layoutKey, sessionIds]);
 
   // design D-wt-finish / D-wt-ui: fixed bottom-right toast, rendered
   // regardless of which branch below fires — the session that spawned it
@@ -636,6 +671,37 @@ export default function TerminalGrid({
           reset layout
         </button>
       </div>
+
+      {/* p8 grid-views: view strip — appears only once a second view
+          exists. One view on screen at a time; a background view with a
+          needs-input member carries the accent dot so nothing blocked can
+          hide behind a view switch. */}
+      {views.length > 1 && (
+        <div className="flex flex-none items-center gap-1 border-b border-garage-line bg-garage-panel px-2 py-1 text-[11px]">
+          {views.map((v) => {
+            const active = v.name === focusedView;
+            return (
+              <button
+                key={v.name}
+                type="button"
+                onClick={() => onSelectView?.(group.name, v.name)}
+                title={`show view "${v.name}" (${v.sessions.length} session${
+                  v.sessions.length === 1 ? "" : "s"
+                })`}
+                className={`flex items-center gap-1.5 border px-2 py-0.5 ${
+                  active
+                    ? "border-garage-amber text-garage-amber"
+                    : "border-garage-line text-garage-dim hover:border-garage-amber hover:text-garage-amber"
+                }`}
+              >
+                {v.needsCount > 0 && <span className="text-garage-amber">●</span>}
+                {v.name}
+                <span className="text-garage-faint">{v.sessions.length}×</span>
+              </button>
+            );
+          })}
+        </div>
+      )}
       <div className="min-h-0 flex-1 p-2">
         <GridContext.Provider value={contextValue}>
           <DockviewReact
@@ -840,6 +906,38 @@ function SessionCellTab({ api, containerApi }) {
         >
           ⬒
         </button>
+      )}
+      {/* p8 grid-views: detach ⇄ rejoin. Detach makes this session a
+          standalone view (grid shows it alone; the others stay grouped in
+          their view); rejoin returns it to main. */}
+      {isLive && (
+        (ctx.viewAssignments?.[id] ?? "main") !== "main" ? (
+          <button
+            type="button"
+            onMouseDown={(e) => e.stopPropagation()}
+            onClick={(e) => {
+              e.stopPropagation();
+              ctx.onRejoinCell?.(id);
+            }}
+            title="rejoin the main view — back into the group"
+            className="text-garage-amber"
+          >
+            ◱
+          </button>
+        ) : (
+          <button
+            type="button"
+            onMouseDown={(e) => e.stopPropagation()}
+            onClick={(e) => {
+              e.stopPropagation();
+              ctx.onDetachCell?.(id);
+            }}
+            title="standalone — move this session to its own view (switch back anytime from the rail or view strip)"
+            className="text-garage-dim hover:text-garage-amber"
+          >
+            ◲
+          </button>
+        )
       )}
       <button
         type="button"
