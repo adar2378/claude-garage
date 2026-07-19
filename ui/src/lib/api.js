@@ -170,6 +170,14 @@ export async function installHooks() {
   const res = await fetch("/api/hooks/install", { method: "POST" });
   const body = await parseJsonSafe(res);
   if (!res.ok) {
+    // 404 = the running daemon predates this endpoint (it serves the new
+    // UI bundle from disk but its routes were loaded at process start) —
+    // name the fix instead of surfacing Fastify's bare "Not Found".
+    if (res.status === 404) {
+      throw new Error(
+        "the running daemon is an older version — restart claude-garage (sessions survive; tmux owns them) and try again"
+      );
+    }
     throw new Error(body.error || `hook install failed (${res.status})`);
   }
   return body;
