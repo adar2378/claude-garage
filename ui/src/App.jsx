@@ -100,6 +100,16 @@ export default function App() {
     setPoppedOutIds(listPoppedOut());
   }, []);
 
+  // Hidden ids are plain in-memory React state, deliberately NOT persisted
+  // anywhere (unlike poppedOutIds, which survives via localStorage) — the
+  // spec is "removes the panel for this page run only": reloading or
+  // reopening claude-garage must restore every hidden session. The rail
+  // keeps listing hidden sessions (with a dim + "hidden" indicator — see
+  // WorkspaceRail); only TerminalGrid's panel set excludes them (see its
+  // `hiddenIds` prop). Declared here (rather than down by hideSession
+  // itself) since selectSession below also needs to clear it.
+  const [hiddenIds, setHiddenIds] = useState(() => new Set());
+
   const { flattenedGroups: groups } = useMemo(
     () => buildGroupTree(workspaces, sessions),
     [workspaces, sessions]
@@ -240,32 +250,85 @@ export default function App() {
     if (groups.length > 0) setFocusedWorkspace(groups[0].name);
   }, [groups, focusedWorkspace]);
 
+  // Falls back to the first *visible* session in the group where possible
+  // (matters when the previously-focused session just got hidden and this
+  // effect's own "still exists?" check passes trivially — hiding never
+  // removes a session from `group.sessions`, only from the grid's panel
+  // set) so this doesn't fight hideSession's own next-visible hand-off
+  // below by re-focusing something hidden.
   useEffect(() => {
     const group = groups.find((g) => g.name === focusedWorkspace);
     if (!group) return;
     if (!group.sessions.some((s) => s.id === focusedSessionId)) {
-      setFocusedSessionId(group.sessions[0]?.id ?? null);
+      const firstVisible = group.sessions.find((s) => !hiddenIds.has(s.id));
+      setFocusedSessionId(firstVisible?.id ?? group.sessions[0]?.id ?? null);
     }
-  }, [groups, focusedWorkspace, focusedSessionId]);
+  }, [groups, focusedWorkspace, focusedSessionId, hiddenIds]);
 
   const selectWorkspace = useCallback((name) => {
     setFocusedWorkspace(name);
   }, []);
 
+  // Clicking a session row in the rail always focuses it — including a
+  // hidden one, which this un-hides first (design: "clicking the session
+  // row in the rail un-hides it and focuses it").
   const selectSession = useCallback((workspaceName, sessionId) => {
     setFocusedWorkspace(workspaceName);
     setFocusedSessionId(sessionId);
+    setHiddenIds((prev) => {
+      if (!prev.has(sessionId)) return prev;
+      const next = new Set(prev);
+      next.delete(sessionId);
+      return next;
+    });
   }, []);
 
+  // Hide (– control): removes the session's panel from the grid for this
+  // page run only (in-memory state above, never persisted). Hiding the
+  // currently-focused cell hands focus to the next visible session in the
+  // group — same wrap-around "next" semantics as the []/[ keybinding just
+  // below — so focus never lingers on a cell that just vanished from the
+  // grid; if every other session in the group is also hidden, focus falls
+  // through to null (the group-effect above then has nothing visible to
+  // pick either, until something gets unhidden).
+  const hideSession = useCallback(
+    (id) => {
+      setHiddenIds((prev) => {
+        if (prev.has(id)) return prev;
+        const next = new Set(prev);
+        next.add(id);
+        return next;
+      });
+
+      setFocusedSessionId((current) => {
+        if (current !== id) return current;
+        const group = groups.find((g) => g.sessions.some((s) => s.id === id));
+        if (!group) return current;
+        const idx = group.sessions.findIndex((s) => s.id === id);
+        for (let step = 1; step <= group.sessions.length; step++) {
+          const candidate = group.sessions[(idx + step) % group.sessions.length];
+          if (candidate.id !== id && !hiddenIds.has(candidate.id)) return candidate.id;
+        }
+        return null;
+      });
+    },
+    [groups, hiddenIds]
+  );
+
+  // Skips hidden sessions — cycling onto a hidden one would leave the grid
+  // showing no active panel for it (its panel doesn't exist), so "next
+  // cell" here means "next visible cell", same set TerminalGrid renders.
   const cycleFocusedCell = useCallback(
     (direction) => {
       const group = groups.find((g) => g.name === focusedWorkspace);
       if (!group || group.sessions.length === 0) return;
-      const idx = group.sessions.findIndex((s) => s.id === focusedSessionId);
-      const next = (idx + direction + group.sessions.length) % group.sessions.length;
-      setFocusedSessionId(group.sessions[next].id);
+      const visible = group.sessions.filter((s) => !hiddenIds.has(s.id));
+      if (visible.length === 0) return;
+      const idx = visible.findIndex((s) => s.id === focusedSessionId);
+      const next = (idx + direction + visible.length) % visible.length;
+      setFocusedSessionId(visible[next].id);
     },
-    [groups, focusedWorkspace, focusedSessionId]
+    [groups, focusedWorkspace, focusedSessionId, hiddenIds]
   );
 
   const jumpToNeedsInput = useCallback(() => {
@@ -274,6 +337,15 @@ export default function App() {
       if (hit) {
         setFocusedWorkspace(g.name);
         setFocusedSessionId(hit.id);
+        // A needs-input session asking for attention should never be
+        // stuck hidden — jumping to it un-hides it, same as clicking it in
+        // the rail would.
+        setHiddenIds((prev) => {
+          if (!prev.has(hit.id)) return prev;
+          const next = new Set(prev);
+          next.delete(hit.id);
+          return next;
+        });
         return;
       }
     }
@@ -558,6 +630,7 @@ export default function App() {
             refreshWorkspaces();
             refreshSessions();
           }}
+          hiddenIds={hiddenIds}
           columnActive={activeColumn === "rail"}
           onActivateColumn={activateRailColumn}
         />
@@ -570,6 +643,8 @@ export default function App() {
           poppedOutIds={poppedOutIds}
           onPopOut={handlePopOut}
           onReclaim={handleReclaim}
+          hiddenIds={hiddenIds}
+          onHideCell={hideSession}
           columnActive={activeColumn === "grid"}
           onActivateColumn={activateGridColumn}
         />

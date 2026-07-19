@@ -9,3 +9,5 @@
 - npm publish: package still `private: true`; needs user's npm account + name claim.
 
 - Linux: notifications are a darwin-only no-op; picker is darwin-only (manual path fallback exists).
+
+- Multi-window layout contention: two full pit-wall pages on the same origin both persist `garage-layout:<ws>` and can clobber each other's panel sets (observed once during e2e with a stale pre-restart page open; unreproducible single-window). Candidate fix: layout writes tagged with a window id + last-writer-wins guard, or refuse dockview persistence when another pit-wall window holds a lease. (2026-07-19)

@@ -47,6 +47,7 @@ export default function WorkspaceRail({
   onBlurChrome,
   onSessionsRestored,
   onWorkspaceRenamed,
+  hiddenIds,
   columnActive,
   onActivateColumn,
 }) {
@@ -271,6 +272,12 @@ export default function WorkspaceRail({
                 const isFocused = s.id === focusedSessionId;
                 const isRestorable = s.status === "restorable";
                 const isNeedsInput = s.status === "needs-input";
+                // Hidden sessions (design: terminal-cell hide control)
+                // still get a rail row — hiding only pulls the panel out
+                // of the grid, this page run only — just dimmed further
+                // with a "hidden" suffix; clicking the row un-hides it (see
+                // onSelectSession -> App's selectSession).
+                const isHidden = hiddenIds?.has(s.id) ?? false;
                 const busy = restoringIds.has(s.id);
                 return (
                   <div
@@ -278,18 +285,24 @@ export default function WorkspaceRail({
                     data-dim-zone
                     className={`flex w-full items-start gap-1 px-2 py-1 text-xs ${
                       isFocused ? "bg-garage-sel" : "hover:bg-garage-sel"
-                    } ${isRestorable ? "opacity-60" : ""} ${columnActive ? "dim-focused" : ""} ${
-                      isNeedsInput ? "dim-exempt" : ""
-                    }`}
+                    } ${isRestorable || isHidden ? "opacity-60" : ""} ${
+                      columnActive ? "dim-focused" : ""
+                    } ${isNeedsInput ? "dim-exempt" : ""}`}
                   >
                     <button
                       type="button"
                       onClick={() => onSelectSession(group.name, s.id)}
                       aria-current={isFocused}
+                      title={isHidden ? `${s.label} — hidden, click to bring back` : undefined}
                       className="flex min-w-0 flex-1 items-start gap-2 text-left"
                     >
                       <span className={colorFor(s.status)}>{glyphFor(s.status)}</span>
-                      <span className="truncate">{s.label}</span>
+                      <span className={`truncate ${isHidden ? "italic text-garage-faint" : ""}`}>
+                        {s.label}
+                      </span>
+                      {isHidden && (
+                        <span className="shrink-0 text-[10px] text-garage-faint">hidden</span>
+                      )}
                     </button>
                     {isRestorable && (
                       <button

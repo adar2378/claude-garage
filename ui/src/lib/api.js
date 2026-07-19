@@ -156,3 +156,24 @@ export async function deleteWorkspace(name) {
   if (res.status === 404) throw new Error(`unknown workspace: ${name}`);
   if (!res.ok) throw new Error(`delete failed (${res.status})`);
 }
+
+// Kills the REAL tmux session backing {id} and drops its resume metadata
+// (design: terminal-cell close control — a deliberate close, not a hide,
+// so there's nothing left to restore afterward; see daemon/src/sessions.js
+// DELETE /api/sessions/*). 403 (id isn't a garage-managed session) and 404
+// (no live tmux session behind this id — e.g. a restorable-only entry)
+// surface via the thrown Error's message; success is 204 with no body.
+export async function deleteSession(id) {
+  const res = await fetch(`/api/sessions/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+  });
+  if (res.status === 204) return;
+  const body = await parseJsonSafe(res);
+  if (res.status === 403) {
+    throw new Error(body.error || "refusing to close a non-garage session");
+  }
+  if (res.status === 404) {
+    throw new Error(body.error || `no such session: ${id}`);
+  }
+  throw new Error(body.error || `could not close session (${res.status})`);
+}

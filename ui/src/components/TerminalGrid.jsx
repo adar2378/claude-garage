@@ -5,7 +5,7 @@ import "dockview/dist/styles/dockview.css";
 import "../dockview-overrides.css";
 import SessionTerminal from "../SessionTerminal.jsx";
 import { glyphFor, colorFor } from "../lib/status.js";
-import { restoreSession } from "../lib/api.js";
+import { restoreSession, deleteSession } from "../lib/api.js";
 import { loadOrBuildLayout, reconcile, resetLayout, saveLayout } from "../lib/layout.js";
 
 const SAVE_DEBOUNCE_MS = 300;
@@ -23,8 +23,8 @@ const SAVE_DEBOUNCE_MS = 300;
 // just its session id — everything else is read fresh from context on
 // every render.
 //
-// The cell's title bar (status glyph + label + status text + pop-out
-// button) used to be rendered twice — once (unlabeled, squeezed) as
+// The cell's title bar (status glyph + label + status text + hide/pop-out/
+// close buttons) used to be rendered twice — once (unlabeled, squeezed) as
 // dockview's own tab, once for real inside the panel's content — which
 // produced two stacked bars per cell. It's now rendered exactly once, as
 // SessionCellTab, wired in as dockview's `defaultTabComponent`: that tab
@@ -50,6 +50,8 @@ export default function TerminalGrid({
   poppedOutIds,
   onPopOut,
   onReclaim,
+  hiddenIds,
+  onHideCell,
   columnActive,
   onActivateColumn,
 }) {
@@ -83,11 +85,24 @@ export default function TerminalGrid({
     }
   }
 
+  // Hidden sessions (design: hide control) are excluded here, before
+  // `sessionIds` is derived below — that's what makes reconcile() drop
+  // their panel from the grid, the same mechanism that removes a panel for
+  // a session that ended entirely. Unlike popped-out sessions (which stay
+  // full members of `group.sessions` and keep their panel slot, just
+  // rendered as a reclaim placeholder — see poppedOutIds usage below),
+  // hiding removes the cell from the grid outright; the rail is the only
+  // place a hidden session still shows up (App owns that split).
+  const visibleSessions = useMemo(
+    () => (group?.sessions ?? []).filter((s) => !hiddenIds?.has(s.id)),
+    [group, hiddenIds]
+  );
+
   const sessionsById = useMemo(() => {
     const map = new Map();
-    for (const s of group?.sessions ?? []) map.set(s.id, s);
+    for (const s of visibleSessions) map.set(s.id, s);
     return map;
-  }, [group]);
+  }, [visibleSessions]);
 
   // Reclaim = clear the popout heartbeat record *and* focus the cell, same
   // as clicking any other cell (design: "the main grid's cell renders that
@@ -111,6 +126,8 @@ export default function TerminalGrid({
       onFocusCell,
       onPopOut,
       onReclaim: reclaim,
+      onHideCell,
+      onSessionsRestored,
       restoreOne,
     }),
     // restoreOne is intentionally omitted from deps and re-created fresh
@@ -128,10 +145,12 @@ export default function TerminalGrid({
       onFocusCell,
       onPopOut,
       reclaim,
+      onHideCell,
+      onSessionsRestored,
     ]
   );
 
-  const sessionIds = useMemo(() => (group?.sessions ?? []).map((s) => s.id), [group]);
+  const sessionIds = useMemo(() => visibleSessions.map((s) => s.id), [visibleSessions]);
   const sessionIdsKey = sessionIds.join(",");
 
   const scheduleSave = useCallback(() => {
@@ -223,6 +242,18 @@ export default function TerminalGrid({
     );
   }
 
+  if (visibleSessions.length === 0) {
+    return (
+      <div
+        onMouseDown={onBlurChrome}
+        onMouseDownCapture={onActivateColumn}
+        className="grid min-h-0 place-items-center bg-garage-bg text-xs text-garage-dim"
+      >
+        every session in this workspace is hidden — click one in the rail to bring it back
+      </div>
+    );
+  }
+
   return (
     <div
       onMouseDown={onBlurChrome}
@@ -291,10 +322,61 @@ function SessionCellTab({ api }) {
   const id = api.id;
   const s = ctx.sessionsById.get(id);
 
+  // Two-step confirm for the close (✕) button — click 1 arms it ("sure?",
+  // text-garage-red) for 3s, click 2 within that window actually deletes.
+  // Mirrors WorkspaceRail's workspace-removal confirm, but kept local to
+  // this component instance rather than lifted to GridContext: each
+  // dockview panel/tab mounts its own SessionCellTab, so there's no
+  // cross-cell state to coordinate — every cell arms/disarms independently
+  // by construction.
+  const [closeArmed, setCloseArmed] = useState(false);
+  const [closing, setClosing] = useState(false);
+  const [closeError, setCloseError] = useState(null);
+  const armTimerRef = useRef(null);
+  const errorTimerRef = useRef(null);
+
+  useEffect(
+    () => () => {
+      clearTimeout(armTimerRef.current);
+      clearTimeout(errorTimerRef.current);
+    },
+    []
+  );
+
   if (!s) return null;
 
   const focused = id === ctx.focusedSessionId;
   const isPoppedOut = ctx.poppedOutIds?.has(id) ?? false;
+  // v1: the close control only ever targets a session with a real tmux
+  // session behind it — a restorable entry has none, and DELETE would just
+  // 404 (see daemon/src/sessions.js). Popped-out cells are still live
+  // (only their *rendering* moved to another window), so they keep ✕.
+  const isLive = s.status !== "restorable";
+
+  async function handleClose() {
+    if (!closeArmed) {
+      setCloseArmed(true);
+      clearTimeout(armTimerRef.current);
+      armTimerRef.current = setTimeout(() => setCloseArmed(false), 3000);
+      return;
+    }
+    clearTimeout(armTimerRef.current);
+    setCloseArmed(false);
+    setClosing(true);
+    setCloseError(null);
+    try {
+      await deleteSession(id);
+      // Same refetch path restoreOne already uses — a close is just
+      // another kind of "the session set changed under us" event.
+      ctx.onSessionsRestored?.();
+    } catch (err) {
+      setCloseError(err.message);
+      clearTimeout(errorTimerRef.current);
+      errorTimerRef.current = setTimeout(() => setCloseError(null), 4000);
+    } finally {
+      setClosing(false);
+    }
+  }
 
   return (
     <div
@@ -306,6 +388,23 @@ function SessionCellTab({ api }) {
       <span className={colorFor(s.status)}>{glyphFor(s.status)}</span>
       <span className={focused ? "font-semibold text-garage-amber" : "text-garage-ink"}>{s.label}</span>
       <span className="ml-auto text-garage-faint">{s.status}</span>
+      {closeError && (
+        <span className="max-w-[9rem] truncate text-garage-red" title={closeError}>
+          {closeError}
+        </span>
+      )}
+      <button
+        type="button"
+        onMouseDown={(e) => e.stopPropagation()}
+        onClick={(e) => {
+          e.stopPropagation();
+          ctx.onHideCell?.(id);
+        }}
+        title="Hide this cell for this page run (rail keeps it — click there to bring it back)"
+        className="text-garage-dim hover:text-garage-amber"
+      >
+        –
+      </button>
       <button
         type="button"
         onMouseDown={(e) => e.stopPropagation()}
@@ -319,6 +418,27 @@ function SessionCellTab({ api }) {
       >
         ⇱
       </button>
+      {isLive && (
+        <button
+          type="button"
+          onMouseDown={(e) => e.stopPropagation()}
+          onClick={(e) => {
+            e.stopPropagation();
+            handleClose();
+          }}
+          disabled={closing}
+          title={
+            closeArmed
+              ? "click again to close — kills the tmux session"
+              : "close this session — kills the tmux session"
+          }
+          className={`disabled:opacity-40 ${
+            closeArmed ? "text-garage-red" : "text-garage-dim hover:text-garage-red"
+          }`}
+        >
+          {closeArmed ? "sure?" : "✕"}
+        </button>
+      )}
     </div>
   );
 }
