@@ -37,11 +37,18 @@ export async function putWorkspace(name, dir) {
   return body;
 }
 
-export async function createSession(workspace, label) {
+// {worktree: true} (design D-wt-ui) spawns the session in an isolated git
+// worktree instead of the workspace's registered directory. Third param is
+// optional and defaults to {} so every pre-existing call site (just
+// workspace + label) keeps working unchanged. 400 (non-git repo — worktree
+// requested against a directory that isn't a git repo) surfaces via the
+// thrown Error's message same as any other body.error, for inline display
+// next to the control that caused it.
+export async function createSession(workspace, label, { worktree } = {}) {
   const res = await fetch("/api/sessions", {
     method: "POST",
     headers: JSON_HEADERS,
-    body: JSON.stringify({ workspace, label }),
+    body: JSON.stringify(worktree ? { workspace, label, worktree: true } : { workspace, label }),
   });
   const body = await parseJsonSafe(res);
   if (!res.ok) {
@@ -56,8 +63,14 @@ export async function createSession(workspace, label) {
   return body;
 }
 
-export async function fetchDiff(workspace) {
-  const res = await fetch(`/api/diff/${encodeURIComponent(workspace)}`);
+// {sessionId} (design D-wt-diff) overrides the diff root to the named
+// session's worktree/live cwd when it sits outside the registered
+// workspace dir — the response then carries {root, branch} alongside the
+// usual {files, truncated} shape; callers show `⎇ <branch>` next to the
+// workspace name when `branch` is present.
+export async function fetchDiff(workspace, sessionId) {
+  const qs = sessionId ? `?sessionId=${encodeURIComponent(sessionId)}` : "";
+  const res = await fetch(`/api/diff/${encodeURIComponent(workspace)}${qs}`);
   if (!res.ok) throw new Error(`GET /api/diff/${workspace} failed (${res.status})`);
   return res.json();
 }
@@ -162,18 +175,46 @@ export async function deleteWorkspace(name) {
 // so there's nothing left to restore afterward; see daemon/src/sessions.js
 // DELETE /api/sessions/*). 403 (id isn't a garage-managed session) and 404
 // (no live tmux session behind this id — e.g. a restorable-only entry)
-// surface via the thrown Error's message; success is 204 with no body.
+// surface via the thrown Error's message. Success is 200 with a body of
+// {deleted: true, worktree: {path, branch, repoDir} | null} (design
+// D-wt-meta) — the worktree record, when present, is what drives the
+// finish (merge/discard/keep) prompt after the kill.
 export async function deleteSession(id) {
   const res = await fetch(`/api/sessions/${encodeURIComponent(id)}`, {
     method: "DELETE",
   });
-  if (res.status === 204) return;
   const body = await parseJsonSafe(res);
-  if (res.status === 403) {
-    throw new Error(body.error || "refusing to close a non-garage session");
+  if (!res.ok) {
+    if (res.status === 403) {
+      throw new Error(body.error || "refusing to close a non-garage session");
+    }
+    if (res.status === 404) {
+      throw new Error(body.error || `no such session: ${id}`);
+    }
+    throw new Error(body.error || `could not close session (${res.status})`);
   }
-  if (res.status === 404) {
-    throw new Error(body.error || `no such session: ${id}`);
+  return body;
+}
+
+// Resolves a dead worktree session's branch (design D-wt-finish) —
+// {worktree} is the exact {path, branch, repoDir} record returned by
+// deleteSession, since the session (and its metadata) are already gone by
+// the time this runs. `action` is "merge" | "discard" | "keep". 409 (merge
+// conflict) surfaces the git stderr via the thrown Error's message with
+// the worktree and branch left intact so the caller can retry, discard, or
+// keep.
+export async function finishWorktree(worktree, action) {
+  const res = await fetch("/api/worktrees/finish", {
+    method: "POST",
+    headers: JSON_HEADERS,
+    body: JSON.stringify({ worktree, action }),
+  });
+  const body = await parseJsonSafe(res);
+  if (!res.ok) {
+    if (res.status === 409) {
+      throw new Error(body.error || "merge conflict — resolve manually");
+    }
+    throw new Error(body.error || `could not finish worktree (${res.status})`);
   }
-  throw new Error(body.error || `could not close session (${res.status})`);
+  return body;
 }

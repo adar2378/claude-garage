@@ -29,6 +29,7 @@ const CHANGE_COLOR = {
 // rail rows / grid cells, not diff content.
 export default function ChangesPane({
   workspace,
+  branch,
   files,
   truncated,
   loading,
@@ -70,6 +71,15 @@ export default function ChangesPane({
     >
       <div className="flex flex-none items-center gap-2 border-b border-garage-line px-2 py-1 text-xs">
         <span className="truncate font-semibold text-garage-ink">{workspace ?? "—"}</span>
+        {branch && (
+          // design D-wt-diff: the diff root is overridden to a worktree
+          // session's cwd — the response carries `branch` in that case
+          // only, so this only ever renders when review is actually
+          // scoped to a worktree rather than the workspace root.
+          <span className="shrink-0 truncate text-[10px] text-garage-faint" title={branch}>
+            ⎇ {branch}
+          </span>
+        )}
         <button
           type="button"
           onClick={onRefresh}

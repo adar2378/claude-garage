@@ -64,6 +64,11 @@ export default function App() {
   const [diffTruncated, setDiffTruncated] = useState(false);
   const [diffLoading, setDiffLoading] = useState(false);
   const [diffError, setDiffError] = useState(null);
+  // p5-worktree-sessions D-wt-diff: set only when the daemon overrides the
+  // diff root to a worktree session's cwd — the response then carries
+  // `branch` alongside the usual shape. ChangesPane shows `⎇ <branch>` next
+  // to the workspace name exactly when this is non-null.
+  const [diffBranch, setDiffBranch] = useState(null);
   const [changesPaneCollapsed, setChangesPaneCollapsed] = useState(false);
   const [paneEmphasis, setPaneEmphasis] = useState("list"); // "list" | "diff" (Tab toggles)
   const [selectedFilePath, setSelectedFilePath] = useState(null);
@@ -168,28 +173,48 @@ export default function App() {
     sessionsRef.current = sessions;
   }, [sessions]);
 
+  // p5-worktree-sessions D-wt-diff: fetchDiffForWorkspace scopes the diff
+  // to the focused session (when the focused workspace and the diff target
+  // agree — every call site below passes the currently-focused workspace),
+  // so the daemon can override the root to that session's worktree. Read
+  // from a ref for the same reason focusedWorkspaceRef exists above — this
+  // callback's identity must stay stable (empty deps) so the SSE effect
+  // doesn't reopen its EventSource every time focus moves, but it still
+  // needs the *latest* focused session at call time.
+  const focusedSessionIdRef = useRef(focusedSessionId);
+  useEffect(() => {
+    focusedSessionIdRef.current = focusedSessionId;
+  }, [focusedSessionId]);
+
   const fetchDiffForWorkspace = useCallback((name) => {
     if (!name) return;
     setDiffLoading(true);
-    fetchDiff(name)
+    fetchDiff(name, focusedSessionIdRef.current)
       .then((data) => {
         const files = data.files ?? [];
         setDiffFiles(files);
         setDiffTruncated(!!data.truncated);
         setDiffError(null);
+        setDiffBranch(data.branch ?? null);
         pruneViewed(name, files.map((f) => f.path));
       })
       .catch((e) => {
         setDiffError(e.message);
         setDiffFiles([]);
+        setDiffBranch(null);
       })
       .finally(() => setDiffLoading(false));
   }, []);
 
-  // Fetch on focused-workspace change (spec: "Pane updates when focus moves").
+  // Fetch on focused-workspace change (spec: "Pane updates when focus
+  // moves"), extended per p5-worktree-sessions D-wt-diff: also refetch on
+  // focused-*session* change within the same workspace — that's what
+  // determines whether the diff root gets overridden to a worktree, so
+  // tabbing between a workspace's own root session and a worktree session
+  // must re-scope the pane, not just switching workspaces.
   useEffect(() => {
     if (focusedWorkspace) fetchDiffForWorkspace(focusedWorkspace);
-  }, [focusedWorkspace, fetchDiffForWorkspace]);
+  }, [focusedWorkspace, focusedSessionId, fetchDiffForWorkspace]);
 
   // ---- SSE: live status pushes drive the rail/grid without reload ----
   useEffect(() => {
@@ -650,6 +675,7 @@ export default function App() {
         />
         <ChangesPane
           workspace={focusedWorkspace}
+          branch={diffBranch}
           files={diffFiles}
           truncated={diffTruncated}
           loading={diffLoading}

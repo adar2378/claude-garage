@@ -85,7 +85,17 @@ export function reconcile(api, sessionIds) {
   const wanted = new Set(sessionIds);
 
   for (const panel of [...api.panels]) {
-    if (!wanted.has(panel.id)) api.removePanel(panel);
+    if (!wanted.has(panel.id)) {
+      // Contained: dockview can throw "resource already disposed" when a
+      // removal races its own internal cleanup (e.g. removal initiated
+      // from inside the panel's tab). The panel is gone either way; one
+      // bad dispose must not abort reconciling the rest.
+      try {
+        api.removePanel(panel);
+      } catch {
+        /* already disposed */
+      }
+    }
   }
 
   const present = new Set(api.panels.map((p) => p.id));

@@ -5,7 +5,7 @@ import "dockview/dist/styles/dockview.css";
 import "../dockview-overrides.css";
 import SessionTerminal from "../SessionTerminal.jsx";
 import { glyphFor, colorFor } from "../lib/status.js";
-import { restoreSession, deleteSession } from "../lib/api.js";
+import { restoreSession, deleteSession, finishWorktree } from "../lib/api.js";
 import { loadOrBuildLayout, reconcile, resetLayout, saveLayout } from "../lib/layout.js";
 
 const SAVE_DEBOUNCE_MS = 300;
@@ -57,6 +57,40 @@ export default function TerminalGrid({
 }) {
   const [restoringIds, setRestoringIds] = useState(() => new Set());
   const [restoreError, setRestoreError] = useState(null);
+
+  // design D-wt-ui / D-wt-finish: the finish (merge/discard/keep) prompt
+  // for a just-closed worktree session. Lives here, not in SessionCellTab,
+  // because the panel that spawned it is gone by the time the DELETE
+  // response comes back (the session is dead — reconcile() will have
+  // dropped its panel on the very next sessions refetch) — see the render
+  // below for the fixed-position toast this drives.
+  // {sessionId, label, worktree: {path, branch, repoDir}, busy, error}
+  const [finishToast, setFinishToast] = useState(null);
+
+  const handleSessionClosed = useCallback((session, worktree) => {
+    if (!worktree) return;
+    setFinishToast({ sessionId: session.id, label: session.label, worktree, busy: false, error: null });
+  }, []);
+
+  async function handleFinishAction(action) {
+    if (!finishToast || finishToast.busy) return;
+    setFinishToast((prev) => (prev ? { ...prev, busy: true, error: null } : prev));
+    try {
+      await finishWorktree(finishToast.worktree, action);
+      setFinishToast(null);
+      onSessionsRestored?.();
+    } catch (err) {
+      setFinishToast((prev) => (prev ? { ...prev, busy: false, error: err.message } : prev));
+    }
+  }
+
+  // "keep" is a pure dismiss (design D-wt-finish: "simply dismissing the
+  // prompt is equivalent" to calling the endpoint with action:"keep") — no
+  // API round-trip needed.
+  function handleFinishKeep() {
+    setFinishToast(null);
+    onSessionsRestored?.();
+  }
 
   // dockview state lives in refs, not React state: the DockviewApi is an
   // imperative handle (mutating it doesn't need a re-render), and
@@ -129,6 +163,7 @@ export default function TerminalGrid({
       onHideCell,
       onSessionsRestored,
       restoreOne,
+      onSessionClosed: handleSessionClosed,
     }),
     // restoreOne is intentionally omitted from deps and re-created fresh
     // every render — it only closes over restoringIds/restoreError, both
@@ -147,6 +182,7 @@ export default function TerminalGrid({
       reclaim,
       onHideCell,
       onSessionsRestored,
+      handleSessionClosed,
     ]
   );
 
@@ -230,27 +266,76 @@ export default function TerminalGrid({
     resetLayout(api, group.name, sessionIds);
   }, [group, sessionIds]);
 
+  // design D-wt-finish / D-wt-ui: fixed bottom-right toast, rendered
+  // regardless of which branch below fires — the session that spawned it
+  // is already dead (and may have been the very last one in the grid), so
+  // this can't live inside the panel/grid content itself.
+  const finishToastNode = finishToast && (
+    <div className="fixed bottom-4 right-4 z-50 flex items-center gap-2 border border-garage-amber bg-garage-panel px-3 py-2 text-[11px] text-garage-ink shadow-lg">
+      <span className="text-garage-dim">worktree for</span>
+      <span className="font-semibold text-garage-amber">{finishToast.label}</span>
+      <span className="text-garage-line">:</span>
+      <button
+        type="button"
+        onClick={() => handleFinishAction("merge")}
+        disabled={finishToast.busy}
+        className="text-[10px] text-garage-dim hover:text-garage-amber disabled:opacity-40"
+      >
+        merge
+      </button>
+      <span className="text-garage-line">·</span>
+      <button
+        type="button"
+        onClick={() => handleFinishAction("discard")}
+        disabled={finishToast.busy}
+        className="text-[10px] text-garage-dim hover:text-garage-amber disabled:opacity-40"
+      >
+        discard
+      </button>
+      <span className="text-garage-line">·</span>
+      <button
+        type="button"
+        onClick={handleFinishKeep}
+        disabled={finishToast.busy}
+        className="text-[10px] text-garage-dim hover:text-garage-amber disabled:opacity-40"
+      >
+        keep
+      </button>
+      {finishToast.error && (
+        <span className="max-w-[14rem] truncate text-garage-red" title={finishToast.error}>
+          · {finishToast.error}
+        </span>
+      )}
+    </div>
+  );
+
   if (!group || group.sessions.length === 0) {
     return (
-      <div
-        onMouseDown={onBlurChrome}
-        onMouseDownCapture={onActivateColumn}
-        className="grid min-h-0 place-items-center bg-garage-bg text-xs text-garage-dim"
-      >
-        {group ? "no sessions in this workspace yet" : "no workspace selected"}
-      </div>
+      <>
+        <div
+          onMouseDown={onBlurChrome}
+          onMouseDownCapture={onActivateColumn}
+          className="grid min-h-0 place-items-center bg-garage-bg text-xs text-garage-dim"
+        >
+          {group ? "no sessions in this workspace yet" : "no workspace selected"}
+        </div>
+        {finishToastNode}
+      </>
     );
   }
 
   if (visibleSessions.length === 0) {
     return (
-      <div
-        onMouseDown={onBlurChrome}
-        onMouseDownCapture={onActivateColumn}
-        className="grid min-h-0 place-items-center bg-garage-bg text-xs text-garage-dim"
-      >
-        every session in this workspace is hidden — click one in the rail to bring it back
-      </div>
+      <>
+        <div
+          onMouseDown={onBlurChrome}
+          onMouseDownCapture={onActivateColumn}
+          className="grid min-h-0 place-items-center bg-garage-bg text-xs text-garage-dim"
+        >
+          every session in this workspace is hidden — click one in the rail to bring it back
+        </div>
+        {finishToastNode}
+      </>
     );
   }
 
@@ -292,6 +377,7 @@ export default function TerminalGrid({
           />
         </GridContext.Provider>
       </div>
+      {finishToastNode}
     </div>
   );
 }
@@ -365,10 +451,24 @@ function SessionCellTab({ api }) {
     setClosing(true);
     setCloseError(null);
     try {
-      await deleteSession(id);
+      const body = await deleteSession(id);
+      // design D-wt-meta/D-wt-ui: a worktree session's DELETE response
+      // carries the {path, branch, repoDir} record — hand it up to
+      // TerminalGrid so it can drive the finish (merge/discard/keep) toast.
+      // Non-worktree sessions get `worktree: null` (or no field on an
+      // older daemon), so this is a no-op for them — exactly today's
+      // behavior.
+      if (body?.worktree) {
+        ctx.onSessionClosed?.(s, body.worktree);
+      }
       // Same refetch path restoreOne already uses — a close is just
       // another kind of "the session set changed under us" event.
-      ctx.onSessionsRestored?.();
+      // Deferred a tick: this handler runs from a button INSIDE the tab
+      // dockview is about to dispose; letting the refetch → reconcile →
+      // removePanel chain run while this click's stack is still unwinding
+      // makes dockview double-dispose the tab ("resource already
+      // disposed"). One macrotask later, the stack is clear.
+      setTimeout(() => ctx.onSessionsRestored?.(), 0);
     } catch (err) {
       setCloseError(err.message);
       clearTimeout(errorTimerRef.current);
