@@ -33,6 +33,11 @@ const EVENT_TO_STATE = {
 // (fail toward attention, never away from it).
 const IDLE_REMINDER_RE = /waiting for your input/i;
 
+// Exported for the test suite.
+export function isIdleReminder(message) {
+  return IDLE_REMINDER_RE.test(message ?? "");
+}
+
 async function getAgents() {
   try {
     const { stdout } = await run("claude", ["agents", "--json"]);
@@ -208,10 +213,7 @@ export default async function hookRoutes(app) {
       return reply.code(200).send({ ok: true, ignored: true });
     }
 
-    if (
-      payload.hook_event_name === "Notification" &&
-      IDLE_REMINDER_RE.test(payload.message ?? "")
-    ) {
+    if (payload.hook_event_name === "Notification" && isIdleReminder(payload.message)) {
       // Idle reminder — leave the state alone (Stop already set done,
       // which decays to idle on its own).
       return reply.code(200).send({ ok: true, ignored: "idle-reminder" });

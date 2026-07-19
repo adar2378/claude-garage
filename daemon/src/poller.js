@@ -49,8 +49,14 @@ async function getPanePids() {
   }
 }
 
-function applyAgentStatus(id, agentStatus) {
-  const mapped = agentStatus === "busy" ? "working" : "idle";
+// `claude agents --json` self-reports busy | waiting | idle. `waiting`
+// means blocked on the user (permission prompt, question) — that IS
+// needs-input, just 2s-coarse. Mapping it to idle (the pre-publish bug)
+// meant hookless installs never saw the product's core signal at all.
+// Exported for the test suite.
+export function applyAgentStatus(id, agentStatus) {
+  const mapped =
+    agentStatus === "busy" ? "working" : agentStatus === "waiting" ? "needs-input" : "idle";
   // The poller's coarse 'idle' must not stomp the hook-sourced precision
   // states: needs-input clears only on real activity, and done holds until
   // its decay timer (status.js) or a 'busy' observation (-> working).

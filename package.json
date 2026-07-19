@@ -1,7 +1,27 @@
 {
   "name": "claude-garage",
-  "version": "0.0.0",
-  "private": true,
+  "version": "0.1.0",
+  "description": "A pit wall for your Claude Code agents — parallel sessions on a live terminal grid, needs-input triage, worktree isolation, and diff review. tmux owns the sessions; close the app and nothing dies.",
+  "license": "MIT",
+  "author": "Saiful Islam <saifulislamadar@gmail.com>",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/adar2378/claude-garage.git"
+  },
+  "homepage": "https://github.com/adar2378/claude-garage#readme",
+  "bugs": "https://github.com/adar2378/claude-garage/issues",
+  "keywords": [
+    "claude",
+    "claude-code",
+    "tmux",
+    "terminal",
+    "agents",
+    "session-manager",
+    "dashboard",
+    "xterm",
+    "git-worktree",
+    "developer-tools"
+  ],
   "type": "module",
   "engines": {
     "node": ">=20"
@@ -21,6 +41,7 @@
   ],
   "scripts": {
     "dev": "concurrently -n daemon,ui -c blue,magenta \"npm:dev --workspace daemon\" \"npm:dev --workspace ui\"",
+    "test": "node --test \"daemon/test/*.test.js\" \"ui/test/*.test.js\"",
     "postinstall": "chmod +x node_modules/node-pty/prebuilds/darwin-*/spawn-helper 2>/dev/null || true",
     "prepack": "npm run build --workspace ui"
   },
