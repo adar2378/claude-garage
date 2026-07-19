@@ -22,7 +22,10 @@ const PORT = Number(process.env.GARAGE_PORT ?? 4747);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, "..", "..");
 
-const app = Fastify({ logger: { level: "info" } });
+// forceCloseConnections: close() actively terminates keep-alive and
+// hijacked connections (SSE, upgraded sockets) instead of waiting for
+// them to drain — they never would; see bin/garage.js shutdown.
+const app = Fastify({ logger: { level: "info" }, forceCloseConnections: true });
 
 app.addHook("onRequest", rejectForeignOrigins);
 app.get("/api/health", async () => ({ status: "ok" }));

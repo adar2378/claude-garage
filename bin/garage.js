@@ -51,8 +51,13 @@ async function main() {
   const { app } = await import("../daemon/src/index.js");
 
   const shutdown = async () => {
+    // app.close() drains connections — but SSE streams and terminal
+    // WebSockets never end on their own, so a polite close hangs forever
+    // when a browser tab is open. Race it against a hard deadline: tmux
+    // owns everything that matters, so force-exiting loses nothing.
+    const deadline = new Promise((r) => setTimeout(r, 1500));
     try {
-      await app.close();
+      await Promise.race([app.close(), deadline]);
     } catch {
       // best-effort — we're exiting regardless
     } finally {
