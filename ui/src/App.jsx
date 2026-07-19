@@ -589,10 +589,40 @@ export default function App() {
   }, [changesPaneCollapsed]);
 
   // ---- keep focus valid as groups change (initial pick, or workspace/session disappearing) ----
+  // Initial pick: ?ws=<name> from the URL (survives reloads, bookmarkable,
+  // lets two windows focus different workspaces) > last-focused from
+  // localStorage (survives closing the tab and reopening at the bare
+  // address) > first group. The sync effect below maintains both.
   useEffect(() => {
     if (focusedWorkspace && groups.some((g) => g.name === focusedWorkspace)) return;
-    if (groups.length > 0) setFocusedWorkspace(groups[0].name);
+    if (groups.length > 0) {
+      const exists = (name) => name && groups.some((g) => g.name === name);
+      const fromUrl = new URLSearchParams(window.location.search).get("ws");
+      let fromStorage = null;
+      try {
+        fromStorage = localStorage.getItem("garage-last-workspace");
+      } catch {
+        // blocked storage — URL and first-group fallbacks still apply
+      }
+      const target = exists(fromUrl) ? fromUrl : exists(fromStorage) ? fromStorage : groups[0].name;
+      setFocusedWorkspace(target);
+    }
   }, [groups, focusedWorkspace]);
+
+  // Mirror focus into the URL (replaceState — no history spam) and into
+  // localStorage (fresh-tab restore).
+  useEffect(() => {
+    if (!focusedWorkspace) return;
+    try {
+      localStorage.setItem("garage-last-workspace", focusedWorkspace);
+    } catch {
+      // best-effort
+    }
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("ws") === focusedWorkspace) return;
+    params.set("ws", focusedWorkspace);
+    window.history.replaceState(null, "", `?${params.toString()}`);
+  }, [focusedWorkspace]);
 
   // Falls back to the first *visible* session in the group where possible
   // (matters when the previously-focused session just got hidden and this
