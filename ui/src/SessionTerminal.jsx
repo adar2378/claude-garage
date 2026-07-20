@@ -1,14 +1,29 @@
 import React, { useEffect, useRef } from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
+import { WebLinksAddon } from "@xterm/addon-web-links";
 import "@xterm/xterm/css/xterm.css";
-import { fetchSessions } from "./lib/api.js";
+import { fetchSessions, openEditor } from "./lib/api.js";
 import { useSettings } from "./lib/settings.js";
 import { useEffectiveTheme, terminalThemeFor, MONO_STACK } from "./lib/theme.js";
 
 // p7 connection-resilience (design D-reconnect): reconnect backoff caps.
 const BACKOFF_BASE_MS = 500;
 const BACKOFF_MAX_MS = 8000;
+
+// File-reference detection for terminal output, VS Code style. Two shapes
+// only, to keep false positives down: a token containing at least one `/`
+// (optionally ./ ../ or absolute), or a bare `name.ext` that carries an
+// explicit `:line` suffix. Both accept trailing `:line[:col]`.
+const FILE_LINK_RE =
+  /(?:\.{1,2}\/|~\/|\/)?[\w.@+-]+(?:\/[\w.@+-]+)+(?::\d+(?::\d+)?)?|[\w@+-]+\.[A-Za-z0-9]{1,8}:\d+(?::\d+)?/g;
+
+// `path:line:col` → { file, line }. Bare paths default to line 1.
+function parseFileLink(text) {
+  const m = text.match(/^(.*?):(\d+)(?::\d+)?$/);
+  if (m) return { file: m[1], line: Number(m[2]) };
+  return { file: text, line: 1 };
+}
 
 export default function SessionTerminal({ id, onConnectionChange, reconnectSignal = 0 }) {
   const hostRef = useRef(null);
@@ -43,6 +58,62 @@ export default function SessionTerminal({ id, onConnectionChange, reconnectSigna
     termRef.current = term;
     const fit = new FitAddon();
     term.loadAddon(fit);
+
+    // p9 terminal-links: VS Code-terminal parity. URLs via the stock
+    // web-links addon; both it and the file provider below require
+    // cmd/ctrl+click (same muscle memory as VS Code) so plain clicks stay
+    // free for selection.
+    term.loadAddon(
+      new WebLinksAddon((e, uri) => {
+        if (e.metaKey || e.ctrlKey) window.open(uri, "_blank", "noopener");
+      })
+    );
+
+    // File references (`ui/src/App.jsx:42`, `./x.py`, `/abs/inside.ts:7:3`)
+    // route through the existing /api/open-editor endpoint, which resolves
+    // against the workspace dir and rejects escapes — the terminal doesn't
+    // validate paths, the daemon does. The session's workspace name isn't a
+    // prop (render sites only know `id`), so it's resolved lazily from
+    // fetchSessions() on first activation and cached for the mount.
+    let wsName;
+    const openFileLink = async (text) => {
+      const { file, line } = parseFileLink(text);
+      try {
+        if (wsName === undefined) {
+          const sessions = await fetchSessions();
+          wsName = sessions.find((s) => s.id === id)?.workspace ?? null;
+        }
+        if (!wsName) return;
+        await openEditor(wsName, file.replace(/^~\//, ""), line);
+      } catch (err) {
+        // No inline error surface in a terminal cell; 400 (outside the
+        // workspace) and 501 (editor CLI missing) just log.
+        console.warn(`open-editor link failed: ${err.message}`);
+      }
+    };
+    const linkProvider = term.registerLinkProvider({
+      provideLinks(lineNo, cb) {
+        const bufLine = term.buffer.active.getLine(lineNo - 1);
+        if (!bufLine) return cb(undefined);
+        const lineText = bufLine.translateToString(true);
+        const links = [];
+        for (const m of lineText.matchAll(FILE_LINK_RE)) {
+          links.push({
+            text: m[0],
+            // xterm ranges are 1-based and end-inclusive.
+            range: {
+              start: { x: m.index + 1, y: lineNo },
+              end: { x: m.index + m[0].length, y: lineNo },
+            },
+            activate(e, text) {
+              if (e.metaKey || e.ctrlKey) openFileLink(text);
+            },
+          });
+        }
+        cb(links.length ? links : undefined);
+      },
+    });
+
     term.open(hostRef.current);
     fit.fit();
 
@@ -182,6 +253,7 @@ export default function SessionTerminal({ id, onConnectionChange, reconnectSigna
       termRef.current = null;
       ro.disconnect();
       dataSub.dispose();
+      linkProvider.dispose();
       if (ws) ws.close();
       term.dispose();
     };
