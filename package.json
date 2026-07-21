@@ -1,6 +1,6 @@
 {
   "name": "claude-garage",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Multiple Claude agents driving you crazy? Park them all in one garage: every session on one live terminal wall, no window juggling. Needs-input triage, worktree isolation, diff review. tmux owns the sessions; close the app and nothing dies.",
   "license": "MIT",
   "author": "Saiful Islam <saifulislamadar@gmail.com>",

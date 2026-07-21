@@ -33,6 +33,7 @@ export default function AddSessionControl({ workspaceName, onCreated }) {
     setOpen(false);
     setLabel("");
     setError(null);
+    setBusy(false);
   }
 
   async function submit(e) {
