@@ -33,11 +33,14 @@
   --dv-tabs-and-actions-container-height: 26px;
   --dv-separator-border: var(--color-garage-line);
   --dv-sash-color: transparent;
-  --dv-active-sash-color: var(--color-garage-amber);
-  /* accent @ ~18% — color-mix so it follows the active theme's accent
-     (garage amber / Claude terracotta) instead of a hardcoded rgba */
-  --dv-drag-over-background-color: color-mix(in srgb, var(--color-garage-amber) 18%, transparent);
-  --dv-drag-over-border-color: var(--color-garage-amber);
+  /* redesign/light-minimal (one-colour rule): sash + drag-over are
+     INTERACTION states, not the needs-input alarm, so they must not be
+     amber — amber now means exactly one thing in this app. Neutral grey
+     mixed from the ink token so it still follows whichever theme is
+     active. */
+  --dv-active-sash-color: var(--color-garage-dim);
+  --dv-drag-over-background-color: color-mix(in srgb, var(--color-garage-ink) 10%, transparent);
+  --dv-drag-over-border-color: var(--color-garage-dim);
   --dv-icon-hover-background-color: var(--color-garage-sel);
 }
 
@@ -81,11 +84,14 @@
 }
 
 /* p8 float-in-page: dockview floating groups (the ❐ control on a cell
-   tab) — accent-bordered, lifted with a shadow so a floated terminal
-   reads as a window above the wall. The tab remains the drag handle and
-   dockview's own resize edges keep working. */
+   tab) — lifted with a shadow so a floated terminal reads as a window
+   above the wall. The tab remains the drag handle and dockview's own
+   resize edges keep working.
+   redesign/light-minimal: the border was amber (reserved for needs-input
+   now) and the shadow was tuned for a dark ground — a 50%-black shadow is
+   a smudge on white. Hairline border + a soft, shallow shadow instead. */
 .garage-dock .dv-resize-container {
-  border: 1px solid var(--color-garage-amber);
-  box-shadow: 0 10px 36px rgba(0, 0, 0, 0.5);
+  border: 1px solid var(--color-garage-line);
+  box-shadow: 0 8px 28px -8px color-mix(in srgb, var(--color-garage-ink) 28%, transparent);
   background: var(--color-garage-panel);
 }

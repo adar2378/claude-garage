@@ -1,4 +1,4 @@
-import { statusEvents } from "./status.js";
+import { statusEvents, getStatusEntry } from "./status.js";
 import { pollerEvents } from "./poller.js";
 
 const KEEPALIVE_MS = 15_000;
@@ -23,7 +23,11 @@ export default async function eventRoutes(app) {
       res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
     };
 
-    const onTransition = ({ id, to }) => send("status", { id, status: to });
+    // `since` is re-read fresh from the store rather than threaded through
+    // the transition payload — setStatus already wrote it before emitting,
+    // so this is always the timestamp of this exact transition.
+    const onTransition = ({ id, to }) =>
+      send("status", { id, status: to, since: getStatusEntry(id).since });
     const onSessionsChanged = () => send("sessions", {});
 
     statusEvents.on("transition", onTransition);

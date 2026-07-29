@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import { glyphFor, colorFor, tipFor } from "../lib/status.js";
+import { formatElapsed, useTicker } from "../lib/elapsed.js";
 import { restoreSession, renameWorkspace, deleteWorkspace } from "../lib/api.js";
 import AddSessionControl from "./AddSessionControl.jsx";
 
@@ -36,6 +37,13 @@ const INDENT_PX = 14;
 //    `focusedSessionId` is still used for: the `bg-garage-sel` "you are
 //    here" highlight). The rail container and workspace header rows are
 //    NOT zones.
+//
+// redesign/light-minimal: rail is monochrome chrome — amber is reserved
+// for the needs-input signal only (see DESIGN-CONTRACT.md). Per-row
+// action buttons (rename/open-root/unreg/add) live in a hover-reveal
+// container (`group/ws` on the header row) so the rail stays quiet at
+// rest; they never leave the DOM, so keybindings and click targets are
+// unaffected — they just fade in on hover/focus.
 export default function WorkspaceRail({
   groups,
   focusedWorkspace,
@@ -53,6 +61,11 @@ export default function WorkspaceRail({
   viewsByWorkspace,
   onSelectView,
 }) {
+  // Advances elapsed-time labels on session rows (design: DESIGN-CONTRACT.md
+  // "Elapsed time"). Called once here — every row reads `s.since` fresh on
+  // each tick rather than running its own timer.
+  useTicker();
+
   const [restoringIds, setRestoringIds] = useState(() => new Set());
   const [restoreError, setRestoreError] = useState(null);
   const [renaming, setRenaming] = useState(null); // { workspaceName, value, error, busy } | null
@@ -145,7 +158,7 @@ export default function WorkspaceRail({
       onMouseDown={onBlurChrome}
       onMouseDownCapture={onActivateColumn}
       aria-label="Workspaces"
-      className="min-h-0 overflow-y-auto border-r border-garage-line bg-garage-panel px-1 py-2"
+      className="min-h-0 overflow-y-auto border-r border-garage-line bg-garage-panel py-2"
     >
       {groups.length === 0 && (
         <p className="px-3 py-2 text-xs text-garage-dim">no workspaces yet</p>
@@ -173,8 +186,8 @@ export default function WorkspaceRail({
         return (
           <div key={group.name} className="mb-1" style={{ marginLeft: depth * INDENT_PX }}>
             <div
-              className={`flex items-center gap-1 px-2 py-1 ${
-                active ? "text-garage-amber" : "text-garage-ink"
+              className={`group/ws relative flex items-center gap-1 px-3 pt-4 pb-1.5 ${
+                active ? "bg-garage-sel" : ""
               }`}
             >
               {isRenamingThis ? (
@@ -185,7 +198,7 @@ export default function WorkspaceRail({
                   }}
                   className="flex min-w-0 flex-1 items-center gap-2"
                 >
-                  {i < 9 && <span className="text-garage-faint">{i + 1}</span>}
+                  {i < 9 && <span className="font-mono text-[11px] text-garage-faint">{i + 1}</span>}
                   <input
                     autoFocus
                     value={renaming.value}
@@ -198,11 +211,11 @@ export default function WorkspaceRail({
                       if (e.key === "Escape") cancelRename();
                     }}
                     onBlur={cancelRename}
-                    className="min-w-0 flex-1 border border-garage-amber bg-garage-bg px-1 py-0.5 text-xs text-garage-ink outline-none"
+                    className="min-w-0 flex-1 rounded-md border border-garage-line bg-garage-bg px-2 py-1 text-[13px] text-garage-ink outline-none focus:border-garage-dim focus:outline-none"
                   />
                   {renaming.error && (
                     <span
-                      className="shrink-0 truncate text-[10px] text-garage-red"
+                      className="shrink-0 truncate text-xs text-garage-red"
                       title={renaming.error}
                     >
                       {renaming.error}
@@ -213,91 +226,119 @@ export default function WorkspaceRail({
                 <button
                   type="button"
                   onClick={() => onSelectWorkspace(group.name)}
-                  className="flex min-w-0 flex-1 items-center gap-2 text-left"
+                  className="flex min-w-0 flex-1 flex-col gap-0.5 text-left"
                 >
-                  {i < 9 && <span className="text-garage-faint">{i + 1}</span>}
-                  <span className="truncate font-semibold">{group.name}</span>
-                  {!group.registered && (
-                    <span
-                      className="text-[10px] text-garage-faint"
-                      title="workspace not registered — derived from session id"
-                    >
-                      ?
+                  {/* redesign/light-minimal: name, branch and session count
+                      used to share one line, with the name as the only
+                      flexible (truncating) item — at the roomier 13px type
+                      the name lost every time and rendered as "c…" or
+                      vanished entirely. Stacked instead: identity on top,
+                      metadata beneath, so the name always gets the full
+                      rail width. */}
+                  <span className="flex min-w-0 items-center gap-2">
+                    {i < 9 && (
+                      <span className="shrink-0 font-mono text-[11px] text-garage-faint">{i + 1}</span>
+                    )}
+                    <span className="truncate text-[13px] font-semibold tracking-tight text-garage-ink">
+                      {group.name}
                     </span>
-                  )}
-                  {workspaceBranch && (
-                    <span
-                      className="max-w-[90px] shrink-0 truncate text-[10px] text-garage-faint"
-                      title={workspaceBranch}
-                    >
-                      ⎇ {workspaceBranch}
+                    {!group.registered && (
+                      <span
+                        className="shrink-0 text-xs text-garage-faint"
+                        title="workspace not registered — derived from session id"
+                      >
+                        ?
+                      </span>
+                    )}
+                  </span>
+                  {/* Count first: it is short and fixed-width, so it always
+                      stays readable and the branch gets whatever width is
+                      left (rather than both truncating to "…"). */}
+                  <span className="flex min-w-0 items-center gap-1.5 font-mono text-[11px] text-garage-faint">
+                    <span className="shrink-0">
+                      {group.sessions.length} session{group.sessions.length === 1 ? "" : "s"}
                     </span>
-                  )}
-                  <span className="ml-auto shrink-0 text-[10px] text-garage-faint">
-                    {group.sessions.length}×
+                    {workspaceBranch && <span aria-hidden="true">·</span>}
+                    {workspaceBranch && (
+                      <span className="truncate" title={workspaceBranch}>
+                        ⎇ {workspaceBranch}
+                      </span>
+                    )}
                   </span>
                 </button>
               )}
-              {!isRenamingThis && group.registered && (
-                <button
-                  type="button"
-                  onMouseDown={(e) => e.stopPropagation()}
-                  onClick={() => startRename(group.name)}
-                  title={`rename ${group.name}`}
-                  className="shrink-0 px-1.5 py-0.5 text-garage-faint hover:text-garage-amber"
-                >
-                  ✎
-                </button>
-              )}
-              {!isRenamingThis && group.registered && (
-                <button
-                  type="button"
-                  onClick={() => onOpenRoot(group.name)}
-                  title={`open ${group.name} root in editor`}
-                  className="shrink-0 px-1.5 py-0.5 text-garage-faint hover:text-garage-amber"
-                >
-                  ⧉
-                </button>
-              )}
-              {/* p7 (spec: "Chrome affordance standards"): the default
-                  action is SAFE (unregisters, sessions keep running) — it
-                  must never share the ✕ vocabulary with session kill, so
-                  it reads "unreg". Arming it reveals the second, explicit
-                  choice: kill every live session AND unregister. */}
-              {!isRenamingThis && group.registered && confirmingDelete !== group.name && (
-                <button
-                  type="button"
-                  onMouseDown={(e) => e.stopPropagation()}
-                  onClick={() => armDelete(group.name)}
-                  title={`remove ${group.name} — click to choose: unregister only, or close all sessions too`}
-                  className="shrink-0 px-1.5 py-0.5 text-[10px] text-garage-faint hover:text-garage-red"
-                >
-                  unreg
-                </button>
-              )}
-              {!isRenamingThis && group.registered && confirmingDelete === group.name && (
-                <>
-                  <button
-                    type="button"
-                    onMouseDown={(e) => e.stopPropagation()}
-                    onClick={() => handleDelete(group.name, false)}
-                    title={`unregister ${group.name} only — sessions keep running in tmux and reappear as an unregistered group`}
-                    className="shrink-0 px-1.5 py-0.5 text-[10px] text-garage-amber"
-                  >
-                    unreg
-                  </button>
-                  <button
-                    type="button"
-                    onMouseDown={(e) => e.stopPropagation()}
-                    onClick={() => handleDelete(group.name, true)}
-                    title={`close all ${
-                      group.sessions.filter((s) => s.status !== "restorable").length
-                    } live session(s) — kills their tmux sessions — then unregister ${group.name}`}
-                    className="shrink-0 px-1.5 py-0.5 text-[10px] text-garage-red"
-                  >
-                    kill {group.sessions.filter((s) => s.status !== "restorable").length}×
-                  </button>
-                </>
+              {!isRenamingThis && (
+                // Floated, not in flow: `opacity-0` alone still reserves the
+                // cluster's full width on every row, which squeezed the
+                // workspace name and branch into "…" even at the default
+                // 240px rail. Absolutely positioned it costs nothing at rest
+                // and overlays the metadata line on hover. It stays in the
+                // DOM (never `hidden`), so focus-within still reveals it for
+                // keyboard users.
+                <div className="absolute right-2 top-3 z-10 flex shrink-0 items-center gap-0.5 rounded-md bg-garage-panel/95 px-1 py-0.5 opacity-0 transition-opacity focus-within:opacity-100 group-hover/ws:opacity-100">
+                  {group.registered && (
+                    <button
+                      type="button"
+                      onMouseDown={(e) => e.stopPropagation()}
+                      onClick={() => startRename(group.name)}
+                      title={`rename ${group.name}`}
+                      className="shrink-0 rounded-md p-1 text-garage-faint hover:bg-garage-sel hover:text-garage-ink"
+                    >
+                      ✎
+                    </button>
+                  )}
+                  {group.registered && (
+                    <button
+                      type="button"
+                      onClick={() => onOpenRoot(group.name)}
+                      title={`open ${group.name} root in editor`}
+                      className="shrink-0 rounded-md p-1 text-garage-faint hover:bg-garage-sel hover:text-garage-ink"
+                    >
+                      ⧉
+                    </button>
+                  )}
+                  {/* p7 (spec: "Chrome affordance standards"): the default
+                      action is SAFE (unregisters, sessions keep running) — it
+                      must never share the ✕ vocabulary with session kill, so
+                      it reads "unreg". Arming it reveals the second, explicit
+                      choice: kill every live session AND unregister. */}
+                  {group.registered && confirmingDelete !== group.name && (
+                    <button
+                      type="button"
+                      onMouseDown={(e) => e.stopPropagation()}
+                      onClick={() => armDelete(group.name)}
+                      title={`remove ${group.name} — click to choose: unregister only, or close all sessions too`}
+                      className="shrink-0 rounded-md p-1 text-xs text-garage-faint hover:bg-garage-sel hover:text-garage-ink"
+                    >
+                      unreg
+                    </button>
+                  )}
+                  {group.registered && confirmingDelete === group.name && (
+                    <>
+                      <button
+                        type="button"
+                        onMouseDown={(e) => e.stopPropagation()}
+                        onClick={() => handleDelete(group.name, false)}
+                        title={`unregister ${group.name} only — sessions keep running in tmux and reappear as an unregistered group`}
+                        className="shrink-0 rounded-md px-2 py-1 text-[11px] text-garage-dim hover:bg-garage-sel"
+                      >
+                        unreg
+                      </button>
+                      <button
+                        type="button"
+                        onMouseDown={(e) => e.stopPropagation()}
+                        onClick={() => handleDelete(group.name, true)}
+                        title={`close all ${
+                          group.sessions.filter((s) => s.status !== "restorable").length
+                        } live session(s) — kills their tmux sessions — then unregister ${group.name}`}
+                        className="shrink-0 rounded-md px-2 py-1 text-[11px] text-garage-red hover:bg-garage-red/10"
+                      >
+                        kill {group.sessions.filter((s) => s.status !== "restorable").length}×
+                      </button>
+                    </>
+                  )}
+                  <AddSessionControl workspaceName={group.name} onCreated={onSessionCreated} />
+                </div>
               )}
               {!isRenamingThis && allRestorable && (
                 <button
@@ -305,13 +346,10 @@ export default function WorkspaceRail({
                   onClick={() => restoreAll(restorableIds)}
                   disabled={restoreAllBusy}
                   title={`restore all sessions in ${group.name}`}
-                  className="shrink-0 px-1 text-[10px] text-garage-dim hover:text-garage-amber disabled:opacity-40"
+                  className="shrink-0 rounded-md px-2 py-1 text-[11px] text-garage-dim hover:bg-garage-sel hover:text-garage-ink disabled:opacity-40"
                 >
                   restore all
                 </button>
-              )}
-              {!isRenamingThis && (
-                <AddSessionControl workspaceName={group.name} onCreated={onSessionCreated} />
               )}
             </div>
             <div className="ml-3 border-l border-garage-line pl-2">
@@ -337,35 +375,55 @@ export default function WorkspaceRail({
                   <div
                     key={s.id}
                     data-dim-zone
-                    className={`flex w-full items-start gap-1 px-2 py-1 text-xs ${
+                    className={`mx-1.5 flex items-center gap-2.5 rounded-md px-3 py-2 text-[13px] ${
                       isFocused ? "bg-garage-sel" : "hover:bg-garage-sel"
-                    } ${isRestorable || isHidden ? "opacity-60" : ""} ${
-                      columnActive ? "dim-focused" : ""
-                    } ${isNeedsInput ? "dim-exempt" : ""}`}
+                    } ${isNeedsInput ? "bg-garage-amber/5" : ""} ${
+                      isRestorable || isHidden ? "opacity-60" : ""
+                    } ${columnActive ? "dim-focused" : ""} ${isNeedsInput ? "dim-exempt" : ""}`}
                   >
                     <button
                       type="button"
                       onClick={() => onSelectSession(group.name, s.id)}
                       aria-current={isFocused}
                       title={isHidden ? `${s.label} — hidden, click to bring back` : undefined}
-                      className="flex min-w-0 flex-1 items-start gap-2 text-left"
+                      className="flex min-w-0 flex-1 flex-col gap-0.5 text-left"
                     >
-                      <span className={colorFor(s.status)} title={tipFor(s.status)}>
-                        {glyphFor(s.status)}
-                      </span>
-                      <span className={`truncate ${isHidden ? "italic text-garage-faint" : ""}`}>
-                        {s.label}
+                      {/* Same stacking fix as the workspace header above:
+                          status + label + elapsed is the identity line and
+                          always gets full width; the branch drops to a
+                          second line rather than squeezing the label out. */}
+                      <span className="flex min-w-0 items-center gap-2.5">
+                        <span
+                          className={`shrink-0 ${colorFor(s.status)}`}
+                          title={tipFor(s.status)}
+                        >
+                          {glyphFor(s.status)}
+                        </span>
+                        <span
+                          className={`truncate text-garage-ink ${isFocused ? "font-semibold" : ""} ${
+                            isHidden ? "italic text-garage-faint" : ""
+                          }`}
+                        >
+                          {s.label}
+                        </span>
+                        {isHidden && (
+                          <span className="shrink-0 text-xs text-garage-faint">hidden</span>
+                        )}
+                        <span
+                          className={`ml-auto shrink-0 font-mono text-xs tabular-nums ${
+                            isNeedsInput ? "font-semibold text-garage-amber" : "text-garage-faint"
+                          }`}
+                        >
+                          {formatElapsed(s.since)}
+                        </span>
                       </span>
                       {s.branch && (
                         <span
-                          className="max-w-[90px] shrink-0 truncate text-[10px] text-garage-faint"
+                          className="min-w-0 truncate pl-[18px] font-mono text-[11px] text-garage-faint"
                           title={s.branch}
                         >
                           ⎇ {s.branch}
                         </span>
-                      )}
-                      {isHidden && (
-                        <span className="shrink-0 text-[10px] text-garage-faint">hidden</span>
                       )}
                     </button>
                     {isRestorable && (
@@ -374,7 +432,7 @@ export default function WorkspaceRail({
                         onClick={() => restoreOne(s.id)}
                         disabled={busy}
                         title={`restore ${s.label}`}
-                        className="shrink-0 px-1 text-[10px] text-garage-dim hover:text-garage-amber disabled:opacity-40"
+                        className="shrink-0 rounded-md px-2 py-1 text-[11px] text-garage-dim hover:bg-garage-sel hover:text-garage-ink disabled:opacity-40"
                       >
                         restore
                       </button>
@@ -391,13 +449,13 @@ export default function WorkspaceRail({
                       type="button"
                       onClick={() => onSelectView?.(group.name, v.name)}
                       title={`show view "${v.name}" in the grid`}
-                      className="flex w-full items-center gap-1.5 px-2 py-0.5 text-[10px]"
+                      className="flex w-full items-center gap-1.5 rounded-md px-2 py-1 text-xs hover:bg-garage-sel"
                     >
                       <span className="text-garage-faint">▸</span>
                       <span
                         className={
                           v.name === viewsEntry.focused
-                            ? "font-semibold text-garage-amber"
+                            ? "font-semibold text-garage-ink"
                             : "text-garage-dim"
                         }
                       >
@@ -411,14 +469,14 @@ export default function WorkspaceRail({
                 ));
               })()}
               {group.sessions.length === 0 && (
-                <p className="px-2 py-1 text-[11px] text-garage-faint">no sessions</p>
+                <p className="px-2 py-1 text-xs text-garage-faint">no sessions</p>
               )}
             </div>
           </div>
         );
       })}
       {restoreError && (
-        <p className="px-3 py-1 text-[11px] text-garage-red" title={restoreError}>
+        <p className="px-3 py-1 text-xs text-garage-red" title={restoreError}>
           {restoreError}
         </p>
       )}

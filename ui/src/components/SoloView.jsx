@@ -60,11 +60,11 @@ export default function SoloView({ id }) {
   }, [id]);
 
   return (
-    <main className="flex h-screen flex-col bg-garage-bg font-mono text-sm text-garage-ink">
-      <header className="flex flex-none items-center gap-2 border-b border-garage-line bg-garage-panel px-3 py-1.5 text-xs">
+    <main className="flex h-screen flex-col bg-garage-bg text-garage-ink">
+      <header className="flex h-10 flex-none items-center gap-2 border-b border-garage-line bg-garage-bg px-3 text-[13px]">
         {status && <span className={colorFor(status)}>{glyphFor(status)}</span>}
-        <span className="text-garage-ink">{id}</span>
-        {status && <span className="ml-auto text-garage-faint">{status}</span>}
+        <span className="font-mono text-garage-ink">{id}</span>
+        {status && <span className="ml-auto text-xs text-garage-faint">{status}</span>}
       </header>
       <div className="min-h-0 flex-1 p-1">
         <SessionTerminal id={id} />

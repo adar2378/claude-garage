@@ -13,10 +13,12 @@ const STORAGE_KEY = "garage-settings";
 
 const DEFAULTS = Object.freeze({
   focusDim: false,
-  // p8-theming: "garage" | "claude-dark" | "claude-light" | "system"
-  // (system follows the OS between the two Claude palettes) — see
-  // lib/theme.js for resolution and index.css for the palettes.
-  theme: "garage",
+  // redesign/light-minimal: "light" | "dark" | "system" — light is the
+  // product default now. lib/theme.js#resolveTheme still migrates the
+  // retired values ("garage"/"claude-dark" -> dark, "claude-light" ->
+  // light) so anyone who explicitly picked one keeps what they chose;
+  // this default only governs viewers who never touched the setting.
+  theme: "light",
   // pit-pet: "off" | "cat" | "duck" | "pup" — see lib/pet.js. Off by
   // default; nobody gets a surprise duck.
   pet: "off",

@@ -1,6 +1,12 @@
 import { test, beforeEach } from "node:test";
 import assert from "node:assert/strict";
-import { setStatus, getStatus, dropSession, statusEvents } from "../src/status.js";
+import {
+  setStatus,
+  getStatus,
+  getStatusEntry,
+  dropSession,
+  statusEvents,
+} from "../src/status.js";
 
 const ID = "garage/test/one";
 
@@ -30,12 +36,12 @@ test("transition events fire once per actual change", () => {
   );
 });
 
-test("done decays to idle after the decay window", (t) => {
+test("done holds indefinitely — no auto-decay to idle", (t) => {
   t.mock.timers.enable({ apis: ["setTimeout"] });
   setStatus(ID, "done");
   assert.equal(getStatus(ID), "done");
-  t.mock.timers.tick(2 * 60 * 1000 + 1);
-  assert.equal(getStatus(ID), "idle");
+  t.mock.timers.tick(24 * 60 * 60 * 1000); // a full day — still no decay
+  assert.equal(getStatus(ID), "done");
 });
 
 test("needs-input never auto-decays", (t) => {
@@ -45,19 +51,37 @@ test("needs-input never auto-decays", (t) => {
   assert.equal(getStatus(ID), "needs-input");
 });
 
-test("a new transition cancels a pending done-decay", (t) => {
-  t.mock.timers.enable({ apis: ["setTimeout"] });
+test("done only clears via an explicit setStatus transition", () => {
   setStatus(ID, "done");
   setStatus(ID, "working");
-  t.mock.timers.tick(10 * 60 * 1000);
   assert.equal(getStatus(ID), "working");
 });
 
-test("dropSession forgets state and timers", (t) => {
-  t.mock.timers.enable({ apis: ["setTimeout"] });
+test("dropSession forgets state", () => {
   setStatus(ID, "done");
   dropSession(ID);
   assert.equal(getStatus(ID), "idle");
-  t.mock.timers.tick(10 * 60 * 1000); // decay firing after drop must not resurrect
-  assert.equal(getStatus(ID), "idle");
+});
+
+test("getStatusEntry defaults to idle/null for unknown ids", () => {
+  assert.deepEqual(getStatusEntry("garage/never/heard-of"), {
+    state: "idle",
+    since: null,
+  });
+});
+
+test("getStatusEntry.since changes on a real transition and is preserved on a repeat setStatus with the same state", (t) => {
+  t.mock.timers.enable({ apis: ["Date"] });
+  setStatus(ID, "working");
+  const firstSince = getStatusEntry(ID).since;
+
+  t.mock.timers.tick(5000);
+  setStatus(ID, "working"); // same state — since must NOT move
+  assert.equal(getStatusEntry(ID).since, firstSince);
+
+  t.mock.timers.tick(5000);
+  setStatus(ID, "done"); // real transition — since must advance
+  const secondSince = getStatusEntry(ID).since;
+  assert.notEqual(secondSince, firstSince);
+  assert.equal(getStatusEntry(ID).state, "done");
 });

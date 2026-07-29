@@ -63,7 +63,7 @@ export default function AddSessionControl({ workspaceName, onCreated }) {
         type="button"
         onClick={() => setOpen(true)}
         title={`new session in ${workspaceName}`}
-        className="shrink-0 px-1.5 py-0.5 text-garage-faint hover:text-garage-amber"
+        className="shrink-0 rounded-md p-1 text-garage-faint hover:bg-garage-sel hover:text-garage-ink"
       >
         +
       </button>
@@ -74,8 +74,8 @@ export default function AddSessionControl({ workspaceName, onCreated }) {
   // toggle spells out "worktree", and failures render as readable inline
   // text under the row — never a hover-only glyph.
   return (
-    <form onSubmit={submit} className="flex shrink-0 flex-col gap-0.5">
-      <div className="flex items-center gap-1">
+    <form onSubmit={submit} className="flex shrink-0 flex-col gap-1">
+      <div className="flex items-center gap-1.5">
         <input
           autoFocus
           value={label}
@@ -88,18 +88,18 @@ export default function AddSessionControl({ workspaceName, onCreated }) {
             if (e.key === "Escape") reset();
           }}
           placeholder="label"
-          className="w-16 border border-garage-line bg-garage-bg px-1 text-xs text-garage-ink outline-none focus:border-garage-amber"
+          className="w-16 rounded-md border border-garage-line bg-garage-bg px-2 py-1 text-[13px] text-garage-ink outline-none focus:border-garage-dim focus:outline-none"
         />
         <label
           title="spawn in an isolated git worktree (garage/<label> branch)"
-          className="flex shrink-0 items-center gap-1 text-[10px] text-garage-dim"
+          className="flex shrink-0 items-center gap-1 text-xs text-garage-dim"
         >
           <input
             type="checkbox"
             checked={worktree}
             onChange={(e) => setWorktree(e.target.checked)}
             onKeyDown={(e) => e.stopPropagation()}
-            className="h-3 w-3 accent-garage-amber"
+            className="h-3 w-3 accent-garage-dim"
           />
           worktree
         </label>
@@ -107,7 +107,7 @@ export default function AddSessionControl({ workspaceName, onCreated }) {
           type="submit"
           disabled={busy}
           title="create session"
-          className="px-1 text-garage-green disabled:opacity-40"
+          className="rounded-md px-1.5 py-1 text-garage-green hover:bg-garage-sel disabled:opacity-40"
         >
           ↵
         </button>
@@ -115,7 +115,7 @@ export default function AddSessionControl({ workspaceName, onCreated }) {
       {error && (
         <p
           role="alert"
-          className="max-w-[200px] whitespace-normal text-[10px] leading-tight text-garage-red"
+          className="max-w-[200px] whitespace-normal text-xs leading-tight text-garage-red"
         >
           {error}
         </p>

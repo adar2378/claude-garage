@@ -17,7 +17,7 @@ import {
   upsertSessionMeta,
   removeSessionMeta,
 } from "./registry.js";
-import { getStatus } from "./status.js";
+import { getStatusEntry } from "./status.js";
 import { createWorktree } from "./worktrees.js";
 
 const CLAUDE_CMD = process.env.GARAGE_CLAUDE_CMD ?? "claude";
@@ -42,14 +42,20 @@ export default async function sessionRoutes(app) {
     };
 
     const live = await Promise.all(
-      sessions.map(async (s) => ({
-        ...s,
-        status: getStatus(s.id),
-        // Live pane cwd, not session_path (see listPanePaths) — falls back
-        // to session_path only if the pane vanished between the two tmux
-        // calls above (a session that died mid-request).
-        branch: await getBranch(panePaths.get(s.id) ?? s.dir),
-      }))
+      sessions.map(async (s) => {
+        // since: epoch ms the current status began, so the UI can render
+        // elapsed time without a second lookup (see status.js getStatusEntry).
+        const { state: status, since } = getStatusEntry(s.id);
+        return {
+          ...s,
+          status,
+          since,
+          // Live pane cwd, not session_path (see listPanePaths) — falls back
+          // to session_path only if the pane vanished between the two tmux
+          // calls above (a session that died mid-request).
+          branch: await getBranch(panePaths.get(s.id) ?? s.dir),
+        };
+      })
     );
     const liveIds = new Set(live.map((s) => s.id));
 
@@ -70,6 +76,7 @@ export default async function sessionRoutes(app) {
         dir,
         attached: false,
         status: "restorable",
+        since: null,
         restorable: true,
         // No live pane to read a cwd from — resolve against the
         // registered workspace dir instead; null if that's gone too.

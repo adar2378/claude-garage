@@ -9,10 +9,10 @@ import { PET_OPTIONS } from "../lib/pet.js";
 // needed (unlike AddWorkspaceForm, which needs to coordinate a refetch on
 // success).
 //
-// Rows are TUI-style `[x]`/`[ ]` mono toggles rather than native checkbox
-// styling, matching the rest of the rail/grid chrome. New settings join the
-// ROWS array below — each just needs a key into lib/settings.js's store,
-// a label, and a one-line description.
+// Rows below are simple toggle rows (label + description + a bracket
+// marker as the checkbox). New settings join the ROWS array below — each
+// just needs a key into lib/settings.js's store, a label, and a one-line
+// description.
 const ROWS = [
   {
     key: "focusDim",
@@ -68,7 +68,7 @@ export default function SettingsPopover() {
         title="settings"
         aria-label="settings"
         aria-expanded={open}
-        className="border border-garage-line bg-garage-sel px-2 py-0.5 text-xs text-garage-ink hover:border-garage-amber"
+        className="rounded-md px-2 py-1 text-[13px] text-garage-dim hover:bg-garage-sel hover:text-garage-ink"
       >
         ⚙
       </button>
@@ -76,12 +76,12 @@ export default function SettingsPopover() {
         <div
           role="menu"
           aria-label="settings"
-          className="absolute right-0 top-full z-10 mt-1 w-72 border border-garage-line bg-garage-panel p-2 shadow-lg"
+          className="absolute right-0 top-full z-10 mt-2 w-80 rounded-xl border border-garage-line bg-garage-bg p-4 shadow-sm"
         >
-          <p className="px-1 pb-1 text-[10px] uppercase tracking-wide text-garage-faint">
+          <p className="px-1 pb-1.5 text-[11px] uppercase tracking-wider text-garage-faint">
             settings
           </p>
-          {ROWS.map((row) => {
+          {ROWS.map((row, i) => {
             const checked = !!settings[row.key];
             return (
               <button
@@ -93,33 +93,36 @@ export default function SettingsPopover() {
                   if (!checked) row.onEnable?.();
                   update({ [row.key]: !checked });
                 }}
-                className="flex w-full items-start gap-2 px-1 py-1 text-left hover:bg-garage-sel"
+                className={`flex w-full items-start gap-3 rounded-md px-1 py-2 text-left hover:bg-garage-sel ${
+                  i < ROWS.length - 1 ? "border-b border-garage-line" : ""
+                }`}
               >
                 {/* whitespace-nowrap + shrink-0: the marker contains a
                     space ("[ ]"), and a tight flex row will happily wrap
                     it across two lines otherwise. */}
                 <span
-                  className={`shrink-0 whitespace-nowrap font-mono ${
-                    checked ? "text-garage-amber" : "text-garage-faint"
+                  className={`shrink-0 whitespace-nowrap font-mono text-[13px] ${
+                    checked ? "text-garage-ink" : "text-garage-faint"
                   }`}
                 >
                   {checked ? "[x]" : "[ ]"}
                 </span>
                 <span className="flex flex-col gap-0.5">
-                  <span className="text-xs text-garage-ink">{row.label}</span>
-                  <span className="text-[11px] text-garage-faint">{row.description}</span>
+                  <span className="text-[13px] text-garage-ink">{row.label}</span>
+                  <span className="text-xs text-garage-dim">{row.description}</span>
                 </span>
               </button>
             );
           })}
 
-          {/* p8-theming: radio-style theme rows, same TUI aesthetic as the
-              checkbox rows above — (•) marks the active choice. */}
-          <p className="px-1 pb-1 pt-2 text-[10px] uppercase tracking-wide text-garage-faint">
+          {/* p8-theming: radio-style theme rows — (•) marks the active
+              choice. THEME_OPTIONS is rendered generically (map over the
+              array) so the registry stays the single source of truth. */}
+          <p className="px-1 pb-1.5 pt-4 text-[11px] uppercase tracking-wider text-garage-faint">
             theme
           </p>
-          {THEME_OPTIONS.map((opt) => {
-            const selected = (settings.theme ?? "garage") === opt.value;
+          {THEME_OPTIONS.map((opt, i) => {
+            const selected = (settings.theme ?? "light") === opt.value;
             return (
               <button
                 key={opt.value}
@@ -127,28 +130,30 @@ export default function SettingsPopover() {
                 role="menuitemradio"
                 aria-checked={selected}
                 onClick={() => update({ theme: opt.value })}
-                className="flex w-full items-start gap-2 px-1 py-1 text-left hover:bg-garage-sel"
+                className={`flex w-full items-start gap-3 rounded-md px-1 py-2 text-left hover:bg-garage-sel ${
+                  i < THEME_OPTIONS.length - 1 ? "border-b border-garage-line" : ""
+                }`}
               >
                 <span
-                  className={`shrink-0 whitespace-nowrap font-mono ${
-                    selected ? "text-garage-amber" : "text-garage-faint"
+                  className={`shrink-0 whitespace-nowrap font-mono text-[13px] ${
+                    selected ? "text-garage-ink" : "text-garage-faint"
                   }`}
                 >
                   {selected ? "(•)" : "( )"}
                 </span>
                 <span className="flex flex-col gap-0.5">
-                  <span className="text-xs text-garage-ink">{opt.label}</span>
-                  <span className="text-[11px] text-garage-faint">{opt.description}</span>
+                  <span className="text-[13px] text-garage-ink">{opt.label}</span>
+                  <span className="text-xs text-garage-dim">{opt.description}</span>
                 </span>
               </button>
             );
           })}
 
           {/* pit-pet roster (lib/pet.js) — same radio aesthetic. */}
-          <p className="px-1 pb-1 pt-2 text-[10px] uppercase tracking-wide text-garage-faint">
+          <p className="px-1 pb-1.5 pt-4 text-[11px] uppercase tracking-wider text-garage-faint">
             pit pet
           </p>
-          {PET_OPTIONS.map((opt) => {
+          {PET_OPTIONS.map((opt, i) => {
             const selected = (settings.pet ?? "off") === opt.value;
             return (
               <button
@@ -157,18 +162,20 @@ export default function SettingsPopover() {
                 role="menuitemradio"
                 aria-checked={selected}
                 onClick={() => update({ pet: opt.value })}
-                className="flex w-full items-start gap-2 px-1 py-1 text-left hover:bg-garage-sel"
+                className={`flex w-full items-start gap-3 rounded-md px-1 py-2 text-left hover:bg-garage-sel ${
+                  i < PET_OPTIONS.length - 1 ? "border-b border-garage-line" : ""
+                }`}
               >
                 <span
-                  className={`shrink-0 whitespace-nowrap font-mono ${
-                    selected ? "text-garage-amber" : "text-garage-faint"
+                  className={`shrink-0 whitespace-nowrap font-mono text-[13px] ${
+                    selected ? "text-garage-ink" : "text-garage-faint"
                   }`}
                 >
                   {selected ? "(•)" : "( )"}
                 </span>
                 <span className="flex flex-col gap-0.5">
-                  <span className="text-xs text-garage-ink">{opt.label}</span>
-                  <span className="text-[11px] text-garage-faint">{opt.description}</span>
+                  <span className="text-[13px] text-garage-ink">{opt.label}</span>
+                  <span className="text-xs text-garage-dim">{opt.description}</span>
                 </span>
               </button>
             );
