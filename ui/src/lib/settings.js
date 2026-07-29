@@ -1,8 +1,7 @@
 // Tiny localStorage-backed settings store (design D-settings). Settings are
 // per-browser viewer preferences, not daemon truth — nothing here crosses
-// to ~/.garage. Popout windows follow the main window via the `storage`
-// event, so a single toggle applies everywhere without any message-passing
-// of its own.
+// to ~/.garage. A second tab follows the first via the `storage` event, so
+// a single toggle applies everywhere without any message-passing of its own.
 //
 // Future settings (theme, decay timeout display, notification muting) join
 // the DEFAULTS object below — everything else in this module is generic.
@@ -48,7 +47,7 @@ function notify() {
 
 // One module-scope `storage` listener (not one per hook subscriber) —
 // `storage` only fires in *other* tabs/windows, so this is what makes a
-// popout or a second tab pick up a setting changed in the main window.
+// second tab pick up a setting changed in the first.
 if (typeof window !== "undefined") {
   window.addEventListener("storage", (e) => {
     if (e.key !== null && e.key !== STORAGE_KEY) return;

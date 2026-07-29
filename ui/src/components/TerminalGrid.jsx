@@ -41,8 +41,8 @@ function nextAutoLabel(sessions) {
 // this component's subtree, so a normal Context crosses the portal
 // boundary exactly like it would for any other child. That's what lets a
 // panel's content (SessionCellPanel) *and* its tab (SessionCellTab) react
-// to session-state changes (status, restore-in-flight, popped-out,
-// app-level focus) without ever calling `panel.api.updateParameters()`:
+// to session-state changes (status, restore-in-flight, app-level focus)
+// without ever calling `panel.api.updateParameters()`:
 // each panel's own identity (the only thing dockview needs to persist) is
 // just its session id — everything else is read fresh from context on
 // every render.
@@ -52,19 +52,15 @@ const GridContext = createContext(null);
 // grid-controls capabilities). One dockview panel per session in the
 // focused workspace, keyed by session id (design D-dock) — restorable
 // sessions keep the restore placeholder as their panel's content, and
-// sessions currently viewed in a pop-out window (design D-popout) render a
-// reclaim placeholder instead of a live terminal, but every session still
-// occupies a slot in the layout so the drag-dock arrangement never shifts
-// out from under the user just because a cell's *content* changed.
+// every session occupies a slot in the layout so the drag-dock arrangement
+// never shifts out from under the user just because a cell's *content*
+// changed.
 export default function TerminalGrid({
   group,
   focusedSessionId,
   onFocusCell,
   onBlurChrome,
   onSessionsRestored,
-  poppedOutIds,
-  onPopOut,
-  onReclaim,
   hiddenIds,
   onHideCell,
   columnActive,
@@ -257,9 +253,7 @@ export default function TerminalGrid({
       return;
     }
     const panel = focusedSessionId ? api.getPanel(focusedSessionId) : null;
-    // Floating cells are outside the tiling — maximize only applies to
-    // grid-located groups.
-    if (panel && panel.group.api.location.type === "grid") api.maximizeGroup(panel);
+    if (panel) api.maximizeGroup(panel);
   }, [focusedSessionId]);
 
   // App's keydown listener owns `\` and `m` (single-listener design
@@ -281,11 +275,9 @@ export default function TerminalGrid({
   // Hidden sessions (design: hide control) are excluded here, before
   // `sessionIds` is derived below — that's what makes reconcile() drop
   // their panel from the grid, the same mechanism that removes a panel for
-  // a session that ended entirely. Unlike popped-out sessions (which stay
-  // full members of `group.sessions` and keep their panel slot, just
-  // rendered as a reclaim placeholder — see poppedOutIds usage below),
-  // hiding removes the cell from the grid outright; the rail is the only
-  // place a hidden session still shows up (App owns that split).
+  // a session that ended entirely. Hiding removes the cell from the grid
+  // outright; the rail is the only place a hidden session still shows up
+  // (App owns that split).
   const visibleSessions = useMemo(
     () =>
       (group?.sessions ?? []).filter(
@@ -300,28 +292,14 @@ export default function TerminalGrid({
     return map;
   }, [visibleSessions]);
 
-  // Reclaim = clear the popout heartbeat record *and* focus the cell, same
-  // as clicking any other cell (design: "the main grid's cell renders that
-  // session as a live terminal again").
-  const reclaim = useCallback(
-    (id) => {
-      onReclaim?.(id);
-      onFocusCell(id);
-    },
-    [onReclaim, onFocusCell]
-  );
-
   const contextValue = useMemo(
     () => ({
       sessionsById,
       focusedSessionId,
       restoringIds,
       restoreError,
-      poppedOutIds,
       columnActive,
       onFocusCell,
-      onPopOut,
-      onReclaim: reclaim,
       onHideCell,
       onSessionsRestored,
       restoreOne,
@@ -343,11 +321,8 @@ export default function TerminalGrid({
       focusedSessionId,
       restoringIds,
       restoreError,
-      poppedOutIds,
       columnActive,
       onFocusCell,
-      onPopOut,
-      reclaim,
       onHideCell,
       onSessionsRestored,
       splitFrom,
@@ -751,7 +726,7 @@ export default function TerminalGrid({
 // always a session id (see layout.js — every addPanel call uses the
 // session id as the panel id); `props` otherwise follows
 // IDockviewPanelHeaderProps (api/containerApi/params/tabLocation), but
-// everything this needs — the session record, focus state, popout state —
+// everything this needs — the session record, focus state, restore state —
 // comes from GridContext instead, same as SessionCellPanel below.
 //
 // This is rendered inside dockview's `.dv-tab` element (see
@@ -767,40 +742,10 @@ export default function TerminalGrid({
 // focused/needs-input/columnActive inputs as SessionCellPanel's content
 // zone below, so the merged bar dims and un-dims in lockstep with the rest
 // of the cell rather than as a separately-lit strip above a dimmed body.
-function SessionCellTab({ api, containerApi }) {
+function SessionCellTab({ api }) {
   const ctx = useContext(GridContext);
   const id = api.id;
   const s = ctx.sessionsById.get(id);
-
-  // p8 float-in-page: is this cell currently a floating group rather than
-  // a grid tile? Driven by dockview's own location events so the toggle
-  // stays correct however the cell got there (button, or dragging a
-  // floating group back into the grid by its tab).
-  const [isFloating, setIsFloating] = useState(() => api.location.type === "floating");
-  useEffect(() => {
-    const disposable = api.onDidLocationChange((e) =>
-      setIsFloating(e.location.type === "floating")
-    );
-    return () => disposable.dispose();
-  }, [api]);
-
-  // Float ⇄ dock. Floating uses dockview's native floating groups — the
-  // cell lifts out of the tiling into a draggable/resizable window INSIDE
-  // the page (unlike ⇱ pop-out, which opens a separate browser window).
-  // Docking back tucks it beside an existing grid tile; with no grid tile
-  // left, dragging the tab onto the empty grid still works natively.
-  function toggleFloat() {
-    const panel = containerApi.getPanel(id);
-    if (!panel) return;
-    if (panel.group.api.location.type === "floating") {
-      const target = containerApi.panels.find(
-        (p) => p.id !== id && p.group.api.location.type === "grid"
-      );
-      if (target) panel.api.moveTo({ group: target.group, position: "right" });
-      return;
-    }
-    containerApi.addFloatingGroup(panel, { x: 48, y: 32, width: 640, height: 420 });
-  }
 
   // Two-step confirm for the close (✕) button — click 1 arms it ("sure?",
   // text-garage-red) for 3s, click 2 within that window actually deletes.
@@ -831,11 +776,9 @@ function SessionCellTab({ api, containerApi }) {
   if (!s) return null;
 
   const focused = id === ctx.focusedSessionId;
-  const isPoppedOut = ctx.poppedOutIds?.has(id) ?? false;
   // v1: the close control only ever targets a session with a real tmux
   // session behind it — a restorable entry has none, and DELETE would just
-  // 404 (see daemon/src/sessions.js). Popped-out cells are still live
-  // (only their *rendering* moved to another window), so they keep ✕.
+  // 404 (see daemon/src/sessions.js).
   const isLive = s.status !== "restorable";
   const isNeedsInput = s.status === "needs-input";
 
@@ -999,45 +942,12 @@ function SessionCellTab({ api, containerApi }) {
           onMouseDown={(e) => e.stopPropagation()}
           onClick={(e) => {
             e.stopPropagation();
-            toggleFloat();
-          }}
-          title={
-            isFloating
-              ? "dock back into the grid"
-              : "float this cell — a draggable window above the grid, same page"
-          }
-          className={`rounded-md p-1 ${
-            isFloating
-              ? "bg-garage-sel text-garage-ink"
-              : "text-garage-faint hover:bg-garage-sel hover:text-garage-ink"
-          }`}
-        >
-          {isFloating ? "⇲" : "❐"}
-        </button>
-        <button
-          type="button"
-          onMouseDown={(e) => e.stopPropagation()}
-          onClick={(e) => {
-            e.stopPropagation();
             ctx.onHideCell?.(id);
           }}
           title="Hide this cell for this page run (rail keeps it — click there to bring it back)"
           className="rounded-md p-1 text-garage-faint hover:bg-garage-sel hover:text-garage-ink"
         >
           –
-        </button>
-        <button
-          type="button"
-          onMouseDown={(e) => e.stopPropagation()}
-          onClick={(e) => {
-            e.stopPropagation();
-            ctx.onPopOut?.(id);
-          }}
-          disabled={isPoppedOut}
-          title="Pop out into a separate window"
-          className="rounded-md p-1 text-garage-faint hover:bg-garage-sel hover:text-garage-ink disabled:opacity-30"
-        >
-          ⇱
         </button>
         {isLive && (
           <button
@@ -1070,7 +980,7 @@ function SessionCellTab({ api, containerApi }) {
 // the dockview panel id, which is always a session id (see layout.js —
 // every addPanel call uses the session id as the panel id). Everything
 // else needed to render the cell — the session record, focus state,
-// restore/popout state — comes from GridContext, not from dockview's own
+// restore state — comes from GridContext, not from dockview's own
 // params (see that context's definition for why).
 //
 // D-dim (column semantics): every cell is a dim zone (`data-dim-zone`),
@@ -1101,7 +1011,6 @@ function SessionCellPanel({ api }) {
 
   const focused = id === ctx.focusedSessionId;
   const isRestorable = s.status === "restorable";
-  const isPoppedOut = ctx.poppedOutIds?.has(id) ?? false;
   const busy = ctx.restoringIds.has(id);
 
   return (
@@ -1121,21 +1030,12 @@ function SessionCellPanel({ api }) {
           : focused
             ? "cell-border-focused"
             : "border-garage-line"
-      } ${isRestorable || isPoppedOut ? "opacity-70" : ""} ${
+      } ${isRestorable ? "opacity-70" : ""} ${
         s.status === "needs-input" ? "dim-exempt" : ""
       } ${ctx.columnActive ? "dim-focused" : ""}`}
     >
       <div className="relative min-h-0 flex-1 p-1">
-        {isPoppedOut ? (
-          <button
-            type="button"
-            onClick={() => ctx.onReclaim(id)}
-            className="flex h-full w-full flex-col items-center justify-center gap-2 text-garage-dim hover:text-garage-ink"
-          >
-            <span className="text-2xl">⇱</span>
-            <span className="text-xs">viewing in separate window — reclaim</span>
-          </button>
-        ) : isRestorable ? (
+        {isRestorable ? (
           <div className="flex h-full flex-col items-center justify-center gap-2 text-garage-dim">
             <span className="text-2xl">⟳</span>
             <span className="text-xs">no live terminal — session needs to be restored</span>

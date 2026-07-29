@@ -49,7 +49,11 @@ export default async function sessionRoutes(app) {
         return {
           ...s,
           status,
-          since,
+          // A session that has never transitioned has no recorded `since`
+          // (the store only stamps one on a real state change), which would
+          // render as "—" in the UI even though the session is live and has
+          // an obvious age. Fall back to when tmux created it.
+          since: since ?? s.createdAt ?? null,
           // Live pane cwd, not session_path (see listPanePaths) — falls back
           // to session_path only if the pane vanished between the two tmux
           // calls above (a session that died mid-request).

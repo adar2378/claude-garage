@@ -19,7 +19,10 @@ export async function listSessions() {
     ({ stdout } = await run("tmux", [
       "ls",
       "-F",
-      "#{session_name}\t#{session_path}\t#{session_attached}",
+      // `session_created` (epoch SECONDS) backs the UI's elapsed timer for a
+      // session that has never had a status transition — without it a live
+      // session with no recorded `since` renders "—" instead of its age.
+      "#{session_name}\t#{session_path}\t#{session_attached}\t#{session_created}",
     ]));
   } catch {
     // tmux exits non-zero when no server is running — that means "no sessions".
@@ -29,9 +32,17 @@ export async function listSessions() {
     .split("\n")
     .filter((line) => line.startsWith(GARAGE_PREFIX))
     .map((line) => {
-      const [name, dir, attached] = line.split("\t");
+      const [name, dir, attached, created] = line.split("\t");
       const [, workspace, label] = name.split("/");
-      return { id: name, workspace, label, dir, attached: attached !== "0" };
+      const createdMs = Number(created) * 1000;
+      return {
+        id: name,
+        workspace,
+        label,
+        dir,
+        attached: attached !== "0",
+        createdAt: Number.isFinite(createdMs) && createdMs > 0 ? createdMs : null,
+      };
     });
 }
 

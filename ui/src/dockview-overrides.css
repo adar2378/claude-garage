@@ -7,7 +7,7 @@
    CSS custom properties usable from any stylesheet.
 
    Dockview's per-panel tab IS the cell's one title bar now — status
-   glyph, label, status text, pop-out button — rendered by
+   glyph, label, elapsed time, cell controls — rendered by
    SessionCellTab in TerminalGrid.jsx and wired in as `defaultTabComponent`
    (plus `singleTabMode="fullwidth"`, also set on <DockviewReact>). The tab
    stays dockview's native drag handle throughout, so nothing here (or in
@@ -83,15 +83,6 @@
   color: var(--color-garage-dim);
 }
 
-/* p8 float-in-page: dockview floating groups (the ❐ control on a cell
-   tab) — lifted with a shadow so a floated terminal reads as a window
-   above the wall. The tab remains the drag handle and dockview's own
-   resize edges keep working.
-   redesign/light-minimal: the border was amber (reserved for needs-input
-   now) and the shadow was tuned for a dark ground — a 50%-black shadow is
-   a smudge on white. Hairline border + a soft, shallow shadow instead. */
-.garage-dock .dv-resize-container {
-  border: 1px solid var(--color-garage-line);
-  box-shadow: 0 8px 28px -8px color-mix(in srgb, var(--color-garage-ink) 28%, transparent);
-  background: var(--color-garage-panel);
-}
+/* Float-in-page (dockview floating groups) was removed — the ❐ control and
+   its `addFloatingGroup` call are gone, so `.dv-resize-container` never
+   renders and needs no skin. Cells are always grid tiles now. */

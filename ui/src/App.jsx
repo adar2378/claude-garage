@@ -1,7 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import WorkspaceRail from "./components/WorkspaceRail.jsx";
 import TerminalGrid from "./components/TerminalGrid.jsx";
-import SoloView from "./components/SoloView.jsx";
 import HooksBanner from "./components/HooksBanner.jsx";
 import AddWorkspaceForm from "./components/AddWorkspaceForm.jsx";
 import ChangesPane from "./components/ChangesPane.jsx";
@@ -14,7 +13,6 @@ import SettingsPopover from "./components/SettingsPopover.jsx";
 import { useSettings } from "./lib/settings.js";
 import { loadViewedMap, markViewed, pruneViewed, hashContent } from "./lib/viewed.js";
 import { firstHunkLine } from "./lib/diff.js";
-import { listPoppedOut, openPopout, clearPopout, subscribe as subscribePopouts } from "./lib/popouts.js";
 import { loadPaneSizes, savePaneSizes, startDrag } from "./lib/panes.js";
 import { useApplyTheme } from "./lib/theme.js";
 import {
@@ -32,24 +30,7 @@ const CLIENT_ID = crypto.randomUUID();
 const VISIBILITY_INTERVAL_MS = 30_000;
 const LOAD_RETRY_MS = 3_000;
 
-// design D-popout: a popout window is opened at `/?solo=<id>` (see
-// lib/popouts.js#openPopout) and never navigates elsewhere for the rest of
-// its life, so this is stable for the whole lifetime of whichever branch
-// of App a given mount takes below — reading it before any hooks run and
-// branching on it is safe (every render of a single mounted instance takes
-// the same branch; React's hooks-order rule is about a single instance,
-// not about App-the-component-type in the abstract).
-function readSoloId() {
-  if (typeof window === "undefined") return null;
-  return new URLSearchParams(window.location.search).get("solo");
-}
-
 export default function App() {
-  const soloId = readSoloId();
-  if (soloId) {
-    return <SoloView id={soloId} />;
-  }
-
   const [workspaces, setWorkspaces] = useState([]);
   const [sessions, setSessions] = useState([]);
   const [loadError, setLoadError] = useState(null);
@@ -163,36 +144,8 @@ export default function App() {
   // p3-restore-and-ship: D-help
   const [helpOpen, setHelpOpen] = useState(false);
 
-  // ---- p4-layout-focus-workspace-ux: popout tracking (design D-popout) ----
-  // `poppedOutIds` re-derives from localStorage on every change the
-  // subscription notices (cross-window writes via `storage`, plus a 5s
-  // poll for same-window writes and pure staleness timeouts — see
-  // lib/popouts.js) so TerminalGrid always renders live-vs-placeholder
-  // cells off the same source of truth a popout window itself reads.
-  const [poppedOutIds, setPoppedOutIds] = useState(() => listPoppedOut());
-
-  useEffect(() => {
-    const unsubscribe = subscribePopouts(() => setPoppedOutIds(listPoppedOut()));
-    return unsubscribe;
-  }, []);
-
-  // openPopout/clearPopout write synchronously but don't themselves fire a
-  // `storage` event in *this* window (that only fires in other
-  // tabs/windows) — so these wrappers refresh local state immediately
-  // rather than waiting on the next poll tick.
-  const handlePopOut = useCallback((id) => {
-    openPopout(id);
-    setPoppedOutIds(listPoppedOut());
-  }, []);
-
-  const handleReclaim = useCallback((id) => {
-    clearPopout(id);
-    setPoppedOutIds(listPoppedOut());
-  }, []);
-
   // Hidden ids are plain in-memory React state, deliberately NOT persisted
-  // anywhere (unlike poppedOutIds, which survives via localStorage) — the
-  // spec is "removes the panel for this page run only": reloading or
+  // anywhere — the spec is "removes the panel for this page run only": reloading or
   // reopening claude-garage must restore every hidden session. The rail
   // keeps listing hidden sessions (with a dim + "hidden" indicator — see
   // WorkspaceRail); only TerminalGrid's panel set excludes them (see its
@@ -1102,9 +1055,6 @@ export default function App() {
           onFocusCell={setFocusedSessionId}
           onBlurChrome={blurActiveTerminal}
           onSessionsRestored={refreshSessions}
-          poppedOutIds={poppedOutIds}
-          onPopOut={handlePopOut}
-          onReclaim={handleReclaim}
           hiddenIds={hiddenIds}
           onHideCell={hideSession}
           columnActive={activeColumn === "grid"}

@@ -52,9 +52,8 @@ export function useEffectiveTheme(setting) {
  * for both "light" and "dark". index.css now defines an explicit
  * `[data-theme="light"]` block (identical to the no-attribute default),
  * so there's no need to delete the attribute for light anymore. Called
- * once per window root (App, SoloView) — popout windows follow the main
- * window automatically because settings.js already syncs across windows
- * via `storage` events.
+ * once per window root. A second tab follows the first automatically,
+ * because settings.js already syncs across windows via `storage` events.
  */
 export function useApplyTheme() {
   const [settings] = useSettings();

@@ -37,8 +37,8 @@ one screen, built around four things that rarely coexist.
    `tmux attach -t garage/<workspace>/<label>` still works, and dead sessions
    restore with their full conversation (`claude --resume`) in one click.
 2. 🖥️ **Every session of a project on screen at once.** Not a switcher, a
-   live grid of interactive terminals. Split, resize, maximize, float, or
-   detach into standalone views, VS Code-style.
+   live grid of interactive terminals. Split, resize, maximize, or detach
+   into standalone views, VS Code-style.
 3. 🚨 **Needs-input triage as a first-class queue.** Blocked sessions sort
    first everywhere, light up amber, count into the header badge and the tab
    title; `a` jumps to whichever agent is waiting, across every project.
