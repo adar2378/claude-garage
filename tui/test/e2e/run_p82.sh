@@ -24,7 +24,11 @@ set -u -o pipefail
 
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 REPO=$(cd "$SCRIPT_DIR/../../.." && pwd)
-TUI_BIN=$REPO/tui/dist/garage-tui-darwin-$(node -p 'process.arch' 2>/dev/null || echo arm64)
+# Binary under test: GARAGE_TUI_BIN overrides the preflight target and is
+# forwarded into the launcher's environment (this harness starts the TUI via
+# `bin/garage.js tui`, which resolves the binary itself — p9 lookup order);
+# default is the p8 Dart dist binary.
+TUI_BIN=${GARAGE_TUI_BIN:-$REPO/tui/dist/garage-tui-darwin-$(node -p 'process.arch' 2>/dev/null || echo arm64)}
 WORK=${E2E_WORK:-$(mktemp -d "${TMPDIR:-/tmp}/garage-tui-p82.XXXXXX")}
 RESULTS=$WORK/results.txt
 mkdir -p "$WORK"
@@ -78,13 +82,30 @@ for row, line in enumerate(sys.stdin.buffer.read().decode('utf-8', 'replace').sp
         if m:
             params = m.group(1)
             codes = [int(p) for p in params.split(';') if p] or [0]
-            for c in codes:
+            # Walk codes consuming extended-color sequences whole: per
+            # ECMA-48/ANSI, 38;5;N / 48;5;N (indexed) and 38;2;R;G;B /
+            # 48;2;R;G;B (truecolor) are ONE color parameter — their payload
+            # numbers are palette indices, not SGR attributes. Without this,
+            # a foreground of indexed color 7 (e.g. 38;5;7, ratatui's Gray)
+            # false-positives as SGR 7 inverse video.
+            k = 0
+            while k < len(codes):
+                c = codes[k]
+                if c in (38, 48, 58):
+                    if k + 1 < len(codes) and codes[k + 1] == 5:
+                        k += 3
+                    elif k + 1 < len(codes) and codes[k + 1] == 2:
+                        k += 5
+                    else:
+                        k += 1
+                    continue
                 if c == 0:
                     rev = False
                 elif c == 7:
                     rev = True
                 elif c == 27:
                     rev = False
+                k += 1
             i = m.end()
             continue
         ch = line[i]
@@ -162,6 +183,7 @@ EOF
 chmod +x "$WORK/launch.sh"
 tmux new-session -d -x 200 -y 55 \
   -e GARAGE_PORT="$PORT" -e GARAGE_TUI_PORT="$PORT" \
+  -e GARAGE_TUI_BIN="${GARAGE_TUI_BIN:-}" \
   -e GARAGE_DIR="$SCRATCH_GARAGE_DIR" -e GARAGE_CLAUDE_CMD='/bin/zsh -f' \
   -s "$OUTER" "$WORK/launch.sh"
 ( while :; do tmux capture-pane -p -t "=$OUTER:" 2>/dev/null; sleep 0.1; done ) \
@@ -300,6 +322,7 @@ tmux kill-session -t "=$OUTER" 2>/dev/null
 rm -f "$WORK/tui-exit"
 tmux new-session -d -x 200 -y 55 \
   -e GARAGE_PORT="$PORT" -e GARAGE_TUI_PORT="$PORT" \
+  -e GARAGE_TUI_BIN="${GARAGE_TUI_BIN:-}" \
   -e GARAGE_DIR="$SCRATCH_GARAGE_DIR" -e GARAGE_CLAUDE_CMD='/bin/zsh -f' \
   -s "$OUTER" "$WORK/launch.sh"
 ( while :; do tmux capture-pane -p -t "=$OUTER:" 2>/dev/null; sleep 0.1; done ) \

@@ -6,13 +6,15 @@
 # escape sequences) and assertions read `tmux capture-pane -p` of the OUTER
 # pane (TUI chrome) or the INNER garage sessions (byte-exactness).
 #
-# Safety contract:
-#   - ~/.garage/state.json is backed up first and restored byte-exact on exit
-#     (a scratch state carrying only the original hookToken is swapped in so
-#     the run never depends on — or disturbs — real workspace registrations).
+# Safety contract (fully scratch — the user's live daemon on 4747 is never
+# touched):
+#   - runs its own daemon on a SCRATCH PORT (GARAGE_E2E_PORT, default 4794)
+#     with a SCRATCH GARAGE_DIR, so ~/.garage is never read or written
+#     (state.json restore plumbing retained for a pre-existing scratch state).
 #   - Only tmux sessions named e2e-* / garage/e2e-*/... are created or killed.
 #   - The daemon is started by this script (refuses to run against an already
-#     running daemon) with GARAGE_CLAUDE_CMD=/bin/zsh and killed on exit.
+#     running daemon on the scratch port) with GARAGE_CLAUDE_CMD=/bin/zsh and
+#     killed on exit.
 #
 # Exits non-zero on the first failed check; prints PASS/FAIL per check.
 
@@ -21,17 +23,25 @@ set -u -o pipefail
 # ── Paths ────────────────────────────────────────────────────────────────
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 REPO=$(cd "$SCRIPT_DIR/../../.." && pwd)
-TUI_BIN=$REPO/tui/dist/garage-tui-darwin-$(node -p 'process.arch' 2>/dev/null || echo arm64)
+# Binary under test: GARAGE_TUI_BIN overrides (p9 parity gate points it at
+# the Rust binary — same checks); default is the p8 Dart dist binary.
+TUI_BIN=${GARAGE_TUI_BIN:-$REPO/tui/dist/garage-tui-darwin-$(node -p 'process.arch' 2>/dev/null || echo arm64)}
 KEYECHO=$REPO/spikes/nocterm-wall/tools/keyecho.sh
 STRESS=$REPO/spikes/nocterm-wall/tools/stress.sh
-STATE=$HOME/.garage/state.json
 WORK=${E2E_WORK:-$(mktemp -d "${TMPDIR:-/tmp}/garage-tui-e2e.XXXXXX")}
 KEYLOG=$WORK/keylog.txt
 RESULTS=$WORK/results.txt
 mkdir -p "$WORK"
 : > "$RESULTS"
 
-BASE=http://127.0.0.1:4747
+# Scratch port + scratch GARAGE_DIR (p9 parity gate): the user's live daemon
+# on 4747 and ~/.garage are never touched. Same pattern as run_p81–p84.
+PORT=${GARAGE_E2E_PORT:-4794}
+SCRATCH_GARAGE_DIR=$WORK/garage-home
+STATE=$SCRATCH_GARAGE_DIR/state.json
+mkdir -p "$SCRATCH_GARAGE_DIR"
+
+BASE=http://127.0.0.1:$PORT
 DAEMON_PID=""
 
 # ── Check plumbing ───────────────────────────────────────────────────────
@@ -98,7 +108,7 @@ for tool in tmux node curl python3 perl; do
   command -v "$tool" >/dev/null || { echo "missing tool: $tool"; exit 2; }
 done
 if curl -s -m 2 "$BASE/api/health" | grep -q ok; then
-  echo "refusing to run: a daemon is already listening on $BASE"; exit 2
+  echo "refusing to run: a daemon is already listening on $BASE (set GARAGE_E2E_PORT)"; exit 2
 fi
 tmux ls -F '#{session_name}' 2>/dev/null | grep -E '^(e2e-tui|garage/e2e-)' \
   | while IFS= read -r s; do tmux kill-session -t "=$s" 2>/dev/null; done
@@ -115,8 +125,9 @@ json.dump(scratch, open(sys.argv[2], "w"), indent=2)
 PY
 TOKEN=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("hookToken",""))' "$WORK/state.json.orig" 2>/dev/null || true)
 
-# ── Daemon up ────────────────────────────────────────────────────────────
-GARAGE_CLAUDE_CMD=/bin/zsh node "$REPO/daemon/src/index.js" >"$WORK/daemon.log" 2>&1 &
+# ── Daemon up (scratch port + scratch GARAGE_DIR) ────────────────────────
+GARAGE_PORT=$PORT GARAGE_DIR=$SCRATCH_GARAGE_DIR GARAGE_CLAUDE_CMD=/bin/zsh \
+  node "$REPO/daemon/src/index.js" >"$WORK/daemon.log" 2>&1 &
 DAEMON_PID=$!
 check "daemon up (GET /api/health ok)" \
   wait_for 10 sh -c "curl -s -m 1 $BASE/api/health | grep -q ok"
@@ -176,7 +187,8 @@ sleep 120
 EOF
   chmod +x "$WORK/launch-$tag.sh"
   tmux new-session -d -x "$cols" -y "$rows" \
-    -e GARAGE_TUI_KEYLOG="$KEYLOG" -s "$name" "$WORK/launch-$tag.sh"
+    -e GARAGE_TUI_KEYLOG="$KEYLOG" -e GARAGE_TUI_PORT="$PORT" \
+    -s "$name" "$WORK/launch-$tag.sh"
 }
 
 OUTER=e2e-tui

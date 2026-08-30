@@ -22,7 +22,9 @@ set -u -o pipefail
 
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 REPO=$(cd "$SCRIPT_DIR/../../.." && pwd)
-TUI_BIN=$REPO/tui/dist/garage-tui-darwin-$(node -p 'process.arch' 2>/dev/null || echo arm64)
+# Binary under test: GARAGE_TUI_BIN overrides (p9 parity gate points it at
+# the Rust binary — same checks); default is the p8 Dart dist binary.
+TUI_BIN=${GARAGE_TUI_BIN:-$REPO/tui/dist/garage-tui-darwin-$(node -p 'process.arch' 2>/dev/null || echo arm64)}
 WORK=${E2E_WORK:-$(mktemp -d "${TMPDIR:-/tmp}/garage-tui-click.XXXXXX")}
 RESULTS=$WORK/results.txt
 mkdir -p "$WORK"
