@@ -27,9 +27,9 @@ REPO=$(cd "$SCRIPT_DIR/../../.." && pwd)
 # Binary under test: GARAGE_TUI_BIN overrides the preflight target and is
 # forwarded into the launcher's environment (this harness starts the TUI via
 # `bin/garage.js tui`, which resolves the binary itself — p9 lookup order);
-# default is the p8 Dart dist binary.
-TUI_BIN=${GARAGE_TUI_BIN:-$REPO/tui/dist/garage-tui-darwin-$(node -p 'process.arch' 2>/dev/null || echo arm64)}
-WORK=${E2E_WORK:-$(mktemp -d "${TMPDIR:-/tmp}/garage-tui-p82.XXXXXX")}
+# default is the Rust dist binary (wall/dist).
+TUI_BIN=${GARAGE_TUI_BIN:-$REPO/wall/dist/garage-wall-darwin-$(node -p 'process.arch' 2>/dev/null || echo arm64)}
+WORK=${E2E_WORK:-$(mktemp -d "${TMPDIR:-/tmp}/garage-wall-p82.XXXXXX")}
 RESULTS=$WORK/results.txt
 mkdir -p "$WORK"
 : > "$RESULTS"

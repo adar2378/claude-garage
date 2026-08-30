@@ -112,3 +112,13 @@ tmux new-session -d -s garage-spike-9 -c sandbox/ws-beta   # ran `claude` here
 > is gitignored — the maintained fork lives at `tui/vendor/nocterm` with all
 > patches registered in `tui/vendor/NOCTERM_VERSION`. To re-run the spike app
 > or its tests, copy that fork back to `spikes/nocterm-wall/vendor/nocterm`.
+
+## Framework fork (historical)
+
+The frozen garage patches (1–9 over nocterm 0.9.0, registry in
+`GARAGE_PATCHES.md` at the fork's root) live at
+https://github.com/adar2378/nocterm, branch `garage`, pinned at
+`2ba41b4fa75dd52840d79ab7fa2707d3ef1d3f11`. The Dart TUI client (`tui/`,
+which vendored that fork) was removed at p9 (`p9-ratatui-port`) after the
+Rust wall passed the full parity gate — the fork is history only and is
+unused by the build.

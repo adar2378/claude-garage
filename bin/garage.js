@@ -314,12 +314,9 @@ async function waitForHealth(deadlineMs = 15000) {
 //    explicit binary path that wins over everything else. Used only when
 //    set and executable; a set-but-unusable value is a hard error (a test
 //    hook must never silently fall through to a different binary).
-// 1. prebuilt Rust binary at tui/dist/garage-wall-<platform>-<arch>
+// 1. prebuilt Rust binary at wall/dist/garage-wall-<platform>-<arch>
 // 2. build once with cargo (checkout only — needs wall/ sources), announced
-// 3. transition fallback: the Dart binary — prebuilt at
-//    tui/dist/garage-tui-<platform>-<arch>, or built once with a local
-//    Dart SDK (unchanged p8 path; removed after parity)
-// 4. actionable error naming what is missing (Rust toolchain first),
+// 3. actionable error naming what is missing (Rust toolchain first),
 //    exit non-zero.
 function resolveTuiBinary() {
   const override = process.env.GARAGE_TUI_BIN;
@@ -336,7 +333,7 @@ function resolveTuiBinary() {
   }
 
   const target = `${process.platform}-${process.arch}`;
-  const distDir = path.join(ROOT, "tui", "dist");
+  const distDir = path.join(ROOT, "wall", "dist");
 
   const rustBinary = path.join(distDir, `garage-wall-${target}`);
   if (existsSync(rustBinary)) return rustBinary;
@@ -346,7 +343,7 @@ function resolveTuiBinary() {
   if (haveCargo && existsSync(wallSrc)) {
     console.log(
       `no prebuilt TUI binary for ${target} — building once with cargo ` +
-        `(release build; lands at tui/dist/garage-wall-${target})`
+        `(release build; lands at wall/dist/garage-wall-${target})`
     );
     const build = spawnSync("cargo", ["build", "--release"], {
       cwd: path.join(ROOT, "wall"),
@@ -361,36 +358,6 @@ function resolveTuiBinary() {
     copyFileSync(built, rustBinary);
     chmodSync(rustBinary, 0o755);
     return rustBinary;
-  }
-
-  // ── Transition fallback (p9): the Dart TUI, exactly as p8 shipped it. ──
-  const binaryPath = path.join(distDir, `garage-tui-${target}`);
-  if (existsSync(binaryPath)) return binaryPath;
-
-  const tuiSrc = path.join(ROOT, "tui", "pubspec.yaml");
-  const haveDart = spawnSync("dart", ["--version"], { stdio: "ignore" }).status === 0;
-  if (haveDart && existsSync(tuiSrc)) {
-    console.log(
-      `no prebuilt TUI binary for ${target} — building once with the local Dart SDK ` +
-        `(≈30s; lands at tui/dist/garage-tui-${target})`
-    );
-    const cwd = path.join(ROOT, "tui");
-    const pub = spawnSync("dart", ["pub", "get"], { cwd, stdio: "inherit" });
-    if (pub.status !== 0) {
-      console.error("dart pub get failed — see the output above");
-      process.exit(1);
-    }
-    mkdirSync(path.join(cwd, "dist"), { recursive: true });
-    const compile = spawnSync(
-      "dart",
-      ["compile", "exe", "bin/garage_tui.dart", "-o", `dist/garage-tui-${target}`],
-      { cwd, stdio: "inherit" }
-    );
-    if (compile.status !== 0 || !existsSync(binaryPath)) {
-      console.error("dart compile exe failed — see the output above");
-      process.exit(1);
-    }
-    return binaryPath;
   }
 
   if (existsSync(wallSrc)) {

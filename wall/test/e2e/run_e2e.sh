@@ -24,11 +24,11 @@ set -u -o pipefail
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 REPO=$(cd "$SCRIPT_DIR/../../.." && pwd)
 # Binary under test: GARAGE_TUI_BIN overrides (p9 parity gate points it at
-# the Rust binary — same checks); default is the p8 Dart dist binary.
-TUI_BIN=${GARAGE_TUI_BIN:-$REPO/tui/dist/garage-tui-darwin-$(node -p 'process.arch' 2>/dev/null || echo arm64)}
+# the Rust binary — same checks); default is the Rust dist binary (wall/dist).
+TUI_BIN=${GARAGE_TUI_BIN:-$REPO/wall/dist/garage-wall-darwin-$(node -p 'process.arch' 2>/dev/null || echo arm64)}
 KEYECHO=$REPO/spikes/nocterm-wall/tools/keyecho.sh
 STRESS=$REPO/spikes/nocterm-wall/tools/stress.sh
-WORK=${E2E_WORK:-$(mktemp -d "${TMPDIR:-/tmp}/garage-tui-e2e.XXXXXX")}
+WORK=${E2E_WORK:-$(mktemp -d "${TMPDIR:-/tmp}/garage-wall-e2e.XXXXXX")}
 KEYLOG=$WORK/keylog.txt
 RESULTS=$WORK/results.txt
 mkdir -p "$WORK"
@@ -360,11 +360,9 @@ tmux send-keys -t "=$OUTER:" -l q
 check "q quits TUI with exit code 0 at 250x70" \
   wait_for 10 sh -c "[ -f '$WORK/tui-exit-s250' ] && [ \"\$(cat '$WORK/tui-exit-s250')\" = 0 ]"
 
-# Deliberately last: known gap under triage — nocterm cancels its stdin
-# subscription before restoring termios, which closes the stdin fd, so its
-# echo/icanon restore throws EBADF (swallowed) and the tty stays raw. The
-# flow-control flags (ixon/ixoff/isig) ARE restored by bootstrap.dart's
-# external stty. Ordered last so one known failure still yields full metrics.
+# Deliberately ordered last (historical: the Dart-era binary had a known
+# termios-restore gap here; the Rust wall restores the tty fully and these
+# pass — kept last so a regression still yields full metrics above).
 check "tty restored after quit at 200x55 (no -ixon/-isig/-icanon/-echo left)" \
   sh -c "! grep -qE '(^| )-(ixon|isig|icanon|echo)( |\$)' '$WORK/tui-stty-s200'"
 check "tty restored after quit at 250x70 (no -ixon/-isig/-icanon/-echo left)" \

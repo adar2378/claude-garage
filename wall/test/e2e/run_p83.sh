@@ -25,9 +25,9 @@ set -u -o pipefail
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 REPO=$(cd "$SCRIPT_DIR/../../.." && pwd)
 # Binary under test: GARAGE_TUI_BIN overrides (p9 parity gate points it at
-# the Rust binary — same checks); default is the p8 Dart dist binary.
-TUI_BIN=${GARAGE_TUI_BIN:-$REPO/tui/dist/garage-tui-darwin-$(node -p 'process.arch' 2>/dev/null || echo arm64)}
-WORK=${E2E_WORK:-$(mktemp -d "${TMPDIR:-/tmp}/garage-tui-p83.XXXXXX")}
+# the Rust binary — same checks); default is the Rust dist binary (wall/dist).
+TUI_BIN=${GARAGE_TUI_BIN:-$REPO/wall/dist/garage-wall-darwin-$(node -p 'process.arch' 2>/dev/null || echo arm64)}
+WORK=${E2E_WORK:-$(mktemp -d "${TMPDIR:-/tmp}/garage-wall-p83.XXXXXX")}
 RESULTS=$WORK/results.txt
 mkdir -p "$WORK"
 : > "$RESULTS"

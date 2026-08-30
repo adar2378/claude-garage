@@ -39,5 +39,5 @@
 
 ## 7. Removal at parity
 
-- [ ] 7.1 Launcher prefers Rust unconditionally; delete `tui/` (Dart client), the nocterm git dependency, and the Dart build path — one revertable commit, only after 6.x is fully recorded
-- [ ] 7.2 Update NOCTERM_VERSION pointer / docs to reflect the frozen-history status of the fork
+- [x] 7.1 Launcher prefers Rust unconditionally; delete `tui/` (Dart client), the nocterm git dependency, and the Dart build path — one revertable commit, only after 6.x is fully recorded
+- [x] 7.2 Update NOCTERM_VERSION pointer / docs to reflect the frozen-history status of the fork
