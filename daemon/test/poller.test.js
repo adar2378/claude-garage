@@ -1,7 +1,7 @@
 import { test, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import { applyAgentStatus } from "../src/poller.js";
-import { setStatus, getStatus, dropSession } from "../src/status.js";
+import { setStatus, getStatus, getStatusEntry, dropSession } from "../src/status.js";
 
 const ID = "garage/test/poll";
 
@@ -42,4 +42,16 @@ test("busy clears needs-input — real activity is the release", () => {
   setStatus(ID, "needs-input");
   applyAgentStatus(ID, "busy");
   assert.equal(getStatus(ID), "working");
+});
+
+test("poller-sourced needs-input carries no message", () => {
+  applyAgentStatus(ID, "waiting");
+  assert.equal(getStatus(ID), "needs-input");
+  assert.equal(getStatusEntry(ID).message, null);
+});
+
+test("same-state poller tick must not clear a hook-set message", () => {
+  setStatus(ID, "needs-input", "Claude needs your permission to use Bash"); // as the Notification hook would
+  applyAgentStatus(ID, "waiting"); // poller tick while the prompt sits open
+  assert.equal(getStatusEntry(ID).message, "Claude needs your permission to use Bash");
 });

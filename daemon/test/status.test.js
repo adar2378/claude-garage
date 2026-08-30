@@ -67,7 +67,40 @@ test("getStatusEntry defaults to idle/null for unknown ids", () => {
   assert.deepEqual(getStatusEntry("garage/never/heard-of"), {
     state: "idle",
     since: null,
+    message: null,
   });
+});
+
+test("hook-set message rides needs-input", () => {
+  setStatus(ID, "needs-input", "Claude needs your permission to use Bash");
+  assert.equal(getStatusEntry(ID).message, "Claude needs your permission to use Bash");
+});
+
+test("message clears on any transition away from needs-input — and never resurrects", () => {
+  setStatus(ID, "needs-input", "Claude needs your permission to use Bash");
+  setStatus(ID, "working");
+  assert.equal(getStatusEntry(ID).message, null);
+  setStatus(ID, "needs-input"); // messageless re-entry — nothing to resurrect
+  assert.equal(getStatusEntry(ID).message, null);
+});
+
+test("messageless needs-input transition leaves message unset — the poller never invents one", () => {
+  setStatus(ID, "needs-input");
+  assert.equal(getStatus(ID), "needs-input");
+  assert.equal(getStatusEntry(ID).message, null);
+});
+
+test("messageless same-state write must not wipe a hook-set message", () => {
+  setStatus(ID, "needs-input", "Claude needs your permission to use Bash");
+  setStatus(ID, "needs-input"); // as a poller tick would, 2s later
+  assert.equal(getStatusEntry(ID).message, "Claude needs your permission to use Bash");
+});
+
+test("message never sticks to non-blocked states", () => {
+  setStatus(ID, "done", "should be dropped");
+  assert.deepEqual(getStatusEntry(ID).message, null);
+  setStatus(ID, "working", "should also be dropped");
+  assert.deepEqual(getStatusEntry(ID).message, null);
 });
 
 test("getStatusEntry.since changes on a real transition and is preserved on a repeat setStatus with the same state", (t) => {

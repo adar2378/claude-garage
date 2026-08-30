@@ -8,7 +8,9 @@ import { GARAGE_PREFIX } from "./tmux.js";
 // Created lazily on first write — a user who registers nothing has no file
 // to migrate or corrupt. tmux ls remains the sole source of truth for
 // sessions; this file is a directory mapping only, never a session list.
-const GARAGE_DIR = path.join(homedir(), ".garage");
+// GARAGE_DIR env override exists for testability (scratch daemons must not
+// share the real ~/.garage/state.json) — same spirit as GARAGE_PORT.
+const GARAGE_DIR = process.env.GARAGE_DIR ?? path.join(homedir(), ".garage");
 const STATE_PATH = path.join(GARAGE_DIR, "state.json");
 
 async function readState() {

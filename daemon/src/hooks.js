@@ -220,7 +220,11 @@ export default async function hookRoutes(app) {
     }
 
     const ids = await resolveSessionIds(payload);
-    for (const id of ids) setStatus(id, state);
+    // p8 message capture: a Notification's text rides into the status store
+    // alongside needs-input; other events pass no message (setStatus clears
+    // it on any transition away from needs-input).
+    const message = state === "needs-input" ? payload.message ?? null : undefined;
+    for (const id of ids) setStatus(id, state, message);
 
     return reply.code(200).send({ ok: true, applied: ids });
   });

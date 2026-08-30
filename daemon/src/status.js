@@ -9,8 +9,14 @@ import { EventEmitter } from "node:events";
 // it only clears via a new setStatus call. `since` records the epoch ms of
 // the last actual state change (not touched by repeat setStatus calls with
 // the same state), so the UI can render "how long in this state".
+//
+// p8 message capture: needs-input may carry the Notification hook's message
+// text. Only hook-sourced writes pass one; the poller's coarse `waiting`
+// observation passes none, and a messageless same-state write must not wipe
+// a hook-set message (the 2s poller would otherwise erase it on the next
+// tick). Any transition away from needs-input clears it.
 
-const store = new Map(); // id -> { state, since }
+const store = new Map(); // id -> { state, since, message }
 
 export const statusEvents = new EventEmitter();
 statusEvents.setMaxListeners(0);
@@ -24,20 +30,32 @@ export function getStatus(id) {
 // state began, or null for a never-signaled id) so callers can compute
 // elapsed time without a second store.
 export function getStatusEntry(id) {
-  return store.get(id) ?? { state: "idle", since: null };
+  return store.get(id) ?? { state: "idle", since: null, message: null };
 }
 
 export function getAllStatuses() {
   return new Map(store);
 }
 
-export function setStatus(id, state) {
+export function setStatus(id, state, message = undefined) {
   const existing = store.get(id);
   const prev = existing?.state ?? "idle";
   const changed = prev !== state;
   const since = changed ? Date.now() : existing?.since ?? Date.now();
 
-  store.set(id, { state, since });
+  // Only needs-input carries a message. A messageless needs-input write
+  // (the poller) preserves what a hook already captured on a same-state
+  // tick, but never invents one on a fresh transition.
+  const nextMessage =
+    state !== "needs-input"
+      ? null
+      : message !== undefined
+        ? message
+        : prev === "needs-input"
+          ? existing?.message ?? null
+          : null;
+
+  store.set(id, { state, since, message: nextMessage });
 
   if (changed) {
     statusEvents.emit("transition", { id, from: prev, to: state });
