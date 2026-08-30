@@ -10,7 +10,7 @@
 // first (so it outlives the TUI) when /api/health is unreachable. Quitting
 // the TUI leaves the daemon and every tmux session running.
 import { execFile, spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, openSync, readFileSync } from "node:fs";
+import { accessSync, chmodSync, constants as fsConstants, copyFileSync, existsSync, mkdirSync, openSync, readFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import readline from "node:readline/promises";
@@ -309,13 +309,62 @@ async function waitForHealth(deadlineMs = 15000) {
   return false;
 }
 
-// Binary lookup order (p8-packaging "TUI binary availability"):
-// 1. prebuilt binary at tui/dist/garage-tui-<platform>-<arch>
-// 2. build once with a local Dart SDK (checkout only — needs tui/ sources)
-// 3. actionable error naming exactly what is missing, exit non-zero.
+// Binary lookup order (p9-ratatui-port "TUI binary availability"):
+// 0. GARAGE_TUI_BIN — test hook for the e2e harnesses (parity gate): an
+//    explicit binary path that wins over everything else. Used only when
+//    set and executable; a set-but-unusable value is a hard error (a test
+//    hook must never silently fall through to a different binary).
+// 1. prebuilt Rust binary at tui/dist/garage-wall-<platform>-<arch>
+// 2. build once with cargo (checkout only — needs wall/ sources), announced
+// 3. transition fallback: the Dart binary — prebuilt at
+//    tui/dist/garage-tui-<platform>-<arch>, or built once with a local
+//    Dart SDK (unchanged p8 path; removed after parity)
+// 4. actionable error naming what is missing (Rust toolchain first),
+//    exit non-zero.
 function resolveTuiBinary() {
+  const override = process.env.GARAGE_TUI_BIN;
+  if (override) {
+    try {
+      accessSync(override, fsConstants.X_OK);
+      return override;
+    } catch {
+      console.error(
+        `GARAGE_TUI_BIN is set but not an executable file: ${override}`
+      );
+      process.exit(1);
+    }
+  }
+
   const target = `${process.platform}-${process.arch}`;
-  const binaryPath = path.join(ROOT, "tui", "dist", `garage-tui-${target}`);
+  const distDir = path.join(ROOT, "tui", "dist");
+
+  const rustBinary = path.join(distDir, `garage-wall-${target}`);
+  if (existsSync(rustBinary)) return rustBinary;
+
+  const wallSrc = path.join(ROOT, "wall", "Cargo.toml");
+  const haveCargo = spawnSync("cargo", ["--version"], { stdio: "ignore" }).status === 0;
+  if (haveCargo && existsSync(wallSrc)) {
+    console.log(
+      `no prebuilt TUI binary for ${target} — building once with cargo ` +
+        `(release build; lands at tui/dist/garage-wall-${target})`
+    );
+    const build = spawnSync("cargo", ["build", "--release"], {
+      cwd: path.join(ROOT, "wall"),
+      stdio: "inherit",
+    });
+    const built = path.join(ROOT, "wall", "target", "release", "garage-wall");
+    if (build.status !== 0 || !existsSync(built)) {
+      console.error("cargo build failed — see the output above");
+      process.exit(1);
+    }
+    mkdirSync(distDir, { recursive: true });
+    copyFileSync(built, rustBinary);
+    chmodSync(rustBinary, 0o755);
+    return rustBinary;
+  }
+
+  // ── Transition fallback (p9): the Dart TUI, exactly as p8 shipped it. ──
+  const binaryPath = path.join(distDir, `garage-tui-${target}`);
   if (existsSync(binaryPath)) return binaryPath;
 
   const tuiSrc = path.join(ROOT, "tui", "pubspec.yaml");
@@ -344,17 +393,17 @@ function resolveTuiBinary() {
     return binaryPath;
   }
 
-  if (!haveDart && existsSync(tuiSrc)) {
+  if (existsSync(wallSrc)) {
     console.error(
-      `no prebuilt TUI binary for ${target} and no Dart SDK on PATH.\n` +
-        `Install Dart (https://dart.dev/get-dart) and re-run — the TUI builds ` +
-        `itself once — or use a platform with a shipped binary (macOS arm64).`
+      `no prebuilt TUI binary for ${target} and no Rust toolchain (cargo) on PATH.\n` +
+        `Install Rust (https://rustup.rs) and re-run — the TUI builds itself once ` +
+        `from wall/ — or use a platform with a shipped binary (macOS arm64).`
     );
   } else {
     console.error(
-      `no prebuilt TUI binary for ${target} in this package, and no tui/ sources ` +
+      `no prebuilt TUI binary for ${target} in this package, and no wall/ sources ` +
         `to build from.\nUse a platform with a shipped binary (macOS arm64), or run ` +
-        `from a git checkout with the Dart SDK installed (npm run build:tui).`
+        `from a git checkout with the Rust toolchain installed (npm run build:tui).`
     );
   }
   process.exit(1);
