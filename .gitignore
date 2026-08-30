@@ -9,6 +9,8 @@ marketing/
 
 # dart build artifacts
 .dart_tool/
+# local-dev override pointing at a nocterm fork checkout
+tui/pubspec_overrides.yaml
 spikes/nocterm-wall/pubspec.lock
 
 # spike: research artifact — its duplicate nocterm copy and compiled binary stay local

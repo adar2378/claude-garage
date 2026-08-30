@@ -236,9 +236,11 @@ packages:
   nocterm:
     dependency: "direct main"
     description:
-      path: "vendor/nocterm"
-      relative: true
-    source: path
+      path: "."
+      ref: "2ba41b4fa75dd52840d79ab7fa2707d3ef1d3f11"
+      resolved-ref: "2ba41b4fa75dd52840d79ab7fa2707d3ef1d3f11"
+      url: "https://github.com/adar2378/nocterm.git"
+    source: git
     version: "0.9.0"
   node_preamble:
     dependency: transitive
