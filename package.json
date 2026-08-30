@@ -33,7 +33,8 @@
     "bin",
     "daemon/src",
     "daemon/package.json",
-    "ui/dist"
+    "ui/dist",
+    "tui/dist"
   ],
   "workspaces": [
     "daemon",
@@ -42,6 +43,7 @@
   "scripts": {
     "dev": "concurrently -n daemon,ui -c blue,magenta \"npm:dev --workspace daemon\" \"npm:dev --workspace ui\"",
     "test": "node --test \"daemon/test/*.test.js\" \"ui/test/*.test.js\"",
+    "build:tui": "cd tui && dart pub get && mkdir -p dist && dart compile exe bin/garage_tui.dart -o dist/garage-tui-$(node -p \"process.platform+'-'+process.arch\")",
     "postinstall": "chmod +x node_modules/node-pty/prebuilds/darwin-*/spawn-helper 2>/dev/null || true",
     "prepack": "npm run build --workspace ui"
   },
