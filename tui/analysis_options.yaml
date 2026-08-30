@@ -1,0 +1,6 @@
+include: package:lints/recommended.yaml
+
+analyzer:
+  exclude:
+    # Vendored fork — upstream code style is not ours to lint.
+    - vendor/**

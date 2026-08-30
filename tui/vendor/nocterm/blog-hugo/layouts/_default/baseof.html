@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>{{ block "title" . }}{{ .Title }} - Nocterm Blog{{ end }}</title>
+    <meta name="description" content="{{ with .Description }}{{ . }}{{ else }}{{ .Site.Params.description }}{{ end }}" />
+
+    {{- $image := .Params.image | default .Site.Params.defaultImage -}}
+    {{- $imageURL := $image | absURL -}}
+
+    <!-- Open Graph -->
+    <meta property="og:title" content="{{ .Title }}" />
+    <meta property="og:description" content="{{ with .Description }}{{ . }}{{ else }}{{ .Site.Params.description }}{{ end }}" />
+    <meta property="og:type" content="{{ if .IsPage }}article{{ else }}website{{ end }}" />
+    <meta property="og:url" content="{{ .Permalink }}" />
+    <meta property="og:site_name" content="{{ .Site.Params.siteName }}" />
+    <meta property="og:image" content="{{ $imageURL }}" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    {{- if .IsPage }}
+    <meta property="article:published_time" content="{{ .Date.Format "2006-01-02T15:04:05Z07:00" }}" />
+    {{- with .Params.author }}
+    <meta property="article:author" content="{{ . }}" />
+    {{- end }}
+    {{- range .Params.tags }}
+    <meta property="article:tag" content="{{ . }}" />
+    {{- end }}
+    {{- end }}
+
+    <!-- Twitter Card -->
+    <meta name="twitter:card" content="summary_large_image" />
+    {{- with .Site.Params.twitterHandle }}
+    <meta name="twitter:site" content="{{ . }}" />
+    <meta name="twitter:creator" content="{{ . }}" />
+    {{- end }}
+    <meta name="twitter:title" content="{{ .Title }}" />
+    <meta name="twitter:description" content="{{ with .Description }}{{ . }}{{ else }}{{ .Site.Params.description }}{{ end }}" />
+    <meta name="twitter:image" content="{{ $imageURL }}" />
+
+    <!-- Canonical -->
+    <link rel="canonical" href="{{ .Permalink }}" />
+
+    <!-- JSON-LD Structured Data -->
+    {{- if .IsPage }}
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "BlogPosting",
+      "headline": "{{ .Title }}",
+      "description": "{{ with .Description }}{{ . }}{{ else }}{{ .Site.Params.description }}{{ end }}",
+      "image": "{{ $imageURL }}",
+      "datePublished": "{{ .Date.Format "2006-01-02T15:04:05Z07:00" }}",
+      {{- with .Lastmod }}
+      "dateModified": "{{ .Format "2006-01-02T15:04:05Z07:00" }}",
+      {{- end }}
+      "author": {
+        "@type": "Person",
+        "name": "{{ .Params.author | default "Nocterm Team" }}"
+      },
+      "publisher": {
+        "@type": "Organization",
+        "name": "Nocterm",
+        "logo": {
+          "@type": "ImageObject",
+          "url": "{{ "/images/logo.png" | absURL }}"
+        }
+      },
+      "mainEntityOfPage": {
+        "@type": "WebPage",
+        "@id": "{{ .Permalink }}"
+      }
+    }
+    </script>
+    {{- else }}
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "WebSite",
+      "name": "{{ .Site.Title }}",
+      "description": "{{ .Site.Params.description }}",
+      "url": "{{ .Site.BaseURL }}"
+    }
+    </script>
+    {{- end }}
+
+    <!-- Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap"
+      rel="stylesheet"
+    />
+
+    <link rel="stylesheet" href="/style.css" />
+    <link rel="stylesheet" href="/blog/blog.css" />
+
+    <!-- Privacy-friendly analytics by Plausible -->
+    <script
+      async
+      src="https://plausible.io/js/pa-JMBWpdJBiTr2a3L7-GwOZ.js"
+    ></script>
+    <script>
+      (window.plausible =
+        window.plausible ||
+        function () {
+          (plausible.q = plausible.q || []).push(arguments);
+        }),
+        (plausible.init =
+          plausible.init ||
+          function (i) {
+            plausible.o = i || {};
+          });
+      plausible.init();
+    </script>
+  </head>
+  <body>
+    <main class="blog-container">
+      {{ partial "header.html" . }}
+      {{ block "main" . }}{{ end }}
+      {{ partial "footer.html" . }}
+    </main>
+  </body>
+</html>

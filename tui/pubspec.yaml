@@ -1,0 +1,19 @@
+name: garage_tui
+description: claude-garage pit wall — full-screen terminal client over the daemon API.
+publish_to: none
+
+environment:
+  sdk: ^3.9.0
+
+dependencies:
+  nocterm: 0.9.0
+
+dependency_overrides:
+  # Vendored fork of nocterm 0.9.0 carrying the garage patches.
+  # Provenance and the patch list live in vendor/NOCTERM_VERSION.
+  nocterm:
+    path: vendor/nocterm
+
+dev_dependencies:
+  lints: ^5.0.0
+  test: ^1.25.6

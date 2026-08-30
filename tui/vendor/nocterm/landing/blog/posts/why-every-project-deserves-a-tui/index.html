@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Why Every Project Deserves a TUI - Nocterm Blog</title>
+    <meta name="description" content="Dev tools don&#39;t have to be scattered scripts and forgotten commands. Build a TUI for your team." />
+    <meta property="og:title" content="Why Every Project Deserves a TUI" />
+    <meta property="og:description" content="Dev tools don&#39;t have to be scattered scripts and forgotten commands. Build a TUI for your team." />
+    <meta property="og:type" content="article" />
+    <meta property="og:url" content="https://nocterm.dev/blog/posts/why-every-project-deserves-a-tui/" />
+    <meta property="og:site_name" content="Nocterm" />
+    <meta property="og:image" content="https://nocterm.dev/images/og-default.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="article:published_time" content="2026-01-27T00:00:00Z" />
+    <meta property="article:author" content="Norbert Kozsir" />
+    <meta property="article:tag" content="dev-tools" />
+    <meta property="article:tag" content="tui" />
+    <meta property="article:tag" content="dx" />
+    <meta property="article:tag" content="flutter" />
+
+    
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:site" content="@noraborys" />
+    <meta name="twitter:creator" content="@noraborys" />
+    <meta name="twitter:title" content="Why Every Project Deserves a TUI" />
+    <meta name="twitter:description" content="Dev tools don&#39;t have to be scattered scripts and forgotten commands. Build a TUI for your team." />
+    <meta name="twitter:image" content="https://nocterm.dev/images/og-default.png" />
+
+    
+    <link rel="canonical" href="https://nocterm.dev/blog/posts/why-every-project-deserves-a-tui/" />
+
+    
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "BlogPosting",
+      "headline": "Why Every Project Deserves a TUI",
+      "description": "Dev tools don\u0027t have to be scattered scripts and forgotten commands. Build a TUI for your team.",
+      "image": "https:\/\/nocterm.dev\/images\/og-default.png",
+      "datePublished": "2026-01-27T00:00:00Z",
+      "dateModified": "2026-01-27T00:00:00Z",
+      "author": {
+        "@type": "Person",
+        "name": "Norbert Kozsir"
+      },
+      "publisher": {
+        "@type": "Organization",
+        "name": "Nocterm",
+        "logo": {
+          "@type": "ImageObject",
+          "url": "https:\/\/nocterm.dev\/images\/logo.png"
+        }
+      },
+      "mainEntityOfPage": {
+        "@type": "WebPage",
+        "@id": "https:\/\/nocterm.dev\/blog\/posts\/why-every-project-deserves-a-tui\/"
+      }
+    }
+    </script>
+
+    
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap"
+      rel="stylesheet"
+    />
+
+    <link rel="stylesheet" href="/style.css" />
+    <link rel="stylesheet" href="/blog/blog.css" />
+
+    
+    <script
+      async
+      src="https://plausible.io/js/pa-JMBWpdJBiTr2a3L7-GwOZ.js"
+    ></script>
+    <script>
+      (window.plausible =
+        window.plausible ||
+        function () {
+          (plausible.q = plausible.q || []).push(arguments);
+        }),
+        (plausible.init =
+          plausible.init ||
+          function (i) {
+            plausible.o = i || {};
+          });
+      plausible.init();
+    </script>
+  </head>
+  <body>
+    <main class="blog-container">
+      <header class="blog-header">
+  <a href="/" class="blog-brand">
+    <span class="blog-brand-icon">✦</span>
+    <span class="blog-brand-name">Nocterm</span>
+  </a>
+  <nav class="blog-nav">
+    <a href="/">Home</a>
+    <a href="https://docs.nocterm.dev">Docs</a>
+    <a href="/blog/" class="active">Blog</a>
+    <a href="https://github.com/Norbert515/nocterm">GitHub</a>
+  </nav>
+</header>
+
+      
+
+<div class="post-header">
+  <a href="/blog/" class="post-back-link">← Back to Blog</a>
+  <h1>Why Every Project Deserves a TUI</h1>
+  <div class="post-meta">
+    <span class="post-meta-item">
+      <span class="post-meta-icon">📅</span> Jan 27, 2026
+    </span>
+    
+    <span class="post-meta-item">
+      <span class="post-meta-icon">✍️</span> Norbert Kozsir
+    </span>
+    
+    <span class="post-meta-item">
+      <span class="post-meta-icon">⏱️</span> 6 min read
+    </span>
+    
+    <div class="post-card-tags">
+      
+      <span class="tag tag-dev-tools">dev-tools</span>
+      
+      <span class="tag tag-tui">tui</span>
+      
+      <span class="tag tag-dx">dx</span>
+      
+      <span class="tag tag-flutter">flutter</span>
+      
+    </div>
+    
+  </div>
+</div>
+
+
+<article class="post-content">
+  <p>I keep running into this problem: I come back to a project after a few days, sometimes a few weeks, and I'm staring at the codebase thinking &quot;how do I even start this thing?&quot;</p>
+<p>Maybe there's a README with setup instructions. Maybe there's a <code>justfile</code> with some commands. But I still need to remember the order: run this first, then that, wait for this to finish, then start the other thing. And if the setup isn't documented well? I end up spelunking through shell history or asking teammates what the magic incantation is.</p>
+<p>I've been there too many times. So here's how I think about solutions.</p>
+<h2 id="good-documentation">Good: Documentation</h2>
+<p>The baseline. A README with setup instructions, maybe a <code>CONTRIBUTING.md</code> that explains how to run tests. It works, but it requires reading and remembering. Documentation also gets outdated. The project evolves, someone adds a new step, forgets to update the docs, and suddenly the setup instructions don't work anymore.</p>
+<p>Still, having <em>something</em> written down is way better than having nothing.</p>
+<h2 id="better-task-runners">Better: Task runners</h2>
+<p>This is where things improve. Tools like <code>just</code> or <code>make</code> let me codify commands. Instead of remembering <code>flutter build apk --release --split-per-abi --target-platform android-arm64</code>, I just run <code>just build</code>.</p>
+<p>I use <code>just</code> constantly. Write a <code>justfile</code>, and <code>just --list</code> shows everything:</p>
+<pre tabindex="0"><code>Available recipes:
+    build     # Build the release APK
+    clean     # Clean build artifacts
+    format    # Format all code
+    test      # Run all tests
+</code></pre><p>New teammate joins? &quot;Run <code>just</code> to see what's available.&quot; That's huge for discovery.</p>
+<h2 id="even-better-interactive-dashboards">Even better: Interactive dashboards</h2>
+<p>Task runners solve the &quot;what commands exist&quot; problem. But they're non-interactive. Run a command, it exits. What about:</p>
+<ul>
+<li>Toggling feature flags without restarting the app</li>
+<li>Logging in as different test users with one keypress</li>
+<li>Triggering a specific push notification to your device</li>
+<li>Resetting onboarding state to test the first-run experience</li>
+<li>Switching between API environments (local, staging, prod)</li>
+<li>Clearing caches, seeding test data, or resetting database state</li>
+</ul>
+<p>These are the things I actually do ten times a day during development. And they're annoying to do through code changes or CLI commands.</p>
+<p>This is where I find TUI dashboards interesting. Something that treats developers a bit like customers. Shows what's available, what's running, what can be done next. A bit of handholding for when I come back after two weeks and my brain has completely context-switched away.</p>
+<p>Tools like <code>lazygit</code>, <code>k9s</code>, and <code>btop</code> are popular for exactly this reason. Keyboard-first, fast, and I never have to leave my terminal.</p>
+<h2 id="why-i-like-dart-for-this">Why I like Dart for this</h2>
+<p>For Flutter projects, Dart is a natural choice. I can share models, API clients, whatever. No need to rewrite stuff in another language just for a dev tool.</p>
+<p>I've been building <a href="https://nocterm.dev">Nocterm</a>, a TUI framework that uses Flutter-like APIs. If I know Flutter, I already know how to build with it.</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-dart" data-lang="dart"><span class="line"><span class="cl"><span class="kd">class</span> <span class="nc">MyDashboard</span> <span class="kd">extends</span> <span class="n">StatefulComponent</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">  <span class="err">@</span><span class="n">override</span>
+</span></span><span class="line"><span class="cl">  <span class="n">State</span><span class="o">&lt;</span><span class="n">MyDashboard</span><span class="o">&gt;</span> <span class="n">createState</span><span class="p">()</span> <span class="o">=&gt;</span> <span class="n">_MyDashboardState</span><span class="p">();</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="kd">class</span> <span class="nc">_MyDashboardState</span> <span class="kd">extends</span> <span class="n">State</span><span class="o">&lt;</span><span class="n">MyDashboard</span><span class="o">&gt;</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">  <span class="kt">String</span> <span class="n">_status</span> <span class="o">=</span> <span class="s1">&#39;Ready&#39;</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">  <span class="err">@</span><span class="n">override</span>
+</span></span><span class="line"><span class="cl">  <span class="n">Component</span> <span class="n">build</span><span class="p">(</span><span class="n">BuildContext</span> <span class="n">context</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="k">return</span> <span class="n">Column</span><span class="p">(</span>
+</span></span><span class="line"><span class="cl">      <span class="nl">children:</span> <span class="p">[</span>
+</span></span><span class="line"><span class="cl">        <span class="n">Text</span><span class="p">(</span><span class="s1">&#39;App Status: </span><span class="si">$</span><span class="n">_status</span><span class="s1">&#39;</span><span class="p">),</span>
+</span></span><span class="line"><span class="cl">        <span class="n">Button</span><span class="p">(</span>
+</span></span><span class="line"><span class="cl">          <span class="nl">onPressed:</span> <span class="p">()</span> <span class="o">=&gt;</span> <span class="n">setState</span><span class="p">(()</span> <span class="o">=&gt;</span> <span class="n">_status</span> <span class="o">=</span> <span class="s1">&#39;Running&#39;</span><span class="p">),</span>
+</span></span><span class="line"><span class="cl">          <span class="nl">child:</span> <span class="n">Text</span><span class="p">(</span><span class="s1">&#39;Start&#39;</span><span class="p">),</span>
+</span></span><span class="line"><span class="cl">        <span class="p">),</span>
+</span></span><span class="line"><span class="cl">      <span class="p">],</span>
+</span></span><span class="line"><span class="cl">    <span class="p">);</span>
+</span></span><span class="line"><span class="cl">  <span class="p">}</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><p><code>StatefulComponent</code>, <code>setState()</code>, <code>Column</code>, <code>Row</code>. It's all there. Hot reload works too, which makes iterating fast. And I can compile to a native executable that starts instantly.</p>
+<h2 id="a-practical-example-the-dev-dashboard">A practical example: the dev dashboard</h2>
+<p>Here's what I mean in practice. A dev dashboard that combines commands, logs, and service extensions in one place:</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-dart" data-lang="dart"><span class="line"><span class="cl"><span class="kt">void</span> <span class="n">main</span><span class="p">()</span> <span class="kd">async</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">  <span class="kd">await</span> <span class="n">runApp</span><span class="p">(</span><span class="kd">const</span> <span class="n">DevDashboard</span><span class="p">());</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="kd">class</span> <span class="nc">DevDashboard</span> <span class="kd">extends</span> <span class="n">StatefulComponent</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">  <span class="c1">// ... state management
+</span></span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">  <span class="err">@</span><span class="n">override</span>
+</span></span><span class="line"><span class="cl">  <span class="n">Component</span> <span class="n">build</span><span class="p">(</span><span class="n">BuildContext</span> <span class="n">context</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="k">return</span> <span class="n">Focusable</span><span class="p">(</span>
+</span></span><span class="line"><span class="cl">      <span class="nl">onKeyEvent:</span> <span class="n">_handleKeyEvent</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">      <span class="nl">child:</span> <span class="n">Column</span><span class="p">(</span>
+</span></span><span class="line"><span class="cl">        <span class="nl">children:</span> <span class="p">[</span>
+</span></span><span class="line"><span class="cl">          <span class="n">_buildHeader</span><span class="p">(),</span>
+</span></span><span class="line"><span class="cl">          <span class="n">_buildStatusBar</span><span class="p">(),</span>  <span class="c1">// Live metrics: users, requests/sec, memory
+</span></span></span><span class="line"><span class="cl">          <span class="n">_buildTabBar</span><span class="p">(),</span>     <span class="c1">// Commands | Logs | Service Extensions
+</span></span></span><span class="line"><span class="cl">          <span class="n">Expanded</span><span class="p">(</span><span class="nl">child:</span> <span class="n">_buildContent</span><span class="p">()),</span>
+</span></span><span class="line"><span class="cl">          <span class="n">_buildFooter</span><span class="p">(),</span>     <span class="c1">// Keyboard shortcuts
+</span></span></span><span class="line"><span class="cl">        <span class="p">],</span>
+</span></span><span class="line"><span class="cl">      <span class="p">),</span>
+</span></span><span class="line"><span class="cl">    <span class="p">);</span>
+</span></span><span class="line"><span class="cl">  <span class="p">}</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><p>The sidebar has categories like &quot;App Control&quot;, &quot;Environment&quot;, &quot;Feature Flags&quot;, &quot;Debug Tools&quot;. The main panel shows what's in each category. Some examples:</p>
+<ul>
+<li><strong>Environment</strong> - Switch between local, staging, production APIs. See the current endpoint at a glance.</li>
+<li><strong>Feature Flags</strong> - Toggle &quot;Dark Mode&quot;, &quot;New Checkout Flow&quot;, &quot;Beta Features&quot; on and off. No app restart needed.</li>
+<li><strong>Test Users</strong> - Log in as &quot;free_user&quot;, &quot;premium_user&quot;, &quot;admin&quot;, or &quot;expired_trial&quot; with one keypress.</li>
+<li><strong>Debug Tools</strong> - Clear cache, reset onboarding, seed test data, trigger a test crash.</li>
+</ul>
+<p>For Flutter apps, service extensions make this possible. I define them in my app:</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-dart" data-lang="dart"><span class="line"><span class="cl"><span class="c1">// In the Flutter app
+</span></span></span><span class="line"><span class="cl"><span class="n">developer</span><span class="p">.</span><span class="n">registerExtension</span><span class="p">(</span><span class="s1">&#39;ext.myapp.clearCache&#39;</span><span class="p">,</span> <span class="p">(</span><span class="n">method</span><span class="p">,</span> <span class="n">params</span><span class="p">)</span> <span class="kd">async</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">  <span class="kd">await</span> <span class="n">CacheService</span><span class="p">.</span><span class="n">clear</span><span class="p">();</span>
+</span></span><span class="line"><span class="cl">  <span class="k">return</span> <span class="n">developer</span><span class="p">.</span><span class="n">ServiceExtensionResponse</span><span class="p">.</span><span class="n">result</span><span class="p">(</span><span class="s1">&#39;{}&#39;</span><span class="p">);</span>
+</span></span><span class="line"><span class="cl"><span class="p">});</span>
+</span></span></code></pre></div><p>And the TUI calls them via the VM service:</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-dart" data-lang="dart"><span class="line"><span class="cl"><span class="c1">// In the TUI
+</span></span></span><span class="line"><span class="cl"><span class="n">Future</span><span class="o">&lt;</span><span class="kt">void</span><span class="o">&gt;</span> <span class="n">_callExtension</span><span class="p">(</span><span class="kt">String</span> <span class="n">name</span><span class="p">)</span> <span class="kd">async</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">  <span class="kd">final</span> <span class="n">vmService</span> <span class="o">=</span> <span class="kd">await</span> <span class="n">vmServiceConnectUri</span><span class="p">(</span><span class="s1">&#39;ws://127.0.0.1:5432/ws&#39;</span><span class="p">);</span>
+</span></span><span class="line"><span class="cl">  <span class="kd">final</span> <span class="n">vm</span> <span class="o">=</span> <span class="kd">await</span> <span class="n">vmService</span><span class="p">.</span><span class="n">getVM</span><span class="p">();</span>
+</span></span><span class="line"><span class="cl">  <span class="kd">await</span> <span class="n">vmService</span><span class="p">.</span><span class="n">callServiceExtension</span><span class="p">(</span><span class="n">name</span><span class="p">,</span> <span class="nl">isolateId:</span> <span class="n">vm</span><span class="p">.</span><span class="n">isolates</span><span class="o">!</span><span class="p">.</span><span class="n">first</span><span class="p">.</span><span class="n">id</span><span class="p">);</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><p>If the TUI itself starts the Flutter app (spawning the process with the right flags and environment variables), it can grab the VM service URI directly from stdout. No copy-pasting URLs. Press <code>[R]</code> to run, the app starts, the TUI connects automatically, and service extensions are ready.</p>
+<p>I've been thinking about packaging this into a reusable library. Something that handles the Flutter process lifecycle and VM service connection. Maybe for a future release.</p>
+<p>Now the whole team has instant access to these tools. QA person needs to test the premium flow? They don't need to ask for test credentials or figure out how to toggle a feature flag in code. They open the dashboard, switch to &quot;premium_user&quot;, enable &quot;New Checkout Flow&quot;, and they're testing.</p>
+<h2 id="keep-the-cli-escape-hatch">Keep the CLI escape hatch</h2>
+<p>TUIs are great, but I still want traditional CLI support. CI/CD needs non-interactive commands. Sometimes I just want to run <code>myapp build --release</code> without navigating a UI.</p>
+<p>The pattern I use:</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-dart" data-lang="dart"><span class="line"><span class="cl"><span class="kt">void</span> <span class="n">main</span><span class="p">(</span><span class="n">List</span><span class="o">&lt;</span><span class="kt">String</span><span class="o">&gt;</span> <span class="n">args</span><span class="p">)</span> <span class="kd">async</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">  <span class="k">if</span> <span class="p">(</span><span class="n">args</span><span class="p">.</span><span class="n">isNotEmpty</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="c1">// Non-interactive mode
+</span></span></span><span class="line"><span class="cl">    <span class="kd">await</span> <span class="n">runHeadless</span><span class="p">(</span><span class="n">args</span><span class="p">);</span>
+</span></span><span class="line"><span class="cl">  <span class="p">}</span> <span class="k">else</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="c1">// TUI mode
+</span></span></span><span class="line"><span class="cl">    <span class="kd">await</span> <span class="n">runApp</span><span class="p">(</span><span class="kd">const</span> <span class="n">DevDashboard</span><span class="p">());</span>
+</span></span><span class="line"><span class="cl">  <span class="p">}</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><p>TUI for daily development, raw CLI for scripts and automation.</p>
+<h2 id="let-ai-help">Let AI help</h2>
+<p>We're in the age of AI writing code, and TUIs are a good fit for that. The structure is declarative, patterns are repetitive, and if it's something Flutter-like, AI models already understand the concepts.</p>
+<p>I find it works well to describe the dashboard I want, point at some docs, and let AI generate a draft. I'll tweak it, but I get something working faster than starting from scratch.</p>
+<h2 id="wrapping-up">Wrapping up</h2>
+<p>Dev tools should take mental load off, not add to it. A TUI that shows what's available, what's running, what you can do next. That's what makes coming back to a project after two weeks actually pleasant.</p>
+<p>It doesn't need to replace the <code>justfile</code> or <code>Makefile</code>. I think of it as a layer on top. The TUI can call those same commands, but with context and visibility.</p>
+<hr>
+<p>The example dev dashboard from this post is in the <a href="https://github.com/Norbert515/nocterm">Nocterm repo</a> under <code>example/dev_dashboard_demo.dart</code> if you want to poke around.</p>
+
+</article>
+
+
+<div class="post-footer">
+  <a href="/blog/">← Back to Blog</a>
+  <span></span>
+</div>
+
+      <footer class="blog-footer">
+  <div class="brand">
+    <span class="brand-icon">✦</span>
+    <span class="brand-name">Nocterm</span>
+    <span class="brand-version">v0.4.3</span>
+  </div>
+  <nav class="blog-footer-links">
+    <a href="https://docs.nocterm.dev">Docs</a>
+    <a href="https://github.com/Norbert515/nocterm">GitHub</a>
+    <a href="https://pub.dev/packages/nocterm">pub.dev</a>
+    <a href="/blog/">Blog</a>
+  </nav>
+</footer>
+
+    </main>
+  </body>
+</html>
