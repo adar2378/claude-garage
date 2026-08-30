@@ -1,0 +1,11 @@
+name: nocterm_wall_spike
+description: Spike - 3x3 grid of live tmux-attached terminals in nocterm
+environment:
+  sdk: ^3.9.0
+dependencies:
+  nocterm: 0.9.0
+dependency_overrides:
+  nocterm:
+    path: vendor/nocterm
+dev_dependencies:
+  test: ^1.31.2
