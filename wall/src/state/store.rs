@@ -65,6 +65,10 @@ pub enum GarageCommand {
     /// `POST /api/statusline/install` — an effect (the store never does
     /// IO), so the store always declines it.
     InstallStatusline,
+    /// `t`: open the focused LIVE session in its own OS terminal window
+    /// (macOS only) — a detached `tmux attach` client alongside the wall's
+    /// own, so the store never does IO and always declines it.
+    OpenWindow,
     Quit,
 }
 
@@ -101,6 +105,7 @@ pub fn garage_command_for(key: &str) -> Option<GarageCommand> {
         "\n" | "\r" => Some(GarageCommand::Engage),
         "?" => Some(GarageCommand::ToggleHelp),
         "I" => Some(GarageCommand::InstallStatusline),
+        "t" => Some(GarageCommand::OpenWindow),
         "q" => Some(GarageCommand::Quit),
         _ => None,
     }
@@ -651,6 +656,7 @@ impl WallStore {
             | GarageCommand::Close
             | GarageCommand::WorkspaceRemove
             | GarageCommand::InstallStatusline
+            | GarageCommand::OpenWindow
             | GarageCommand::Quit => false,
             _ if self.state.layer != KeyLayer::Garage => false,
             GarageCommand::FocusWorkspace(index) => {
@@ -1347,6 +1353,16 @@ mod tests {
     fn install_statusline_is_always_declined_by_dispatch() {
         let mut store = store_with(vec![ws("a")], vec![si("a", "one")]);
         assert!(!store.dispatch(GarageCommand::InstallStatusline));
+    }
+
+    // ── p12: standalone-window key ("t" opens the focused session in its
+    // own OS terminal, an effect the store always declines) ────────────────
+
+    #[test]
+    fn t_maps_to_open_window_an_effect_the_store_declines() {
+        assert_eq!(garage_command_for("t"), Some(GarageCommand::OpenWindow));
+        let mut store = store_with(vec![ws("a")], vec![si("a", "one")]);
+        assert!(!store.dispatch(GarageCommand::OpenWindow));
     }
 
     #[test]
