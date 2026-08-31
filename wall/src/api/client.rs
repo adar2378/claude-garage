@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use serde_json::{json, Value};
 
-use super::models::{SessionInfo, SpawnedSession, WorkspaceInfo};
+use super::models::{SessionInfo, SpawnedSession, UsageInfo, WorkspaceInfo};
 
 /// Pure port-selection logic behind [`garage_daemon_port`], split out so it
 /// unit-tests without touching the process environment.
@@ -101,6 +101,26 @@ impl GarageClient {
     pub fn fetch_workspaces(&self) -> Result<Vec<WorkspaceInfo>, ApiError> {
         let body = self.get_json("/api/workspaces")?;
         parse_list(body.as_ref(), WorkspaceInfo::from_json, "workspaces")
+    }
+
+    /// `GET /api/usage` (spec tui-context-meters "Strip usage chip") —
+    /// always a 200 with both windows possibly null; a missing/malformed
+    /// body degrades to the all-null default rather than an error, since a
+    /// transient hiccup here should just skip a poll tick, not disrupt the
+    /// wall.
+    pub fn fetch_usage(&self) -> Result<UsageInfo, ApiError> {
+        let body = self.get_json("/api/usage")?;
+        Ok(body.as_ref().map(UsageInfo::from_json).unwrap_or_default())
+    }
+
+    /// `POST /api/statusline/install` (spec tui-context-meters "Install
+    /// affordance") — installs the chaining statusline wrapper into
+    /// `~/.claude/settings.json`. The caller only needs success/failure; the
+    /// strip notice text is static success wording or the daemon's own
+    /// error message (via [`ApiError`]).
+    pub fn install_statusline(&self) -> Result<(), ApiError> {
+        self.post_json("/api/statusline/install", &json!({}))?;
+        Ok(())
     }
 
     /// `POST /api/sessions`. With `worktree` the daemon spawns into an

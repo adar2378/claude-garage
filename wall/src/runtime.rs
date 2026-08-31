@@ -40,7 +40,7 @@ use serde_json::Value;
 use tokio::sync::mpsc;
 
 use crate::api::client::{ApiError, GarageClient};
-use crate::api::models::{SessionInfo, WorkspaceInfo};
+use crate::api::models::{SessionInfo, UsageInfo, WorkspaceInfo};
 use crate::api::sse::SseClient;
 use crate::input::encode::encode_key;
 use crate::input::paste::wrap_bracketed_paste;
@@ -78,6 +78,25 @@ const ELAPSED_TICK: Duration = Duration::from_secs(10);
 /// frozen tile).
 const FROZEN_COUNT_REFRESH: Duration = Duration::from_secs(1);
 
+/// `GET /api/usage` poll cadence (spec tui-context-meters "Strip usage
+/// chip": "refreshed at least every 60s"). No SSE push exists for
+/// account-wide usage — polling (plus the once-at-startup fetch) is the
+/// only source.
+const USAGE_POLL_INTERVAL: Duration = Duration::from_secs(60);
+
+/// Delay before the one-time statusline-install hint may appear (spec
+/// tui-context-meters "Install affordance": "~30s after startup").
+const INSTALL_HINT_DELAY: Duration = Duration::from_secs(30);
+
+/// How long the install hint stays up if never dismissed by a keypress
+/// (spec: "one-time" — it never reappears after this either).
+const INSTALL_HINT_TTL_MS: i64 = 8000;
+
+/// The install action's success wording (spec tui-context-meters "Install
+/// affordance": exact strip-notice text, verbatim — harnesses grep it).
+const INSTALL_STATUSLINE_SUCCESS: &str =
+    "statusline feed installed — meters go live as agents work";
+
 /// The one event channel every producer feeds (design.md: single
 /// state-owning loop).
 pub enum AppEvent {
@@ -88,6 +107,9 @@ pub enum AppEvent {
     TileOutput,
     Workspaces(Vec<WorkspaceInfo>),
     Sessions(Vec<SessionInfo>),
+    /// `GET /api/usage` poll result (spec tui-context-meters "Strip usage
+    /// chip").
+    Usage(UsageInfo),
     /// SSE `status` event.
     Status {
         id: String,
@@ -100,6 +122,9 @@ pub enum AppEvent {
     SpawnSettled,
     /// A restore effect settled for this session id.
     RestoreSettled(String),
+    /// The statusline-install effect settled (success or failure) — clears
+    /// the busy guard (spec tui-context-meters "Install affordance").
+    InstallStatuslineSettled,
     /// The add-workspace PUT settled: `error: None` closes the overlay and
     /// focuses the new workspace; `Some` keeps it open with the inline error.
     WorkspaceAddSettled {
@@ -206,6 +231,9 @@ pub enum Effect {
     AddWorkspace { name: String, dir: String },
     /// `q`: orderly quit.
     Quit,
+    /// `I`: `POST /api/statusline/install` (spec tui-context-meters
+    /// "Install affordance").
+    InstallStatusline,
 }
 
 // ── Garage-layer router ──────────────────────────────────────────────────
@@ -257,6 +285,8 @@ pub struct GarageRouter {
     restoring: HashSet<String>,
     /// A spawn call in flight — guards concurrent spawns.
     spawning: bool,
+    /// A statusline-install call in flight — guards concurrent installs.
+    installing_statusline: bool,
     pub notices: Notices,
 }
 
@@ -271,6 +301,10 @@ impl GarageRouter {
 
     pub fn restore_settled(&mut self, id: &str) {
         self.restoring.remove(id);
+    }
+
+    pub fn install_statusline_settled(&mut self) {
+        self.installing_statusline = false;
     }
 
     /// Handle one garage-layer key (already reduced to its string form by
@@ -342,6 +376,7 @@ impl GarageRouter {
             GarageCommand::RestoreAll => self.restore_all(store, now_ms, &mut effects),
             GarageCommand::Close => self.close_pressed(store, now_ms, &mut effects),
             GarageCommand::WorkspaceRemove => self.remove_pressed(store, now_ms, &mut effects),
+            GarageCommand::InstallStatusline => self.install_statusline_pressed(&mut effects),
             _ => {}
         }
         effects
@@ -363,6 +398,17 @@ impl GarageRouter {
             label,
             worktree,
         });
+    }
+
+    /// `I`: fire the statusline-install effect, busy-guarded against a
+    /// second press before the first settles (spec tui-context-meters
+    /// "Install affordance").
+    fn install_statusline_pressed(&mut self, effects: &mut Vec<Effect>) {
+        if self.installing_statusline {
+            return;
+        }
+        self.installing_statusline = true;
+        effects.push(Effect::InstallStatusline);
     }
 
     /// A click on a restorable placeholder restores it (Enter's landing,
@@ -904,6 +950,15 @@ fn run_effect(effect: Effect, tx: &EventSender, base_url: &str) {
                     });
                 }
             },
+            Effect::InstallStatusline => {
+                match client.install_statusline() {
+                    Ok(()) => send_notice(&tx, INSTALL_STATUSLINE_SUCCESS.to_owned(), 5000),
+                    Err(e) => {
+                        send_notice(&tx, failure_notice("statusline install failed", &e), 5000)
+                    }
+                }
+                let _ = tx.send(AppEvent::InstallStatuslineSettled);
+            }
             Effect::Quit => unreachable!("Quit is handled by the state loop"),
         }
     });
@@ -922,6 +977,7 @@ pub fn run(terminal: &mut crate::term::WallTerminal, base_url: &str) -> std::io:
     spawn_input_task(&rt, tx.clone(), stop.clone());
     spawn_fetch_task(&rt, tx.clone(), base_url.to_owned(), client_id.clone());
     spawn_sse_task(&rt, tx.clone(), base_url.to_owned(), stop.clone());
+    spawn_usage_task(&rt, tx.clone(), base_url.to_owned(), stop.clone());
     spawn_signal_task(&rt, tx.clone());
 
     let result = rt.block_on(state_loop(terminal, tx.clone(), rx, base_url, &client_id));
@@ -983,6 +1039,32 @@ fn spawn_fetch_task(
                 let _ = tx.send(AppEvent::Sessions(sessions));
             }
             Err(e) => send_notice(&tx, format!("sessions fetch failed: {e}"), 5000),
+        }
+    });
+}
+
+/// `GET /api/usage`: once at startup, then every [`USAGE_POLL_INTERVAL`]
+/// (spec tui-context-meters "Strip usage chip") — no SSE push exists for
+/// account-wide usage, so polling is the only source. Stops promptly on
+/// `stop` rather than sleeping through the full interval at shutdown.
+fn spawn_usage_task(
+    rt: &tokio::runtime::Runtime,
+    tx: EventSender,
+    base_url: String,
+    stop: Arc<AtomicBool>,
+) {
+    rt.spawn(async move {
+        while !stop.load(Ordering::Relaxed) {
+            let base_url = base_url.clone();
+            let tx = tx.clone();
+            let _ = tokio::task::spawn_blocking(move || {
+                let client = GarageClient::new(Some(base_url));
+                if let Ok(usage) = client.fetch_usage() {
+                    let _ = tx.send(AppEvent::Usage(usage));
+                }
+            })
+            .await;
+            tokio::time::sleep(USAGE_POLL_INTERVAL).await;
         }
     });
 }
@@ -1099,6 +1181,7 @@ impl App {
             AppEvent::TileOutput => {}
             AppEvent::Workspaces(w) => self.store.workspaces_fetched(w),
             AppEvent::Sessions(s) => self.store.sessions_fetched(s),
+            AppEvent::Usage(u) => self.store.usage_fetched(u),
             AppEvent::Status { id, status, since } => {
                 self.store.status_changed(&id, &status, since);
             }
@@ -1107,6 +1190,7 @@ impl App {
             }
             AppEvent::SpawnSettled => self.router.spawn_settled(),
             AppEvent::RestoreSettled(id) => self.router.restore_settled(&id),
+            AppEvent::InstallStatuslineSettled => self.router.install_statusline_settled(),
             AppEvent::WorkspaceAddSettled { name, error } => {
                 let failed = error.is_some();
                 self.ws_form.settled(error);
@@ -1126,8 +1210,19 @@ impl App {
             AppEvent::Term(Event::Paste(text)) => self.handle_paste(&text),
             AppEvent::Term(Event::Mouse(mouse)) => self.handle_mouse(&mouse),
             AppEvent::Term(Event::Key(key)) => {
-                if key.kind != KeyEventKind::Release && self.handle_key(&key) {
-                    return true;
+                if key.kind != KeyEventKind::Release {
+                    // Any keypress dismisses the install hint forever this
+                    // run (spec tui-context-meters "Install affordance") —
+                    // checked before ordinary key handling so it dismisses
+                    // regardless of layer, even when the key goes on to do
+                    // something else (e.g. `I` itself: the hint clears here,
+                    // then the install action below shows its own notice).
+                    if self.router.notices.current(now_ms()) == Some(crate::ui::strip::STATUSLINE_HINT) {
+                        self.router.notices.clear_prefix(crate::ui::strip::STATUSLINE_HINT);
+                    }
+                    if self.handle_key(&key) {
+                        return true;
+                    }
                 }
             }
             AppEvent::Term(_) => {}
@@ -1752,6 +1847,21 @@ impl App {
     }
 }
 
+/// Whether the one-time statusline-install hint should appear now (spec
+/// tui-context-meters "Install affordance"): not shown yet this run, the
+/// startup delay has elapsed, and no session carries statusline-sourced
+/// context. Pure — split out from the loop below so the gating logic
+/// unit-tests without real timers.
+fn should_show_install_hint(
+    already_shown: bool,
+    elapsed_since_startup: Duration,
+    sessions: &[WallSession],
+) -> bool {
+    !already_shown
+        && elapsed_since_startup >= INSTALL_HINT_DELAY
+        && !sessions.iter().any(WallSession::has_statusline_context)
+}
+
 /// The single state-owning loop: drains the channel, applies events, runs
 /// the downstream reconciliation (registry / escalation / heartbeat), and
 /// draws when dirty, frame-capped like the spike.
@@ -1801,6 +1911,8 @@ async fn state_loop(
     let mut last_render = Instant::now() - FRAME_CAP;
     let mut last_elapsed_tick = Instant::now();
     let mut last_heartbeat = Instant::now();
+    let startup = Instant::now();
+    let mut install_hint_shown = false;
 
     loop {
         let now = now_ms();
@@ -1821,6 +1933,15 @@ async fn state_loop(
             tokio::task::spawn_blocking(move || {
                 let _ = GarageClient::new(Some(base_url)).post_visibility(&client_id, true);
             });
+        }
+        // One-time statusline-install hint (spec tui-context-meters
+        // "Install affordance"): dim, never repeats after it's shown once —
+        // dismissal on any keypress is handled in `App::apply`.
+        if should_show_install_hint(install_hint_shown, startup.elapsed(), &app.store.state().sessions)
+        {
+            install_hint_shown = true;
+            app.router.notices.show(crate::ui::strip::STATUSLINE_HINT, INSTALL_HINT_TTL_MS, now);
+            dirty = true;
         }
         // Reattach retries / staggered attaches fire from the tick too, so
         // they never wait on an input event.
@@ -1930,6 +2051,7 @@ mod tests {
             branch: None,
             restorable: false,
             title: None,
+            context: None,
         }
     }
 
@@ -2282,6 +2404,100 @@ mod tests {
         );
         router.spawn_settled();
         assert_eq!(key_at(&mut router, &mut store, "n", 1200).len(), 1);
+    }
+
+    // ── p11: install statusline (spec tui-context-meters "Install
+    // affordance") ──────────────────────────────────────────────────────
+
+    #[test]
+    fn shift_i_fires_the_install_effect_busy_guarded_until_settled() {
+        let mut store = store_with(vec![ws("a")], vec![si("a", "one")]);
+        let mut router = GarageRouter::default();
+        assert_eq!(
+            key_at(&mut router, &mut store, "I", 1000),
+            vec![Effect::InstallStatusline]
+        );
+        assert_eq!(
+            key_at(&mut router, &mut store, "I", 1100),
+            vec![],
+            "in flight"
+        );
+        router.install_statusline_settled();
+        assert_eq!(
+            key_at(&mut router, &mut store, "I", 1200),
+            vec![Effect::InstallStatusline]
+        );
+    }
+
+    #[test]
+    fn install_statusline_notice_strings() {
+        assert_eq!(
+            INSTALL_STATUSLINE_SUCCESS,
+            "statusline feed installed — meters go live as agents work"
+        );
+        assert_eq!(
+            failure_notice("statusline install failed", &ApiError::Transport("x".into())),
+            "statusline install failed"
+        );
+        assert_eq!(
+            failure_notice(
+                "statusline install failed",
+                &ApiError::Status { status: 500, message: "boom".into() }
+            ),
+            "statusline install failed: boom"
+        );
+    }
+
+    #[test]
+    fn install_hint_condition_gates_on_shown_delay_and_statusline_sessions() {
+        use crate::api::models::ContextInfo;
+
+        let none_yet = vec![WallSession::from_info(&si("a", "one"), None)];
+        assert!(
+            !should_show_install_hint(false, Duration::from_secs(29), &none_yet),
+            "too early"
+        );
+        assert!(should_show_install_hint(false, Duration::from_secs(30), &none_yet));
+        assert!(
+            !should_show_install_hint(true, Duration::from_secs(60), &none_yet),
+            "already shown this run — never again"
+        );
+
+        let transcript_only = vec![WallSession::from_info(
+            &SessionInfo {
+                context: Some(ContextInfo { used_percentage: 10, source: "transcript".into() }),
+                ..si("a", "one")
+            },
+            None,
+        )];
+        assert!(
+            should_show_install_hint(false, Duration::from_secs(60), &transcript_only),
+            "transcript-sourced context doesn't count as statusline-sourced"
+        );
+
+        let with_statusline = vec![WallSession::from_info(
+            &SessionInfo {
+                context: Some(ContextInfo { used_percentage: 10, source: "statusline".into() }),
+                ..si("a", "one")
+            },
+            None,
+        )];
+        assert!(!should_show_install_hint(false, Duration::from_secs(60), &with_statusline));
+    }
+
+    #[test]
+    fn any_keypress_dismisses_the_install_hint_forever_this_run() {
+        let mut router = GarageRouter::default();
+        router.notices.show(crate::ui::strip::STATUSLINE_HINT, 8000, 1000);
+        assert_eq!(router.notices.current(1001), Some(crate::ui::strip::STATUSLINE_HINT));
+        // The dismissal check runtime.rs's `App::apply` runs before ordinary
+        // key handling — exercised directly here against `Notices` since
+        // building a full `App` needs a terminal/registry this module
+        // doesn't stand up in tests.
+        if router.notices.current(1001) == Some(crate::ui::strip::STATUSLINE_HINT) {
+            router.notices.clear_prefix(crate::ui::strip::STATUSLINE_HINT);
+        }
+        assert_eq!(router.notices.current(1001), None, "any keypress clears it");
     }
 
     #[test]

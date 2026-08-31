@@ -108,6 +108,7 @@ mod tests {
             branch: None,
             worktree: false,
             title: None,
+            context: None,
         }
     }
 

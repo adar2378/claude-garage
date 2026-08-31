@@ -49,6 +49,11 @@ pub mod colors {
     pub const FAINT: Color = Color::DarkGray;
     /// Validation errors (never amber — amber is reserved for needs-input).
     pub const ERROR: Color = Color::Red;
+    /// Context-meter "compact or restart soon" threshold (spec
+    /// tui-context-meters "Tile context meter", ≥80%) — the palette's red,
+    /// same value as [`ERROR`]; kept as its own name since the two convey
+    /// unrelated things. NEVER amber (amber stays exclusive to needs-input).
+    pub const CTX_HOT: Color = Color::Red;
 }
 
 /// Status → color per the salience ladder. `since_ms`/`now_ms` drive the
@@ -116,6 +121,12 @@ mod tests {
         assert!(!done_faded(Some(1000), 1000 + DONE_FADE_MS));
         assert!(done_faded(Some(1000), 1000 + DONE_FADE_MS + 1));
         assert!(!done_faded(None, i64::MAX));
+    }
+
+    #[test]
+    fn ctx_hot_is_the_palette_red_never_amber() {
+        assert_eq!(colors::CTX_HOT, Color::Red);
+        assert_ne!(colors::CTX_HOT, colors::AMBER);
     }
 
     #[test]

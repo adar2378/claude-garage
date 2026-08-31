@@ -159,6 +159,7 @@ mod tests {
             branch: None,
             restorable: status == "restorable",
             title: None,
+            context: None,
         }
     }
 

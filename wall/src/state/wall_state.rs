@@ -4,7 +4,7 @@
 
 use std::collections::HashMap;
 
-use crate::api::models::{SessionInfo, WorkspaceInfo};
+use crate::api::models::{ContextInfo, SessionInfo, UsageInfo, WorkspaceInfo};
 use crate::state::salience::WorkspaceGroup;
 use crate::state::views::{self, View, ViewSummary};
 
@@ -50,6 +50,10 @@ pub struct WallSession {
     /// subtitle in the tile bar"), when it differs meaningfully from an
     /// empty/hostname/shell name — `None` renders byte-identical to pre-p10.
     pub title: Option<String>,
+    /// p11: this session's context-window usage, when known (spec
+    /// tui-context-meters "Tile context meter") — `None` renders the tile
+    /// bar exactly as before the feature.
+    pub context: Option<ContextInfo>,
 }
 
 impl WallSession {
@@ -64,6 +68,7 @@ impl WallSession {
             message: info.message.clone(),
             branch: info.branch.clone(),
             title: info.title.clone(),
+            context: info.context.clone(),
             worktree: !info.restorable
                 && info.dir.is_some()
                 && workspace_dir.is_some()
@@ -73,6 +78,14 @@ impl WallSession {
 
     pub fn needs_input(&self) -> bool {
         self.status == "needs-input"
+    }
+
+    /// True when this session's context (if any) came from the statusline
+    /// wrapper, not the transcript fallback — the install hint's gate (spec
+    /// tui-context-meters "Install affordance": "no session has
+    /// statusline-sourced context").
+    pub fn has_statusline_context(&self) -> bool {
+        self.context.as_ref().is_some_and(|c| c.source == "statusline")
     }
 
     /// A live session has a tmux session behind it — anything but restorable.
@@ -141,6 +154,10 @@ pub struct WallState {
     /// restart (spec tui-views "View persistence" schema has no focus
     /// field).
     pub focused_view: HashMap<String, String>,
+    /// p11: the most recent `GET /api/usage` result (spec
+    /// tui-context-meters "Strip usage chip") — both windows `None` until a
+    /// statusline post arrives, which hides the chip entirely.
+    pub usage: UsageInfo,
 }
 
 impl Default for WallState {
@@ -167,6 +184,7 @@ impl WallState {
             grid_focus_recency: Vec::new(),
             views: HashMap::new(),
             focused_view: HashMap::new(),
+            usage: UsageInfo::default(),
         }
     }
 

@@ -19,6 +19,94 @@ fn as_string(v: Option<&Value>) -> Option<String> {
     v.and_then(Value::as_str).map(str::to_owned)
 }
 
+/// A JSON number → a 0-100 percentage, clamped then rounded. The daemon
+/// already clamps (`clampPercentage`/transcript's `Math.round`), but
+/// defensive clamping here costs nothing and keeps `context_segments`
+/// (ui/tile.rs) safe even against a malformed payload.
+fn as_percentage(v: Option<&Value>) -> Option<u32> {
+    match v {
+        Some(Value::Number(n)) => n.as_f64().map(|f| f.clamp(0.0, 100.0).round() as u32),
+        _ => None,
+    }
+}
+
+/// `resetsAt` rides through as whatever JSON scalar the statusline payload
+/// carried (an ISO string in practice) — the wall never interprets it, only
+/// carries it, so a string or a number are both accepted verbatim.
+fn as_resets_at(v: Option<&Value>) -> Option<String> {
+    match v {
+        Some(Value::String(s)) => Some(s.clone()),
+        Some(Value::Number(n)) => Some(n.to_string()),
+        _ => None,
+    }
+}
+
+/// One session's `context` entry (`GET /api/sessions` — see
+/// `daemon/src/sessions.js`'s `{usedPercentage, source: "statusline"|
+/// "transcript"} | null` shape; proposal.md "API").
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ContextInfo {
+    /// 0-100; the daemon already clamps/rounds this.
+    pub used_percentage: u32,
+    /// `"statusline"` or `"transcript"` — see the context-telemetry spec.
+    pub source: String,
+}
+
+impl ContextInfo {
+    /// `None` when `usedPercentage` is missing or not a number (the Dart
+    /// port's "throw on malformed" — treated here as "no context", same as
+    /// the field being absent).
+    pub fn from_json(json: &Value) -> Option<ContextInfo> {
+        Some(ContextInfo {
+            used_percentage: as_percentage(json.get("usedPercentage"))?,
+            source: as_string(json.get("source")).unwrap_or_default(),
+        })
+    }
+}
+
+/// One window of `GET /api/usage` (`{usedPercentage, resetsAt} | null`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct UsageWindow {
+    pub used_percentage: u32,
+    pub resets_at: Option<String>,
+}
+
+impl UsageWindow {
+    pub fn from_json(json: &Value) -> Option<UsageWindow> {
+        Some(UsageWindow {
+            used_percentage: as_percentage(json.get("usedPercentage"))?,
+            resets_at: as_resets_at(json.get("resetsAt")),
+        })
+    }
+}
+
+/// `GET /api/usage` response (`daemon/src/sessions.js`'s
+/// `{fiveHour: {...}|null, sevenDay: {...}|null}` — account-wide, from the
+/// most recent statusline post; both null until one arrives).
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
+pub struct UsageInfo {
+    pub five_hour: Option<UsageWindow>,
+    pub seven_day: Option<UsageWindow>,
+}
+
+impl UsageInfo {
+    /// Never fails — a missing/malformed body degrades to "both null" so a
+    /// transient parse hiccup never blocks the strip (it just shows no chip
+    /// this tick).
+    pub fn from_json(json: &Value) -> UsageInfo {
+        UsageInfo {
+            five_hour: json
+                .get("fiveHour")
+                .filter(|v| !v.is_null())
+                .and_then(UsageWindow::from_json),
+            seven_day: json
+                .get("sevenDay")
+                .filter(|v| !v.is_null())
+                .and_then(UsageWindow::from_json),
+        }
+    }
+}
+
 /// One registered workspace from `GET /api/workspaces`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct WorkspaceInfo {
@@ -64,6 +152,10 @@ pub struct SessionInfo {
     /// `null` server-side) — `None` for restorable entries and for any live
     /// session with nothing meaningful to show.
     pub title: Option<String>,
+    /// p11: `{usedPercentage, source: "statusline"|"transcript"} | null` —
+    /// `None` for a session with no context data yet (or a restorable
+    /// entry, which never carries one; see context-telemetry spec).
+    pub context: Option<ContextInfo>,
 }
 
 impl SessionInfo {
@@ -80,6 +172,10 @@ impl SessionInfo {
             branch: as_string(json.get("branch")),
             restorable: json.get("restorable") == Some(&Value::Bool(true)),
             title: as_string(json.get("title")),
+            context: json
+                .get("context")
+                .filter(|v| !v.is_null())
+                .and_then(ContextInfo::from_json),
         })
     }
 }
@@ -121,6 +217,49 @@ mod tests {
         assert!(!s.attached);
         assert!(!s.restorable);
         assert_eq!(s.title, None);
+        assert_eq!(s.context, None);
+    }
+
+    // ── p11: context (spec tui-context-meters) ───────────────────────────
+
+    #[test]
+    fn context_parses_the_daemon_shape() {
+        let v = json!({
+            "id": "i", "workspace": "w", "label": "l",
+            "context": {"usedPercentage": 42.4, "source": "statusline"}
+        });
+        let ctx = SessionInfo::from_json(&v).unwrap().context.unwrap();
+        assert_eq!(ctx.used_percentage, 42);
+        assert_eq!(ctx.source, "statusline");
+    }
+
+    #[test]
+    fn context_null_and_absent_both_map_to_none() {
+        let v = json!({"id": "i", "workspace": "w", "label": "l", "context": null});
+        assert_eq!(SessionInfo::from_json(&v).unwrap().context, None);
+        let v = json!({"id": "i", "workspace": "w", "label": "l"});
+        assert_eq!(SessionInfo::from_json(&v).unwrap().context, None);
+    }
+
+    #[test]
+    fn usage_info_parses_both_windows_and_a_null_one() {
+        let v = json!({
+            "fiveHour": {"usedPercentage": 24.0, "resetsAt": "2026-01-01T00:00:00Z"},
+            "sevenDay": null
+        });
+        let u = UsageInfo::from_json(&v);
+        assert_eq!(u.five_hour.as_ref().unwrap().used_percentage, 24);
+        assert_eq!(
+            u.five_hour.as_ref().unwrap().resets_at.as_deref(),
+            Some("2026-01-01T00:00:00Z")
+        );
+        assert_eq!(u.seven_day, None);
+    }
+
+    #[test]
+    fn usage_info_both_null_is_the_default() {
+        let v = json!({"fiveHour": null, "sevenDay": null});
+        assert_eq!(UsageInfo::from_json(&v), UsageInfo::default());
     }
 
     #[test]

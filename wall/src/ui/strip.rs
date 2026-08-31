@@ -16,8 +16,36 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Paragraph, Widget};
 
+use crate::api::models::UsageInfo;
 use crate::state::wall_state::{KeyLayer, WallState};
 use crate::ui::theme::colors;
+
+/// The one-time statusline-install hint's exact wording (spec
+/// tui-context-meters "Install affordance") — rendered dim, never amber; the
+/// runtime shows it through the same notice slot as any other strip notice
+/// (see `runtime.rs`'s hint scheduling), so `strip_line` special-cases this
+/// text to pick the dim color instead of an ordinary notice's bright one.
+pub const STATUSLINE_HINT: &str = "context meters: press I to install the statusline feed";
+
+/// `5h N% · wk M%`-style account usage chip (spec tui-context-meters "Strip
+/// usage chip"): a null window is omitted, not zero-filled; both null hides
+/// the chip entirely (`None`).
+fn usage_chip_text(usage: &UsageInfo) -> Option<String> {
+    let five_hour = usage
+        .five_hour
+        .as_ref()
+        .map(|w| format!("5h {}%", w.used_percentage));
+    let seven_day = usage
+        .seven_day
+        .as_ref()
+        .map(|w| format!("wk {}%", w.used_percentage));
+    match (five_hour, seven_day) {
+        (None, None) => None,
+        (Some(a), None) => Some(a),
+        (None, Some(b)) => Some(b),
+        (Some(a), Some(b)) => Some(format!("{a} · {b}")),
+    }
+}
 
 pub struct StripLine {
     pub line: Line<'static>,
@@ -45,9 +73,19 @@ pub fn strip_line(state: &WallState, notice: Option<&str>, width: u16) -> StripL
     let mut right: Vec<Span<'static>> = Vec::new();
     let mut badge_local: Option<Range<usize>> = None;
     if let Some(notice) = notice {
+        // The install hint rides the same notice slot but reads dim, never
+        // the bright color an ordinary notice gets (spec: "never amber",
+        // and dim per the mockup's quiet-affordance tone).
+        let color = if notice == STATUSLINE_HINT { colors::DIM } else { colors::FG };
+        right.push(Span::styled(format!(" {notice} "), Style::default().fg(color)));
+    }
+    // Usage chip (spec tui-context-meters "Strip usage chip"): additive only
+    // — inserted between the notice and the badge/keys chip so it never
+    // displaces either of them.
+    if let Some(chip) = usage_chip_text(&state.usage) {
         right.push(Span::styled(
-            format!(" {notice} "),
-            Style::default().fg(colors::FG),
+            format!(" {chip} "),
+            Style::default().fg(colors::DIM),
         ));
     }
     if blocked > 0 {
@@ -106,7 +144,7 @@ mod tests {
     //! text with amber dots, the blocked badge and its click range, chip
     //! variants, the notice slot.
     use super::*;
-    use crate::api::models::{SessionInfo, WorkspaceInfo};
+    use crate::api::models::{SessionInfo, UsageWindow, WorkspaceInfo};
     use crate::state::store::WallStore;
 
     fn ws(name: &str) -> WorkspaceInfo {
@@ -130,6 +168,7 @@ mod tests {
             branch: None,
             restorable: false,
             title: None,
+            context: None,
         }
     }
 
@@ -210,5 +249,109 @@ mod tests {
         if let Some(badge) = s.badge {
             assert!(badge.end <= 30);
         }
+    }
+
+    // ── p11: usage chip (spec tui-context-meters "Strip usage chip") ───────
+
+    #[test]
+    fn usage_chip_hidden_entirely_when_both_windows_are_null() {
+        let store = store(); // fresh: no /api/usage post yet
+        let text = strip_line(store.state(), None, 120).line.to_string();
+        assert!(!text.contains("5h"));
+        assert!(!text.contains("wk"));
+    }
+
+    #[test]
+    fn usage_chip_shows_both_windows_dim() {
+        let mut store = store();
+        store.usage_fetched(UsageInfo {
+            five_hour: Some(UsageWindow { used_percentage: 24, resets_at: None }),
+            seven_day: Some(UsageWindow { used_percentage: 61, resets_at: None }),
+        });
+        let s = strip_line(store.state(), None, 120);
+        let text = s.line.to_string();
+        assert!(text.contains("5h 24% · wk 61%"), "{text}");
+        let chip_span = s
+            .line
+            .spans
+            .iter()
+            .find(|sp| sp.content.contains("5h 24%"))
+            .unwrap();
+        assert_eq!(chip_span.style.fg, Some(colors::DIM));
+    }
+
+    #[test]
+    fn usage_chip_omits_a_null_window() {
+        let mut five_only = store();
+        five_only.usage_fetched(UsageInfo {
+            five_hour: Some(UsageWindow { used_percentage: 24, resets_at: None }),
+            seven_day: None,
+        });
+        let text = strip_line(five_only.state(), None, 120).line.to_string();
+        assert!(text.contains("5h 24%"), "{text}");
+        assert!(!text.contains("wk"), "{text}");
+
+        let mut week_only = store();
+        week_only.usage_fetched(UsageInfo {
+            five_hour: None,
+            seven_day: Some(UsageWindow { used_percentage: 61, resets_at: None }),
+        });
+        let text = strip_line(week_only.state(), None, 120).line.to_string();
+        assert!(text.contains("wk 61%"), "{text}");
+        assert!(!text.contains("5h"), "{text}");
+    }
+
+    #[test]
+    fn usage_chip_never_displaces_the_notice_badge_or_keys_chip() {
+        let mut store = store(); // one blocked session (beta/blocked) baked in
+        store.usage_fetched(UsageInfo {
+            five_hour: Some(UsageWindow { used_percentage: 24, resets_at: None }),
+            seven_day: Some(UsageWindow { used_percentage: 61, resets_at: None }),
+        });
+        let s = strip_line(store.state(), Some("closed ghost"), 140);
+        let text = s.line.to_string();
+        assert!(text.contains("closed ghost"), "{text}");
+        assert!(text.contains("5h 24% · wk 61%"), "{text}");
+        assert!(
+            text.ends_with(" ● 1 blocked  keys → garage "),
+            "badge and keys chip still land at the very end: {text}"
+        );
+        let badge = s.badge.unwrap();
+        let badge_text: String = text
+            .chars()
+            .skip(usize::from(badge.start))
+            .take(usize::from(badge.end - badge.start))
+            .collect();
+        assert_eq!(badge_text, " ● 1 blocked ", "badge range still matches the paint");
+    }
+
+    // ── p11: install hint styling (spec tui-context-meters "Install
+    // affordance") ──────────────────────────────────────────────────────
+
+    #[test]
+    fn install_hint_notice_renders_dim_never_bright_or_amber() {
+        let store = store();
+        let s = strip_line(store.state(), Some(STATUSLINE_HINT), 120);
+        let hint_span = s
+            .line
+            .spans
+            .iter()
+            .find(|sp| sp.content.contains("press I"))
+            .unwrap();
+        assert_eq!(hint_span.style.fg, Some(colors::DIM));
+        assert_ne!(hint_span.style.fg, Some(colors::AMBER));
+    }
+
+    #[test]
+    fn an_ordinary_notice_still_renders_bright() {
+        let store = store();
+        let s = strip_line(store.state(), Some("closed ghost"), 120);
+        let notice_span = s
+            .line
+            .spans
+            .iter()
+            .find(|sp| sp.content.contains("closed ghost"))
+            .unwrap();
+        assert_eq!(notice_span.style.fg, Some(colors::FG));
     }
 }

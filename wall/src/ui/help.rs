@@ -13,7 +13,7 @@ use crate::ui::theme::colors;
 
 /// The full binding legend (the Dart `_bindings` list, verbatim — the help
 /// overlay must list every p8.1–p8.4 key).
-pub const BINDINGS: [(&str, &str); 18] = [
+pub const BINDINGS: [(&str, &str); 19] = [
     ("1-9", "focus workspace"),
     ("[ ]", "cycle focused tile"),
     ("Enter", "engage focused tile (restore it when restorable)"),
@@ -23,6 +23,7 @@ pub const BINDINGS: [(&str, &str); 18] = [
     ("A", "triage queue"),
     ("n / N", "spawn session / worktree session"),
     ("R", "restore all restorable sessions in workspace"),
+    ("I", "install statusline feed for context meters"),
     ("x x", "close focused session (press twice)"),
     ("X X", "remove focused workspace (sessions keep running)"),
     ("X K", "remove focused workspace AND kill its sessions"),
@@ -88,8 +89,8 @@ mod tests {
     fn every_lifecycle_key_is_listed() {
         let keys: Vec<&str> = BINDINGS.iter().map(|(k, _)| *k).collect();
         for key in [
-            "1-9", "[ ]", "Enter", "Ctrl+G", "m", "a", "A", "n / N", "R", "x x", "X X", "X K",
-            "w", "d", "D", "Tab", "?", "q",
+            "1-9", "[ ]", "Enter", "Ctrl+G", "m", "a", "A", "n / N", "R", "I", "x x", "X X",
+            "X K", "w", "d", "D", "Tab", "?", "q",
         ] {
             assert!(keys.contains(&key), "missing {key}");
         }

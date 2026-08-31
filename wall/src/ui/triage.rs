@@ -89,6 +89,15 @@ fn row_line(s: &WallSession, selected: bool, width: usize, now_ms: i64) -> Line<
             ));
         }
     }
+    // Bare context percentage, dim, when present (spec tui-context-meters
+    // "Tile context meter": "The triage queue MAY show the percentage
+    // dim") — no bar, no hot-red variant here; just the number.
+    if let Some(context) = &s.context {
+        spans.push(Span::styled(
+            format!("  {}%", context.used_percentage),
+            Style::default().fg(colors::DIM),
+        ));
+    }
     // Subtitle (spec tui-wall "Auto-subtitle in the tile bar": "The triage
     // queue row MAY show the same subtitle dim when present"), lowest
     // priority — fitted into whatever's left after identity/waiting/message.
@@ -183,6 +192,7 @@ mod tests {
             branch: None,
             worktree: false,
             title: None,
+            context: None,
         }
     }
 
@@ -239,6 +249,19 @@ mod tests {
         let line = row_line(&s, false, 40, 0).to_string();
         assert!(line.chars().count() <= 40, "{line}");
         assert!(line.ends_with('…'), "{line}");
+    }
+
+    #[test]
+    fn row_shows_the_bare_percent_dim_when_present() {
+        let mut s = session("api-fix", "needs-input", Some(0));
+        s.context = Some(crate::api::models::ContextInfo {
+            used_percentage: 55,
+            source: "statusline".to_owned(),
+        });
+        let line = row_line(&s, false, 78, 240_000);
+        assert!(line.to_string().contains("55%"), "{line}");
+        let percent_span = &line.spans[4]; // after prefix/glyph/identity/waiting
+        assert_eq!(percent_span.style.fg, Some(colors::DIM));
     }
 
     #[test]

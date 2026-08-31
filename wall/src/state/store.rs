@@ -5,7 +5,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use crate::api::models::{SessionInfo, WorkspaceInfo};
+use crate::api::models::{SessionInfo, UsageInfo, WorkspaceInfo};
 use crate::state::salience::{build_groups, jump_target};
 use crate::state::views::{
     compute_views, derive_view_name, prune_views, view_exists, view_of, View, ViewsByWorkspace,
@@ -61,6 +61,10 @@ pub enum GarageCommand {
     /// overlay for the focused session (its views list + "new group…").
     OpenViewPicker,
     ToggleHelp,
+    /// `I` (shift+i, spec tui-context-meters "Install affordance"):
+    /// `POST /api/statusline/install` — an effect (the store never does
+    /// IO), so the store always declines it.
+    InstallStatusline,
     Quit,
 }
 
@@ -96,6 +100,7 @@ pub fn garage_command_for(key: &str) -> Option<GarageCommand> {
         "\t" => Some(GarageCommand::CycleView),
         "\n" | "\r" => Some(GarageCommand::Engage),
         "?" => Some(GarageCommand::ToggleHelp),
+        "I" => Some(GarageCommand::InstallStatusline),
         "q" => Some(GarageCommand::Quit),
         _ => None,
     }
@@ -201,6 +206,14 @@ impl WallStore {
         if views_changed {
             self.views_revision += 1;
         }
+        self.set(next);
+    }
+
+    /// `GET /api/usage` refetch (spec tui-context-meters "Strip usage
+    /// chip") — account-wide data, no session reconciliation involved.
+    pub fn usage_fetched(&mut self, usage: UsageInfo) {
+        let mut next = self.state.clone();
+        next.usage = usage;
         self.set(next);
     }
 
@@ -637,6 +650,7 @@ impl WallStore {
             | GarageCommand::RestoreAll
             | GarageCommand::Close
             | GarageCommand::WorkspaceRemove
+            | GarageCommand::InstallStatusline
             | GarageCommand::Quit => false,
             _ if self.state.layer != KeyLayer::Garage => false,
             GarageCommand::FocusWorkspace(index) => {
@@ -933,6 +947,7 @@ mod tests {
             branch: None,
             restorable: false,
             title: None,
+            context: None,
         }
     }
 
@@ -980,6 +995,28 @@ mod tests {
         );
         assert_eq!(store.state().layer, KeyLayer::Garage);
         assert_eq!(store.state().keys_target_chip(), "keys → garage");
+    }
+
+    #[test]
+    fn usage_fetched_replaces_the_account_wide_usage_and_nothing_else() {
+        use crate::api::models::UsageWindow;
+
+        let mut store = store_with(vec![ws("a")], vec![si("a", "one")]);
+        assert_eq!(store.state().usage, UsageInfo::default());
+        let before_version = store.version();
+
+        store.usage_fetched(UsageInfo {
+            five_hour: Some(UsageWindow { used_percentage: 24, resets_at: None }),
+            seven_day: None,
+        });
+        assert_eq!(
+            store.state().usage.five_hour.as_ref().map(|w| w.used_percentage),
+            Some(24)
+        );
+        assert_eq!(store.state().usage.seven_day, None);
+        assert!(store.version() > before_version);
+        // Sessions/focus untouched by an account-wide usage refetch.
+        assert_eq!(store.state().focused_session_id, Some(id("a", "one")));
     }
 
     #[test]
@@ -1292,6 +1329,24 @@ mod tests {
         assert_eq!(garage_command_for("z"), None);
         assert_eq!(garage_command_for("0"), None);
         assert_eq!(garage_command_for(" "), None);
+    }
+
+    // ── p11: install-statusline key (spec tui-context-meters "Install
+    // affordance") ────────────────────────────────────────────────────────
+
+    #[test]
+    fn shift_i_installs_statusline_lowercase_i_stays_free() {
+        assert_eq!(
+            garage_command_for("I"),
+            Some(GarageCommand::InstallStatusline)
+        );
+        assert_eq!(garage_command_for("i"), None, "lowercase i is unbound");
+    }
+
+    #[test]
+    fn install_statusline_is_always_declined_by_dispatch() {
+        let mut store = store_with(vec![ws("a")], vec![si("a", "one")]);
+        assert!(!store.dispatch(GarageCommand::InstallStatusline));
     }
 
     #[test]

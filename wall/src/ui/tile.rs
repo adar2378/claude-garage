@@ -59,6 +59,30 @@ pub fn border_for(v: &TileView) -> (Color, BorderType) {
     (color, border_type)
 }
 
+/// `▰`/`▱` segment count for the tile-bar context meter (spec
+/// tui-context-meters "Tile context meter"): `ceil(pct/25)`, capped at 4.
+/// Naturally 0 at `pct == 0` (no segment forced) and ≥1 for any `pct > 0` —
+/// `u32::div_ceil` gives both for free, no separate `.max(1)` needed.
+fn context_segments(pct: u32) -> u32 {
+    pct.div_ceil(25).min(4)
+}
+
+/// Dim below 80, the palette's red ("compact or restart soon") at 80 and
+/// above — NEVER amber; amber stays exclusive to needs-input even here.
+fn context_meter_color(pct: u32) -> Color {
+    if pct >= 80 {
+        colors::CTX_HOT
+    } else {
+        colors::DIM
+    }
+}
+
+/// `▰▰▱▱ 42%`-style meter text.
+fn context_meter_text(pct: u32) -> String {
+    let filled = context_segments(pct) as usize;
+    format!("{}{} {pct}%", "▰".repeat(filled), "▱".repeat(4 - filled))
+}
+
 /// Truncate `text` to `width` cells with a trailing ellipsis (the subtitle's
 /// own truncation — spec tui-wall "Auto-subtitle in the tile bar").
 fn fit_subtitle(text: &str, width: usize) -> String {
@@ -123,6 +147,17 @@ pub fn title_line(v: &TileView, width: u16) -> Line<'static> {
         spans.push(Span::styled(
             format!(" ↓ live · +{n} lines "),
             Style::default().fg(colors::FG).add_modifier(Modifier::BOLD),
+        ));
+    }
+    // Context meter (spec tui-context-meters "Tile context meter"): ladder
+    // priority above the subtitle, below glyph/label/branch/elapsed — it
+    // renders unconditionally (never truncated itself) exactly like those;
+    // only the subtitle below it ever shrinks or drops to make room. `None`
+    // (never posted / no session) renders exactly as before this feature.
+    if let Some(context) = &s.context {
+        spans.push(Span::styled(
+            format!(" {}", context_meter_text(context.used_percentage)),
+            Style::default().fg(context_meter_color(context.used_percentage)),
         ));
     }
     // Subtitle: non-null, and only when it differs from the label (spec:
@@ -255,6 +290,7 @@ mod tests {
             branch: None,
             worktree: false,
             title: None,
+            context: None,
         }
     }
 
@@ -369,6 +405,81 @@ mod tests {
         let text = line.to_string();
         assert!(!text.contains("anything"));
         assert!(text.contains("a-genuinely-quite-long-branch-name-here"), "{text}");
+    }
+
+    // ── p11: context meter (spec tui-context-meters "Tile context meter") ──
+
+    fn context(used_percentage: u32, source: &str) -> crate::api::models::ContextInfo {
+        crate::api::models::ContextInfo {
+            used_percentage,
+            source: source.to_owned(),
+        }
+    }
+
+    #[test]
+    fn context_segment_math_edges() {
+        assert_eq!(context_segments(0), 0, "0% shows every segment empty");
+        assert_eq!(context_segments(1), 1, "min 1 segment once pct > 0");
+        assert_eq!(context_segments(25), 1);
+        assert_eq!(context_segments(79), 4, "ceil(79/25) == 4, same as 80/88/100");
+        assert_eq!(context_segments(80), 4);
+        assert_eq!(context_segments(100), 4);
+    }
+
+    #[test]
+    fn context_meter_color_is_dim_below_80_never_amber() {
+        assert_eq!(context_meter_color(0), colors::DIM);
+        assert_eq!(context_meter_color(42), colors::DIM);
+        assert_eq!(context_meter_color(79), colors::DIM);
+        assert_ne!(context_meter_color(79), colors::AMBER);
+    }
+
+    #[test]
+    fn context_meter_color_is_hot_red_at_80_and_above() {
+        assert_eq!(context_meter_color(80), colors::CTX_HOT);
+        assert_eq!(context_meter_color(88), colors::CTX_HOT);
+        assert_eq!(context_meter_color(100), colors::CTX_HOT);
+        assert_ne!(context_meter_color(88), colors::AMBER);
+    }
+
+    #[test]
+    fn meter_renders_dim_at_42_percent() {
+        let mut s = session("idle");
+        s.context = Some(context(42, "statusline"));
+        let line = title_line(&view(&s), 200);
+        assert_eq!(line.to_string(), " ○ lbl ▰▰▱▱ 42% ");
+        let meter_span = &line.spans[line.spans.len() - 2];
+        assert_eq!(meter_span.style.fg, Some(colors::DIM));
+    }
+
+    #[test]
+    fn meter_renders_red_at_88_percent() {
+        let mut s = session("idle");
+        s.context = Some(context(88, "transcript"));
+        let line = title_line(&view(&s), 200);
+        assert_eq!(line.to_string(), " ○ lbl ▰▰▰▰ 88% ");
+        let meter_span = &line.spans[line.spans.len() - 2];
+        assert_eq!(meter_span.style.fg, Some(colors::CTX_HOT));
+    }
+
+    #[test]
+    fn null_context_renders_byte_identical_to_before_the_feature() {
+        let s = session("needs-input"); // context: None from the fixture
+        assert_eq!(title_line(&view(&s), 200).to_string(), " ● lbl 1:05 ");
+    }
+
+    #[test]
+    fn meter_sits_above_the_subtitle_in_the_truncation_ladder() {
+        // Ladder priority (spec): above the subtitle, below
+        // glyph/label/branch/elapsed — those never shrink, the meter never
+        // shrinks either, only the subtitle drops when nothing is left.
+        let mut s = session("idle");
+        s.context = Some(context(42, "statusline"));
+        s.title = Some("a very long summary that will not fit at all".to_owned());
+        let line = title_line(&view(&s), 16);
+        let text = line.to_string();
+        assert!(text.contains("▰▰▱▱ 42%"), "{text}");
+        assert!(!text.contains("a very long summary"), "{text}");
     }
 
     #[test]
