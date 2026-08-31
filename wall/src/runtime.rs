@@ -234,6 +234,10 @@ pub enum Effect {
     /// `I`: `POST /api/statusline/install` (spec tui-context-meters
     /// "Install affordance").
     InstallStatusline,
+    /// `t`: launch a detached OS terminal window attached to the focused
+    /// LIVE session (macOS only — the router declines before this is ever
+    /// built off macOS; see [`crate::ui::window_open`]).
+    OpenWindow { id: String, label: String },
 }
 
 // ── Garage-layer router ──────────────────────────────────────────────────
@@ -377,6 +381,7 @@ impl GarageRouter {
             GarageCommand::Close => self.close_pressed(store, now_ms, &mut effects),
             GarageCommand::WorkspaceRemove => self.remove_pressed(store, now_ms, &mut effects),
             GarageCommand::InstallStatusline => self.install_statusline_pressed(&mut effects),
+            GarageCommand::OpenWindow => self.open_window_pressed(store, now_ms, &mut effects),
             _ => {}
         }
         effects
@@ -409,6 +414,34 @@ impl GarageRouter {
         }
         self.installing_statusline = true;
         effects.push(Effect::InstallStatusline);
+    }
+
+    /// `t`: open the focused session in its own OS terminal window (p12
+    /// standalone-window — the `m` maximize's OS-window companion). Declined
+    /// for a restorable/dead focus ("no live session to open") and off
+    /// macOS entirely ("standalone windows: macOS only for now") — in
+    /// neither case does an [`Effect::OpenWindow`] get built, so
+    /// [`crate::ui::window_open`] never has to make that call itself.
+    fn open_window_pressed(&mut self, store: &WallStore, now_ms: i64, effects: &mut Vec<Effect>) {
+        let Some(session) = store
+            .state()
+            .session_by_id(store.state().focused_session_id.as_deref())
+        else {
+            return;
+        };
+        if !session.live() {
+            self.notices.show("no live session to open", 2000, now_ms);
+            return;
+        }
+        if !cfg!(target_os = "macos") {
+            self.notices
+                .show("standalone windows: macOS only for now", 3000, now_ms);
+            return;
+        }
+        effects.push(Effect::OpenWindow {
+            id: session.id.clone(),
+            label: session.label.clone(),
+        });
     }
 
     /// A click on a restorable placeholder restores it (Enter's landing,
@@ -959,6 +992,10 @@ fn run_effect(effect: Effect, tx: &EventSender, base_url: &str) {
                 }
                 let _ = tx.send(AppEvent::InstallStatuslineSettled);
             }
+            Effect::OpenWindow { id, label } => match crate::ui::window_open::launch(&id) {
+                Ok(()) => send_notice(&tx, format!("opened {label} in a new window"), 3000),
+                Err(e) => send_notice(&tx, format!("open window failed: {e}"), 5000),
+            },
             Effect::Quit => unreachable!("Quit is handled by the state loop"),
         }
     });
@@ -2445,6 +2482,67 @@ mod tests {
                 &ApiError::Status { status: 500, message: "boom".into() }
             ),
             "statusline install failed: boom"
+        );
+    }
+
+    // ── p12: standalone window ("t" opens the focused session in its own
+    // OS terminal — an effect the store always declines) ──────────────────
+
+    #[test]
+    fn t_with_no_focused_session_is_a_silent_no_op() {
+        let mut store = store_with(vec![ws("a")], vec![]);
+        let mut router = GarageRouter::default();
+        assert_eq!(key_at(&mut router, &mut store, "t", 1000), vec![]);
+        assert_eq!(router.notices.current(1001), None);
+    }
+
+    #[test]
+    fn t_on_a_restorable_session_shows_no_live_session_notice() {
+        let mut store = store_with(vec![ws("a")], vec![si_restorable("a", "dead")]);
+        let mut router = GarageRouter::default();
+        assert_eq!(key_at(&mut router, &mut store, "t", 1000), vec![]);
+        assert_eq!(
+            router.notices.current(1001),
+            Some("no live session to open")
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn t_on_a_live_session_fires_open_window() {
+        let mut store = store_with(vec![ws("a")], vec![si("a", "one")]);
+        let mut router = GarageRouter::default();
+        assert_eq!(
+            key_at(&mut router, &mut store, "t", 1000),
+            vec![Effect::OpenWindow {
+                id: id("a", "one"),
+                label: "one".to_owned(),
+            }]
+        );
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    #[test]
+    fn t_off_macos_shows_macos_only_notice_even_for_a_live_session() {
+        let mut store = store_with(vec![ws("a")], vec![si("a", "one")]);
+        let mut router = GarageRouter::default();
+        assert_eq!(key_at(&mut router, &mut store, "t", 1000), vec![]);
+        assert_eq!(
+            router.notices.current(1001),
+            Some("standalone windows: macOS only for now")
+        );
+    }
+
+    #[test]
+    fn t_open_window_success_and_failure_notices() {
+        assert_eq!(
+            format!("opened {} in a new window", "one"),
+            "opened one in a new window"
+        );
+        let err = std::io::Error::other("boom");
+        assert_eq!(
+            format!("open window failed: {err}"),
+            "open window failed: boom"
         );
     }
 
