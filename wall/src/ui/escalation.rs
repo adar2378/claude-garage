@@ -88,6 +88,7 @@ mod tests {
             message: None,
             branch: None,
             worktree: false,
+            title: None,
         }
     }
 

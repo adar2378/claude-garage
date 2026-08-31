@@ -59,6 +59,11 @@ pub struct SessionInfo {
     pub message: Option<String>,
     pub branch: Option<String>,
     pub restorable: bool,
+    /// The daemon-normalized pane/OSC title (p10 `list-panes -F
+    /// #{pane_title}`; empty/hostname/shell-name already normalized to
+    /// `null` server-side) — `None` for restorable entries and for any live
+    /// session with nothing meaningful to show.
+    pub title: Option<String>,
 }
 
 impl SessionInfo {
@@ -74,6 +79,7 @@ impl SessionInfo {
             message: as_string(json.get("message")),
             branch: as_string(json.get("branch")),
             restorable: json.get("restorable") == Some(&Value::Bool(true)),
+            title: as_string(json.get("title")),
         })
     }
 }
@@ -114,6 +120,18 @@ mod tests {
         assert_eq!(s.since, None);
         assert!(!s.attached);
         assert!(!s.restorable);
+        assert_eq!(s.title, None);
+    }
+
+    #[test]
+    fn title_parses_when_present_and_defaults_to_none() {
+        let v = json!({"id": "i", "workspace": "w", "label": "l", "title": "✳ testing subtitle"});
+        assert_eq!(
+            SessionInfo::from_json(&v).unwrap().title.as_deref(),
+            Some("✳ testing subtitle")
+        );
+        let v = json!({"id": "i", "workspace": "w", "label": "l", "title": null});
+        assert_eq!(SessionInfo::from_json(&v).unwrap().title, None);
     }
 
     #[test]

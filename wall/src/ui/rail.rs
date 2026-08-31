@@ -158,6 +158,7 @@ mod tests {
             message: None,
             branch: None,
             restorable: status == "restorable",
+            title: None,
         }
     }
 

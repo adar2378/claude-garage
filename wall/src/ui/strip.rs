@@ -129,6 +129,7 @@ mod tests {
             message: None,
             branch: None,
             restorable: false,
+            title: None,
         }
     }
 

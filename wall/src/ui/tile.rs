@@ -59,9 +59,32 @@ pub fn border_for(v: &TileView) -> (Color, BorderType) {
     (color, border_type)
 }
 
+/// Truncate `text` to `width` cells with a trailing ellipsis (the subtitle's
+/// own truncation — spec tui-wall "Auto-subtitle in the tile bar").
+fn fit_subtitle(text: &str, width: usize) -> String {
+    if width == 0 {
+        return String::new();
+    }
+    let chars: Vec<char> = text.chars().collect();
+    if chars.len() <= width {
+        return text.to_owned();
+    }
+    if width == 1 {
+        return "…".to_owned();
+    }
+    let mut out: String = chars[..width - 1].iter().collect();
+    out.push('…');
+    out
+}
+
 /// The border-title status bar: glyph, label, ⎇ branch, elapsed (waiting
-/// time for needs-input), frozen affordance.
-pub fn title_line(v: &TileView) -> Line<'static> {
+/// time for needs-input), frozen affordance, and — lowest priority, only
+/// when it still fits — the daemon-provided subtitle (spec tui-wall
+/// "Auto-subtitle in the tile bar"). `width` is the tile's rendered width
+/// (the Block's top edge, corners included); everything but the subtitle
+/// renders unconditionally exactly as before this feature — the subtitle is
+/// the only thing the truncation ladder ever drops or shortens.
+pub fn title_line(v: &TileView, width: u16) -> Line<'static> {
     let s = v.session;
     let blocked = s.needs_input();
     let glyph_color = status_color(&s.status, s.since, v.now_ms);
@@ -101,6 +124,23 @@ pub fn title_line(v: &TileView) -> Line<'static> {
             format!(" ↓ live · +{n} lines "),
             Style::default().fg(colors::FG).add_modifier(Modifier::BOLD),
         ));
+    }
+    // Subtitle: non-null, and only when it differs from the label (spec:
+    // "differs from its label") — otherwise it's pure noise repeating what
+    // the label already says. Lowest priority: fitted into whatever's left
+    // after every span above plus the trailing space this function always
+    // ends with; a title that doesn't fit even one character is dropped.
+    if let Some(title) = s.title.as_deref() {
+        if title != s.label {
+            let used: usize = spans.iter().map(Span::width).sum();
+            // Reserve 1 for the leading separator space and 1 for the
+            // trailing space every title line ends with.
+            let avail = (width as usize).saturating_sub(used + 2);
+            let fitted = fit_subtitle(title, avail);
+            if !fitted.is_empty() {
+                spans.push(Span::styled(format!(" {fitted}"), Style::default().fg(colors::DIM)));
+            }
+        }
     }
     spans.push(Span::raw(" "));
     Line::from(spans)
@@ -161,7 +201,7 @@ pub fn render_tile(buf: &mut Buffer, rect: Rect, v: &TileView, screen: Option<&v
     let block = Block::bordered()
         .border_type(border_type)
         .border_style(Style::default().fg(color))
-        .title(title_line(v));
+        .title(title_line(v, rect.width));
 
     if let Some((heading, detail)) = placeholder_for(v, screen.is_some()) {
         let inner = block.inner(rect);
@@ -214,6 +254,7 @@ mod tests {
             message: None,
             branch: None,
             worktree: false,
+            title: None,
         }
     }
 
@@ -256,7 +297,7 @@ mod tests {
     fn title_carries_glyph_label_elapsed() {
         let s = session("needs-input");
         let v = view(&s);
-        assert_eq!(title_line(&v).to_string(), " ● lbl 1:05 ");
+        assert_eq!(title_line(&v, 200).to_string(), " ● lbl 1:05 ");
     }
 
     #[test]
@@ -266,7 +307,7 @@ mod tests {
         let mut v = view(&s);
         v.frozen_new_lines = Some(42);
         assert_eq!(
-            title_line(&v).to_string(),
+            title_line(&v, 200).to_string(),
             " ◐ lbl ⎇ garage/lbl 1:05 ↓ live · +42 lines  "
         );
     }
@@ -274,9 +315,60 @@ mod tests {
     #[test]
     fn idle_and_done_omit_the_elapsed_timer() {
         let s = session("idle");
-        assert_eq!(title_line(&view(&s)).to_string(), " ○ lbl ");
+        assert_eq!(title_line(&view(&s), 200).to_string(), " ○ lbl ");
         let s = session("done");
-        assert_eq!(title_line(&view(&s)).to_string(), " ✓ lbl ");
+        assert_eq!(title_line(&view(&s), 200).to_string(), " ✓ lbl ");
+    }
+
+    // ── p10: auto-subtitle (spec tui-wall "Auto-subtitle in the tile bar") ─
+
+    #[test]
+    fn no_title_renders_byte_identical_to_before_the_feature() {
+        let s = session("idle");
+        assert_eq!(title_line(&view(&s), 200).to_string(), " ○ lbl ");
+    }
+
+    #[test]
+    fn a_title_matching_the_label_is_suppressed_as_noise() {
+        let mut s = session("idle");
+        s.title = Some("lbl".to_owned());
+        assert_eq!(title_line(&view(&s), 200).to_string(), " ○ lbl ");
+    }
+
+    #[test]
+    fn subtitle_renders_dim_after_the_existing_content_when_it_fits() {
+        let mut s = session("idle");
+        s.title = Some("build the thing".to_owned());
+        let line = title_line(&view(&s), 200);
+        assert_eq!(line.to_string(), " ○ lbl build the thing ");
+        let subtitle_span = &line.spans[line.spans.len() - 2];
+        assert_eq!(subtitle_span.style.fg, Some(colors::DIM));
+    }
+
+    #[test]
+    fn subtitle_truncates_with_an_ellipsis_when_the_tile_is_narrow() {
+        // Spec scenario "Subtitle renders and truncates": a 40-wide tile,
+        // long title — the subtitle truncates, label/branch/elapsed unhurt.
+        let mut s = session("needs-input");
+        s.branch = Some("garage/lbl".to_owned());
+        s.title = Some("a very long summary of what this session is doing right now".to_owned());
+        let line = title_line(&view(&s), 40);
+        let text = line.to_string();
+        assert!(text.chars().count() <= 40, "{text}");
+        assert!(text.starts_with(" ● lbl ⎇ garage/lbl 1:05 "), "{text}");
+        assert!(text.trim_end().ends_with('…'), "{text}");
+    }
+
+    #[test]
+    fn subtitle_is_dropped_entirely_when_nothing_is_left() {
+        // The label/branch/elapsed must never be shortened to make room.
+        let mut s = session("needs-input");
+        s.branch = Some("a-genuinely-quite-long-branch-name-here".to_owned());
+        s.title = Some("anything".to_owned());
+        let line = title_line(&view(&s), 30);
+        let text = line.to_string();
+        assert!(!text.contains("anything"));
+        assert!(text.contains("a-genuinely-quite-long-branch-name-here"), "{text}");
     }
 
     #[test]

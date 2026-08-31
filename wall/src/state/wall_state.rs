@@ -2,8 +2,11 @@
 //! "State architecture": one WallState; every render is a pure function of it
 //! plus live terminal buffers). Mutation happens only in `store.rs`.
 
+use std::collections::HashMap;
+
 use crate::api::models::{SessionInfo, WorkspaceInfo};
 use crate::state::salience::WorkspaceGroup;
+use crate::state::views::{self, View, ViewSummary};
 
 /// Exactly one layer governs keyboard input at a time
 /// (spec tui-key-routing: "Three key layers with a visible target chip").
@@ -21,6 +24,8 @@ pub enum OverlayKind {
     Help,
     TriageQueue,
     WorkspaceAdd,
+    /// `D` (spec tui-views "Move to a group"): the view picker.
+    ViewPicker,
 }
 
 /// One session as the wall tracks it. Mirrors the daemon entry plus the
@@ -41,6 +46,10 @@ pub struct WallSession {
     pub message: Option<String>,
     pub branch: Option<String>,
     pub worktree: bool,
+    /// The session's daemon-normalized OSC/pane title (spec tui-wall "Auto-
+    /// subtitle in the tile bar"), when it differs meaningfully from an
+    /// empty/hostname/shell name — `None` renders byte-identical to pre-p10.
+    pub title: Option<String>,
 }
 
 impl WallSession {
@@ -54,6 +63,7 @@ impl WallSession {
             since: info.since,
             message: info.message.clone(),
             branch: info.branch.clone(),
+            title: info.title.clone(),
             worktree: !info.restorable
                 && info.dir.is_some()
                 && workspace_dir.is_some()
@@ -115,6 +125,22 @@ pub struct WallState {
     pub gridded_session_ids: Vec<String>,
     /// Focus recency for LRU eviction — least-recently-focused first.
     pub grid_focus_recency: Vec<String>,
+    /// Named (non-default) views per workspace, in creation order (spec
+    /// tui-views; see `state::views` module docs for the exception-list
+    /// model). A session id absent from every list here belongs to the
+    /// derived default view — most workspaces never appear in this map at
+    /// all. Mutated only by [`crate::state::store::WallStore::detach_focused`]
+    /// and pruned on every reconciliation
+    /// ([`crate::state::store::WallStore::sessions_fetched`] and friends) —
+    /// see [`views::prune_views`].
+    pub views: HashMap<String, Vec<View>>,
+    /// The focused view name per workspace; absent = [`views::DEFAULT_VIEW`].
+    /// Persists across workspace switches within a run (so returning to a
+    /// workspace lands back on whichever view you left it on) but is never
+    /// itself written to `wall.json` — only membership persists across a
+    /// restart (spec tui-views "View persistence" schema has no focus
+    /// field).
+    pub focused_view: HashMap<String, String>,
 }
 
 impl Default for WallState {
@@ -139,6 +165,8 @@ impl WallState {
             maximized_session_id: None,
             gridded_session_ids: Vec::new(),
             grid_focus_recency: Vec::new(),
+            views: HashMap::new(),
+            focused_view: HashMap::new(),
         }
     }
 
@@ -157,6 +185,46 @@ impl WallState {
         self.sessions.iter().filter(|s| s.needs_input()).count()
     }
 
+    /// The workspace's views in display order for the view strip and group
+    /// frame (spec tui-views "View strip and group frame"): the default
+    /// view first if non-empty, then named views in creation order; a view
+    /// with no live members doesn't appear (mirrors `views.js`
+    /// `computeViews` — see `state::views`). A strip renders only when this
+    /// has 2+ entries; a frame renders around the focused view's tiles only
+    /// when its `session_ids.len() >= 2`. Empty when `workspace` has no
+    /// group at all.
+    pub fn views_for(&self, workspace: &str) -> Vec<ViewSummary> {
+        let Some(group) = self.group_by_name(Some(workspace)) else {
+            return Vec::new();
+        };
+        let named = self.views.get(workspace).map(Vec::as_slice).unwrap_or(&[]);
+        views::compute_views(&group.sessions, named)
+    }
+
+    /// `workspace`'s currently focused view name — never a dangling one:
+    /// reconciliation resets a workspace's entry to the default the moment
+    /// pruning would otherwise leave it pointing at a view that no longer
+    /// exists (see `store::reconcile`).
+    pub fn focused_view_name(&self, workspace: &str) -> &str {
+        self.focused_view.get(workspace).map(String::as_str).unwrap_or(views::DEFAULT_VIEW)
+    }
+
+    /// Salience-ordered session ids of `workspace`'s `view` — the input to
+    /// the per-view grid cap/LRU machinery in store.rs. Empty when the
+    /// workspace has no group, or when `view` currently has no members.
+    pub(crate) fn view_session_ids(&self, workspace: &str, view: &str) -> Vec<String> {
+        let Some(group) = self.group_by_name(Some(workspace)) else {
+            return Vec::new();
+        };
+        let named = self.views.get(workspace).map(Vec::as_slice).unwrap_or(&[]);
+        group
+            .sessions
+            .iter()
+            .filter(|s| views::view_of(named, &s.id) == view)
+            .map(|s| s.id.clone())
+            .collect()
+    }
+
     /// The bottom strip's keys-target chip
     /// (spec: `keys → garage` / `keys → <workspace>/<label>`).
     pub fn keys_target_chip(&self) -> String {
@@ -169,6 +237,7 @@ impl WallState {
             KeyLayer::Overlay => match self.overlay {
                 Some(OverlayKind::TriageQueue) => "keys → queue".to_owned(),
                 Some(OverlayKind::WorkspaceAdd) => "keys → add workspace".to_owned(),
+                Some(OverlayKind::ViewPicker) => "keys → move to group".to_owned(),
                 _ => "keys → help".to_owned(),
             },
         }

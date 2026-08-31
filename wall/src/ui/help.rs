@@ -13,7 +13,7 @@ use crate::ui::theme::colors;
 
 /// The full binding legend (the Dart `_bindings` list, verbatim — the help
 /// overlay must list every p8.1–p8.4 key).
-pub const BINDINGS: [(&str, &str); 15] = [
+pub const BINDINGS: [(&str, &str); 18] = [
     ("1-9", "focus workspace"),
     ("[ ]", "cycle focused tile"),
     ("Enter", "engage focused tile (restore it when restorable)"),
@@ -27,6 +27,9 @@ pub const BINDINGS: [(&str, &str); 15] = [
     ("X X", "remove focused workspace (sessions keep running)"),
     ("X K", "remove focused workspace AND kill its sessions"),
     ("w", "add workspace"),
+    ("d", "detach focused session to its own view, or rejoin main"),
+    ("D", "move focused session to another view / new group"),
+    ("Tab", "cycle the focused workspace's views"),
     ("?", "toggle this help"),
     ("q", "quit (tmux sessions keep running)"),
 ];
@@ -86,7 +89,7 @@ mod tests {
         let keys: Vec<&str> = BINDINGS.iter().map(|(k, _)| *k).collect();
         for key in [
             "1-9", "[ ]", "Enter", "Ctrl+G", "m", "a", "A", "n / N", "R", "x x", "X X", "X K",
-            "w", "?", "q",
+            "w", "d", "D", "Tab", "?", "q",
         ] {
             assert!(keys.contains(&key), "missing {key}");
         }
@@ -104,7 +107,7 @@ mod tests {
         let area = Rect::new(0, 0, 120, 40);
         let r = help_modal_rect(area);
         assert!(r.width < area.width && r.height < area.height);
-        assert_eq!(r.height, 19, "15 rows + border + padding");
+        assert_eq!(r.height, BINDINGS.len() as u16 + 4, "rows + border + padding");
         // Centered: symmetric margins within a cell.
         assert!((r.x - area.x).abs_diff(area.width - (r.x + r.width)) <= 1);
     }

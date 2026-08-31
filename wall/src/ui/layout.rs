@@ -15,8 +15,19 @@ pub const RAIL_WIDTH: u16 = 28;
 #[derive(Clone, Debug, Default)]
 pub struct WallLayout {
     pub rail: Rect,
+    /// The tile area: with a group frame, this is already inset one cell
+    /// inside [`WallLayout::group_frame`] (the frame's border lives in that
+    /// outer rect, never inside `grid`).
     pub grid: Rect,
     pub strip: Rect,
+    /// The one-line view strip directly above the grid (spec tui-views
+    /// "View strip and group frame"), zero-height when fewer than 2 views —
+    /// callers key rendering off the height, not a separate bool.
+    pub view_strip: Rect,
+    /// The group-frame border rect — one cell larger than `grid` on every
+    /// side — when the focused view has 2+ sessions; `None` for a solo view
+    /// (frameless, spec: "the frame's absence marks individual").
+    pub group_frame: Option<Rect>,
     /// One rect per gridded session (same order as
     /// `WallState::gridded_session_ids`). With a maximized tile, its rect is
     /// the full grid area while siblings KEEP their normal grid-cell rects —
@@ -28,13 +39,49 @@ pub struct WallLayout {
 }
 
 /// Split the frame and place every tile. `maximized` must already be
-/// validated as an index into the gridded set.
-pub fn wall_layout(area: Rect, n_tiles: usize, maximized: Option<usize>) -> WallLayout {
+/// validated as an index into the gridded set. `view_strip` reserves a
+/// one-line row above the grid (spec tui-views: only when the focused
+/// workspace has 2+ views); `framed` insets the grid by one cell on every
+/// side for the group-frame border (only when the focused view has 2+
+/// sessions) — both are the caller's (runtime.rs) precomputed booleans, so
+/// this stays pure geometry with no state dependency.
+pub fn wall_layout(
+    area: Rect,
+    n_tiles: usize,
+    maximized: Option<usize>,
+    view_strip: bool,
+    framed: bool,
+) -> WallLayout {
     let [main, strip] =
         Layout::vertical([Constraint::Fill(1), Constraint::Length(1)]).areas(area);
-    let [rail, grid] =
+    let [rail, grid_full] =
         Layout::horizontal([Constraint::Length(RAIL_WIDTH.min(main.width)), Constraint::Fill(1)])
             .areas(main);
+
+    let (view_strip_rect, grid_area) = if view_strip && grid_full.height > 0 {
+        let [vs, rest] =
+            Layout::vertical([Constraint::Length(1), Constraint::Fill(1)]).areas(grid_full);
+        (vs, rest)
+    } else {
+        (
+            Rect { x: grid_full.x, y: grid_full.y, width: grid_full.width, height: 0 },
+            grid_full,
+        )
+    };
+
+    let (group_frame, grid) = if framed && grid_area.width >= 2 && grid_area.height >= 2 {
+        (
+            Some(grid_area),
+            Rect {
+                x: grid_area.x + 1,
+                y: grid_area.y + 1,
+                width: grid_area.width - 2,
+                height: grid_area.height - 2,
+            },
+        )
+    } else {
+        (None, grid_area)
+    };
 
     let tiles = (0..n_tiles)
         .map(|i| {
@@ -55,6 +102,8 @@ pub fn wall_layout(area: Rect, n_tiles: usize, maximized: Option<usize>) -> Wall
         rail,
         grid,
         strip,
+        view_strip: view_strip_rect,
+        group_frame,
         tiles,
         maximized: maximized.filter(|&i| i < n_tiles),
     }
@@ -98,15 +147,17 @@ mod tests {
 
     #[test]
     fn splits_rail_grid_strip() {
-        let l = wall_layout(area(120, 40), 0, None);
+        let l = wall_layout(area(120, 40), 0, None, false, false);
         assert_eq!(l.rail, Rect::new(0, 0, 28, 39));
         assert_eq!(l.grid, Rect::new(28, 0, 92, 39));
         assert_eq!(l.strip, Rect::new(0, 39, 120, 1));
+        assert_eq!(l.view_strip.height, 0, "no view strip by default");
+        assert_eq!(l.group_frame, None);
     }
 
     #[test]
     fn tiles_tile_the_grid_area_exactly_for_a_full_grid() {
-        let l = wall_layout(area(120, 40), 6, None);
+        let l = wall_layout(area(120, 40), 6, None, false, false);
         assert_eq!(l.tiles.len(), 6);
         let total: u32 = l
             .tiles
@@ -122,13 +173,57 @@ mod tests {
 
     #[test]
     fn maximized_tile_takes_the_full_grid_siblings_keep_their_cells() {
-        let normal = wall_layout(area(120, 40), 4, None);
-        let l = wall_layout(area(120, 40), 4, Some(2));
+        let normal = wall_layout(area(120, 40), 4, None, false, false);
+        let l = wall_layout(area(120, 40), 4, Some(2), false, false);
         assert_eq!(l.maximized, Some(2));
         assert_eq!(l.tiles[2], l.grid, "maximized rect = full grid area");
         for i in [0, 1, 3] {
             assert_eq!(l.tiles[i], normal.tiles[i], "sibling {i} keeps its cell");
         }
+    }
+
+    #[test]
+    fn view_strip_reserves_one_row_above_the_grid() {
+        let l = wall_layout(area(120, 40), 2, None, true, false);
+        assert_eq!(l.view_strip, Rect::new(28, 0, 92, 1));
+        assert_eq!(l.grid, Rect::new(28, 1, 92, 38), "grid shifts down by one row");
+        assert_eq!(l.strip, Rect::new(0, 39, 120, 1), "bottom strip untouched");
+    }
+
+    #[test]
+    fn no_view_strip_reserves_no_row() {
+        let with = wall_layout(area(120, 40), 2, None, true, false);
+        let without = wall_layout(area(120, 40), 2, None, false, false);
+        assert_eq!(without.view_strip.height, 0);
+        assert_eq!(without.grid.height, with.grid.height + 1);
+    }
+
+    #[test]
+    fn group_frame_insets_the_grid_by_one_cell_on_every_side() {
+        let unframed = wall_layout(area(120, 40), 2, None, false, false);
+        let l = wall_layout(area(120, 40), 2, None, false, true);
+        let frame = l.group_frame.expect("framed");
+        assert_eq!(frame, unframed.grid, "the frame border sits where the grid used to start");
+        assert_eq!(
+            l.grid,
+            Rect::new(frame.x + 1, frame.y + 1, frame.width - 2, frame.height - 2)
+        );
+    }
+
+    #[test]
+    fn view_strip_and_group_frame_compose() {
+        let l = wall_layout(area(120, 40), 2, None, true, true);
+        assert_eq!(l.view_strip, Rect::new(28, 0, 92, 1));
+        let frame = l.group_frame.expect("framed");
+        assert_eq!(frame, Rect::new(28, 1, 92, 38), "frame sits below the view strip");
+        assert_eq!(l.grid, Rect::new(29, 2, 90, 36));
+    }
+
+    #[test]
+    fn a_tiny_area_never_produces_a_degenerate_frame_inset() {
+        // Too small for a 1-cell border on every side: no frame, no panic.
+        let l = wall_layout(Rect::new(0, 0, 30, 2), 1, None, false, true);
+        assert_eq!(l.group_frame, None);
     }
 
     #[test]
@@ -152,7 +247,7 @@ mod tests {
 
     #[test]
     fn narrow_terminal_never_underflows() {
-        let l = wall_layout(area(20, 5), 2, None);
+        let l = wall_layout(area(20, 5), 2, None, false, false);
         assert_eq!(l.rail.width, 20, "rail clamped to the area");
         assert_eq!(l.grid.width, 0);
         assert_eq!(l.tiles.len(), 2);

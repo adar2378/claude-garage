@@ -89,6 +89,22 @@ fn row_line(s: &WallSession, selected: bool, width: usize, now_ms: i64) -> Line<
             ));
         }
     }
+    // Subtitle (spec tui-wall "Auto-subtitle in the tile bar": "The triage
+    // queue row MAY show the same subtitle dim when present"), lowest
+    // priority — fitted into whatever's left after identity/waiting/message.
+    if let Some(title) = s.title.as_deref() {
+        if title != s.label {
+            let used: usize = spans.iter().map(Span::width).sum();
+            let remaining = width.saturating_sub(used + 2);
+            let fitted = fit(title, remaining);
+            if !fitted.is_empty() {
+                spans.push(Span::styled(
+                    format!("  {fitted}"),
+                    Style::default().fg(colors::DIM),
+                ));
+            }
+        }
+    }
     Line::from(spans)
 }
 
@@ -166,6 +182,7 @@ mod tests {
             message: None,
             branch: None,
             worktree: false,
+            title: None,
         }
     }
 
@@ -222,6 +239,24 @@ mod tests {
         let line = row_line(&s, false, 40, 0).to_string();
         assert!(line.chars().count() <= 40, "{line}");
         assert!(line.ends_with('…'), "{line}");
+    }
+
+    #[test]
+    fn row_shows_the_subtitle_dim_when_present_and_distinct_from_the_label() {
+        let mut s = session("api-fix", "needs-input", Some(0));
+        s.title = Some("✳ writing tests".to_owned());
+        let line = row_line(&s, false, 78, 240_000);
+        assert!(line.to_string().ends_with("✳ writing tests"), "{line}");
+        let subtitle_span = line.spans.last().unwrap();
+        assert_eq!(subtitle_span.style.fg, Some(colors::DIM));
+    }
+
+    #[test]
+    fn row_omits_a_title_matching_the_label() {
+        let mut s = session("api-fix", "needs-input", Some(0));
+        s.title = Some("api-fix".to_owned());
+        let line = row_line(&s, false, 78, 240_000);
+        assert!(!line.to_string().contains("api-fix  api-fix"));
     }
 
     #[test]

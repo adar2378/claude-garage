@@ -74,6 +74,21 @@ pub fn triage_row_index_at(local_row: i32, row_count: usize) -> Option<usize> {
     Some(i as usize)
 }
 
+/// Same border+padding offset as the triage modal (spec tui-views "Move to a
+/// group" — the picker uses the same modal shape as `triage`/`workspace_add`).
+pub const VIEW_PICKER_MODAL_ROW_OFFSET: i32 = 2;
+
+/// Maps a picker-modal-local row to an entry index (every view name plus the
+/// trailing "new group…" row), or `None` for the border, padding, blank
+/// line, or footer.
+pub fn view_picker_row_index_at(local_row: i32, entry_count: usize) -> Option<usize> {
+    let i = local_row - VIEW_PICKER_MODAL_ROW_OFFSET;
+    if i < 0 || i as usize >= entry_count {
+        return None;
+    }
+    Some(i as usize)
+}
+
 #[cfg(test)]
 mod tests {
     //! Port of `tui/test/hit_targets_test.dart` — point→tile index via
@@ -92,6 +107,7 @@ mod tests {
             message: None,
             branch: None,
             worktree: false,
+            title: None,
         }
     }
 
@@ -236,5 +252,22 @@ mod tests {
         assert_eq!(triage_row_index_at(6, 3), None); // footer
         assert_eq!(triage_row_index_at(2, 0), None); // empty queue
         assert_eq!(triage_row_index_at(-1, 3), None);
+    }
+
+    // ── viewPickerRowIndexAt ────────────────────────────────────────────
+
+    #[test]
+    fn picker_rows_sit_below_the_border_plus_padding_offset() {
+        assert_eq!(VIEW_PICKER_MODAL_ROW_OFFSET, 2);
+        assert_eq!(view_picker_row_index_at(2, 3), Some(0));
+        assert_eq!(view_picker_row_index_at(4, 3), Some(2), "the new group… row");
+    }
+
+    #[test]
+    fn picker_border_padding_and_footer_map_to_none() {
+        assert_eq!(view_picker_row_index_at(0, 3), None);
+        assert_eq!(view_picker_row_index_at(1, 3), None);
+        assert_eq!(view_picker_row_index_at(5, 3), None);
+        assert_eq!(view_picker_row_index_at(-1, 3), None);
     }
 }

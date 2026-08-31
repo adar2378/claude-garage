@@ -153,6 +153,7 @@ mod tests {
             message: None,
             branch: None,
             worktree: false,
+            title: None,
         }
     }
 
@@ -239,6 +240,7 @@ mod tests {
             message: None,
             branch: None,
             worktree: false,
+            title: None,
         };
         let groups = build_groups(&[ws("a")], &[session("a", "s1"), stray]);
         assert_eq!(names(&groups), ["a", "stray"]);

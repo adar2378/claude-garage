@@ -35,6 +35,7 @@ use crossterm::event::{
 use ratatui::layout::Rect;
 use ratatui::style::Style;
 use ratatui::text::Line;
+use ratatui::widgets::{Block, BorderType, Widget as _};
 use serde_json::Value;
 use tokio::sync::mpsc;
 
@@ -44,13 +45,17 @@ use crate::api::sse::SseClient;
 use crate::input::encode::encode_key;
 use crate::input::paste::wrap_bracketed_paste;
 use crate::state::armed_action::{ArmedAction, ArmedClose};
+use crate::state::persistence;
 use crate::state::salience::restorable_session_ids;
 use crate::state::store::{garage_command_for, GarageCommand, WallStore};
+use crate::state::views::{self, ViewSummary};
 use crate::state::wall_state::{KeyLayer, OverlayKind, WallSession, WallState};
 use crate::state::workspace_remove::{confirm_kill_target, kill_remove_notice, remove_arm_notice};
 use crate::ui::escalation::{EscalationPolicy, HEARTBEAT_INTERVAL_MS};
 use crate::ui::help::render_help;
-use crate::ui::hit_targets::{rail_target_at, tile_index_at, triage_row_index_at, RailTarget};
+use crate::ui::hit_targets::{
+    rail_target_at, tile_index_at, triage_row_index_at, view_picker_row_index_at, RailTarget,
+};
 use crate::ui::layout::{tile_inner, wall_layout, WallLayout};
 use crate::ui::rail::render_rail;
 use crate::ui::registry::{FrozenTile, TileRegistry};
@@ -59,6 +64,8 @@ use crate::ui::strip::render_strip;
 use crate::ui::theme::colors;
 use crate::ui::tile::{render_centered_lines, render_tile, TileView};
 use crate::ui::triage::{render_triage, triage_queue_rows, wrap_selection};
+use crate::ui::view_picker::{picker_entries, render_view_picker, ViewPickerState};
+use crate::ui::view_strip::render_view_strip;
 use crate::ui::workspace_add::{render_workspace_add, WorkspaceAddForm};
 
 const FRAME_CAP: Duration = Duration::from_millis(33); // ~30fps render cap (not spec-mandated)
@@ -301,6 +308,13 @@ impl GarageRouter {
             }
             return effects;
         };
+        // `d` needs to know afterward whether it detached (solo view) or
+        // rejoined (default view) to show the right notice — special-cased
+        // ahead of the generic dispatch below.
+        if let GarageCommand::DetachFocused = command {
+            self.detach_pressed(store, now_ms);
+            return effects;
+        }
         if store.dispatch(command) {
             return effects;
         }
@@ -413,6 +427,24 @@ impl GarageRouter {
         }
     }
 
+    /// `d` (spec tui-views "Detach and rejoin"): dispatch the detach/rejoin
+    /// transition, then show "detached &lt;label&gt;" iff it actually
+    /// detached (landed on a non-default view) — a rejoin gets no notice,
+    /// matching the design.md contract's harness-grepped wording.
+    fn detach_pressed(&mut self, store: &mut WallStore, now_ms: i64) {
+        let session = store
+            .state()
+            .session_by_id(store.state().focused_session_id.as_deref())
+            .cloned();
+        if !store.dispatch(GarageCommand::DetachFocused) {
+            return;
+        }
+        let Some(session) = session else { return };
+        if store.state().focused_view_name(&session.workspace) != views::DEFAULT_VIEW {
+            self.notices.show(format!("detached {}", session.label), 2000, now_ms);
+        }
+    }
+
     fn disarm_close(&mut self) {
         if self.armed_close.armed_id().is_none() {
             return;
@@ -494,6 +526,10 @@ impl GarageRouter {
 pub fn garage_key_string(key: &KeyEvent) -> Option<String> {
     match key.code {
         KeyCode::Enter => Some("\r".to_owned()),
+        // p10 (spec tui-views "View strip and group frame"): Tab cycles the
+        // focused workspace's views — the wave-1b reservation this fills in
+        // (`garage_command_for` already maps `"\t"` to `CycleView`).
+        KeyCode::Tab => Some("\t".to_owned()),
         KeyCode::Char(c)
             if !key
                 .modifiers
@@ -540,12 +576,15 @@ pub fn handle_overlay_key(
     key: &KeyEvent,
     queue_selection: &mut usize,
     form: &mut WorkspaceAddForm,
+    view_picker: &mut ViewPickerState,
     home: &str,
     dir_exists: &dyn Fn(&str) -> bool,
-) -> Vec<Effect> {
+) -> (Vec<Effect>, Option<String>) {
     let Some(kind) = store.state().overlay else {
-        return Vec::new();
+        return (Vec::new(), None);
     };
+    let mut effects = Vec::new();
+    let mut notice = None;
     let plain_char = match key.code {
         KeyCode::Char(c)
             if !key
@@ -601,7 +640,7 @@ pub fn handle_overlay_key(
                     .chain(store.state().groups.iter().map(|g| g.name.clone()))
                     .collect();
                 if let Some((name, dir)) = form.submit(home, &existing, dir_exists) {
-                    return vec![Effect::AddWorkspace { name, dir }];
+                    effects.push(Effect::AddWorkspace { name, dir });
                 }
             }
             KeyCode::Char(c)
@@ -613,8 +652,94 @@ pub fn handle_overlay_key(
             }
             _ => {}
         },
+        OverlayKind::ViewPicker => {
+            notice = handle_view_picker_key(store, key, plain_char, view_picker);
+        }
     }
-    Vec::new()
+    (effects, notice)
+}
+
+/// `D` picker key routing (spec tui-views "Move to a group"): `j`/`k`/arrows
+/// move the selection, Enter on a view moves the focused session there
+/// (closing the overlay and returning the "moved <label> → <view>" strip
+/// notice), Enter on the trailing "new group…" row switches to its
+/// text-input sub-mode (reusing the workspace_add field pattern) whose own
+/// Enter creates/moves into that name; Esc cancels from either sub-mode.
+fn handle_view_picker_key(
+    store: &mut WallStore,
+    key: &KeyEvent,
+    plain_char: Option<char>,
+    view_picker: &mut ViewPickerState,
+) -> Option<String> {
+    let workspace = store.state().focused_workspace.clone();
+    let view_names: Vec<String> = workspace
+        .as_deref()
+        .map(|w| store.state().views_for(w).into_iter().map(|v| v.name).collect())
+        .unwrap_or_default();
+
+    if view_picker.new_group_input.is_some() {
+        match key.code {
+            KeyCode::Esc => {
+                view_picker.reset();
+                store.close_overlay();
+            }
+            KeyCode::Backspace => view_picker.backspace(),
+            KeyCode::Enter => {
+                let name = view_picker.new_group_input.clone().unwrap_or_default();
+                let trimmed = name.trim().to_owned();
+                view_picker.reset();
+                if trimmed.is_empty() {
+                    store.close_overlay();
+                } else {
+                    return move_to_view_and_notice(store, &trimmed);
+                }
+            }
+            KeyCode::Char(c) if plain_char == Some(c) => view_picker.insert_char(c),
+            _ => {}
+        }
+        return None;
+    }
+
+    let entries_len = view_names.len() + 1; // + "new group…"
+    match (key.code, plain_char) {
+        (KeyCode::Esc, _) => {
+            view_picker.reset();
+            store.close_overlay();
+        }
+        (KeyCode::Down, _) | (_, Some('j')) => {
+            view_picker.selected = wrap_selection(view_picker.selected, 1, entries_len);
+        }
+        (KeyCode::Up, _) | (_, Some('k')) => {
+            view_picker.selected = wrap_selection(view_picker.selected, -1, entries_len);
+        }
+        (KeyCode::Enter, _) => {
+            let sel = view_picker.selected.min(entries_len.saturating_sub(1));
+            if sel == view_names.len() {
+                view_picker.new_group_input = Some(String::new());
+            } else if let Some(name) = view_names.get(sel).cloned() {
+                view_picker.reset();
+                return move_to_view_and_notice(store, &name);
+            }
+        }
+        _ => {}
+    }
+    None
+}
+
+/// Close the picker, move the focused session into `view_name`, and return
+/// the strip notice on success (spec tui-views design.md: "moved <label> →
+/// <view>" — kept stable for e2e greps).
+fn move_to_view_and_notice(store: &mut WallStore, view_name: &str) -> Option<String> {
+    let label = store
+        .state()
+        .session_by_id(store.state().focused_session_id.as_deref())
+        .map(|s| s.label.clone());
+    store.close_overlay();
+    if store.move_focused_to_view(view_name) {
+        label.map(|label| format!("moved {label} → {view_name}"))
+    } else {
+        None
+    }
 }
 
 // ── Latency instrumentation ──────────────────────────────────────────────
@@ -935,14 +1060,20 @@ struct App {
     queue_selection: usize,
     /// The `w` overlay's text field + inline error + busy guard.
     ws_form: WorkspaceAddForm,
+    /// The `D` overlay's selection + "new group…" text-input sub-mode.
+    view_picker: ViewPickerState,
     /// Rects of the last drawn frame — the mouse router reads the SAME
     /// geometry the paint used. `None` until the first frame.
     layout: Option<WallLayout>,
     /// Strip badge columns from the last frame (absolute), when rendered.
     badge_cols: Option<Range<u16>>,
+    /// View-strip click targets from the last frame (absolute columns paired
+    /// with the view name they focus) — empty when the strip isn't shown.
+    view_strip_targets: Vec<(Range<u16>, String)>,
     /// Modal rects from the last frame, per open overlay.
     triage_rect: Option<Rect>,
     ws_add_rect: Option<Rect>,
+    view_picker_rect: Option<Rect>,
 }
 
 impl App {
@@ -1011,14 +1142,18 @@ impl App {
                 self.keylog
                     .log("overlay", &format!("{:?} {:?}", key.code, key.modifiers));
                 let home = std::env::var("HOME").unwrap_or_default();
-                let effects = handle_overlay_key(
+                let (effects, notice) = handle_overlay_key(
                     &mut self.store,
                     key,
                     &mut self.queue_selection,
                     &mut self.ws_form,
+                    &mut self.view_picker,
                     &home,
                     &|path| std::path::Path::new(path).is_dir(),
                 );
+                if let Some(text) = notice {
+                    self.router.notices.show(text, 2000, now_ms());
+                }
                 self.run_effects(effects);
                 false
             }
@@ -1041,6 +1176,9 @@ impl App {
                 }
                 if key_str == "w" {
                     self.ws_form.reset();
+                }
+                if key_str == "D" {
+                    self.view_picker.reset();
                 }
                 let effects = self
                     .router
@@ -1226,6 +1364,23 @@ impl App {
                         self.store.close_overlay();
                     }
                 }
+                OverlayKind::ViewPicker => self.handle_view_picker_click(col, row),
+            }
+            return;
+        }
+        // View-strip click: focus that view (spec tui-views "View strip and
+        // group frame" — task 3.3 "view-strip click focuses that view").
+        if layout.view_strip.height > 0 && row == layout.view_strip.y {
+            let target = self
+                .view_strip_targets
+                .iter()
+                .find(|(r, _)| r.contains(&col))
+                .map(|(_, name)| name.clone());
+            if let Some(name) = target {
+                if self.store.state().layer == KeyLayer::Engaged {
+                    self.store.disengage();
+                }
+                self.store.focus_view(&name);
             }
             return;
         }
@@ -1285,6 +1440,54 @@ impl App {
             self.queue_selection = 0;
             self.store.open_overlay(OverlayKind::TriageQueue);
         }
+    }
+
+    /// A click inside the `D` view-picker overlay (task 3.3 "picker overlay
+    /// clicks"): outside the modal is Esc; inside, while the "new group…"
+    /// text field owns the keys, clicks do nothing (same as
+    /// `workspace_add`'s field); otherwise a row click selects — the
+    /// trailing "new group…" row switches to that sub-mode, any other row
+    /// moves the focused session there and shows the "moved" notice.
+    fn handle_view_picker_click(&mut self, col: u16, row: u16) {
+        let Some(rect) = self.view_picker_rect else { return };
+        if !rect.contains((col, row).into()) {
+            self.view_picker.reset();
+            self.store.close_overlay();
+            return;
+        }
+        if self.view_picker.new_group_input.is_some() {
+            return;
+        }
+        let workspace = self.store.state().focused_workspace.clone();
+        let view_names: Vec<String> = workspace
+            .as_deref()
+            .map(|w| self.store.state().views_for(w).into_iter().map(|v| v.name).collect())
+            .unwrap_or_default();
+        let entries_len = view_names.len() + 1;
+        let local = i32::from(row - rect.y);
+        let Some(i) = view_picker_row_index_at(local, entries_len) else {
+            return;
+        };
+        if i == view_names.len() {
+            self.view_picker.selected = i;
+            self.view_picker.new_group_input = Some(String::new());
+            return;
+        }
+        let Some(name) = view_names.get(i).cloned() else {
+            return;
+        };
+        let label = self
+            .store
+            .state()
+            .session_by_id(self.store.state().focused_session_id.as_deref())
+            .map(|s| s.label.clone());
+        self.store.close_overlay();
+        if self.store.move_focused_to_view(&name) {
+            if let Some(label) = label {
+                self.router.notices.show(format!("moved {label} → {name}"), 2000, now_ms());
+            }
+        }
+        self.view_picker.reset();
     }
 
     /// Wheel over a tile's terminal area. A frozen view owns the wheel
@@ -1387,7 +1590,26 @@ impl App {
                 .and_then(|m| ids.iter().position(|id| id == m));
             (ids, maximized)
         };
-        let layout = wall_layout(area, ids.len(), maximized_index);
+        // Views (spec tui-views "View strip and group frame"): the strip
+        // shows only at 2+ views; the frame only around a 2+-session
+        // focused view — both precomputed here so `wall_layout` stays pure
+        // geometry with no state dependency of its own.
+        let focused_workspace = self.store.state().focused_workspace.clone();
+        let views: Vec<ViewSummary> = focused_workspace
+            .as_deref()
+            .map(|w| self.store.state().views_for(w))
+            .unwrap_or_default();
+        let focused_view_name = focused_workspace
+            .as_deref()
+            .map(|w| self.store.state().focused_view_name(w).to_owned())
+            .unwrap_or_default();
+        let show_view_strip = views.len() >= 2;
+        let framed = views
+            .iter()
+            .find(|v| v.name == focused_view_name)
+            .is_some_and(|v| v.session_ids.len() >= 2);
+
+        let layout = wall_layout(area, ids.len(), maximized_index, show_view_strip, framed);
 
         // PTY size tracks the tile (TIOCSWINSZ) on every layout pass —
         // startup, grid reshape, maximize both ways, terminal resize.
@@ -1398,6 +1620,20 @@ impl App {
 
         let buf = frame.buffer_mut();
         render_rail(buf, layout.rail, self.store.state(), now_ms);
+
+        if show_view_strip {
+            let ranges = render_view_strip(buf, layout.view_strip, &views, &focused_view_name);
+            self.view_strip_targets =
+                views.iter().zip(ranges).map(|(v, r)| (r, v.name.clone())).collect();
+        } else {
+            self.view_strip_targets.clear();
+        }
+        if let Some(frame_rect) = layout.group_frame {
+            Block::bordered()
+                .border_type(BorderType::Rounded)
+                .border_style(Style::default().fg(colors::FAINT))
+                .render(frame_rect, buf);
+        }
 
         if self.store.state().groups.is_empty() {
             // Zero workspaces: onboarding panel (never amber).
@@ -1451,6 +1687,7 @@ impl App {
 
         self.triage_rect = None;
         self.ws_add_rect = None;
+        self.view_picker_rect = None;
         match self.store.state().overlay {
             Some(OverlayKind::Help) => render_help(buf, area),
             Some(OverlayKind::TriageQueue) => {
@@ -1460,6 +1697,17 @@ impl App {
             }
             Some(OverlayKind::WorkspaceAdd) => {
                 self.ws_add_rect = Some(render_workspace_add(buf, area, &self.ws_form));
+            }
+            Some(OverlayKind::ViewPicker) => {
+                let view_names: Vec<String> = views.iter().map(|v| v.name.clone()).collect();
+                let entries = picker_entries(&view_names);
+                self.view_picker_rect = Some(render_view_picker(
+                    buf,
+                    area,
+                    &entries,
+                    self.view_picker.selected,
+                    self.view_picker.new_group_input.as_deref(),
+                ));
             }
             None => {}
         }
@@ -1513,11 +1761,31 @@ async fn state_loop(
         base_url: base_url.to_owned(),
         queue_selection: 0,
         ws_form: WorkspaceAddForm::default(),
+        view_picker: ViewPickerState::default(),
         layout: None,
         badge_cols: None,
+        view_strip_targets: Vec::new(),
         triage_rect: None,
         ws_add_rect: None,
+        view_picker_rect: None,
     };
+    // View persistence (spec tui-views "View persistence"): load whatever
+    // wall.json holds, then debounce a save (≥500ms after the last
+    // views_revision bump) so a burst of `d`/`D`/Tab presses writes once,
+    // not once per keystroke; a final synchronous save on every exit path
+    // below never leaves a just-made change unpersisted.
+    //
+    // The load itself is deferred to right after the FIRST `Sessions` fetch
+    // lands (not issued eagerly here) — `load_views` prunes its assignments
+    // against `state().sessions`, which is empty on a brand-new `WallStore`,
+    // so calling it before any session exists would prune every loaded
+    // assignment on the spot and silently lose the whole file.
+    let views_path = persistence::wall_json_path();
+    let mut pending_views = Some(persistence::load(&views_path));
+    let mut saved_views_revision = app.store.views_revision();
+    let mut views_dirty_since: Option<Instant> = None;
+    const VIEWS_SAVE_DEBOUNCE: Duration = Duration::from_millis(500);
+
     let mut dirty = true;
     let mut last_render = Instant::now() - FRAME_CAP;
     let mut last_elapsed_tick = Instant::now();
@@ -1551,6 +1819,24 @@ async fn state_loop(
         if app.refresh_frozen_counts() {
             dirty = true;
         }
+        // Debounced wall.json save (spec tui-views "View persistence"):
+        // start the timer the moment views_revision moves, fire once it's
+        // sat still for VIEWS_SAVE_DEBOUNCE — a burst of view mutations
+        // resets the timer on every bump rather than writing on each one.
+        if app.store.views_revision() != saved_views_revision {
+            views_dirty_since.get_or_insert_with(Instant::now);
+        }
+        if let Some(since) = views_dirty_since {
+            if since.elapsed() >= VIEWS_SAVE_DEBOUNCE {
+                saved_views_revision = app.store.views_revision();
+                views_dirty_since = None;
+                let views = app.store.state().views.clone();
+                let path = views_path.clone();
+                tokio::task::spawn_blocking(move || {
+                    let _ = persistence::save(&path, &views);
+                });
+            }
+        }
         if dirty && last_render.elapsed() >= FRAME_CAP {
             terminal.draw(|f| app.draw_frame(f, now_ms()))?;
             last_render = Instant::now();
@@ -1563,7 +1849,10 @@ async fn state_loop(
         };
         let first = match tokio::time::timeout(timeout, rx.recv()).await {
             Err(_) => continue, // timeout: loop back to tick + render
-            Ok(None) => return Ok(()),
+            Ok(None) => {
+                let _ = persistence::save(&views_path, &app.store.state().views);
+                return Ok(());
+            }
             Ok(Some(ev)) => ev,
         };
         // Drain everything pending; handle in arrival order.
@@ -1572,9 +1861,18 @@ async fn state_loop(
             events.push(ev);
         }
         for ev in events {
+            let was_sessions = matches!(ev, AppEvent::Sessions(_));
             dirty = true;
             if app.apply(ev) {
+                let _ = persistence::save(&views_path, &app.store.state().views);
                 return Ok(());
+            }
+            // The first Sessions fetch has now populated state().sessions —
+            // safe to load the persisted views (see the comment above).
+            if was_sessions {
+                if let Some(views) = pending_views.take() {
+                    app.store.load_views(views);
+                }
             }
         }
         // Downstream of the batch: registry sync, dead-tile disengage,
@@ -1620,6 +1918,7 @@ mod tests {
             message: None,
             branch: None,
             restorable: false,
+            title: None,
         }
     }
 
@@ -2062,6 +2361,18 @@ mod tests {
     }
 
     #[test]
+    fn garage_key_string_maps_tab_to_cycle_view_the_wave_1b_follow_up() {
+        assert_eq!(
+            garage_key_string(&KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE)).as_deref(),
+            Some("\t")
+        );
+        assert_eq!(
+            garage_command_for(&garage_key_string(&KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE)).unwrap()),
+            Some(GarageCommand::CycleView)
+        );
+    }
+
+    #[test]
     fn ctrl_and_alt_modified_keys_are_consumed_without_reaching_the_bindings() {
         // Mirrors the Dart parser's character-null control events: consumed,
         // no disarm, no typing hint, never an agent byte.
@@ -2137,7 +2448,8 @@ mod tests {
         form: &mut WorkspaceAddForm,
         key: KeyEvent,
     ) -> Vec<Effect> {
-        handle_overlay_key(store, &key, selection, form, "/home/me", &|_| true)
+        let mut view_picker = ViewPickerState::default();
+        handle_overlay_key(store, &key, selection, form, &mut view_picker, "/home/me", &|_| true).0
     }
 
     fn plain(code: KeyCode) -> KeyEvent {
@@ -2265,8 +2577,16 @@ mod tests {
         store.open_overlay(OverlayKind::WorkspaceAdd);
         let (mut sel, mut form) = (0, WorkspaceAddForm::default());
         form.input = "/nope".to_owned();
-        let effects =
-            handle_overlay_key(&mut store, &plain(KeyCode::Enter), &mut sel, &mut form, "/h", &|_| false);
+        let mut view_picker = ViewPickerState::default();
+        let (effects, _) = handle_overlay_key(
+            &mut store,
+            &plain(KeyCode::Enter),
+            &mut sel,
+            &mut form,
+            &mut view_picker,
+            "/h",
+            &|_| false,
+        );
         assert!(effects.is_empty());
         assert_eq!(form.error.as_deref(), Some("no such directory: /nope"));
         assert_eq!(store.state().overlay, Some(OverlayKind::WorkspaceAdd));
@@ -2286,5 +2606,114 @@ mod tests {
                 dir: "/x/proj".to_owned(),
             }]
         );
+    }
+
+    // ── p10 views: d/D strip notices (design.md "detached <label>" /
+    // "moved <label> → <view>" — kept stable for e2e greps) ────────────────
+
+    #[test]
+    fn d_detaching_shows_the_detached_notice() {
+        let mut store = store_with(vec![ws("a")], vec![si("a", "one"), si("a", "two")]);
+        store.focus_session(&id("a", "two"));
+        let mut router = GarageRouter::default();
+        key_at(&mut router, &mut store, "d", 1000);
+        assert_eq!(router.notices.current(1001), Some("detached two"));
+    }
+
+    #[test]
+    fn d_rejoining_shows_no_notice() {
+        let mut store = store_with(vec![ws("a")], vec![si("a", "one"), si("a", "two")]);
+        store.focus_session(&id("a", "two"));
+        let mut router = GarageRouter::default();
+        key_at(&mut router, &mut store, "d", 1000); // detach: notice shown, ttl 2000ms
+        key_at(&mut router, &mut store, "d", 3500); // rejoin, well after that notice expired
+        assert_eq!(router.notices.current(3600), None, "a rejoin raises no notice of its own");
+    }
+
+    #[test]
+    fn d_with_no_focused_session_is_a_silent_no_op() {
+        let mut store = store_with(vec![ws("a")], vec![]);
+        let mut router = GarageRouter::default();
+        key_at(&mut router, &mut store, "d", 1000);
+        assert_eq!(router.notices.current(1001), None);
+    }
+
+    #[test]
+    fn shift_d_opens_the_picker_overlay() {
+        let mut store = store_with(vec![ws("a")], vec![si("a", "one")]);
+        let mut router = GarageRouter::default();
+        key_at(&mut router, &mut store, "D", 1000);
+        assert_eq!(store.state().overlay, Some(OverlayKind::ViewPicker));
+    }
+
+    #[test]
+    fn picker_enter_on_an_existing_view_moves_and_shows_the_moved_notice() {
+        let mut store =
+            store_with(vec![ws("a")], vec![si("a", "one"), si("a", "two"), si("a", "three")]);
+        store.focus_session(&id("a", "two"));
+        store.detach_focused(); // "two" -> solo view "two"
+        store.focus_view_of(&id("a", "three"));
+        store.open_view_picker();
+
+        // Entries are ["main", "two", "new group…"]; select "two" (index 1).
+        let mut view_picker = ViewPickerState { selected: 1, ..Default::default() };
+        let notice =
+            handle_view_picker_key(&mut store, &plain(KeyCode::Enter), None, &mut view_picker);
+        assert_eq!(notice.as_deref(), Some("moved three → two"));
+        assert_eq!(store.state().overlay, None, "picker closes on selection");
+        let view = store
+            .state()
+            .views_for("a")
+            .into_iter()
+            .find(|v| v.name == "two")
+            .unwrap();
+        assert_eq!(view.session_ids, [id("a", "two"), id("a", "three")]);
+    }
+
+    #[test]
+    fn picker_new_group_flow_creates_a_named_group_and_shows_the_moved_notice() {
+        let mut store = store_with(vec![ws("a")], vec![si("a", "one"), si("a", "two")]);
+        store.focus_session(&id("a", "one"));
+        store.open_view_picker();
+
+        // Entries are ["main", "new group…"]; select the trailing row.
+        let mut view_picker = ViewPickerState { selected: 1, ..Default::default() };
+        assert_eq!(
+            handle_view_picker_key(&mut store, &plain(KeyCode::Enter), None, &mut view_picker),
+            None,
+            "switches to the text-input sub-mode; nothing moved yet"
+        );
+        assert!(view_picker.new_group_input.is_some());
+
+        for c in "backend".chars() {
+            handle_view_picker_key(
+                &mut store,
+                &KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE),
+                Some(c),
+                &mut view_picker,
+            );
+        }
+        let notice =
+            handle_view_picker_key(&mut store, &plain(KeyCode::Enter), None, &mut view_picker);
+        assert_eq!(notice.as_deref(), Some("moved one → backend"));
+        assert_eq!(store.state().focused_view_name("a"), "backend");
+    }
+
+    #[test]
+    fn picker_esc_cancels_from_either_mode_without_moving_anything() {
+        let mut store = store_with(vec![ws("a")], vec![si("a", "one"), si("a", "two")]);
+        store.focus_session(&id("a", "one"));
+        store.open_view_picker();
+        let mut view_picker = ViewPickerState::default();
+
+        handle_view_picker_key(&mut store, &plain(KeyCode::Esc), None, &mut view_picker);
+        assert_eq!(store.state().overlay, None);
+        assert_eq!(store.state().views_for("a").len(), 1, "nothing moved");
+
+        store.open_view_picker();
+        view_picker.new_group_input = Some("partial".to_owned());
+        handle_view_picker_key(&mut store, &plain(KeyCode::Esc), None, &mut view_picker);
+        assert_eq!(store.state().overlay, None);
+        assert!(view_picker.new_group_input.is_none());
     }
 }
