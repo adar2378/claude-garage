@@ -1,19 +1,28 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { EventEmitter } from "node:events";
-import { listSessions } from "./tmux.js";
+import os from "node:os";
+import { listSessions, normalizeTitle } from "./tmux.js";
 import { setStatus, getStatus, dropSession } from "./status.js";
 import { upsertSessionMeta } from "./registry.js";
 
 const run = promisify(execFile);
 const POLL_MS = 2000;
 
-// Emits "sessions-changed" whenever the poller notices the garage session
-// list itself changed (spawn/death), so events.js can tell the UI to refetch.
+// Emits "sessions-changed" whenever the poller notices something the wall's
+// session listing depends on changed: the garage session set itself
+// (spawn/death) OR — p10 — a live session's normalized pane title, so a
+// `tmux select-pane -T` (e.g. Claude Code's OSC title) gets pushed to the
+// UI instead of only being picked up on the next unrelated refetch.
 export const pollerEvents = new EventEmitter();
 pollerEvents.setMaxListeners(0);
 
 let lastSessionIds = new Set();
+// p10: normalized title per currently-live garage session, from the tick
+// this map was last rebuilt in. Rebuilt wholesale every tick from `sessions`
+// (never merged), so a session that dies has its entry dropped for free —
+// memory-trivial, sessions-only.
+let lastTitles = new Map();
 
 // `claude agents --json` — missing CLI or any failure is a silent no-op,
 // per D-status's graceful degradation to poller-absent behavior.
@@ -26,22 +35,26 @@ async function getAgents() {
   }
 }
 
-// tmux pane pid per session name — pane_pid joins exactly to the `pid`
-// reported by `claude agents --json` since garage spawns claude as the
-// pane's root process (design D-status).
+// tmux pane pid + title per session name — pane_pid joins exactly to the
+// `pid` reported by `claude agents --json` since garage spawns claude as the
+// pane's root process (design D-status). p10: pane_title rides the same
+// list-panes call (kept to ONE per tick daemon-wide) so the title-change
+// diff below needs no tmux invocation of its own; title is free text, so it
+// sits last in the format string and everything past the second tab is
+// rejoined into it (same rationale as tmux.js's parsePaneLine).
 async function getPanePids() {
   try {
     const { stdout } = await run("tmux", [
       "list-panes",
       "-a",
       "-F",
-      "#{session_name}\t#{pane_pid}",
+      "#{session_name}\t#{pane_pid}\t#{pane_title}",
     ]);
     const map = new Map();
     for (const line of stdout.split("\n")) {
       if (!line.trim()) continue;
-      const [name, pid] = line.split("\t");
-      map.set(name, Number(pid));
+      const [name, pid, ...rest] = line.split("\t");
+      map.set(name, { pid: Number(pid), title: rest.join("\t") });
     }
     return map;
   } catch {
@@ -65,38 +78,82 @@ export function applyAgentStatus(id, agentStatus) {
   setStatus(id, mapped);
 }
 
-async function tick() {
-  const sessions = await listSessions().catch(() => []);
-
+// p10 wave-2 fix: pure id+title diff, no tmux/IO — exported so it's
+// exhaustively unit-testable without a live tmux server. `sessions` is this
+// tick's listSessions() result; `panePids` maps session id -> {pid, title}
+// (from this tick's single list-panes call — a session can be missing an
+// entry, e.g. mid-spawn); `prevIds`/`prevTitles` are the previous tick's
+// state. Session-id-set changes (spawn/death) AND a normalized-title change
+// on any still-live session both count as "changed" — a pane-title-only
+// change (`tmux select-pane -T`) never touches the id set, so without the
+// title half this would sit unpushed until some unrelated refetch noticed.
+export function diffSessionState(sessions, panePids, hostname, prevIds, prevTitles) {
   const currentIds = new Set(sessions.map((s) => s.id));
-  let changed = currentIds.size !== lastSessionIds.size;
-  for (const id of lastSessionIds) {
-    if (!currentIds.has(id)) {
-      dropSession(id);
-      changed = true;
-    }
-  }
+  let changed = currentIds.size !== prevIds.size;
   if (!changed) {
-    for (const id of currentIds) {
-      if (!lastSessionIds.has(id)) {
+    for (const id of prevIds) {
+      if (!currentIds.has(id)) {
         changed = true;
         break;
       }
     }
   }
-  lastSessionIds = currentIds;
+  if (!changed) {
+    for (const id of currentIds) {
+      if (!prevIds.has(id)) {
+        changed = true;
+        break;
+      }
+    }
+  }
+
+  const titles = new Map();
+  for (const session of sessions) {
+    const title = normalizeTitle(panePids.get(session.id)?.title, hostname);
+    titles.set(session.id, title);
+    if (prevTitles.get(session.id) !== title) changed = true;
+  }
+
+  return { changed, ids: currentIds, titles };
+}
+
+async function tick() {
+  const sessions = await listSessions().catch(() => []);
+
+  if (sessions.length === 0) {
+    for (const id of lastSessionIds) dropSession(id);
+    const changed = lastSessionIds.size !== 0;
+    lastSessionIds = new Set();
+    lastTitles = new Map();
+    if (changed) pollerEvents.emit("sessions-changed");
+    return;
+  }
+
+  // p10: title rides the same list-panes call already made for the pid
+  // join — kept to ONE list-panes invocation per tick daemon-wide.
+  const [agents, panePids] = await Promise.all([getAgents(), getPanePids()]);
+  const hostname = os.hostname();
+  const { changed, ids, titles } = diffSessionState(
+    sessions,
+    panePids,
+    hostname,
+    lastSessionIds,
+    lastTitles
+  );
+  for (const id of lastSessionIds) {
+    if (!ids.has(id)) dropSession(id);
+  }
+  lastSessionIds = ids;
+  lastTitles = titles;
   if (changed) pollerEvents.emit("sessions-changed");
 
-  if (sessions.length === 0) return;
-
-  const [agents, panePids] = await Promise.all([getAgents(), getPanePids()]);
   if (agents.length === 0) return; // claude CLI missing/no live agents
 
   const agentByPid = new Map(agents.map((a) => [a.pid, a]));
   const unmatched = [];
 
   for (const session of sessions) {
-    const panePid = panePids.get(session.id);
+    const panePid = panePids.get(session.id)?.pid;
     const agent = panePid !== undefined ? agentByPid.get(panePid) : undefined;
     if (agent) {
       applyAgentStatus(session.id, agent.status);

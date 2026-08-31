@@ -1,4 +1,5 @@
 import { stat } from "node:fs/promises";
+import os from "node:os";
 import {
   GARAGE_PREFIX,
   NAME_RE,
@@ -6,6 +7,7 @@ import {
   listSessions,
   listPanePaths,
   resolveBranch,
+  normalizeTitle,
   hasSession,
   createSession,
   killSession,
@@ -26,6 +28,8 @@ export default async function sessionRoutes(app) {
   app.get("/api/sessions", async () => {
     const sessions = await listSessions();
     const panePaths = await listPanePaths();
+    // p10: same tmux hostname for every session in this request — read once.
+    const hostname = os.hostname();
 
     // D-branch: this route is re-hit on every SSE-driven refetch, so the
     // git calls it triggers must stay cheap — one execFile per unique
@@ -46,6 +50,7 @@ export default async function sessionRoutes(app) {
         // since: epoch ms the current status began, so the UI can render
         // elapsed time without a second lookup (see status.js getStatusEntry).
         const { state: status, since, message } = getStatusEntry(s.id);
+        const pane = panePaths.get(s.id);
         return {
           ...s,
           status,
@@ -60,7 +65,11 @@ export default async function sessionRoutes(app) {
           // Live pane cwd, not session_path (see listPanePaths) — falls back
           // to session_path only if the pane vanished between the two tmux
           // calls above (a session that died mid-request).
-          branch: await getBranch(panePaths.get(s.id) ?? s.dir),
+          branch: await getBranch(pane?.path ?? s.dir),
+          // p10: the pane's OSC title (e.g. Claude Code's "✳ <summary>"),
+          // filtered down to null when it's just tmux's own default (empty,
+          // hostname, bare shell name) — see normalizeTitle.
+          title: normalizeTitle(pane?.title, hostname),
         };
       })
     );
@@ -85,6 +94,9 @@ export default async function sessionRoutes(app) {
         status: "restorable",
         since: null,
         message: null,
+        // p10: no live pane to read a title from — restorable entries never
+        // have one (see session-status spec).
+        title: null,
         restorable: true,
         // No live pane to read a cwd from — resolve against the
         // registered workspace dir instead; null if that's gone too.

@@ -46,14 +46,27 @@ export async function listSessions() {
     });
 }
 
-// D-branch: live pane cwd per garage session, keyed by session name — NOT
-// `session_path` (that's the session's *starting* dir, frozen at creation;
-// a user who `cd`s into a worktree inside the pane changes pane_current_path
-// but not session_path). `-a` lists every pane on the server across every
-// session, so results are filtered to the garage prefix same as
-// listSessions(). A session can have multiple panes/windows if the user
-// split it manually — only the first pane encountered per session is kept,
-// there's no principled way to pick "the" cwd of a multi-pane session.
+// p10: pane titles are free text — tmux doesn't forbid a literal tab in one
+// (unlikely, but "typically" isn't "never"). `#{pane_title}` sits LAST in
+// the format string and everything from the second tab onward is rejoined
+// into the title field, so an embedded separator there can never shift
+// session_name/pane_current_path out from under the earlier destructuring.
+// Exported (pure, no tmux call) so the split logic is unit-testable without
+// a live server.
+export function parsePaneLine(line) {
+  const [name, panePath, ...rest] = line.split("\t");
+  return { name, panePath, title: rest.join("\t") };
+}
+
+// D-branch: live pane cwd + title per garage session, keyed by session name
+// — NOT `session_path` (that's the session's *starting* dir, frozen at
+// creation; a user who `cd`s into a worktree inside the pane changes
+// pane_current_path but not session_path). `-a` lists every pane on the
+// server across every session, so results are filtered to the garage prefix
+// same as listSessions(). A session can have multiple panes/windows if the
+// user split it manually — only the first pane encountered per session is
+// kept, there's no principled way to pick "the" cwd/title of a multi-pane
+// session.
 export async function listPanePaths() {
   let stdout;
   try {
@@ -61,19 +74,55 @@ export async function listPanePaths() {
       "list-panes",
       "-a",
       "-F",
-      "#{session_name}\t#{pane_current_path}",
+      "#{session_name}\t#{pane_current_path}\t#{pane_title}",
     ]));
   } catch {
     // No tmux server running — no panes.
     return new Map();
   }
-  const paths = new Map();
+  const panes = new Map();
   for (const line of stdout.split("\n")) {
     if (!line.startsWith(GARAGE_PREFIX)) continue;
-    const [name, panePath] = line.split("\t");
-    if (!paths.has(name)) paths.set(name, panePath);
+    const { name, panePath, title } = parsePaneLine(line);
+    if (!panes.has(name)) panes.set(name, { path: panePath, title });
   }
-  return paths;
+  return panes;
+}
+
+// p10: tmux's own default pane titles carry no signal — empty, the machine
+// hostname (tmux's out-of-the-box default), or the bare shell/login-shell
+// name it sets before anything else runs. Filtering those down to null
+// means the UI only ever sees a title something *set* (e.g. Claude Code's
+// OSC title updates). Pure — hostname is passed in rather than read via
+// os.hostname() internally so this stays trivially unit-testable; the one
+// production caller (sessions.js) passes os.hostname().
+const BARE_PROCESS_NAMES = new Set([
+  "sh",
+  "bash",
+  "zsh",
+  "fish",
+  "-sh",
+  "-bash",
+  "-zsh",
+  "-fish",
+  "tmux",
+]);
+
+export function normalizeTitle(title, hostname) {
+  if (title == null) return null;
+  const trimmed = title.trim();
+  if (!trimmed) return null;
+
+  const lower = trimmed.toLowerCase();
+  if (BARE_PROCESS_NAMES.has(lower)) return null;
+
+  if (hostname) {
+    const hostLower = hostname.toLowerCase();
+    const shortHost = hostLower.split(".")[0];
+    if (lower === hostLower || lower === shortHost) return null;
+  }
+
+  return trimmed;
 }
 
 // D-branch: shared by sessions.js (per-session, keyed off live pane cwd)
