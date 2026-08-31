@@ -167,22 +167,29 @@ check "spawn p81-a/second" test "$(spawn p81-a second '')" = 201
 check "both tiles attach (main + second in grid titles)" \
   wait_for 20 sh -c "tmux capture-pane -p -t '=$OUTER:' | grep -qF 'main' && tmux capture-pane -p -t '=$OUTER:' | grep -qF 'second'"
 
-# Geometry at 200x55: rail 28, strip 1 → grid 172x54; two tiles → cells
-# 86x54 each → inner (borders off) 84x52. Maximized → 172x54 → inner 170x52.
-check "PTY size matches tile inner size for main (84x52, not 80x24)" \
-  wait_for 15 client_size_is garage/p81-a/main 84x52
-check "PTY size matches tile inner size for second (84x52)" \
-  wait_for 15 client_size_is garage/p81-a/second 84x52
+# Geometry at 200x55: rail 28, strip 1 → grid 172x54. p10 (spec tui-views
+# "View strip and group frame"): a view with 2+ sessions ALWAYS gets the
+# neutral group frame around the grid area, even the lone default view of a
+# workspace that just happens to have two sessions and no manual grouping —
+# so this p81-a/{main,second} pair is framed too. Frame insets grid_area by
+# 1 cell/side → grid 170x52; two tiles → cells ~85x52 each → inner (borders
+# off) 83x50. Maximized → fills the (already framed-inset) grid 170x52 →
+# inner 168x50. Verified against a live run after the p10 change landed;
+# these were 84x52 / 170x52 / 84x52 before framing existed.
+check "PTY size matches tile inner size for main (83x50, not 80x24)" \
+  wait_for 15 client_size_is garage/p81-a/main 83x50
+check "PTY size matches tile inner size for second (83x50)" \
+  wait_for 15 client_size_is garage/p81-a/second 83x50
 
 # ── 4. m maximize toggles tile AND PTY size ──────────────────────────────
 tmux send-keys -t "=$OUTER:" -l m
-check "m maximizes the focused tile (PTY grows to 170x52)" \
-  wait_for 15 client_size_is garage/p81-a/main 170x52
-check "obscured sibling keeps its grid-cell PTY size (84x52)" \
-  client_size_is garage/p81-a/second 84x52
+check "m maximizes the focused tile (PTY grows to 168x50)" \
+  wait_for 15 client_size_is garage/p81-a/main 168x50
+check "obscured sibling keeps its grid-cell PTY size (83x50)" \
+  client_size_is garage/p81-a/second 83x50
 tmux send-keys -t "=$OUTER:" -l m
-check "m again restores the grid (PTY back to 84x52)" \
-  wait_for 15 client_size_is garage/p81-a/main 84x52
+check "m again restores the grid (PTY back to 83x50)" \
+  wait_for 15 client_size_is garage/p81-a/main 83x50
 
 # ── 5. Restore round-trip (Enter on a restorable tile) ───────────────────
 # GARAGE_CLAUDE_CMD=/bin/zsh means no poller-observed claudeSessionId, so
