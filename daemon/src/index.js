@@ -7,6 +7,7 @@ import sessionRoutes from "./sessions.js";
 import workspaceRoutes from "./workspaces.js";
 import pickerRoutes from "./picker.js";
 import hookRoutes from "./hooks.js";
+import statuslineRoutes from "./statusline.js";
 import eventRoutes from "./events.js";
 import notifyRoutes from "./notify.js";
 import diffRoutes from "./diff.js";
@@ -15,6 +16,7 @@ import worktreeRoutes from "./worktrees.js";
 import { attachTermServer } from "./term.js";
 import { rejectForeignOrigins } from "./security.js";
 import { startPoller } from "./poller.js";
+import { healthPayload } from "./health.js";
 
 const HOST = "127.0.0.1";
 const PORT = Number(process.env.GARAGE_PORT ?? 4747);
@@ -29,11 +31,14 @@ const REPO_ROOT = path.resolve(__dirname, "..", "..");
 const app = Fastify({ logger: { level: "info" }, forceCloseConnections: true });
 
 app.addHook("onRequest", rejectForeignOrigins);
-app.get("/api/health", async () => ({ status: "ok" }));
+// version + pid ride along for the launcher's stale-daemon gate
+// (bin/garage.js, p8.2) — see health.js.
+app.get("/api/health", async () => healthPayload());
 app.register(sessionRoutes);
 app.register(workspaceRoutes);
 app.register(pickerRoutes);
 app.register(hookRoutes);
+app.register(statuslineRoutes);
 app.register(eventRoutes);
 app.register(notifyRoutes);
 app.register(diffRoutes);

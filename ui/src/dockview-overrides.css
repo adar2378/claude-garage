@@ -7,7 +7,7 @@
    CSS custom properties usable from any stylesheet.
 
    Dockview's per-panel tab IS the cell's one title bar now — status
-   glyph, label, status text, pop-out button — rendered by
+   glyph, label, elapsed time, cell controls — rendered by
    SessionCellTab in TerminalGrid.jsx and wired in as `defaultTabComponent`
    (plus `singleTabMode="fullwidth"`, also set on <DockviewReact>). The tab
    stays dockview's native drag handle throughout, so nothing here (or in
@@ -33,11 +33,14 @@
   --dv-tabs-and-actions-container-height: 26px;
   --dv-separator-border: var(--color-garage-line);
   --dv-sash-color: transparent;
-  --dv-active-sash-color: var(--color-garage-amber);
-  /* accent @ ~18% — color-mix so it follows the active theme's accent
-     (garage amber / Claude terracotta) instead of a hardcoded rgba */
-  --dv-drag-over-background-color: color-mix(in srgb, var(--color-garage-amber) 18%, transparent);
-  --dv-drag-over-border-color: var(--color-garage-amber);
+  /* redesign/light-minimal (one-colour rule): sash + drag-over are
+     INTERACTION states, not the needs-input alarm, so they must not be
+     amber — amber now means exactly one thing in this app. Neutral grey
+     mixed from the ink token so it still follows whichever theme is
+     active. */
+  --dv-active-sash-color: var(--color-garage-dim);
+  --dv-drag-over-background-color: color-mix(in srgb, var(--color-garage-ink) 10%, transparent);
+  --dv-drag-over-border-color: var(--color-garage-dim);
   --dv-icon-hover-background-color: var(--color-garage-sel);
 }
 
@@ -80,12 +83,6 @@
   color: var(--color-garage-dim);
 }
 
-/* p8 float-in-page: dockview floating groups (the ❐ control on a cell
-   tab) — accent-bordered, lifted with a shadow so a floated terminal
-   reads as a window above the wall. The tab remains the drag handle and
-   dockview's own resize edges keep working. */
-.garage-dock .dv-resize-container {
-  border: 1px solid var(--color-garage-amber);
-  box-shadow: 0 10px 36px rgba(0, 0, 0, 0.5);
-  background: var(--color-garage-panel);
-}
+/* Float-in-page (dockview floating groups) was removed — the ❐ control and
+   its `addFloatingGroup` call are gone, so `.dv-resize-container` never
+   renders and needs no skin. Cells are always grid tiles now. */

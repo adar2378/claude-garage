@@ -83,21 +83,21 @@ export default function AddWorkspaceForm({ onClose, onCreated, existingNames }) 
     return (
       <div
         onKeyDown={stopKey}
-        className="absolute right-0 top-full z-10 mt-1 flex w-72 flex-col gap-2 border border-garage-line bg-garage-panel p-3 shadow-lg"
+        className="absolute right-0 top-full z-10 mt-2 flex w-72 flex-col gap-3 rounded-xl border border-garage-line bg-garage-bg p-4 shadow-sm"
       >
         <p className="text-xs text-garage-dim">opening folder picker…</p>
-        <div className="flex justify-between">
+        <div className="flex items-center justify-between">
           <button
             type="button"
             onClick={goManual}
-            className="text-xs text-garage-faint underline hover:text-garage-amber"
+            className="rounded-md px-2 py-1 text-xs text-garage-dim underline hover:bg-garage-sel hover:text-garage-ink"
           >
             type a path instead
           </button>
           <button
             type="button"
             onClick={onClose}
-            className="px-2 py-0.5 text-xs text-garage-dim hover:text-garage-ink"
+            className="rounded-md px-3 py-1.5 text-[13px] text-garage-dim hover:bg-garage-sel hover:text-garage-ink"
           >
             cancel
           </button>
@@ -114,18 +114,18 @@ export default function AddWorkspaceForm({ onClose, onCreated, existingNames }) 
           save(name, dir);
         }}
         onKeyDown={stopKey}
-        className="absolute right-0 top-full z-10 mt-1 flex w-80 flex-col gap-2 border border-garage-line bg-garage-panel p-3 shadow-lg"
+        className="absolute right-0 top-full z-10 mt-2 flex w-80 flex-col gap-3 rounded-xl border border-garage-line bg-garage-bg p-4 shadow-sm"
       >
-        <label className="flex flex-col gap-1 text-xs text-garage-dim">
+        <label className="flex flex-col gap-1.5 text-xs text-garage-dim">
           name
           <input
             autoFocus
             value={name}
             onChange={(e) => setName(e.target.value)}
-            className="border border-garage-line bg-garage-bg px-2 py-1 text-garage-ink outline-none focus:border-garage-amber"
+            className="rounded-md border border-garage-line bg-garage-bg px-3 py-1.5 text-[13px] text-garage-ink focus:border-garage-dim focus:outline-none"
           />
         </label>
-        <p className="truncate text-[11px] text-garage-faint" title={dir}>
+        <p className="truncate text-xs text-garage-faint" title={dir}>
           {dir}
         </p>
         {error && <p className="text-xs text-garage-red">{error}</p>}
@@ -133,7 +133,7 @@ export default function AddWorkspaceForm({ onClose, onCreated, existingNames }) 
           <button
             type="button"
             onClick={goManual}
-            className="text-xs text-garage-faint underline hover:text-garage-amber"
+            className="rounded-md px-2 py-1 text-xs text-garage-dim underline hover:bg-garage-sel hover:text-garage-ink"
           >
             type a path instead
           </button>
@@ -141,14 +141,14 @@ export default function AddWorkspaceForm({ onClose, onCreated, existingNames }) 
             <button
               type="button"
               onClick={onClose}
-              className="px-2 py-0.5 text-xs text-garage-dim hover:text-garage-ink"
+              className="rounded-md px-3 py-1.5 text-[13px] text-garage-dim hover:bg-garage-sel hover:text-garage-ink"
             >
               cancel
             </button>
             <button
               type="submit"
               disabled={busy || !name.trim() || !dir.trim()}
-              className="border border-garage-line bg-garage-sel px-2 py-0.5 text-xs text-garage-amber disabled:opacity-40"
+              className="rounded-md bg-garage-ink px-3 py-1.5 text-[13px] text-garage-bg hover:opacity-90 disabled:opacity-40"
             >
               save
             </button>
@@ -168,25 +168,25 @@ export default function AddWorkspaceForm({ onClose, onCreated, existingNames }) 
         save(name, dir);
       }}
       onKeyDown={stopKey}
-      className="absolute right-0 top-full z-10 mt-1 flex w-72 flex-col gap-2 border border-garage-line bg-garage-panel p-3 shadow-lg"
+      className="absolute right-0 top-full z-10 mt-2 flex w-72 flex-col gap-3 rounded-xl border border-garage-line bg-garage-bg p-4 shadow-sm"
     >
-      <label className="flex flex-col gap-1 text-xs text-garage-dim">
+      <label className="flex flex-col gap-1.5 text-xs text-garage-dim">
         name
         <input
           autoFocus
           value={name}
           onChange={(e) => setName(e.target.value)}
           placeholder="kowboy"
-          className="border border-garage-line bg-garage-bg px-2 py-1 text-garage-ink outline-none focus:border-garage-amber"
+          className="rounded-md border border-garage-line bg-garage-bg px-3 py-1.5 text-[13px] text-garage-ink focus:border-garage-dim focus:outline-none"
         />
       </label>
-      <label className="flex flex-col gap-1 text-xs text-garage-dim">
+      <label className="flex flex-col gap-1.5 text-xs text-garage-dim">
         dir
         <input
           value={dir}
           onChange={(e) => setDir(e.target.value)}
           placeholder="/Users/me/dev/kowboy"
-          className="border border-garage-line bg-garage-bg px-2 py-1 text-garage-ink outline-none focus:border-garage-amber"
+          className="rounded-md border border-garage-line bg-garage-bg px-3 py-1.5 text-[13px] text-garage-ink focus:border-garage-dim focus:outline-none"
         />
       </label>
       {error && <p className="text-xs text-garage-red">{error}</p>}
@@ -194,14 +194,14 @@ export default function AddWorkspaceForm({ onClose, onCreated, existingNames }) 
         <button
           type="button"
           onClick={onClose}
-          className="px-2 py-0.5 text-xs text-garage-dim hover:text-garage-ink"
+          className="rounded-md px-3 py-1.5 text-[13px] text-garage-dim hover:bg-garage-sel hover:text-garage-ink"
         >
           cancel
         </button>
         <button
           type="submit"
           disabled={busy || !name.trim() || !dir.trim()}
-          className="border border-garage-line bg-garage-sel px-2 py-0.5 text-xs text-garage-amber disabled:opacity-40"
+          className="rounded-md bg-garage-ink px-3 py-1.5 text-[13px] text-garage-bg hover:opacity-90 disabled:opacity-40"
         >
           register
         </button>

@@ -10,14 +10,6 @@ const CHANGE_GLYPH = {
   untracked: "?",
 };
 
-const CHANGE_COLOR = {
-  modified: "text-garage-blue",
-  added: "text-garage-green",
-  deleted: "text-garage-red",
-  renamed: "text-garage-blue",
-  untracked: "text-garage-dim",
-};
-
 // Third grid column (design D-layout, spec: diff-review-ui "Changes pane").
 // Collapsed to a thin toggle strip via `collapsed`; App.jsx sizes the grid
 // track to match (32px / 360px) — this component just fills whatever width
@@ -105,7 +97,7 @@ export default function ChangesPane({
         onMouseDownCapture={onActivateColumn}
         title="expand changes pane"
         aria-label="expand changes pane"
-        className="flex h-full w-full flex-col items-center gap-2 border-l border-garage-line bg-garage-panel py-2 text-garage-dim hover:text-garage-amber"
+        className="flex h-full w-full flex-col items-center gap-2 border-l border-garage-line bg-garage-panel py-2 text-garage-dim hover:bg-garage-sel hover:text-garage-ink"
       >
         <span aria-hidden="true">«</span>
         <span className="[writing-mode:vertical-rl]">changes</span>
@@ -122,14 +114,14 @@ export default function ChangesPane({
         columnActive ? "dim-focused" : ""
       }`}
     >
-      <div className="flex flex-none items-center gap-2 border-b border-garage-line px-2 py-1 text-xs">
-        <span className="truncate font-semibold text-garage-ink">{workspace ?? "—"}</span>
+      <div className="flex h-10 flex-none items-center gap-2 border-b border-garage-line px-3">
+        <span className="truncate text-[13px] font-medium text-garage-ink">{workspace ?? "—"}</span>
         {branch && (
           // design D-wt-diff: the diff root is overridden to a worktree
           // session's cwd — the response carries `branch` in that case
           // only, so this only ever renders when review is actually
           // scoped to a worktree rather than the workspace root.
-          <span className="shrink-0 truncate text-[10px] text-garage-faint" title={branch}>
+          <span className="shrink-0 truncate font-mono text-[11px] text-garage-faint" title={branch}>
             ⎇ {branch}
           </span>
         )}
@@ -140,7 +132,7 @@ export default function ChangesPane({
           type="button"
           onClick={onEnterReview}
           title="full-screen review mode (r)"
-          className="ml-auto border border-garage-line px-2 py-0.5 text-[11px] text-garage-dim hover:border-garage-amber hover:text-garage-amber"
+          className="ml-auto rounded-md px-2.5 py-1 text-xs text-garage-dim hover:bg-garage-sel hover:text-garage-ink"
         >
           review
         </button>
@@ -148,7 +140,7 @@ export default function ChangesPane({
           type="button"
           onClick={onRefresh}
           title="refresh diff"
-          className="text-garage-dim hover:text-garage-amber"
+          className="rounded-md px-2.5 py-1 text-xs text-garage-dim hover:bg-garage-sel hover:text-garage-ink"
         >
           ↻
         </button>
@@ -156,19 +148,19 @@ export default function ChangesPane({
           type="button"
           onClick={onToggleCollapse}
           title="collapse changes pane"
-          className="text-garage-dim hover:text-garage-amber"
+          className="rounded-md px-2.5 py-1 text-xs text-garage-dim hover:bg-garage-sel hover:text-garage-ink"
         >
           »
         </button>
       </div>
 
       {error && (
-        <div className="flex-none border-b border-garage-line px-2 py-1 text-[11px] text-garage-red">
+        <div className="flex-none border-b border-garage-line px-3 py-1 text-[11px] text-garage-red">
           {error}
         </div>
       )}
       {truncated && (
-        <div className="flex-none border-b border-garage-line bg-garage-sel px-2 py-1 text-[11px] text-garage-amber">
+        <div className="flex-none border-b border-garage-line bg-garage-sel px-3 py-1 text-[11px] text-garage-dim">
           response truncated — some files show stats only
         </div>
       )}
@@ -179,28 +171,28 @@ export default function ChangesPane({
           style={{ flexBasis: `${paneSplit * 100}%`, flexGrow: 0, flexShrink: 0 }}
         >
           {loading && files.length === 0 && (
-            <p className="px-2 py-2 text-[11px] text-garage-dim">loading…</p>
+            <p className="px-3 py-2 text-xs text-garage-dim">loading…</p>
           )}
           {!loading && files.length === 0 && (
-            <p className="px-2 py-2 text-[11px] text-garage-dim">no changes</p>
+            <p className="px-3 py-2 text-xs text-garage-dim">no changes</p>
           )}
           {files.map((f) => (
             <button
               key={f.path}
               type="button"
               onClick={() => onSelectFile(f.path)}
-              className={`flex w-full items-center gap-2 px-2 py-1 text-left text-[11px] ${
+              className={`mx-1.5 flex w-[calc(100%-0.75rem)] items-center gap-2 rounded-md px-3 py-1.5 text-left text-[13px] ${
                 f.path === selectedPath ? "bg-garage-sel" : "hover:bg-garage-sel"
               }`}
             >
-              <span className={CHANGE_COLOR[f.changeType] ?? "text-garage-dim"}>
+              <span className="font-mono text-[11px] text-garage-faint">
                 {CHANGE_GLYPH[f.changeType] ?? "?"}
               </span>
-              <span className="min-w-0 flex-1 truncate">{f.path}</span>
-              {f.binary && <span className="shrink-0 text-garage-faint">bin</span>}
-              {f.truncated && <span className="shrink-0 text-garage-amber">trunc</span>}
+              <span className="min-w-0 flex-1 truncate font-mono text-xs text-garage-dim">{f.path}</span>
+              {f.binary && <span className="shrink-0 text-xs text-garage-faint">bin</span>}
+              {f.truncated && <span className="shrink-0 text-xs text-garage-dim">trunc</span>}
               {!f.binary && (
-                <span className="shrink-0 text-garage-faint">
+                <span className="shrink-0 font-mono text-xs tabular-nums">
                   <span className="text-garage-green">+{f.additions ?? 0}</span>{" "}
                   <span className="text-garage-red">−{f.deletions ?? 0}</span>
                 </span>

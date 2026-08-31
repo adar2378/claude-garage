@@ -4,12 +4,33 @@
 // UI+API serving — see daemon/src/index.js), then prints and best-effort
 // opens the URL. Never touches tmux on shutdown — SIGINT/SIGTERM close the
 // HTTP server only, so live garage sessions survive the process exiting.
-import { execFile, spawn } from "node:child_process";
+//
+// p8-packaging: `claude-garage tui` runs the same prerequisite checks, then
+// attaches the compiled TUI to a running daemon — starting one detached
+// first (so it outlives the TUI) when /api/health is unreachable. Quitting
+// the TUI leaves the daemon and every tmux session running.
+import { execFile, spawn, spawnSync } from "node:child_process";
+import { accessSync, chmodSync, constants as fsConstants, copyFileSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, statSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import readline from "node:readline/promises";
+import { fileURLToPath } from "node:url";
 
 const PORT = Number(process.env.GARAGE_PORT ?? 4747);
 const HEALTH_URL = `http://127.0.0.1:${PORT}/api/health`;
 const UI_URL = `http://127.0.0.1:${PORT}`;
+
+// bin/garage.js -> repo/package root is one level up. Resolves correctly
+// whether run from a checkout or an installed package.
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+
+// The launcher's own package version — compared against the version the
+// daemon reports on /api/health to detect a stale (pre-upgrade) daemon
+// still serving old code (p8.2; symptom: 404s on routes the new UI/TUI
+// call, e.g. `?meta=1`).
+const VERSION = JSON.parse(
+  readFileSync(path.join(ROOT, "package.json"), "utf8")
+).version;
 
 function execFileP(cmd, args) {
   return new Promise((resolve, reject) => {
@@ -74,7 +95,8 @@ async function offerTmuxInstall() {
   }
 }
 
-async function main() {
+// Shared by the web and TUI paths — identical checks, identical errors.
+async function checkPrerequisites() {
   try {
     await execFileP("tmux", ["-V"]);
   } catch (err) {
@@ -93,6 +115,18 @@ async function main() {
     ["--version"],
     "see https://docs.claude.com/en/docs/claude-code for install instructions"
   );
+}
+
+async function main() {
+  await checkPrerequisites();
+
+  // Stale-daemon gate (p8.2), same as the tui path: a healthy daemon that
+  // predates this launcher is stopped by its reported pid so the
+  // in-process daemon below can bind the freed port and serve current
+  // code. A daemon at the launcher's own version is left alone (the
+  // import below will then report EADDRINUSE as before).
+  const health = await fetchHealth();
+  if (daemonIsStale(health)) await stopStaleDaemon(health);
 
   process.env.GARAGE_SERVE_UI = "1";
 
@@ -140,4 +174,325 @@ async function main() {
   }, 600);
 }
 
-main();
+// ---------------------------------------------------------------------------
+// `claude-garage tui` (p8-packaging)
+// ---------------------------------------------------------------------------
+
+async function healthOk(timeoutMs = 750) {
+  return (await fetchHealth(timeoutMs)) !== null;
+}
+
+// The parsed /api/health body, or null when no healthy daemon answers.
+// A daemon that answers 200 with an unparseable body still counts as
+// present ({}), so the version gate below treats it as stale rather than
+// racing a second daemon onto an occupied port.
+async function fetchHealth(timeoutMs = 750) {
+  try {
+    const res = await fetch(HEALTH_URL, { signal: AbortSignal.timeout(timeoutMs) });
+    if (!res.ok) return null;
+    return await res.json().catch(() => ({}));
+  } catch {
+    return null;
+  }
+}
+
+// ── Stale-daemon gate (p8.2) ────────────────────────────────────────────
+// A daemon left running across an upgrade keeps serving pre-upgrade code
+// (observed as `?meta=1` 404s from a daemon older than the launcher). When
+// the version /api/health reports differs from the launcher's — or the
+// field is missing entirely (pre-upgrade daemons) — stop it by the pid it
+// reports (never pkill by name) and let the caller start a fresh one the
+// same way it would have with no daemon at all. Restarting is safe by
+// design: tmux owns the sessions and state.json is on disk.
+
+function daemonIsStale(health) {
+  return health !== null && health.version !== VERSION;
+}
+
+async function waitForPortFree(deadlineMs = 10000) {
+  const start = Date.now();
+  while (Date.now() - start < deadlineMs) {
+    if (!(await healthOk(500))) return true;
+    await new Promise((r) => setTimeout(r, 250));
+  }
+  return false;
+}
+
+// The pid of the process LISTENING on the daemon port — the fallback for
+// pre-upgrade daemons whose /api/health reports no pid field. Port-based
+// and exact (never process-name matching); null when it cannot be
+// determined unambiguously.
+async function pidListeningOnPort() {
+  try {
+    const { stdout } = await execFileP("lsof", [
+      "-nP", `-iTCP:${PORT}`, "-sTCP:LISTEN", "-t",
+    ]);
+    const pids = [...new Set(stdout.split("\n").map((s) => s.trim()).filter(Boolean))];
+    if (pids.length !== 1) return null;
+    const pid = Number(pids[0]);
+    return Number.isInteger(pid) && pid > 1 ? pid : null;
+  } catch {
+    return null; // lsof missing or nothing listening
+  }
+}
+
+async function stopStaleDaemon(health) {
+  const label = health.version ? `v${health.version}` : "with no version (pre-upgrade)";
+  console.log(
+    `garage daemon ${label} is stale (launcher v${VERSION}) — restarting it; ` +
+      `sessions are untouched (tmux owns them)`
+  );
+  // Prefer the pid health reports (current daemons); fall back to the
+  // port's listener for pre-upgrade daemons that report none.
+  let pid = Number(health.pid);
+  if (!Number.isInteger(pid) || pid <= 1) {
+    pid = await pidListeningOnPort();
+  }
+  if (pid === null) {
+    console.error(
+      `could not determine the stale daemon's pid — stop it yourself ` +
+        `(lsof -ti tcp:${PORT} | xargs kill) and re-run`
+    );
+    process.exit(1);
+  }
+  try {
+    process.kill(pid, "SIGTERM");
+  } catch (err) {
+    if (!(err && err.code === "ESRCH")) {
+      console.error(
+        `could not stop the stale daemon (pid ${pid}): ${err.message} — ` +
+          `stop it yourself and re-run`
+      );
+      process.exit(1);
+    }
+    // ESRCH: already gone — the port check below settles it either way.
+  }
+  if (!(await waitForPortFree())) {
+    console.error(
+      `port ${PORT} did not free up after stopping daemon pid ${pid} — ` +
+        `something else may be serving /api/health there; stop it ` +
+        `(lsof -ti tcp:${PORT}) and re-run`
+    );
+    process.exit(1);
+  }
+}
+
+// Start the daemon as a detached child so it outlives the TUI — same daemon
+// module the web entrypoint imports in-process, same GARAGE_SERVE_UI=1 flag.
+// daemon/src/index.js degrades gracefully when ui/dist is absent (logs and
+// serves API-only), so the TUI path never requires a built UI, while the web
+// wall keeps working alongside whenever ui/dist exists.
+function startDetachedDaemon() {
+  const daemonEntry = path.join(ROOT, "daemon", "src", "index.js");
+  // daemon.log lives beside the daemon's state: honor GARAGE_DIR (the
+  // p8.1 scratch-dir override the daemon itself uses) so a scratch-port
+  // launcher run never writes into the real ~/.garage.
+  const logDir = process.env.GARAGE_DIR ?? path.join(os.homedir(), ".garage");
+  mkdirSync(logDir, { recursive: true });
+  const logPath = path.join(logDir, "daemon.log");
+  const out = openSync(logPath, "a");
+  const child = spawn(process.execPath, [daemonEntry], {
+    detached: true,
+    stdio: ["ignore", out, out],
+    env: { ...process.env, GARAGE_SERVE_UI: "1" },
+  });
+  child.unref();
+  return logPath;
+}
+
+async function waitForHealth(deadlineMs = 15000) {
+  const start = Date.now();
+  while (Date.now() - start < deadlineMs) {
+    if (await healthOk(500)) return true;
+    await new Promise((r) => setTimeout(r, 250));
+  }
+  return false;
+}
+
+// cargo build --release, then copy the result into wall/dist/<target-name>
+// (creating the dist dir if needed) and mark it executable. Shared by the
+// "no prebuilt binary yet" path and the p11 staleness-guard rebuild path
+// below — one cargo invocation, one copy-into-dist step, used both places.
+function cargoBuildTuiBinary(rustBinary) {
+  const build = spawnSync("cargo", ["build", "--release"], {
+    cwd: path.join(ROOT, "wall"),
+    stdio: "inherit",
+  });
+  const built = path.join(ROOT, "wall", "target", "release", "garage-wall");
+  if (build.status !== 0 || !existsSync(built)) {
+    console.error("cargo build failed — see the output above");
+    process.exit(1);
+  }
+  mkdirSync(path.dirname(rustBinary), { recursive: true });
+  copyFileSync(built, rustBinary);
+  chmodSync(rustBinary, 0o755);
+}
+
+// The latest mtime (ms) of any file under `dir`, recursively; 0 if the
+// directory doesn't exist or is empty. Used by the p11 staleness guard to
+// compare wall/src against the built binary — a plain recursive walk since
+// wall/src is small and this only runs once per launch.
+function newestMtimeUnder(dir) {
+  let newest = 0;
+  const stack = [dir];
+  while (stack.length > 0) {
+    const current = stack.pop();
+    let entries;
+    try {
+      entries = readdirSync(current, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const entry of entries) {
+      const full = path.join(current, entry.name);
+      if (entry.isDirectory()) {
+        stack.push(full);
+      } else {
+        const mtime = statSync(full).mtimeMs;
+        if (mtime > newest) newest = mtime;
+      }
+    }
+  }
+  return newest;
+}
+
+// p11 staleness guard: true when anything under wall/src, or wall/Cargo.toml
+// / wall/Cargo.lock, has an mtime newer than the built binary — i.e. the
+// checkout has source changes the binary predates (the "invisible picker"
+// report's root cause: a stale binary silently missing a fix). Source-file
+// mtimes only; never compares against GARAGE_TUI_BIN (that path never calls
+// this — see resolveTuiBinary's override branch, which returns first).
+function wallSourcesNewerThan(rustBinary) {
+  const binaryMtime = statSync(rustBinary).mtimeMs;
+  const wallDir = path.join(ROOT, "wall");
+  for (const f of ["Cargo.toml", "Cargo.lock"]) {
+    const full = path.join(wallDir, f);
+    if (existsSync(full) && statSync(full).mtimeMs > binaryMtime) return true;
+  }
+  return newestMtimeUnder(path.join(wallDir, "src")) > binaryMtime;
+}
+
+// Binary lookup order (p9-ratatui-port "TUI binary availability"):
+// 0. GARAGE_TUI_BIN — test hook for the e2e harnesses (parity gate): an
+//    explicit binary path that wins over everything else. Used only when
+//    set and executable; a set-but-unusable value is a hard error (a test
+//    hook must never silently fall through to a different binary). Honored
+//    verbatim — the p11 staleness guard below never runs for it.
+// 1. prebuilt Rust binary at wall/dist/garage-wall-<platform>-<arch> — in a
+//    source checkout (wall/Cargo.toml present), p11 additionally checks it
+//    isn't stale against wall/src before returning it (see below).
+// 2. build once with cargo (checkout only — needs wall/ sources), announced
+// 3. actionable error naming what is missing (Rust toolchain first),
+//    exit non-zero.
+function resolveTuiBinary() {
+  const override = process.env.GARAGE_TUI_BIN;
+  if (override) {
+    try {
+      accessSync(override, fsConstants.X_OK);
+      return override;
+    } catch {
+      console.error(
+        `GARAGE_TUI_BIN is set but not an executable file: ${override}`
+      );
+      process.exit(1);
+    }
+  }
+
+  const target = `${process.platform}-${process.arch}`;
+  const distDir = path.join(ROOT, "wall", "dist");
+  const rustBinary = path.join(distDir, `garage-wall-${target}`);
+  const wallSrc = path.join(ROOT, "wall", "Cargo.toml");
+
+  if (existsSync(rustBinary)) {
+    // p11 launcher staleness guard: only in a source checkout (wall/
+    // present at all — an installed package ships no wall/ sources, so this
+    // never triggers there) AND only when wall/src actually outdates the
+    // binary. Mirrors the stale-daemon gate's shape: detect, announce,
+    // self-heal — reusing the exact same cargo-build path task 2 above (and
+    // "no prebuilt binary" below) already uses.
+    if (existsSync(wallSrc) && wallSourcesNewerThan(rustBinary)) {
+      const haveCargo = spawnSync("cargo", ["--version"], { stdio: "ignore" }).status === 0;
+      if (haveCargo) {
+        console.log("wall sources newer than the built binary — rebuilding");
+        cargoBuildTuiBinary(rustBinary);
+      } else {
+        console.error(
+          `warning: wall/src is newer than the built TUI binary (${rustBinary}) ` +
+            `and no cargo on PATH to rebuild it — it may be stale`
+        );
+      }
+    }
+    return rustBinary;
+  }
+
+  const haveCargo = spawnSync("cargo", ["--version"], { stdio: "ignore" }).status === 0;
+  if (haveCargo && existsSync(wallSrc)) {
+    console.log(
+      `no prebuilt TUI binary for ${target} — building once with cargo ` +
+        `(release build; lands at wall/dist/garage-wall-${target})`
+    );
+    cargoBuildTuiBinary(rustBinary);
+    return rustBinary;
+  }
+
+  if (existsSync(wallSrc)) {
+    console.error(
+      `no prebuilt TUI binary for ${target} and no Rust toolchain (cargo) on PATH.\n` +
+        `Install Rust (https://rustup.rs) and re-run — the TUI builds itself once ` +
+        `from wall/ — or use a platform with a shipped binary (macOS arm64).`
+    );
+  } else {
+    console.error(
+      `no prebuilt TUI binary for ${target} in this package, and no wall/ sources ` +
+        `to build from.\nUse a platform with a shipped binary (macOS arm64), or run ` +
+        `from a git checkout with the Rust toolchain installed (npm run build:tui).`
+    );
+  }
+  process.exit(1);
+}
+
+async function tuiMain() {
+  await checkPrerequisites();
+
+  // Resolve (and if needed build) the binary BEFORE starting a daemon: a
+  // missing binary should fail fast without a side-effect daemon appearing.
+  const tuiBinary = resolveTuiBinary();
+
+  // Stale-daemon gate (p8.2): a healthy daemon that predates this launcher
+  // is stopped (by its reported pid) and replaced exactly like the
+  // daemon-absent path below.
+  const health = await fetchHealth();
+  const stale = daemonIsStale(health);
+  if (stale) await stopStaleDaemon(health);
+  if (health === null || stale) {
+    if (!stale) {
+      console.log(`no daemon on port ${PORT} — starting one (it outlives the TUI)`);
+    }
+    const logPath = startDetachedDaemon();
+    if (!(await waitForHealth())) {
+      console.error(
+        `claude-garage daemon did not come up on port ${PORT} — see ${logPath} ` +
+          `(port already in use? set GARAGE_PORT to pick a different one)`
+      );
+      process.exit(1);
+    }
+  }
+
+  // Foreground, inherited stdio: the TUI owns the terminal until it exits.
+  // The daemon (in-process elsewhere or the detached child above) is left
+  // running — tmux sessions and the web wall stay live.
+  const child = spawn(tuiBinary, [], { stdio: "inherit", env: process.env });
+  child.on("error", (err) => {
+    console.error(`failed to start TUI binary at ${tuiBinary}: ${err.message}`);
+    process.exit(1);
+  });
+  child.on("exit", (code, signal) => {
+    process.exit(signal ? 1 : (code ?? 0));
+  });
+}
+
+if (process.argv[2] === "tui") {
+  tuiMain();
+} else {
+  main();
+}

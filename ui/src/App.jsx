@@ -1,7 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import WorkspaceRail from "./components/WorkspaceRail.jsx";
 import TerminalGrid from "./components/TerminalGrid.jsx";
-import SoloView from "./components/SoloView.jsx";
 import HooksBanner from "./components/HooksBanner.jsx";
 import AddWorkspaceForm from "./components/AddWorkspaceForm.jsx";
 import ChangesPane from "./components/ChangesPane.jsx";
@@ -14,7 +13,6 @@ import SettingsPopover from "./components/SettingsPopover.jsx";
 import { useSettings } from "./lib/settings.js";
 import { loadViewedMap, markViewed, pruneViewed, hashContent } from "./lib/viewed.js";
 import { firstHunkLine } from "./lib/diff.js";
-import { listPoppedOut, openPopout, clearPopout, subscribe as subscribePopouts } from "./lib/popouts.js";
 import { loadPaneSizes, savePaneSizes, startDrag } from "./lib/panes.js";
 import { useApplyTheme } from "./lib/theme.js";
 import {
@@ -32,24 +30,7 @@ const CLIENT_ID = crypto.randomUUID();
 const VISIBILITY_INTERVAL_MS = 30_000;
 const LOAD_RETRY_MS = 3_000;
 
-// design D-popout: a popout window is opened at `/?solo=<id>` (see
-// lib/popouts.js#openPopout) and never navigates elsewhere for the rest of
-// its life, so this is stable for the whole lifetime of whichever branch
-// of App a given mount takes below — reading it before any hooks run and
-// branching on it is safe (every render of a single mounted instance takes
-// the same branch; React's hooks-order rule is about a single instance,
-// not about App-the-component-type in the abstract).
-function readSoloId() {
-  if (typeof window === "undefined") return null;
-  return new URLSearchParams(window.location.search).get("solo");
-}
-
 export default function App() {
-  const soloId = readSoloId();
-  if (soloId) {
-    return <SoloView id={soloId} />;
-  }
-
   const [workspaces, setWorkspaces] = useState([]);
   const [sessions, setSessions] = useState([]);
   const [loadError, setLoadError] = useState(null);
@@ -101,7 +82,7 @@ export default function App() {
     paneSizesRef.current = paneSizes;
   }, [paneSizes]);
   // Which divider (if any) is actively being dragged, purely for the
-  // `.is-dragging` amber-highlight class — dividers are not dim-zones and
+  // `.is-dragging` grey-highlight class — dividers are not dim-zones and
   // don't participate in activeColumn.
   const [draggingDivider, setDraggingDivider] = useState(null);
 
@@ -163,36 +144,8 @@ export default function App() {
   // p3-restore-and-ship: D-help
   const [helpOpen, setHelpOpen] = useState(false);
 
-  // ---- p4-layout-focus-workspace-ux: popout tracking (design D-popout) ----
-  // `poppedOutIds` re-derives from localStorage on every change the
-  // subscription notices (cross-window writes via `storage`, plus a 5s
-  // poll for same-window writes and pure staleness timeouts — see
-  // lib/popouts.js) so TerminalGrid always renders live-vs-placeholder
-  // cells off the same source of truth a popout window itself reads.
-  const [poppedOutIds, setPoppedOutIds] = useState(() => listPoppedOut());
-
-  useEffect(() => {
-    const unsubscribe = subscribePopouts(() => setPoppedOutIds(listPoppedOut()));
-    return unsubscribe;
-  }, []);
-
-  // openPopout/clearPopout write synchronously but don't themselves fire a
-  // `storage` event in *this* window (that only fires in other
-  // tabs/windows) — so these wrappers refresh local state immediately
-  // rather than waiting on the next poll tick.
-  const handlePopOut = useCallback((id) => {
-    openPopout(id);
-    setPoppedOutIds(listPoppedOut());
-  }, []);
-
-  const handleReclaim = useCallback((id) => {
-    clearPopout(id);
-    setPoppedOutIds(listPoppedOut());
-  }, []);
-
   // Hidden ids are plain in-memory React state, deliberately NOT persisted
-  // anywhere (unlike poppedOutIds, which survives via localStorage) — the
-  // spec is "removes the panel for this page run only": reloading or
+  // anywhere — the spec is "removes the panel for this page run only": reloading or
   // reopening claude-garage must restore every hidden session. The rail
   // keeps listing hidden sessions (with a dim + "hidden" indicator — see
   // WorkspaceRail); only TerminalGrid's panel set excludes them (see its
@@ -441,7 +394,10 @@ export default function App() {
       } catch {
         return;
       }
-      const { id, status } = payload;
+      // `since` (epoch ms of this transition) rides along so elapsed timers
+      // in the rail and grid start from the real transition moment rather
+      // than waiting for the next full GET /api/sessions.
+      const { id, status, since } = payload;
       // Diff freshness trigger 1/3 (design D-freshness): a session in the
       // *focused* workspace flipping to done refetches the diff. Read from
       // refs so this doesn't force the SSE connection to reopen on every
@@ -452,7 +408,9 @@ export default function App() {
           fetchDiffForWorkspace(focusedWorkspaceRef.current);
         }
       }
-      setSessions((prev) => prev.map((s) => (s.id === id ? { ...s, status } : s)));
+      setSessions((prev) =>
+        prev.map((s) => (s.id === id ? { ...s, status, since: since ?? s.since } : s))
+      );
     });
 
     es.addEventListener("sessions", refreshSessions);
@@ -982,61 +940,40 @@ export default function App() {
     // The header above is never a zone, so it's exempt from this whole
     // mechanism regardless of `activeColumn`.
     <main
-      className={`flex h-screen flex-col bg-garage-bg font-mono text-sm text-garage-ink ${
+      className={`flex h-screen flex-col bg-garage-bg font-sans text-[13px] text-garage-ink ${
         settings.focusDim ? "focus-dim" : ""
       }`}
     >
       <header
         onMouseDown={blurActiveTerminal}
-        className="flex flex-none items-center gap-3 border-b border-garage-line bg-garage-panel px-4 py-2"
+        className="flex h-12 flex-none items-center gap-3 border-b border-garage-line bg-garage-panel px-4"
       >
-        <span className="font-bold tracking-wide text-garage-amber">claude-garage</span>
-        <span className="text-garage-dim">pit wall</span>
+        <span className="text-[15px] font-semibold tracking-tight text-garage-ink">claude-garage</span>
         {/* p7 connection-resilience: daemon reachability chip (spec:
-            "Connection-state chip"). */}
-        <span
-          title="daemon connection state"
-          className={`flex items-center gap-1.5 border px-2 py-0.5 text-[11px] ${
-            connState === "live"
-              ? "border-garage-line text-garage-dim"
-              : "border-garage-amber text-garage-amber"
-          }`}
-        >
-          <span className={connState === "live" ? "text-garage-green" : ""}>
-            {connState === "live" ? "●" : "↻"}
+            "Connection-state chip"). A healthy daemon is silent — the chip
+            only renders while reconnecting, and reconnecting is not a
+            needs-input alarm so it stays amber-free. */}
+        {connState !== "live" && (
+          <span title="daemon connection state" className="flex items-center gap-1.5 text-xs text-garage-dim">
+            <span>↻</span>
+            reconnecting…
           </span>
-          {connState === "live" ? "live" : "reconnecting…"}
-        </span>
+        )}
         <div className="relative ml-auto flex items-center gap-2">
           {/* p7 attention-badge: aggregate needs-input count; click = same
-              jump as `a`. Quiet zero state keeps header geometry stable. */}
-          <button
-            type="button"
-            onClick={jumpToNeedsInput}
-            title="jump to a session that needs input (same as pressing a)"
-            className={`flex items-center gap-1.5 border px-2 py-0.5 text-[11px] ${
-              needsCount > 0
-                ? "border-garage-amber text-garage-amber hover:bg-garage-sel"
-                : "border-garage-line text-garage-dim"
-            }`}
-          >
-            <span className={needsCount > 0 ? "" : "text-garage-faint"}>●</span>
-            {needsCount === 0
-              ? "all clear"
-              : `${needsCount} need${needsCount === 1 ? "s" : ""} input`}
-          </button>
-          {/* p7 input-mode-indicator: the keys-routing chip (spec:
-              "Keys-routing chip"). */}
-          <span
-            title="where keystrokes go right now"
-            className={`border px-2 py-0.5 text-[11px] ${
-              inputMode
-                ? "border-garage-amber text-garage-amber"
-                : "border-garage-line text-garage-dim"
-            }`}
-          >
-            keys → {inputMode ? modeLabel : "garage"}
-          </span>
+              jump as `a`. A zero count says nothing, so it isn't rendered —
+              silence is the "all clear" state. */}
+          {needsCount > 0 && (
+            <button
+              type="button"
+              onClick={jumpToNeedsInput}
+              title="jump to a session that needs input (same as pressing a)"
+              className="flex items-center gap-1.5 rounded-md bg-garage-amber/10 px-3 py-1.5 text-[13px] font-semibold text-garage-amber hover:bg-garage-amber/15"
+            >
+              <span>●</span>
+              {needsCount} need{needsCount === 1 ? "s" : ""} input
+            </button>
+          )}
           <SettingsPopover />
           {/* P4-WIRE: settings/focus-dim — gear button opens the settings
               popover (design D-settings) belongs here, left of "+ add
@@ -1044,9 +981,9 @@ export default function App() {
           <button
             type="button"
             onClick={() => setShowAddWorkspace((v) => !v)}
-            className="border border-garage-line bg-garage-sel px-2 py-0.5 text-xs text-garage-ink hover:border-garage-amber"
+            className="rounded-md px-3 py-1.5 text-[13px] text-garage-dim hover:bg-garage-sel hover:text-garage-ink"
           >
-            + add workspace
+            + Add workspace
           </button>
           {showAddWorkspace && (
             <AddWorkspaceForm
@@ -1062,7 +999,7 @@ export default function App() {
       </header>
 
       {loadError && (
-        <div className="flex-none border-b border-garage-line bg-garage-panel px-4 py-1 text-xs text-garage-red">
+        <div className="flex-none px-4 py-2 text-xs text-garage-red bg-garage-panel">
           {loadError} — retrying…
         </div>
       )}
@@ -1118,9 +1055,6 @@ export default function App() {
           onFocusCell={setFocusedSessionId}
           onBlurChrome={blurActiveTerminal}
           onSessionsRestored={refreshSessions}
-          poppedOutIds={poppedOutIds}
-          onPopOut={handlePopOut}
-          onReclaim={handleReclaim}
           hiddenIds={hiddenIds}
           onHideCell={hideSession}
           columnActive={activeColumn === "grid"}
@@ -1169,27 +1103,27 @@ export default function App() {
           exists, plus the live key-routing note. Not a focus target. */}
       <div
         aria-hidden="true"
-        className="flex flex-none flex-wrap items-center gap-4 border-t border-garage-line bg-garage-panel px-4 py-1 text-[11px] text-garage-faint"
+        className="flex h-9 flex-none flex-wrap items-center gap-5 border-t border-garage-line bg-garage-panel px-4 text-xs text-garage-faint"
       >
         <span>
-          <span className="text-garage-amber">?</span> help
+          <kbd className="font-mono text-[11px] text-garage-dim">?</kbd> help
         </span>
         <span>
-          <span className="text-garage-amber">a</span> needs-input
+          <kbd className="font-mono text-[11px] text-garage-dim">a</kbd> needs-input
         </span>
         <span>
-          <span className="text-garage-amber">1–9</span> workspace
+          <kbd className="font-mono text-[11px] text-garage-dim">1–9</kbd> workspace
         </span>
         <span>
-          <span className="text-garage-amber">\</span> split
+          <kbd className="font-mono text-[11px] text-garage-dim">\</kbd> split
         </span>
         <span>
-          <span className="text-garage-amber">m</span> maximize
+          <kbd className="font-mono text-[11px] text-garage-dim">m</kbd> maximize
         </span>
         <span>
-          <span className="text-garage-amber">r</span> review
+          <kbd className="font-mono text-[11px] text-garage-dim">r</kbd> review
         </span>
-        <span className={`ml-auto ${inputMode ? "text-garage-amber" : ""}`}>
+        <span className={`ml-auto ${inputMode ? "text-garage-ink font-medium" : "text-garage-faint"}`}>
           {inputMode ? `keys go to ${modeLabel} — Ctrl+\` to return` : "keys go to garage"}
         </span>
       </div>
@@ -1215,14 +1149,14 @@ export default function App() {
       {/* p7 input-mode-indicator: transient escape hint on terminal focus
           (spec: "Terminal-focus escape hint"). */}
       {modeHint && (
-        <div className="fixed bottom-10 left-1/2 z-[60] -translate-x-1/2 border border-garage-line bg-garage-panel px-4 py-1.5 text-xs text-garage-dim shadow-lg">
-          keys now go to <span className="font-semibold text-garage-amber">{modeHint.label}</span>{" "}
-          — press <span className="text-garage-amber">Ctrl+`</span> to return to garage
+        <div className="fixed bottom-10 left-1/2 z-[60] -translate-x-1/2 rounded-lg border border-garage-line bg-garage-panel px-4 py-1.5 text-xs text-garage-dim shadow-sm">
+          keys now go to <span className="font-medium text-garage-ink">{modeHint.label}</span>{" "}
+          — press <span className="font-medium text-garage-ink">Ctrl+`</span> to return to garage
         </div>
       )}
 
       {editorError && (
-        <div className="fixed bottom-4 right-4 z-[60] flex max-w-sm items-start gap-2 border border-garage-red bg-garage-panel px-3 py-2 text-xs text-garage-red shadow-lg">
+        <div className="fixed bottom-4 right-4 z-[60] flex max-w-sm items-start gap-2 rounded-lg border border-garage-line bg-garage-panel px-3 py-2 text-xs text-garage-red shadow-sm">
           <span>{editorError}</span>
           <button
             type="button"

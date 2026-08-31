@@ -10,7 +10,11 @@ const run = promisify(execFile);
 // D-wt-location: outside any repo, so a worktree never pollutes `git status`
 // for the repo itself. Keyed by workspace so `~/.garage/worktrees/<ws>/` is
 // one place to `ls` per workspace.
-const WORKTREES_ROOT = path.join(homedir(), ".garage", "worktrees");
+// Follows the registry's GARAGE_DIR override (testability — see registry.js).
+const WORKTREES_ROOT = path.join(
+  process.env.GARAGE_DIR ?? path.join(homedir(), ".garage"),
+  "worktrees"
+);
 
 // D-wt-branch: namespaced so a repo's real branches never collide with ours,
 // and so the discard/merge cleanup guard below can refuse to touch anything

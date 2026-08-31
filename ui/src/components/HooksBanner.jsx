@@ -73,14 +73,17 @@ export default function HooksBanner({ sessions }) {
 
   if (install.state === "done") {
     return (
-      <div className="flex flex-none items-center gap-3 border-b border-garage-line bg-garage-panel px-4 py-1 text-xs text-garage-green">
-        <span>
+      <div className="flex flex-none items-center gap-3 bg-garage-sel px-4 py-2 text-xs text-garage-dim">
+        <span className="text-garage-green">
           ✓ hooks installed — needs-input detection is now instant
           {install.backup && (
             <span className="text-garage-dim"> (backup saved next to settings.json)</span>
           )}
         </span>
-        <button onClick={dismiss} className="ml-auto text-garage-dim hover:text-garage-ink">
+        <button
+          onClick={dismiss}
+          className="ml-auto rounded-md px-2 py-1 text-xs text-garage-dim hover:bg-garage-line hover:text-garage-ink"
+        >
           dismiss ×
         </button>
       </div>
@@ -88,12 +91,12 @@ export default function HooksBanner({ sessions }) {
   }
 
   return (
-    <div className="flex flex-none flex-wrap items-center gap-3 border-b border-garage-line bg-garage-panel px-4 py-1 text-xs text-garage-amber">
+    <div className="flex flex-none flex-wrap items-center gap-3 bg-garage-sel px-4 py-2 text-xs text-garage-dim">
       <span>Hooks make needs-input detection instant (without them, status lags the poller).</span>
       <button
         onClick={handleInstall}
         disabled={install.state === "busy"}
-        className="border border-garage-amber px-2 py-0.5 text-garage-amber hover:bg-garage-amber hover:text-garage-bg disabled:opacity-40"
+        className="rounded-md bg-garage-panel px-3 py-1.5 text-[13px] text-garage-ink hover:bg-garage-line disabled:opacity-40"
       >
         {install.state === "busy" ? "installing…" : "install hooks for me"}
       </button>
@@ -110,7 +113,10 @@ export default function HooksBanner({ sessions }) {
           {install.error}
         </span>
       )}
-      <button onClick={dismiss} className="ml-auto text-garage-dim hover:text-garage-ink">
+      <button
+        onClick={dismiss}
+        className="ml-auto rounded-md px-2 py-1 text-xs text-garage-dim hover:bg-garage-line hover:text-garage-ink"
+      >
         dismiss ×
       </button>
     </div>

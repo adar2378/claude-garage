@@ -15,7 +15,7 @@ export default function DiffList({ files, selectedPath, emptyMessage = "no chang
   }, [selectedPath]);
 
   if (files.length === 0) {
-    return <p className="px-2 py-2 text-[11px] text-garage-dim">{emptyMessage}</p>;
+    return <p className="px-3 py-2 text-xs text-garage-dim">{emptyMessage}</p>;
   }
 
   return (
@@ -28,8 +28,8 @@ export default function DiffList({ files, selectedPath, emptyMessage = "no chang
           }}
         >
           <div
-            className={`sticky top-0 z-10 truncate border-b border-t border-garage-line bg-garage-panel px-2 py-1 text-[11px] ${
-              f.path === selectedPath ? "text-garage-amber" : "text-garage-dim"
+            className={`sticky top-0 z-10 truncate border-b border-t border-garage-line bg-garage-panel px-3 py-1.5 font-mono text-xs ${
+              f.path === selectedPath ? "text-garage-ink" : "text-garage-dim"
             }`}
           >
             {f.renamedFrom || f.oldPath ? `${f.oldPath ?? f.renamedFrom} → ${f.path}` : f.path}

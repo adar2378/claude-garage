@@ -37,8 +37,8 @@ one screen, built around four things that rarely coexist.
    `tmux attach -t garage/<workspace>/<label>` still works, and dead sessions
    restore with their full conversation (`claude --resume`) in one click.
 2. 🖥️ **Every session of a project on screen at once.** Not a switcher, a
-   live grid of interactive terminals. Split, resize, maximize, float, or
-   detach into standalone views, VS Code-style.
+   live grid of interactive terminals. Split, resize, maximize, or detach
+   into standalone views, VS Code-style.
 3. 🚨 **Needs-input triage as a first-class queue.** Blocked sessions sort
    first everywhere, light up amber, count into the header badge and the tab
    title; `a` jumps to whichever agent is waiting, across every project.
@@ -67,6 +67,22 @@ sessions with the `+` next to its name, and press `?` for the keys.
 **install hooks for me** in the banner for instant detection. The daemon
 merges Claude Code's hooks into `~/.claude/settings.json` (backup kept,
 idempotent).
+
+## TUI
+
+The same wall, full-screen in your terminal:
+
+```bash
+npx claude-garage tui
+```
+
+Starts the daemon if one isn't already running, then opens the terminal
+wall. Core keys: `1`–`9` switch workspaces, `Enter` engages the focused
+terminal (keys go to the agent), `Ctrl+G` hands keys back to the garage,
+`a` jumps to the session that's waited longest for input, `A` opens the
+triage queue, `q` quits. The daemon and the web wall at
+`http://127.0.0.1:4747` keep working alongside — quitting the TUI leaves
+them (and every tmux session) running.
 
 ## Local-only by design
 

@@ -6,3 +6,14 @@ dist/
 
 # local marketing assets — never upload
 marketing/
+
+# dart build artifacts (nocterm spike)
+.dart_tool/
+spikes/nocterm-wall/pubspec.lock
+
+# spike: research artifact — its duplicate nocterm copy and compiled binary stay local
+spikes/nocterm-wall/vendor/
+spikes/nocterm-wall/bin/wall
+
+# local research notes
+GAP.md

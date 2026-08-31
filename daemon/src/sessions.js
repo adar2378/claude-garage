@@ -1,4 +1,5 @@
 import { stat } from "node:fs/promises";
+import os from "node:os";
 import {
   GARAGE_PREFIX,
   NAME_RE,
@@ -6,6 +7,7 @@ import {
   listSessions,
   listPanePaths,
   resolveBranch,
+  normalizeTitle,
   hasSession,
   createSession,
   killSession,
@@ -17,8 +19,10 @@ import {
   upsertSessionMeta,
   removeSessionMeta,
 } from "./registry.js";
-import { getStatus } from "./status.js";
+import { getStatusEntry } from "./status.js";
 import { createWorktree } from "./worktrees.js";
+import { getStatuslineContext, getRateLimits } from "./statusline.js";
+import { getCachedContext, refreshContext } from "./transcript.js";
 
 const CLAUDE_CMD = process.env.GARAGE_CLAUDE_CMD ?? "claude";
 
@@ -26,6 +30,8 @@ export default async function sessionRoutes(app) {
   app.get("/api/sessions", async () => {
     const sessions = await listSessions();
     const panePaths = await listPanePaths();
+    // p10: same tmux hostname for every session in this request — read once.
+    const hostname = os.hostname();
 
     // D-branch: this route is re-hit on every SSE-driven refetch, so the
     // git calls it triggers must stay cheap — one execFile per unique
@@ -41,15 +47,57 @@ export default async function sessionRoutes(app) {
       return branchCache.get(dir);
     };
 
+    // p11: fetched once up front (not per-session) — same cost discipline as
+    // branchCache above — so both the live loop's claudeSessionId lookup and
+    // the restorable loop below share one registry read.
+    const metas = await listSessionMetas();
+    const metaById = new Map(metas.map((m) => [m.id, m]));
+
     const live = await Promise.all(
-      sessions.map(async (s) => ({
-        ...s,
-        status: getStatus(s.id),
-        // Live pane cwd, not session_path (see listPanePaths) — falls back
-        // to session_path only if the pane vanished between the two tmux
-        // calls above (a session that died mid-request).
-        branch: await getBranch(panePaths.get(s.id) ?? s.dir),
-      }))
+      sessions.map(async (s) => {
+        // since: epoch ms the current status began, so the UI can render
+        // elapsed time without a second lookup (see status.js getStatusEntry).
+        const { state: status, since, message } = getStatusEntry(s.id);
+        const pane = panePaths.get(s.id);
+        const dir = pane?.path ?? s.dir;
+
+        // p11: context — statusline data (pushed by the wrapper) beats the
+        // transcript fallback beats null. The transcript path is a cache
+        // read only: getCachedContext never blocks, refreshContext kicks a
+        // background read (a no-op if the cache is still fresh or a read is
+        // already in flight) — this route must never block on file IO.
+        let context = getStatuslineContext(s.id);
+        if (!context) {
+          context = getCachedContext(s.id);
+          const claudeSessionId = metaById.get(s.id)?.claudeSessionId;
+          if (claudeSessionId && dir) {
+            refreshContext(s.id, { dir, claudeSessionId });
+          }
+        }
+
+        return {
+          ...s,
+          status,
+          // p8: the Notification hook's text for a needs-input session; the
+          // store guarantees null for every other state (see status.js).
+          message: message ?? null,
+          // A session that has never transitioned has no recorded `since`
+          // (the store only stamps one on a real state change), which would
+          // render as "—" in the UI even though the session is live and has
+          // an obvious age. Fall back to when tmux created it.
+          since: since ?? s.createdAt ?? null,
+          // Live pane cwd, not session_path (see listPanePaths) — falls back
+          // to session_path only if the pane vanished between the two tmux
+          // calls above (a session that died mid-request).
+          branch: await getBranch(dir),
+          // p10: the pane's OSC title (e.g. Claude Code's "✳ <summary>"),
+          // filtered down to null when it's just tmux's own default (empty,
+          // hostname, bare shell name) — see normalizeTitle.
+          title: normalizeTitle(pane?.title, hostname),
+          // p11: {usedPercentage, source: "statusline"|"transcript"} | null.
+          context,
+        };
+      })
     );
     const liveIds = new Set(live.map((s) => s.id));
 
@@ -57,7 +105,6 @@ export default async function sessionRoutes(app) {
     // has no matching live tmux session. dir is re-resolved from the
     // registry (not a cached copy in the meta record) so a workspace
     // re-registered to a new path since the crash is reflected correctly.
-    const metas = await listSessionMetas();
     const restorable = [];
     for (const meta of metas) {
       if (liveIds.has(meta.id)) continue;
@@ -70,15 +117,28 @@ export default async function sessionRoutes(app) {
         dir,
         attached: false,
         status: "restorable",
+        since: null,
+        message: null,
+        // p10: no live pane to read a title from — restorable entries never
+        // have one (see session-status spec).
+        title: null,
         restorable: true,
         // No live pane to read a cwd from — resolve against the
         // registered workspace dir instead; null if that's gone too.
         branch: await getBranch(dir),
+        // p11: restorable entries never carry context — there's no live
+        // session to have posted a statusline or grown a fresh transcript
+        // usage figure since it died (see context-telemetry spec).
+        context: null,
       });
     }
 
     return [...live, ...restorable];
   });
+
+  // p11: account-wide rate limits from the most recent statusline post —
+  // null until one arrives. See statusline.js for the store.
+  app.get("/api/usage", async () => getRateLimits());
 
   app.post("/api/sessions", async (req, reply) => {
     const { workspace, label, worktree: wantWorktree } = req.body ?? {};
@@ -236,6 +296,29 @@ export default async function sessionRoutes(app) {
         .code(403)
         .send({ error: "refusing to touch non-garage sessions" });
     }
+
+    // p8.1: `?meta=1` deletes ONLY the stored resume metadata of a NON-live
+    // (restorable) session — the plain DELETE below 404s for those since
+    // there is no tmux session to kill. Behavior without the param is
+    // unchanged (the web UI never sends it). The worktree record rides the
+    // response the same way, so the caller can still surface "worktree
+    // kept" for a discarded restorable worktree session.
+    if (req.query?.meta === "1") {
+      if (await hasSession(id)) {
+        return reply
+          .code(409)
+          .send({ error: `session is live — delete it without meta=1: ${id}` });
+      }
+      const meta = await getSessionMeta(id).catch(() => null);
+      if (!meta) {
+        return reply.code(404).send({ error: `no resume metadata for: ${id}` });
+      }
+      await removeSessionMeta(id).catch(() => {});
+      return reply
+        .code(200)
+        .send({ deleted: true, meta: true, worktree: meta?.worktree ?? null });
+    }
+
     if (!(await hasSession(id))) {
       return reply.code(404).send({ error: `no such session: ${id}` });
     }

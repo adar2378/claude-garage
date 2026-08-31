@@ -190,7 +190,7 @@ async function resolveDiffRoot(registeredDir, sessionId) {
   const wtPath = meta?.worktree?.path;
 
   const panePaths = await listPanePaths();
-  const paneCwd = panePaths.get(sessionId);
+  const paneCwd = panePaths.get(sessionId)?.path;
   if (paneCwd && paneCwd !== registeredDir) {
     const s = await stat(paneCwd).catch(() => null);
     if (s?.isDirectory()) return { dir: paneCwd, isWorktree: !!wtPath };

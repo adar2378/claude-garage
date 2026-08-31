@@ -1,0 +1,49 @@
+# garage-wall — the claude-garage TUI, ported to ratatui (p9-ratatui-port).
+#
+# Standalone cargo workspace (the [workspace] table keeps it from being
+# absorbed by any parent workspace). Crate pins follow the ratatui spike
+# (spikes/ratatui-wall/SPIKE.md): published crates only, no git deps, no
+# vendoring.
+
+[workspace]
+
+[package]
+name = "garage-wall"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "garage_wall"
+path = "src/lib.rs"
+
+[[bin]]
+name = "garage-wall"
+path = "src/main.rs"
+
+[[bin]]
+# Test helper for the teardown-injection regression test (tests/injection.rs):
+# attaches TileClients to scratch tmux sessions and either closes them
+# cleanly or holds them for the test to SIGKILL. Not shipped.
+name = "pty_hold"
+path = "src/bin/pty_hold.rs"
+
+[dependencies]
+# TUI stack — pinned per the spike (all gates passed on these exact crates).
+ratatui = "0.30.2"
+crossterm = "0.29.0"
+portable-pty = "0.9.0"
+vt100 = "0.16.2"
+tui-term = "0.3.4"
+
+# Runtime shape (design.md: tokio; PTY readers + SSE as tasks feeding one
+# event channel; a single state-owning loop).
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync", "signal"] }
+
+# Daemon HTTP client (design.md: "std TCP or a small HTTP crate") — ureq,
+# blocking, run inside spawn_blocking tasks. No TLS: the daemon is
+# 127.0.0.1-only plain HTTP.
+ureq = { version = "2.12.1", default-features = false }
+serde_json = "1.0"
+
+[profile.release]
+debug = false

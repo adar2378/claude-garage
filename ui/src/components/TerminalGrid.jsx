@@ -1,10 +1,13 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { DockviewReact } from "dockview-react";
-import { themeAbyss } from "dockview";
+import { themeLight, themeDark } from "dockview";
 import "dockview/dist/styles/dockview.css";
 import "../dockview-overrides.css";
 import SessionTerminal from "../SessionTerminal.jsx";
-import { glyphFor, colorFor } from "../lib/status.js";
+import { glyphFor, colorFor, tipFor } from "../lib/status.js";
+import { formatElapsed, useTicker } from "../lib/elapsed.js";
+import { useEffectiveTheme } from "../lib/theme.js";
+import { useSettings } from "../lib/settings.js";
 import { restoreSession, deleteSession, finishWorktree, createSession } from "../lib/api.js";
 import {
   loadOrBuildLayout,
@@ -19,6 +22,11 @@ const SAVE_DEBOUNCE_MS = 300;
 // First free `claude-N` label in this workspace's deck (p7 D-grid-controls:
 // explicit splits and the grid-header spawn menu auto-label rather than
 // prompting — the rail's + form remains the place to pick a name).
+// Module-scope so the object identity is stable across renders — dockview
+// re-applies its skin whenever the `theme` prop changes identity.
+const GARAGE_DOCK_LIGHT = { ...themeLight, tabGroupIndicator: "none" };
+const GARAGE_DOCK_DARK = { ...themeDark, tabGroupIndicator: "none" };
+
 function nextAutoLabel(sessions) {
   const used = new Set(sessions.map((s) => s.label));
   let n = 1;
@@ -33,8 +41,8 @@ function nextAutoLabel(sessions) {
 // this component's subtree, so a normal Context crosses the portal
 // boundary exactly like it would for any other child. That's what lets a
 // panel's content (SessionCellPanel) *and* its tab (SessionCellTab) react
-// to session-state changes (status, restore-in-flight, popped-out,
-// app-level focus) without ever calling `panel.api.updateParameters()`:
+// to session-state changes (status, restore-in-flight, app-level focus)
+// without ever calling `panel.api.updateParameters()`:
 // each panel's own identity (the only thing dockview needs to persist) is
 // just its session id — everything else is read fresh from context on
 // every render.
@@ -44,19 +52,15 @@ const GridContext = createContext(null);
 // grid-controls capabilities). One dockview panel per session in the
 // focused workspace, keyed by session id (design D-dock) — restorable
 // sessions keep the restore placeholder as their panel's content, and
-// sessions currently viewed in a pop-out window (design D-popout) render a
-// reclaim placeholder instead of a live terminal, but every session still
-// occupies a slot in the layout so the drag-dock arrangement never shifts
-// out from under the user just because a cell's *content* changed.
+// every session occupies a slot in the layout so the drag-dock arrangement
+// never shifts out from under the user just because a cell's *content*
+// changed.
 export default function TerminalGrid({
   group,
   focusedSessionId,
   onFocusCell,
   onBlurChrome,
   onSessionsRestored,
-  poppedOutIds,
-  onPopOut,
-  onReclaim,
   hiddenIds,
   onHideCell,
   columnActive,
@@ -72,6 +76,16 @@ export default function TerminalGrid({
   onRejoinCell,
   onAssignNewSession,
 }) {
+  // redesign/light-minimal: the dock's base theme has to follow the app
+  // theme. It was pinned to dockview's dark `abyss`, which left dockview's
+  // own unoverridden chrome dark against a white wall. themeLight/themeDark
+  // carry the matching colorScheme; `tabGroupIndicator: "none"` is carried
+  // over from abyss because SessionCellTab IS the whole title bar and a
+  // second group indicator would render as a stray bar above it.
+  const [dockSettings] = useSettings();
+  const appTheme = useEffectiveTheme(dockSettings.theme);
+  const dockTheme = appTheme === "dark" ? GARAGE_DOCK_DARK : GARAGE_DOCK_LIGHT;
+
   // p8 grid-views: layouts persist PER VIEW — the main view keeps the
   // workspace's original key (backward compatible with pre-views
   // layouts), detached views get their own.
@@ -239,9 +253,7 @@ export default function TerminalGrid({
       return;
     }
     const panel = focusedSessionId ? api.getPanel(focusedSessionId) : null;
-    // Floating cells are outside the tiling — maximize only applies to
-    // grid-located groups.
-    if (panel && panel.group.api.location.type === "grid") api.maximizeGroup(panel);
+    if (panel) api.maximizeGroup(panel);
   }, [focusedSessionId]);
 
   // App's keydown listener owns `\` and `m` (single-listener design
@@ -263,11 +275,9 @@ export default function TerminalGrid({
   // Hidden sessions (design: hide control) are excluded here, before
   // `sessionIds` is derived below — that's what makes reconcile() drop
   // their panel from the grid, the same mechanism that removes a panel for
-  // a session that ended entirely. Unlike popped-out sessions (which stay
-  // full members of `group.sessions` and keep their panel slot, just
-  // rendered as a reclaim placeholder — see poppedOutIds usage below),
-  // hiding removes the cell from the grid outright; the rail is the only
-  // place a hidden session still shows up (App owns that split).
+  // a session that ended entirely. Hiding removes the cell from the grid
+  // outright; the rail is the only place a hidden session still shows up
+  // (App owns that split).
   const visibleSessions = useMemo(
     () =>
       (group?.sessions ?? []).filter(
@@ -282,28 +292,14 @@ export default function TerminalGrid({
     return map;
   }, [visibleSessions]);
 
-  // Reclaim = clear the popout heartbeat record *and* focus the cell, same
-  // as clicking any other cell (design: "the main grid's cell renders that
-  // session as a live terminal again").
-  const reclaim = useCallback(
-    (id) => {
-      onReclaim?.(id);
-      onFocusCell(id);
-    },
-    [onReclaim, onFocusCell]
-  );
-
   const contextValue = useMemo(
     () => ({
       sessionsById,
       focusedSessionId,
       restoringIds,
       restoreError,
-      poppedOutIds,
       columnActive,
       onFocusCell,
-      onPopOut,
-      onReclaim: reclaim,
       onHideCell,
       onSessionsRestored,
       restoreOne,
@@ -325,11 +321,8 @@ export default function TerminalGrid({
       focusedSessionId,
       restoringIds,
       restoreError,
-      poppedOutIds,
       columnActive,
       onFocusCell,
-      onPopOut,
-      reclaim,
       onHideCell,
       onSessionsRestored,
       splitFrom,
@@ -440,15 +433,15 @@ export default function TerminalGrid({
   // is already dead (and may have been the very last one in the grid), so
   // this can't live inside the panel/grid content itself.
   const finishToastNode = finishToast && (
-    <div className="fixed bottom-4 right-4 z-50 flex items-center gap-2 border border-garage-amber bg-garage-panel px-3 py-2 text-[11px] text-garage-ink shadow-lg">
+    <div className="fixed bottom-4 right-4 z-50 flex items-center gap-2 rounded-lg border border-garage-line bg-garage-bg px-3 py-2 text-xs text-garage-ink shadow-sm">
       <span className="text-garage-dim">worktree for</span>
-      <span className="font-semibold text-garage-amber">{finishToast.label}</span>
+      <span className="font-semibold text-garage-ink">{finishToast.label}</span>
       <span className="text-garage-line">:</span>
       <button
         type="button"
         onClick={() => handleFinishAction("merge")}
         disabled={finishToast.busy}
-        className="border border-garage-line px-2 py-0.5 text-[10px] text-garage-dim hover:border-garage-amber hover:text-garage-amber disabled:opacity-40"
+        className="rounded-md px-2 py-1 text-xs text-garage-dim hover:bg-garage-sel hover:text-garage-ink disabled:opacity-40"
       >
         merge
       </button>
@@ -456,10 +449,10 @@ export default function TerminalGrid({
         type="button"
         onClick={handleDiscardClick}
         disabled={finishToast.busy}
-        className={`border px-2 py-0.5 text-[10px] disabled:opacity-40 ${
+        className={`rounded-md px-2 py-1 text-xs disabled:opacity-40 ${
           finishToast.discardArmed
-            ? "border-garage-red text-garage-red"
-            : "border-garage-line text-garage-dim hover:border-garage-red hover:text-garage-red"
+            ? "text-garage-red"
+            : "text-garage-dim hover:bg-garage-sel hover:text-garage-red"
         }`}
       >
         {finishToast.discardArmed ? "discard branch?" : "discard"}
@@ -468,7 +461,7 @@ export default function TerminalGrid({
         type="button"
         onClick={handleFinishKeep}
         disabled={finishToast.busy}
-        className="border border-garage-line px-2 py-0.5 text-[10px] text-garage-dim hover:border-garage-amber hover:text-garage-amber disabled:opacity-40"
+        className="rounded-md px-2 py-1 text-xs text-garage-dim hover:bg-garage-sel hover:text-garage-ink disabled:opacity-40"
       >
         keep
       </button>
@@ -497,36 +490,36 @@ export default function TerminalGrid({
           onMouseDownCapture={onActivateColumn}
           className="grid min-h-0 place-items-center bg-garage-bg p-6"
         >
-          <div className="max-w-md border border-garage-line bg-garage-panel px-7 py-6">
-            <h2 className="mb-1 text-sm font-semibold text-garage-ink">your pit wall is empty</h2>
-            <p className="mb-3 text-xs text-garage-dim">
+          <div className="max-w-md space-y-4 rounded-xl border border-garage-line bg-garage-panel px-8 py-7">
+            <h2 className="text-[15px] font-semibold text-garage-ink">your pit wall is empty</h2>
+            <p className="text-[13px] text-garage-dim">
               claude-garage runs several Claude Code sessions side by side and tells you the
               moment one needs you.
             </p>
-            <ol className="mb-4 list-decimal pl-5 text-xs text-garage-dim">
-              <li className="mb-1">
+            <ol className="list-decimal space-y-1.5 pl-5 text-[13px] text-garage-dim">
+              <li>
                 <span className="font-semibold text-garage-ink">add a workspace</span> — point it
                 at a project folder
               </li>
-              <li className="mb-1">
+              <li>
                 <span className="font-semibold text-garage-ink">spawn sessions</span> — the{" "}
-                <span className="text-garage-amber">+</span> next to the workspace name in the rail
+                <span className="font-mono text-garage-ink">+</span> next to the workspace name in the rail
               </li>
               <li>
                 <span className="font-semibold text-garage-ink">triage</span> — amber{" "}
                 <span className="text-garage-amber">●</span> means Claude is waiting; press{" "}
-                <span className="text-garage-amber">a</span> to jump there
+                <span className="font-mono text-garage-ink">a</span> to jump there
               </li>
             </ol>
             <button
               type="button"
               onClick={() => onAddWorkspace?.()}
-              className="border border-garage-amber px-4 py-1.5 text-xs text-garage-amber hover:bg-garage-amber hover:text-garage-bg"
+              className="rounded-md bg-garage-ink px-4 py-2 text-[13px] font-medium text-garage-bg hover:opacity-90"
             >
               + add your first workspace
             </button>
-            <p className="mt-3 text-[11px] text-garage-faint">
-              press <span className="text-garage-amber">?</span> anytime for keybindings &amp; the
+            <p className="text-[11px] text-garage-faint">
+              press <span className="font-mono text-garage-ink">?</span> anytime for keybindings &amp; the
               status legend
             </p>
           </div>
@@ -546,7 +539,7 @@ export default function TerminalGrid({
         >
           <span>
             no sessions in {group.name} yet — spawn one with the{" "}
-            <span className="text-garage-amber">+</span> next to its name in the rail
+            <span className="font-mono text-garage-ink">+</span> next to its name in the rail
           </span>
         </div>
         {finishToastNode}
@@ -575,8 +568,8 @@ export default function TerminalGrid({
       onMouseDownCapture={onActivateColumn}
       className="flex min-h-0 flex-col overflow-hidden bg-garage-bg"
     >
-      <div className="flex flex-none items-center gap-2 border-b border-garage-line bg-garage-panel px-2 py-1 text-xs">
-        <span className="text-garage-dim">{group.name}</span>
+      <div className="flex h-10 flex-none items-center gap-2 border-b border-garage-line bg-garage-panel px-3 text-[13px]">
+        <span className="font-medium text-garage-ink">{group.name}</span>
 
         {/* p7 grid-controls toolbar: VS Code's terminal affordances — + ▾
             spawn menu, split right/down, maximize — acting on the focused
@@ -588,14 +581,14 @@ export default function TerminalGrid({
             title={`new session in ${group.name}`}
             aria-haspopup="menu"
             aria-expanded={spawnMenuOpen}
-            className="px-2 py-0.5 text-garage-dim hover:text-garage-amber"
+            className="rounded-md px-2 py-1 text-garage-dim hover:bg-garage-sel hover:text-garage-ink"
           >
-            + <span className="text-[9px] text-garage-faint">▾</span>
+            + <span className="text-xs text-garage-faint">▾</span>
           </button>
           {spawnMenuOpen && (
             <div
               role="menu"
-              className="absolute left-0 top-full z-20 mt-1 w-64 border border-garage-line bg-garage-panel p-1 shadow-lg"
+              className="absolute left-0 top-full z-20 mt-1 w-64 rounded-lg border border-garage-line bg-garage-bg p-1 shadow-sm"
             >
               <button
                 type="button"
@@ -604,10 +597,10 @@ export default function TerminalGrid({
                   setSpawnMenuOpen(false);
                   splitFrom(focusedSessionId, "right");
                 }}
-                className="flex w-full flex-col px-2 py-1.5 text-left hover:bg-garage-sel"
+                className="flex w-full flex-col rounded-md px-3 py-2 text-left hover:bg-garage-sel"
               >
-                <span className="text-garage-ink">new session</span>
-                <span className="text-[10px] text-garage-faint">
+                <span className="text-[13px] text-garage-ink">new session</span>
+                <span className="text-xs text-garage-faint">
                   spawns beside the focused cell — same directory
                 </span>
               </button>
@@ -618,10 +611,10 @@ export default function TerminalGrid({
                   setSpawnMenuOpen(false);
                   splitFrom(focusedSessionId, "right", { worktree: true });
                 }}
-                className="flex w-full flex-col px-2 py-1.5 text-left hover:bg-garage-sel"
+                className="flex w-full flex-col rounded-md px-3 py-2 text-left hover:bg-garage-sel"
               >
-                <span className="text-garage-ink">new worktree session</span>
-                <span className="text-[10px] text-garage-faint">
+                <span className="text-[13px] text-garage-ink">new worktree session</span>
+                <span className="text-xs text-garage-faint">
                   isolated git worktree on branch garage/&lt;label&gt;
                 </span>
               </button>
@@ -632,7 +625,7 @@ export default function TerminalGrid({
             onClick={() => focusedSessionId && splitFrom(focusedSessionId, "right")}
             disabled={!focusedSessionId}
             title="split focused cell right (\)"
-            className="px-1.5 py-0.5 text-garage-dim hover:text-garage-amber disabled:opacity-30"
+            className="rounded-md px-1.5 py-1 text-garage-dim hover:bg-garage-sel hover:text-garage-ink disabled:opacity-30"
           >
             ◫
           </button>
@@ -641,7 +634,7 @@ export default function TerminalGrid({
             onClick={() => focusedSessionId && splitFrom(focusedSessionId, "below")}
             disabled={!focusedSessionId}
             title="split focused cell down"
-            className="px-1.5 py-0.5 text-garage-dim hover:text-garage-amber disabled:opacity-30"
+            className="rounded-md px-1.5 py-1 text-garage-dim hover:bg-garage-sel hover:text-garage-ink disabled:opacity-30"
           >
             ⬒
           </button>
@@ -650,7 +643,7 @@ export default function TerminalGrid({
             onClick={toggleMaximize}
             disabled={!focusedSessionId}
             title="maximize focused cell — toggle (m)"
-            className="px-1.5 py-0.5 text-garage-dim hover:text-garage-amber disabled:opacity-30"
+            className="rounded-md px-1.5 py-1 text-garage-dim hover:bg-garage-sel hover:text-garage-ink disabled:opacity-30"
           >
             ⛶
           </button>
@@ -666,7 +659,7 @@ export default function TerminalGrid({
           type="button"
           onClick={handleResetLayout}
           title="Discard the custom layout and restore the default grid"
-          className="ml-auto border border-garage-line px-2 py-0.5 text-[11px] text-garage-dim hover:border-garage-amber hover:text-garage-amber"
+          className="ml-auto rounded-md px-2.5 py-1 text-xs text-garage-dim hover:bg-garage-sel hover:text-garage-ink"
         >
           reset layout
         </button>
@@ -677,7 +670,7 @@ export default function TerminalGrid({
           needs-input member carries the accent dot so nothing blocked can
           hide behind a view switch. */}
       {views.length > 1 && (
-        <div className="flex flex-none items-center gap-1 border-b border-garage-line bg-garage-panel px-2 py-1 text-[11px]">
+        <div className="flex flex-none items-center gap-1 border-b border-garage-line bg-garage-panel px-3 py-1.5 text-xs">
           {views.map((v) => {
             const active = v.name === focusedView;
             return (
@@ -688,10 +681,10 @@ export default function TerminalGrid({
                 title={`show view "${v.name}" (${v.sessions.length} session${
                   v.sessions.length === 1 ? "" : "s"
                 })`}
-                className={`flex items-center gap-1.5 border px-2 py-0.5 ${
+                className={`flex items-center gap-1.5 rounded-md px-2.5 py-1 ${
                   active
-                    ? "border-garage-amber text-garage-amber"
-                    : "border-garage-line text-garage-dim hover:border-garage-amber hover:text-garage-amber"
+                    ? "bg-garage-sel text-garage-ink"
+                    : "text-garage-dim hover:bg-garage-sel"
                 }`}
               >
                 {v.needsCount > 0 && <span className="text-garage-amber">●</span>}
@@ -705,8 +698,8 @@ export default function TerminalGrid({
       <div className="min-h-0 flex-1 p-2">
         <GridContext.Provider value={contextValue}>
           <DockviewReact
-            className="garage-dock dockview-theme-abyss"
-            theme={themeAbyss}
+            className="garage-dock"
+            theme={dockTheme}
             components={{ terminal: SessionCellPanel }}
             // Every panel in this grid is the same "terminal" content
             // component, so one tab component covers all of them —
@@ -733,7 +726,7 @@ export default function TerminalGrid({
 // always a session id (see layout.js — every addPanel call uses the
 // session id as the panel id); `props` otherwise follows
 // IDockviewPanelHeaderProps (api/containerApi/params/tabLocation), but
-// everything this needs — the session record, focus state, popout state —
+// everything this needs — the session record, focus state, restore state —
 // comes from GridContext instead, same as SessionCellPanel below.
 //
 // This is rendered inside dockview's `.dv-tab` element (see
@@ -749,40 +742,10 @@ export default function TerminalGrid({
 // focused/needs-input/columnActive inputs as SessionCellPanel's content
 // zone below, so the merged bar dims and un-dims in lockstep with the rest
 // of the cell rather than as a separately-lit strip above a dimmed body.
-function SessionCellTab({ api, containerApi }) {
+function SessionCellTab({ api }) {
   const ctx = useContext(GridContext);
   const id = api.id;
   const s = ctx.sessionsById.get(id);
-
-  // p8 float-in-page: is this cell currently a floating group rather than
-  // a grid tile? Driven by dockview's own location events so the toggle
-  // stays correct however the cell got there (button, or dragging a
-  // floating group back into the grid by its tab).
-  const [isFloating, setIsFloating] = useState(() => api.location.type === "floating");
-  useEffect(() => {
-    const disposable = api.onDidLocationChange((e) =>
-      setIsFloating(e.location.type === "floating")
-    );
-    return () => disposable.dispose();
-  }, [api]);
-
-  // Float ⇄ dock. Floating uses dockview's native floating groups — the
-  // cell lifts out of the tiling into a draggable/resizable window INSIDE
-  // the page (unlike ⇱ pop-out, which opens a separate browser window).
-  // Docking back tucks it beside an existing grid tile; with no grid tile
-  // left, dragging the tab onto the empty grid still works natively.
-  function toggleFloat() {
-    const panel = containerApi.getPanel(id);
-    if (!panel) return;
-    if (panel.group.api.location.type === "floating") {
-      const target = containerApi.panels.find(
-        (p) => p.id !== id && p.group.api.location.type === "grid"
-      );
-      if (target) panel.api.moveTo({ group: target.group, position: "right" });
-      return;
-    }
-    containerApi.addFloatingGroup(panel, { x: 48, y: 32, width: 640, height: 420 });
-  }
 
   // Two-step confirm for the close (✕) button — click 1 arms it ("sure?",
   // text-garage-red) for 3s, click 2 within that window actually deletes.
@@ -805,15 +768,19 @@ function SessionCellTab({ api, containerApi }) {
     []
   );
 
+  // Header timer: advances the elapsed-time readout every second (design
+  // contract §6) — a no-op-safe interval hook, cheap to call unconditionally
+  // even on the early `!s` return below since hooks must run every render.
+  useTicker();
+
   if (!s) return null;
 
   const focused = id === ctx.focusedSessionId;
-  const isPoppedOut = ctx.poppedOutIds?.has(id) ?? false;
   // v1: the close control only ever targets a session with a real tmux
   // session behind it — a restorable entry has none, and DELETE would just
-  // 404 (see daemon/src/sessions.js). Popped-out cells are still live
-  // (only their *rendering* moved to another window), so they keep ✕.
+  // 404 (see daemon/src/sessions.js).
   const isLive = s.status !== "restorable";
+  const isNeedsInput = s.status === "needs-input";
 
   async function handleClose() {
     if (!closeArmed) {
@@ -857,150 +824,153 @@ function SessionCellTab({ api, containerApi }) {
   return (
     <div
       data-dim-zone=""
-      className={`flex h-full w-full items-center gap-2 border-b bg-garage-panel px-2 text-xs ${
-        focused ? "border-garage-amber" : "border-garage-line"
-      } ${s.status === "needs-input" ? "dim-exempt" : ""} ${ctx.columnActive ? "dim-focused" : ""}`}
+      className={`group/cell flex h-9 w-full items-center gap-2 border-b border-garage-line bg-garage-panel px-3 ${
+        isNeedsInput ? "bg-garage-amber/5" : ""
+      } ${isNeedsInput ? "dim-exempt" : ""} ${ctx.columnActive ? "dim-focused" : ""}`}
     >
-      <span className={colorFor(s.status)}>{glyphFor(s.status)}</span>
-      <span className={focused ? "font-semibold text-garage-amber" : "text-garage-ink"}>{s.label}</span>
+      <span className={colorFor(s.status)} title={tipFor(s.status)}>
+        {glyphFor(s.status)}
+      </span>
+      <span
+        className={`text-[13px] tracking-tight text-garage-ink ${
+          focused ? "font-semibold" : "font-medium"
+        }`}
+      >
+        {s.label}
+      </span>
       {s.branch && (
         <span
-          className="max-w-[90px] shrink-0 truncate text-[10px] text-garage-faint"
+          className="max-w-[90px] shrink-0 truncate font-mono text-[11px] text-garage-faint"
           title={s.branch}
         >
           ⎇ {s.branch}
         </span>
       )}
-      <span className="ml-auto text-garage-faint">{s.status}</span>
+      <span
+        className={`ml-auto font-mono text-xs tabular-nums ${
+          isNeedsInput ? "font-semibold text-garage-amber" : "text-garage-faint"
+        }`}
+      >
+        {formatElapsed(s.since)}
+      </span>
       {closeError && (
         <span className="max-w-[9rem] truncate text-garage-red" title={closeError}>
           {closeError}
         </span>
       )}
-      {/* p7 grid-controls: per-cell splits, same semantics as the header
-          toolbar but anchored to THIS cell — VS Code's per-terminal split. */}
-      {isLive && (
-        <button
-          type="button"
-          onMouseDown={(e) => e.stopPropagation()}
-          onClick={(e) => {
-            e.stopPropagation();
-            ctx.splitFrom?.(id, "right");
-          }}
-          title="split right — new session beside this one"
-          className="text-garage-dim hover:text-garage-amber"
-        >
-          ◫
-        </button>
-      )}
-      {isLive && (
-        <button
-          type="button"
-          onMouseDown={(e) => e.stopPropagation()}
-          onClick={(e) => {
-            e.stopPropagation();
-            ctx.splitFrom?.(id, "below");
-          }}
-          title="split down — new session below this one"
-          className="text-garage-dim hover:text-garage-amber"
-        >
-          ⬒
-        </button>
-      )}
-      {/* p8 grid-views: detach ⇄ rejoin. Detach makes this session a
-          standalone view (grid shows it alone; the others stay grouped in
-          their view); rejoin returns it to main. */}
-      {isLive && (
-        (ctx.viewAssignments?.[id] ?? "main") !== "main" ? (
+      {/* Rest-state hint that this cell has controls, shown ONLY at rest:
+          it fades out exactly as the real hover-reveal row below fades in,
+          so the two never occupy the header at the same time. Decorative
+          and aria-hidden — the controls themselves stay permanently in the
+          accessibility tree (see the note on the row below). */}
+      <span
+        className="text-garage-faint transition-opacity group-hover/cell:opacity-0 group-focus-within/cell:opacity-0"
+        aria-hidden="true"
+      >
+        ⋯
+      </span>
+      {/* Every secondary control below stays mounted at all times (so
+          keyboard focus and every onClick/title/disabled binding keep
+          working exactly as before) — only its visibility changes: hidden
+          at rest, revealed on cell hover or when a control inside has
+          keyboard focus. */}
+      <div className="flex items-center gap-0.5 opacity-0 transition-opacity focus-within:opacity-100 group-hover/cell:opacity-100">
+        {/* p7 grid-controls: per-cell splits, same semantics as the header
+            toolbar but anchored to THIS cell — VS Code's per-terminal split. */}
+        {isLive && (
           <button
             type="button"
             onMouseDown={(e) => e.stopPropagation()}
             onClick={(e) => {
               e.stopPropagation();
-              ctx.onRejoinCell?.(id);
+              ctx.splitFrom?.(id, "right");
             }}
-            title="rejoin the main view — back into the group"
-            className="text-garage-amber"
+            title="split right — new session beside this one"
+            className="rounded-md p-1 text-garage-faint hover:bg-garage-sel hover:text-garage-ink"
           >
-            ◱
+            ◫
           </button>
-        ) : (
+        )}
+        {isLive && (
           <button
             type="button"
             onMouseDown={(e) => e.stopPropagation()}
             onClick={(e) => {
               e.stopPropagation();
-              ctx.onDetachCell?.(id);
+              ctx.splitFrom?.(id, "below");
             }}
-            title="standalone — move this session to its own view (switch back anytime from the rail or view strip)"
-            className="text-garage-dim hover:text-garage-amber"
+            title="split down — new session below this one"
+            className="rounded-md p-1 text-garage-faint hover:bg-garage-sel hover:text-garage-ink"
           >
-            ◲
+            ⬒
           </button>
-        )
-      )}
-      <button
-        type="button"
-        onMouseDown={(e) => e.stopPropagation()}
-        onClick={(e) => {
-          e.stopPropagation();
-          toggleFloat();
-        }}
-        title={
-          isFloating
-            ? "dock back into the grid"
-            : "float this cell — a draggable window above the grid, same page"
-        }
-        className={isFloating ? "text-garage-amber" : "text-garage-dim hover:text-garage-amber"}
-      >
-        {isFloating ? "⇲" : "❐"}
-      </button>
-      <button
-        type="button"
-        onMouseDown={(e) => e.stopPropagation()}
-        onClick={(e) => {
-          e.stopPropagation();
-          ctx.onHideCell?.(id);
-        }}
-        title="Hide this cell for this page run (rail keeps it — click there to bring it back)"
-        className="text-garage-dim hover:text-garage-amber"
-      >
-        –
-      </button>
-      <button
-        type="button"
-        onMouseDown={(e) => e.stopPropagation()}
-        onClick={(e) => {
-          e.stopPropagation();
-          ctx.onPopOut?.(id);
-        }}
-        disabled={isPoppedOut}
-        title="Pop out into a separate window"
-        className="text-garage-dim hover:text-garage-amber disabled:opacity-30"
-      >
-        ⇱
-      </button>
-      {isLive && (
+        )}
+        {/* p8 grid-views: detach ⇄ rejoin. Detach makes this session a
+            standalone view (grid shows it alone; the others stay grouped in
+            their view); rejoin returns it to main. */}
+        {isLive && (
+          (ctx.viewAssignments?.[id] ?? "main") !== "main" ? (
+            <button
+              type="button"
+              onMouseDown={(e) => e.stopPropagation()}
+              onClick={(e) => {
+                e.stopPropagation();
+                ctx.onRejoinCell?.(id);
+              }}
+              title="rejoin the main view — back into the group"
+              className="rounded-md bg-garage-sel p-1 text-garage-ink hover:bg-garage-sel"
+            >
+              ◱
+            </button>
+          ) : (
+            <button
+              type="button"
+              onMouseDown={(e) => e.stopPropagation()}
+              onClick={(e) => {
+                e.stopPropagation();
+                ctx.onDetachCell?.(id);
+              }}
+              title="standalone — move this session to its own view (switch back anytime from the rail or view strip)"
+              className="rounded-md p-1 text-garage-faint hover:bg-garage-sel hover:text-garage-ink"
+            >
+              ◲
+            </button>
+          )
+        )}
         <button
           type="button"
           onMouseDown={(e) => e.stopPropagation()}
           onClick={(e) => {
             e.stopPropagation();
-            handleClose();
+            ctx.onHideCell?.(id);
           }}
-          disabled={closing}
-          title={
-            closeArmed
-              ? "click again to close — kills the tmux session"
-              : "close this session — kills the tmux session"
-          }
-          className={`disabled:opacity-40 ${
-            closeArmed ? "text-garage-red" : "text-garage-dim hover:text-garage-red"
-          }`}
+          title="Hide this cell for this page run (rail keeps it — click there to bring it back)"
+          className="rounded-md p-1 text-garage-faint hover:bg-garage-sel hover:text-garage-ink"
         >
-          {closeArmed ? "sure?" : "✕"}
+          –
         </button>
-      )}
+        {isLive && (
+          <button
+            type="button"
+            onMouseDown={(e) => e.stopPropagation()}
+            onClick={(e) => {
+              e.stopPropagation();
+              handleClose();
+            }}
+            disabled={closing}
+            title={
+              closeArmed
+                ? "click again to close — kills the tmux session"
+                : "close this session — kills the tmux session"
+            }
+            className={`rounded-md p-1 disabled:opacity-40 ${
+              closeArmed ? "text-garage-red" : "text-garage-faint hover:bg-garage-sel hover:text-garage-red"
+            }`}
+          >
+            {closeArmed ? "sure?" : "✕"}
+          </button>
+        )}
+      </div>
     </div>
   );
 }
@@ -1010,7 +980,7 @@ function SessionCellTab({ api, containerApi }) {
 // the dockview panel id, which is always a session id (see layout.js —
 // every addPanel call uses the session id as the panel id). Everything
 // else needed to render the cell — the session record, focus state,
-// restore/popout state — comes from GridContext, not from dockview's own
+// restore state — comes from GridContext, not from dockview's own
 // params (see that context's definition for why).
 //
 // D-dim (column semantics): every cell is a dim zone (`data-dim-zone`),
@@ -1041,7 +1011,6 @@ function SessionCellPanel({ api }) {
 
   const focused = id === ctx.focusedSessionId;
   const isRestorable = s.status === "restorable";
-  const isPoppedOut = ctx.poppedOutIds?.has(id) ?? false;
   const busy = ctx.restoringIds.has(id);
 
   return (
@@ -1055,27 +1024,18 @@ function SessionCellPanel({ api }) {
       onFocus={() => ctx.onFocusCell(id)}
       data-dim-zone=""
       data-session-id={id}
-      className={`flex h-full min-h-0 flex-col overflow-hidden border ${
+      className={`flex h-full min-h-0 flex-col overflow-hidden rounded-lg border ${
         s.status === "needs-input"
           ? "border-garage-amber"
           : focused
             ? "cell-border-focused"
             : "border-garage-line"
-      } ${isRestorable || isPoppedOut ? "opacity-70" : ""} ${
+      } ${isRestorable ? "opacity-70" : ""} ${
         s.status === "needs-input" ? "dim-exempt" : ""
       } ${ctx.columnActive ? "dim-focused" : ""}`}
     >
       <div className="relative min-h-0 flex-1 p-1">
-        {isPoppedOut ? (
-          <button
-            type="button"
-            onClick={() => ctx.onReclaim(id)}
-            className="flex h-full w-full flex-col items-center justify-center gap-2 text-garage-dim hover:text-garage-amber"
-          >
-            <span className="text-2xl">⇱</span>
-            <span className="text-xs">viewing in separate window — reclaim</span>
-          </button>
-        ) : isRestorable ? (
+        {isRestorable ? (
           <div className="flex h-full flex-col items-center justify-center gap-2 text-garage-dim">
             <span className="text-2xl">⟳</span>
             <span className="text-xs">no live terminal — session needs to be restored</span>
@@ -1083,7 +1043,7 @@ function SessionCellPanel({ api }) {
               type="button"
               onClick={() => ctx.restoreOne(id)}
               disabled={busy}
-              className="border border-garage-line px-2 py-0.5 text-xs text-garage-dim hover:border-garage-amber hover:text-garage-amber disabled:opacity-40"
+              className="rounded-md px-2.5 py-1 text-xs text-garage-dim hover:bg-garage-sel hover:text-garage-ink disabled:opacity-40"
             >
               restore
             </button>
@@ -1100,14 +1060,14 @@ function SessionCellPanel({ api }) {
             />
             {!connected && (
               <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-2 bg-garage-bg/90 p-3 text-center">
-                <span className="text-xs text-garage-amber">connection to daemon lost</span>
+                <span className="text-xs text-garage-red">connection to daemon lost</span>
                 <span className="text-[11px] text-garage-dim">
                   the tmux session is still alive — only this view is detached
                 </span>
                 <button
                   type="button"
                   onClick={() => setReconnectNonce((n) => n + 1)}
-                  className="border border-garage-amber px-3 py-1 text-xs text-garage-amber hover:bg-garage-amber hover:text-garage-bg"
+                  className="rounded-md bg-garage-ink px-3 py-1 text-xs text-garage-bg hover:opacity-90"
                 >
                   reconnect now
                 </button>
