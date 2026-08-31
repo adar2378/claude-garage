@@ -3,9 +3,7 @@
 ## Purpose
 
 The `npx claude-garage` entrypoint: one process serving UI + API on loopback, actionable prerequisite errors, and shutdown that never touches tmux sessions.
-
 ## Requirements
-
 ### Requirement: Single-process entrypoint serving UI and API
 Running `npx claude-garage` (via the package's `bin` entrypoint) SHALL start a single process that serves both the daemon API and the pre-built UI, listening on `127.0.0.1:4747`. The UI SHALL be reachable at `http://127.0.0.1:4747`, the API SHALL be reachable under `/api`, and terminal WebSocket connections SHALL be reachable under `/term`.
 
@@ -56,3 +54,26 @@ When the daemon serves the UI from its own origin (`http://127.0.0.1:4747`, or t
 #### Scenario: Allowlist follows a custom port
 - **WHEN** `GARAGE_PORT=5050` is set and the UI is served at `http://127.0.0.1:5050`
 - **THEN** requests with `Origin: http://127.0.0.1:5050` are accepted, consistent with the daemon's own serving origin
+
+### Requirement: TUI subcommand
+`npx claude-garage tui` SHALL launch the TUI client. It SHALL start the daemon first if `GET /api/health` is not reachable (same prerequisite checks and port as the web entrypoint), then run the TUI attached to it. Exiting the TUI SHALL leave the daemon and all tmux sessions running. The bare `npx claude-garage` behavior SHALL be unchanged.
+
+#### Scenario: TUI starts daemon when absent
+- **WHEN** `npx claude-garage tui` is run with no daemon listening on 4747
+- **THEN** the daemon starts, then the TUI opens full-screen; quitting the TUI leaves `GET /api/health` reachable
+
+#### Scenario: TUI reuses running daemon
+- **WHEN** `npx claude-garage tui` is run while a daemon is already serving 4747
+- **THEN** no second daemon is started and the TUI attaches to the existing one
+
+### Requirement: TUI binary availability
+The package SHALL provide the compiled TUI binary for the host platform (macOS arm64 at minimum), either shipped per-release or compiled on first run when a Rust toolchain (`cargo`) is available. The build SHALL be `npm run build:tui` invoking cargo on the `wall/` workspace, producing the binary at the launcher's platform-specific dist path. If the binary is unavailable and cannot be built, `claude-garage tui` SHALL print an actionable error naming what is missing (prebuilt binary for this platform, or install the Rust toolchain) and exit non-zero without starting a broken UI. During the port's transition window the launcher MAY fall back to the Dart binary; after parity removal, the Rust binary is the only TUI.
+
+#### Scenario: Missing binary is actionable
+- **WHEN** `claude-garage tui` runs on a platform with no prebuilt binary and no `cargo` on PATH
+- **THEN** the command prints an error explaining how to get the TUI (install Rust or use a supported platform) and exits non-zero
+
+#### Scenario: Self-build via cargo
+- **WHEN** no prebuilt binary exists but `cargo` is on PATH
+- **THEN** the launcher builds the `wall/` workspace once (announcing it), uses the result, and subsequent launches reuse it
+

@@ -3,9 +3,7 @@
 ## Purpose
 
 Per-session state (needs-input / working / done / idle) fed by a hybrid of Claude Code HTTP hooks (precision) and a `claude agents --json` poller (zero-setup baseline), pushed to the UI over SSE, with macOS notifications for off-screen attention routing.
-
 ## Requirements
-
 ### Requirement: Session status state model
 Every garage session SHALL have exactly one status at any time, drawn from the set: `needs-input`, `working`, `done`, `idle`. A session with no status signal ever recorded SHALL default to `idle`.
 
@@ -79,3 +77,33 @@ Claude Code's Notification hook fires both for genuine blockers (permission prom
 #### Scenario: Permission prompts still flag instantly
 - **WHEN** a Notification arrives with a permission-request message (or no message at all)
 - **THEN** the session transitions to `needs-input`
+
+### Requirement: Needs-input message capture
+When a Notification hook event transitions a session to `needs-input`, the daemon SHALL record that event's message text for the session. The recorded message SHALL be cleared when the session leaves `needs-input`. Poller-sourced `needs-input` transitions (which carry no message) SHALL leave any recorded message unset rather than inventing one.
+
+#### Scenario: Hook message recorded
+- **WHEN** a Notification hook arrives with message "Claude needs your permission to use Bash" and the session transitions to needs-input
+- **THEN** the daemon associates that message with the session
+
+#### Scenario: Message cleared on answer
+- **WHEN** the same session later transitions to `working`
+- **THEN** the recorded message is cleared
+
+### Requirement: Message exposed in session listing
+`GET /api/sessions` entries with status `needs-input` SHALL include a `message` field carrying the recorded notification text, or `null` when none was captured. Entries in other states SHALL have `message` as `null`.
+
+#### Scenario: Message present for blocked session
+- **WHEN** `GET /api/sessions` is called while a hook-signalled needs-input session exists
+- **THEN** that entry includes `"message": "<the notification text>"` and non-blocked entries include `"message": null`
+
+### Requirement: Pane title exposure
+The daemon SHALL capture each live garage session's tmux pane title (`#{pane_title}`) during its existing pane listing and expose it as `title` (string or null) on `GET /api/sessions` entries. A title equal to tmux defaults (empty, the hostname, or the bare shell/process name) SHALL be exposed as null rather than noise. Restorable entries have `title: null`. The value refreshes at poller cadence; no new tmux invocations are added (extend the existing `list-panes` format string).
+
+#### Scenario: Claude Code title surfaces
+- **WHEN** Claude Code in a session sets its OSC title to "✳ Refactoring the poller"
+- **THEN** that session's listing entry includes `"title": "✳ Refactoring the poller"` within one poll interval
+
+#### Scenario: Default titles are null
+- **WHEN** a session's pane title is the machine hostname
+- **THEN** the entry's `title` is null
+
