@@ -21,6 +21,8 @@ import {
 } from "./registry.js";
 import { getStatusEntry } from "./status.js";
 import { createWorktree } from "./worktrees.js";
+import { getStatuslineContext, getRateLimits } from "./statusline.js";
+import { getCachedContext, refreshContext } from "./transcript.js";
 
 const CLAUDE_CMD = process.env.GARAGE_CLAUDE_CMD ?? "claude";
 
@@ -45,12 +47,34 @@ export default async function sessionRoutes(app) {
       return branchCache.get(dir);
     };
 
+    // p11: fetched once up front (not per-session) — same cost discipline as
+    // branchCache above — so both the live loop's claudeSessionId lookup and
+    // the restorable loop below share one registry read.
+    const metas = await listSessionMetas();
+    const metaById = new Map(metas.map((m) => [m.id, m]));
+
     const live = await Promise.all(
       sessions.map(async (s) => {
         // since: epoch ms the current status began, so the UI can render
         // elapsed time without a second lookup (see status.js getStatusEntry).
         const { state: status, since, message } = getStatusEntry(s.id);
         const pane = panePaths.get(s.id);
+        const dir = pane?.path ?? s.dir;
+
+        // p11: context — statusline data (pushed by the wrapper) beats the
+        // transcript fallback beats null. The transcript path is a cache
+        // read only: getCachedContext never blocks, refreshContext kicks a
+        // background read (a no-op if the cache is still fresh or a read is
+        // already in flight) — this route must never block on file IO.
+        let context = getStatuslineContext(s.id);
+        if (!context) {
+          context = getCachedContext(s.id);
+          const claudeSessionId = metaById.get(s.id)?.claudeSessionId;
+          if (claudeSessionId && dir) {
+            refreshContext(s.id, { dir, claudeSessionId });
+          }
+        }
+
         return {
           ...s,
           status,
@@ -65,11 +89,13 @@ export default async function sessionRoutes(app) {
           // Live pane cwd, not session_path (see listPanePaths) — falls back
           // to session_path only if the pane vanished between the two tmux
           // calls above (a session that died mid-request).
-          branch: await getBranch(pane?.path ?? s.dir),
+          branch: await getBranch(dir),
           // p10: the pane's OSC title (e.g. Claude Code's "✳ <summary>"),
           // filtered down to null when it's just tmux's own default (empty,
           // hostname, bare shell name) — see normalizeTitle.
           title: normalizeTitle(pane?.title, hostname),
+          // p11: {usedPercentage, source: "statusline"|"transcript"} | null.
+          context,
         };
       })
     );
@@ -79,7 +105,6 @@ export default async function sessionRoutes(app) {
     // has no matching live tmux session. dir is re-resolved from the
     // registry (not a cached copy in the meta record) so a workspace
     // re-registered to a new path since the crash is reflected correctly.
-    const metas = await listSessionMetas();
     const restorable = [];
     for (const meta of metas) {
       if (liveIds.has(meta.id)) continue;
@@ -101,11 +126,19 @@ export default async function sessionRoutes(app) {
         // No live pane to read a cwd from — resolve against the
         // registered workspace dir instead; null if that's gone too.
         branch: await getBranch(dir),
+        // p11: restorable entries never carry context — there's no live
+        // session to have posted a statusline or grown a fresh transcript
+        // usage figure since it died (see context-telemetry spec).
+        context: null,
       });
     }
 
     return [...live, ...restorable];
   });
+
+  // p11: account-wide rate limits from the most recent statusline post —
+  // null until one arrives. See statusline.js for the store.
+  app.get("/api/usage", async () => getRateLimits());
 
   app.post("/api/sessions", async (req, reply) => {
     const { workspace, label, worktree: wantWorktree } = req.body ?? {};

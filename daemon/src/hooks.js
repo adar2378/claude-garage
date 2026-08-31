@@ -1,23 +1,13 @@
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
-import { timingSafeEqual } from "node:crypto";
-import { copyFile, mkdir, readFile, rename, writeFile } from "node:fs/promises";
-import { homedir } from "node:os";
-import { dirname, join } from "node:path";
-import { listSessions } from "./tmux.js";
+import { join } from "node:path";
 import { setStatus } from "./status.js";
 import { getHookToken } from "./registry.js";
+import { tokenMatches } from "./token-auth.js";
+import { resolveSessionIds } from "./session-resolve.js";
+import { readSettingsOrRefuse, writeSettingsAtomic } from "./settings-install.js";
+import { claudeHome } from "./claude-home.js";
 
-const run = promisify(execFile);
 const PORT = Number(process.env.GARAGE_PORT ?? 4747);
 const HOOK_URL = `http://127.0.0.1:${PORT}/api/hooks/claude`;
-
-function tokenMatches(given, expected) {
-  if (typeof given !== "string") return false;
-  const a = Buffer.from(given);
-  const b = Buffer.from(expected);
-  return a.length === b.length && timingSafeEqual(a, b);
-}
 
 const EVENT_TO_STATE = {
   Notification: "needs-input",
@@ -36,57 +26,6 @@ const IDLE_REMINDER_RE = /waiting for your input/i;
 // Exported for the test suite.
 export function isIdleReminder(message) {
   return IDLE_REMINDER_RE.test(message ?? "");
-}
-
-async function getAgents() {
-  try {
-    const { stdout } = await run("claude", ["agents", "--json"]);
-    return JSON.parse(stdout);
-  } catch {
-    return [];
-  }
-}
-
-async function getPanePids() {
-  try {
-    const { stdout } = await run("tmux", [
-      "list-panes",
-      "-a",
-      "-F",
-      "#{session_name}\t#{pane_pid}",
-    ]);
-    const map = new Map(); // pid -> session name
-    for (const line of stdout.split("\n")) {
-      if (!line.trim()) continue;
-      const [name, pid] = line.split("\t");
-      map.set(Number(pid), name);
-    }
-    return map;
-  } catch {
-    return new Map();
-  }
-}
-
-// Resolve a hook payload to the garage session id(s) it applies to.
-// Precise path: payload session_id -> agents-json sessionId -> its pid ->
-// pane_pid join. Fallback: cwd fail-open, applied to every garage session
-// sharing that dir (over-notify rather than silently drop).
-async function resolveSessionIds({ session_id, cwd }) {
-  const [agents, pidToSession] = await Promise.all([getAgents(), getPanePids()]);
-
-  if (session_id) {
-    const agent = agents.find((a) => a.sessionId === session_id);
-    const sessionName = agent && pidToSession.get(agent.pid);
-    if (sessionName) return [sessionName];
-  }
-
-  if (cwd) {
-    const sessions = await listSessions();
-    const matches = sessions.filter((s) => s.dir === cwd).map((s) => s.id);
-    if (matches.length > 0) return matches;
-  }
-
-  return [];
 }
 
 export async function hookSnippet() {
@@ -108,11 +47,12 @@ export async function hookSnippet() {
 // Safety order: parse-or-refuse (a corrupt file is returned as an error,
 // byte-for-byte untouched) -> timestamped backup of the pre-install file
 // -> atomic write (tmp + rename, same directory, so a crash mid-write can
-// never leave a half-written settings.json). Idempotency comes from
-// entry-level dedupe: a hook group is only appended when no existing
-// group for that event already carries one of its hook URLs (the URL
-// embeds the per-install token, which is stable — see getHookToken).
-const SETTINGS_PATH = join(homedir(), ".claude", "settings.json");
+// never leave a half-written settings.json) — see settings-install.js.
+// Idempotency comes from entry-level dedupe: a hook group is only appended
+// when no existing group for that event already carries one of its hook
+// URLs (the URL embeds the per-install token, which is stable — see
+// getHookToken).
+const SETTINGS_PATH = join(claudeHome(), "settings.json");
 
 function groupHasAnyUrl(group, urls) {
   return (group?.hooks ?? []).some((h) => urls.has(h.url));
@@ -148,32 +88,7 @@ export function mergeHookSnippet(settings, snippet) {
 }
 
 async function installHooks() {
-  let raw = null;
-  try {
-    raw = await readFile(SETTINGS_PATH, "utf8");
-  } catch (err) {
-    if (err.code !== "ENOENT") throw err;
-  }
-
-  let settings = {};
-  if (raw !== null && raw.trim() !== "") {
-    try {
-      settings = JSON.parse(raw);
-    } catch {
-      const error = new Error(
-        `~/.claude/settings.json is not valid JSON — fix it (or remove it) and retry; the file was left untouched`
-      );
-      error.statusCode = 422;
-      throw error;
-    }
-    if (typeof settings !== "object" || settings === null || Array.isArray(settings)) {
-      const error = new Error(
-        `~/.claude/settings.json is not a JSON object — the file was left untouched`
-      );
-      error.statusCode = 422;
-      throw error;
-    }
-  }
+  const { settings, raw } = await readSettingsOrRefuse(SETTINGS_PATH);
 
   const snippet = await hookSnippet();
   const { merged, changed } = mergeHookSnippet(settings, snippet);
@@ -181,18 +96,7 @@ async function installHooks() {
     return { ok: true, installed: true, alreadyInstalled: true, backup: null };
   }
 
-  await mkdir(dirname(SETTINGS_PATH), { recursive: true });
-
-  let backup = null;
-  if (raw !== null) {
-    backup = `${SETTINGS_PATH}.garage-backup-${new Date().toISOString().replace(/[:.]/g, "-")}`;
-    await copyFile(SETTINGS_PATH, backup);
-  }
-
-  const tmp = `${SETTINGS_PATH}.garage-tmp-${process.pid}`;
-  await writeFile(tmp, `${JSON.stringify(merged, null, 2)}\n`, "utf8");
-  await rename(tmp, SETTINGS_PATH);
-
+  const backup = await writeSettingsAtomic(SETTINGS_PATH, raw, merged);
   return { ok: true, installed: true, alreadyInstalled: false, backup };
 }
 

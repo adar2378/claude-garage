@@ -3,8 +3,18 @@ import { promisify } from "node:util";
 import { EventEmitter } from "node:events";
 import os from "node:os";
 import { listSessions, normalizeTitle } from "./tmux.js";
-import { setStatus, getStatus, dropSession } from "./status.js";
+import { setStatus, getStatus, dropSession as dropStatus } from "./status.js";
+import { dropSession as dropStatuslineContext } from "./statusline.js";
 import { upsertSessionMeta } from "./registry.js";
+
+// p11: a dead session's statusline-fed context must be cleared alongside
+// its status entry (context-telemetry spec) — a future reuse of the same
+// garage session id must never inherit a stale percentage from a prior,
+// unrelated conversation.
+function dropSession(id) {
+  dropStatus(id);
+  dropStatuslineContext(id);
+}
 
 const run = promisify(execFile);
 const POLL_MS = 2000;
