@@ -26,8 +26,8 @@ REPO=$(cd "$SCRIPT_DIR/../../.." && pwd)
 # Binary under test: GARAGE_TUI_BIN overrides (p9 parity gate points it at
 # the Rust binary — same checks); default is the Rust dist binary (wall/dist).
 TUI_BIN=${GARAGE_TUI_BIN:-$REPO/wall/dist/garage-wall-darwin-$(node -p 'process.arch' 2>/dev/null || echo arm64)}
-KEYECHO=$REPO/spikes/nocterm-wall/tools/keyecho.sh
-STRESS=$REPO/spikes/nocterm-wall/tools/stress.sh
+KEYECHO=$REPO/wall/test/e2e/tools/keyecho.sh
+STRESS=$REPO/wall/test/e2e/tools/stress.sh
 WORK=${E2E_WORK:-$(mktemp -d "${TMPDIR:-/tmp}/garage-wall-e2e.XXXXXX")}
 KEYLOG=$WORK/keylog.txt
 RESULTS=$WORK/results.txt
