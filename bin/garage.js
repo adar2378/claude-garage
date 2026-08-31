@@ -10,7 +10,7 @@
 // first (so it outlives the TUI) when /api/health is unreachable. Quitting
 // the TUI leaves the daemon and every tmux session running.
 import { execFile, spawn, spawnSync } from "node:child_process";
-import { accessSync, chmodSync, constants as fsConstants, copyFileSync, existsSync, mkdirSync, openSync, readFileSync } from "node:fs";
+import { accessSync, chmodSync, constants as fsConstants, copyFileSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, statSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import readline from "node:readline/promises";
@@ -309,12 +309,78 @@ async function waitForHealth(deadlineMs = 15000) {
   return false;
 }
 
+// cargo build --release, then copy the result into wall/dist/<target-name>
+// (creating the dist dir if needed) and mark it executable. Shared by the
+// "no prebuilt binary yet" path and the p11 staleness-guard rebuild path
+// below — one cargo invocation, one copy-into-dist step, used both places.
+function cargoBuildTuiBinary(rustBinary) {
+  const build = spawnSync("cargo", ["build", "--release"], {
+    cwd: path.join(ROOT, "wall"),
+    stdio: "inherit",
+  });
+  const built = path.join(ROOT, "wall", "target", "release", "garage-wall");
+  if (build.status !== 0 || !existsSync(built)) {
+    console.error("cargo build failed — see the output above");
+    process.exit(1);
+  }
+  mkdirSync(path.dirname(rustBinary), { recursive: true });
+  copyFileSync(built, rustBinary);
+  chmodSync(rustBinary, 0o755);
+}
+
+// The latest mtime (ms) of any file under `dir`, recursively; 0 if the
+// directory doesn't exist or is empty. Used by the p11 staleness guard to
+// compare wall/src against the built binary — a plain recursive walk since
+// wall/src is small and this only runs once per launch.
+function newestMtimeUnder(dir) {
+  let newest = 0;
+  const stack = [dir];
+  while (stack.length > 0) {
+    const current = stack.pop();
+    let entries;
+    try {
+      entries = readdirSync(current, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const entry of entries) {
+      const full = path.join(current, entry.name);
+      if (entry.isDirectory()) {
+        stack.push(full);
+      } else {
+        const mtime = statSync(full).mtimeMs;
+        if (mtime > newest) newest = mtime;
+      }
+    }
+  }
+  return newest;
+}
+
+// p11 staleness guard: true when anything under wall/src, or wall/Cargo.toml
+// / wall/Cargo.lock, has an mtime newer than the built binary — i.e. the
+// checkout has source changes the binary predates (the "invisible picker"
+// report's root cause: a stale binary silently missing a fix). Source-file
+// mtimes only; never compares against GARAGE_TUI_BIN (that path never calls
+// this — see resolveTuiBinary's override branch, which returns first).
+function wallSourcesNewerThan(rustBinary) {
+  const binaryMtime = statSync(rustBinary).mtimeMs;
+  const wallDir = path.join(ROOT, "wall");
+  for (const f of ["Cargo.toml", "Cargo.lock"]) {
+    const full = path.join(wallDir, f);
+    if (existsSync(full) && statSync(full).mtimeMs > binaryMtime) return true;
+  }
+  return newestMtimeUnder(path.join(wallDir, "src")) > binaryMtime;
+}
+
 // Binary lookup order (p9-ratatui-port "TUI binary availability"):
 // 0. GARAGE_TUI_BIN — test hook for the e2e harnesses (parity gate): an
 //    explicit binary path that wins over everything else. Used only when
 //    set and executable; a set-but-unusable value is a hard error (a test
-//    hook must never silently fall through to a different binary).
-// 1. prebuilt Rust binary at wall/dist/garage-wall-<platform>-<arch>
+//    hook must never silently fall through to a different binary). Honored
+//    verbatim — the p11 staleness guard below never runs for it.
+// 1. prebuilt Rust binary at wall/dist/garage-wall-<platform>-<arch> — in a
+//    source checkout (wall/Cargo.toml present), p11 additionally checks it
+//    isn't stale against wall/src before returning it (see below).
 // 2. build once with cargo (checkout only — needs wall/ sources), announced
 // 3. actionable error naming what is missing (Rust toolchain first),
 //    exit non-zero.
@@ -334,29 +400,38 @@ function resolveTuiBinary() {
 
   const target = `${process.platform}-${process.arch}`;
   const distDir = path.join(ROOT, "wall", "dist");
-
   const rustBinary = path.join(distDir, `garage-wall-${target}`);
-  if (existsSync(rustBinary)) return rustBinary;
-
   const wallSrc = path.join(ROOT, "wall", "Cargo.toml");
+
+  if (existsSync(rustBinary)) {
+    // p11 launcher staleness guard: only in a source checkout (wall/
+    // present at all — an installed package ships no wall/ sources, so this
+    // never triggers there) AND only when wall/src actually outdates the
+    // binary. Mirrors the stale-daemon gate's shape: detect, announce,
+    // self-heal — reusing the exact same cargo-build path task 2 above (and
+    // "no prebuilt binary" below) already uses.
+    if (existsSync(wallSrc) && wallSourcesNewerThan(rustBinary)) {
+      const haveCargo = spawnSync("cargo", ["--version"], { stdio: "ignore" }).status === 0;
+      if (haveCargo) {
+        console.log("wall sources newer than the built binary — rebuilding");
+        cargoBuildTuiBinary(rustBinary);
+      } else {
+        console.error(
+          `warning: wall/src is newer than the built TUI binary (${rustBinary}) ` +
+            `and no cargo on PATH to rebuild it — it may be stale`
+        );
+      }
+    }
+    return rustBinary;
+  }
+
   const haveCargo = spawnSync("cargo", ["--version"], { stdio: "ignore" }).status === 0;
   if (haveCargo && existsSync(wallSrc)) {
     console.log(
       `no prebuilt TUI binary for ${target} — building once with cargo ` +
         `(release build; lands at wall/dist/garage-wall-${target})`
     );
-    const build = spawnSync("cargo", ["build", "--release"], {
-      cwd: path.join(ROOT, "wall"),
-      stdio: "inherit",
-    });
-    const built = path.join(ROOT, "wall", "target", "release", "garage-wall");
-    if (build.status !== 0 || !existsSync(built)) {
-      console.error("cargo build failed — see the output above");
-      process.exit(1);
-    }
-    mkdirSync(distDir, { recursive: true });
-    copyFileSync(built, rustBinary);
-    chmodSync(rustBinary, 0o755);
+    cargoBuildTuiBinary(rustBinary);
     return rustBinary;
   }
 
