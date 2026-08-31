@@ -239,6 +239,35 @@ check "detach notice shown" outer_has 'detached alpha'
 check "solo focused view is frameless (PTY 170x51, not 83x50)" \
   wait_for 10 client_size_is garage/p10e2e-group/alpha 170x51
 
+# ── 3b. D picker from a DETACHED SOLO view — the exact reported repro ────
+# shape (scratch daemon + wall, 2 sessions, `d` then `D` while focused on
+# the just-detached solo view). The modal must be VISIBLE — title AND row
+# text via capture-pane, not merely a state check — and its own current
+# view ("alpha", the solo view holding just this session) must be excluded
+# from the row list: with only "main" and "alpha" as views, excluding
+# "alpha" leaves exactly one real row ("main") ahead of "new group…", so a
+# single `j` from the default (row 0, "main") lands on "new group…" — if
+# "alpha" were still offered as a confusing self-move row (the entries bug),
+# that same `j` would instead land on it.
+tmux send-keys -t "=$OUTER:" -l D
+check "D opens the picker FROM A DETACHED SOLO VIEW (title visible on screen)" \
+  wait_for 10 outer_has 'move to group'
+# "new group…" is a row inside the modal's own bordered box and appears
+# NOWHERE else on screen (unlike "main", which the view strip above it
+# already prints) — an unambiguous proof the row list itself painted, not
+# just the title.
+check "...its row list is visible too (new group… row painted)" \
+  outer_has 'new group…'
+tmux send-keys -t "=$OUTER:" -l j       # row 0 "main" -> row 1
+tmux send-keys -t "=$OUTER:" Enter
+check "alpha's OWN current view is excluded: j landed on new group…, not a self-move" \
+  wait_for 10 outer_has 'new group name'
+check "...no bogus self-move notice (moved alpha → alpha)" \
+  outer_lacks 'moved alpha → alpha'
+tmux send-keys -t "=$OUTER:" Escape
+check "Esc cancels the picker cleanly" wait_for 10 outer_lacks 'move to group'
+check "still detached, unaffected by the picker excursion" outer_has ' main  alpha'
+
 # ── 4. Tab cycles views; grid content follows ────────────────────────────
 tmux send-keys -t "=$OUTER:" Tab
 check "Tab moves focus to main: beta's content is now gridded" \
@@ -260,13 +289,17 @@ check "d rejoins: view strip gone (single view again)" \
 check "rejoined pair is framed again (PTY 83x50 for both)" \
   wait_for 10 sh -c "test \"\$(tmux list-clients -t '=garage/p10e2e-group/alpha' -F '#{client_width}x#{client_height}')\" = 83x50 && test \"\$(tmux list-clients -t '=garage/p10e2e-group/beta' -F '#{client_width}x#{client_height}')\" = 83x50"
 
-# ── 6. D picker: build a 2-session group across two moves ────────────────
-# alpha is focused (grid order [alpha, beta] after reconciliation). Move it
-# into a brand-new group "backend".
+# ── 6. D picker FROM THE DEFAULT (joined) VIEW: build a 2-session group ──
+# across two moves. alpha is focused (grid order [alpha, beta] after
+# reconciliation) and its only view is "main" — its own current view, so
+# entries are just ["new group…"] (the confusing self-move row this fix
+# drops is never offered in the first place here, since it's the sole view).
 tmux send-keys -t "=$OUTER:" -l D
-check "D opens the picker (move to group)" wait_for 10 outer_has 'move to group'
-tmux send-keys -t "=$OUTER:" -l j       # → "new group…"
-tmux send-keys -t "=$OUTER:" Enter      # → text-input sub-mode
+check "D opens the picker (move to group) — visible from the default view too" \
+  wait_for 10 outer_has 'move to group'
+check "...its row list is visible too (new group… row painted)" \
+  outer_has 'new group…'
+tmux send-keys -t "=$OUTER:" Enter      # row 0, the only row: "new group…" -> text-input sub-mode
 sleep 0.3
 tmux send-keys -t "=$OUTER:" -l backend
 tmux send-keys -t "=$OUTER:" Enter
@@ -279,7 +312,11 @@ check "Tab reaches beta in main (its content is gridded)" \
   wait_for 10 outer_has 'beta-mark-3'
 tmux send-keys -t "=$OUTER:" -l D
 check "D reopens the picker for beta" wait_for 10 outer_has 'move to group'
-tmux send-keys -t "=$OUTER:" -l j       # → "backend" (main, backend, new group…)
+# beta's current view is "main" (excluded), so entries are just ["backend",
+# "new group…"] — row 0 IS "backend" already; no navigation needed. (Before
+# this fix, "main" was still offered as a leading self-move row, so reaching
+# "backend" needed an extra `j` — its absence here is itself proof the
+# exclusion took effect, not just a convenience.)
 tmux send-keys -t "=$OUTER:" Enter
 check "second move notice: moved beta → backend" wait_for 10 outer_has 'moved beta → backend'
 check "backend now has 2 sessions: main vanished (no strip)" \

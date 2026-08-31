@@ -659,6 +659,23 @@ pub fn handle_overlay_key(
     (effects, notice)
 }
 
+/// The view-picker's selectable rows for the CURRENTLY focused
+/// workspace/session (spec tui-views "Move to a group"): every other view of
+/// the workspace plus the trailing "new group…" row — the focused session's
+/// own current view is excluded (see [`picker_entries`]). Shared by the key,
+/// click, and render paths so all three can never disagree about what's
+/// selectable — the row a keypress or click resolves to is always the same
+/// row the modal draws.
+fn view_picker_entries(store: &WallStore) -> Vec<String> {
+    let Some(workspace) = store.state().focused_workspace.clone() else {
+        return picker_entries(&[], "");
+    };
+    let current_view = store.state().focused_view_name(&workspace).to_owned();
+    let view_names: Vec<String> =
+        store.state().views_for(&workspace).into_iter().map(|v| v.name).collect();
+    picker_entries(&view_names, &current_view)
+}
+
 /// `D` picker key routing (spec tui-views "Move to a group"): `j`/`k`/arrows
 /// move the selection, Enter on a view moves the focused session there
 /// (closing the overlay and returning the "moved <label> → <view>" strip
@@ -671,11 +688,7 @@ fn handle_view_picker_key(
     plain_char: Option<char>,
     view_picker: &mut ViewPickerState,
 ) -> Option<String> {
-    let workspace = store.state().focused_workspace.clone();
-    let view_names: Vec<String> = workspace
-        .as_deref()
-        .map(|w| store.state().views_for(w).into_iter().map(|v| v.name).collect())
-        .unwrap_or_default();
+    let entries = view_picker_entries(store);
 
     if view_picker.new_group_input.is_some() {
         match key.code {
@@ -700,7 +713,9 @@ fn handle_view_picker_key(
         return None;
     }
 
-    let entries_len = view_names.len() + 1; // + "new group…"
+    // The trailing "new group…" row is always the last entry (`picker_entries`
+    // guarantees it — never empty even with zero other views).
+    let entries_len = entries.len();
     match (key.code, plain_char) {
         (KeyCode::Esc, _) => {
             view_picker.reset();
@@ -714,9 +729,9 @@ fn handle_view_picker_key(
         }
         (KeyCode::Enter, _) => {
             let sel = view_picker.selected.min(entries_len.saturating_sub(1));
-            if sel == view_names.len() {
+            if sel == entries_len - 1 {
                 view_picker.new_group_input = Some(String::new());
-            } else if let Some(name) = view_names.get(sel).cloned() {
+            } else if let Some(name) = entries.get(sel).cloned() {
                 view_picker.reset();
                 return move_to_view_and_notice(store, &name);
             }
@@ -1458,22 +1473,18 @@ impl App {
         if self.view_picker.new_group_input.is_some() {
             return;
         }
-        let workspace = self.store.state().focused_workspace.clone();
-        let view_names: Vec<String> = workspace
-            .as_deref()
-            .map(|w| self.store.state().views_for(w).into_iter().map(|v| v.name).collect())
-            .unwrap_or_default();
-        let entries_len = view_names.len() + 1;
+        let entries = view_picker_entries(&self.store);
+        let entries_len = entries.len();
         let local = i32::from(row - rect.y);
         let Some(i) = view_picker_row_index_at(local, entries_len) else {
             return;
         };
-        if i == view_names.len() {
+        if i == entries_len - 1 {
             self.view_picker.selected = i;
             self.view_picker.new_group_input = Some(String::new());
             return;
         }
-        let Some(name) = view_names.get(i).cloned() else {
+        let Some(name) = entries.get(i).cloned() else {
             return;
         };
         let label = self
@@ -1700,7 +1711,7 @@ impl App {
             }
             Some(OverlayKind::ViewPicker) => {
                 let view_names: Vec<String> = views.iter().map(|v| v.name.clone()).collect();
-                let entries = picker_entries(&view_names);
+                let entries = picker_entries(&view_names, &focused_view_name);
                 self.view_picker_rect = Some(render_view_picker(
                     buf,
                     area,
@@ -2647,6 +2658,26 @@ mod tests {
     }
 
     #[test]
+    fn picker_entries_exclude_the_focused_sessions_current_view() {
+        // Exactly the reported repro shape: two sessions, `d` detaches the
+        // focused one into its own solo view, then `D` must never offer that
+        // solo view as a destination for itself.
+        let mut store = store_with(vec![ws("a")], vec![si("a", "one"), si("a", "two")]);
+        store.focus_session(&id("a", "one"));
+        store.detach_focused(); // "one" -> its own solo view "one"; "two" stays in "main"
+        assert_eq!(
+            view_picker_entries(&store),
+            ["main", "new group…"],
+            "not [\"main\", \"one\", \"new group…\"]"
+        );
+
+        // Cross-check the other side of the same pair: focused back on
+        // "main" (holding "two"), "main" itself must now be the excluded one.
+        store.focus_view_of(&id("a", "two"));
+        assert_eq!(view_picker_entries(&store), ["one", "new group…"]);
+    }
+
+    #[test]
     fn picker_enter_on_an_existing_view_moves_and_shows_the_moved_notice() {
         let mut store =
             store_with(vec![ws("a")], vec![si("a", "one"), si("a", "two"), si("a", "three")]);
@@ -2655,8 +2686,10 @@ mod tests {
         store.focus_view_of(&id("a", "three"));
         store.open_view_picker();
 
-        // Entries are ["main", "two", "new group…"]; select "two" (index 1).
-        let mut view_picker = ViewPickerState { selected: 1, ..Default::default() };
+        // Focused session "three" sits in "main" — its own current view, so
+        // "main" is excluded. Entries are ["two", "new group…"]; select
+        // "two" (index 0).
+        let mut view_picker = ViewPickerState { selected: 0, ..Default::default() };
         let notice =
             handle_view_picker_key(&mut store, &plain(KeyCode::Enter), None, &mut view_picker);
         assert_eq!(notice.as_deref(), Some("moved three → two"));
@@ -2676,8 +2709,9 @@ mod tests {
         store.focus_session(&id("a", "one"));
         store.open_view_picker();
 
-        // Entries are ["main", "new group…"]; select the trailing row.
-        let mut view_picker = ViewPickerState { selected: 1, ..Default::default() };
+        // "one" and "two" are both still in "main" — the focused session's
+        // own current view, so it's excluded, leaving just ["new group…"].
+        let mut view_picker = ViewPickerState { selected: 0, ..Default::default() };
         assert_eq!(
             handle_view_picker_key(&mut store, &plain(KeyCode::Enter), None, &mut view_picker),
             None,

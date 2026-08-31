@@ -266,3 +266,126 @@ real recovery directly.
   their own prefix (`p10e2e-*` / `garage/p10e2e-*` for the new suite).
   Verified via `tmux ls` and `lsof` after every run in this pass: no leaked
   tmux sessions, daemon processes, or bound ports.
+
+## Post-review fixes
+
+### Bug: "`D` view-picker never renders" — investigated, not reproduced as reported; the real defect was in the entry list, not the draw path
+
+**Report shape:** pressing `D` in the garage layer opens the view-picker
+overlay with correct internal state (`overlay == Some(ViewPicker)`, chip
+reads `keys → move to group`, `j`/`Enter` visibly affect selection) but the
+modal itself allegedly never paints. Exact repro given: scratch daemon +
+wall, 2 sessions, `d` (detach the focused one into its own solo view), then
+`D`.
+
+**Investigation.** Read the full draw path in `runtime.rs::draw_frame`: the
+`match self.store.state().overlay { ... }` block is exhaustive over
+`OverlayKind`, the `Some(OverlayKind::ViewPicker)` arm is present, unconditional,
+and — like `Help`/`TriageQueue`/`WorkspaceAdd` — is the LAST thing drawn each
+frame, strictly after the tile loop and the bottom strip, so it always paints
+over tiles with correct z-order. `view_picker::picker_modal_rect` /
+`centered_rect` / `modal_width` were checked for zero-size edge cases at
+every terminal size (including narrower than the modal's minimum) — all use
+`.min()`/`.saturating_sub()`, never underflow, and the trailing "new
+group…" row guarantees at least one non-empty row always exists, so the
+rect is never degenerate. `open_overlay`/`close_overlay` and the
+`reconcile`/`refocus_vacated_views` path (the "trap-fix" logic touched by an
+earlier pass) were checked for any code path that could reset `overlay` to
+`None` out from under an open picker (e.g. on the periodic session-poll
+reconcile) — none exists; `overlay` is untouched by reconciliation.
+
+Rebuilt the release binary from a clean `HEAD` checkout and reproduced the
+EXACT reported repro shape end to end against a scratch daemon (2 sessions,
+`d`, `D`) via `tmux capture-pane` (the same technique `run_p10.sh` uses) —
+the modal painted correctly and stayed painted across 5 consecutive
+1-second-apart captures, both before and after this pass's changes. **No
+render-layer defect (missing arm, wrong z-order, or zero-rect) was found or
+reproduced** in this codebase at `HEAD`; `run_p10.sh`'s new `3b` section
+(below) locks this down permanently as a real, capture-pane-verified,
+title-AND-row-text assertion from the exact detached-solo-view repro shape,
+so a future regression here would fail loudly.
+
+**The real, confirmed defect** was one level deeper: `view_picker::picker_entries`
+listed *every* view of the workspace, including the focused session's own
+CURRENT view — moving a session "into" the view it's already in is a
+confusing no-op row. Worse, `runtime.rs` computed this same
+view-name-plus-"new group…" list independently in THREE places (the
+`draw_frame` render arm, `handle_view_picker_key`'s selection/Enter
+math, and `handle_view_picker_click`'s hit-test math) — a latent
+draw/behavior desync risk: any future asymmetric edit to one of the three
+copies would make the highlighted row and the row actually acted on
+disagree, which could plausibly present to a user as "the picker looks
+wrong" or "input doesn't seem to match what's on screen" (the reported
+symptom, even though the immediate rendering wasn't literally blank).
+
+**Fix.**
+- `view_picker::picker_entries(view_names, current_view)` now takes the
+  focused session's current view name and filters it out before appending
+  the trailing `"new group…"` row (never empty — that row is always
+  present, even when the current view is the workspace's only one).
+- Added `runtime.rs::view_picker_entries(&WallStore) -> Vec<String>`, a
+  single helper that resolves the focused workspace's current view and view
+  list and calls `picker_entries` once. `draw_frame`, `handle_view_picker_key`,
+  and `handle_view_picker_click` all now go through either this helper or
+  the same `focused_view_name`/`picker_entries` pair, so render, keyboard,
+  and mouse selection can never disagree about what row is what again.
+- Selection/hit-target index math in both the key and click handlers was
+  updated to index into the filtered `entries` list directly (dropping the
+  old `view_names.len()` / `view_names.get(sel)` arithmetic that assumed
+  the current view was always present).
+
+**Tests added** (`cargo test --lib`: 341 passed, up from a 338 baseline —
++3 new):
+- `ui::view_picker::tests::entries_drop_the_focused_sessions_current_view`
+- `ui::view_picker::tests::entries_are_just_new_group_when_the_current_view_is_the_only_one`
+- `runtime::tests::picker_entries_exclude_the_focused_sessions_current_view`
+  — the exact reported repro shape (2 sessions, `detach_focused`, then
+  read the picker's entries from both sides of the pair).
+
+Two existing `runtime.rs` tests
+(`picker_enter_on_an_existing_view_moves_and_shows_the_moved_notice`,
+`picker_new_group_flow_creates_a_named_group_and_shows_the_moved_notice`)
+had their expected `selected` index and comments updated: with the current
+view excluded, the row indices they were asserting against shifted down by
+one (or, in the second test, collapsed to the single remaining row).
+
+**`run_p10.sh` strengthened** (owned by this task):
+- New section `3b` — the exact reported repro shape (`d` detach, then `D`
+  while focused on the resulting solo view) — asserts the modal is VISIBLE
+  via `tmux capture-pane`: the `move to group` title text AND the
+  `new group…` row text (a string that appears nowhere else on screen,
+  unlike `main`, which the view strip above the modal already prints —
+  chosen deliberately so this check can't false-pass against the strip).
+  It then proves the entries-exclusion fix *behaviorally*: from the default
+  selection (row 0, "main"), a single `j` lands on "new group…" — if the
+  solo view's own name were still offered as a row ahead of it (the bug),
+  that same `j` would land there instead and produce a
+  `moved alpha → alpha` self-move notice, which is asserted absent.
+- The two existing step-6 `D`-picker checks (opened from the default,
+  already-joined view) were also strengthened with the same title+row-text
+  visibility assertion, and their scripted key sequences were corrected for
+  the new (shorter, since the current view no longer appears) entry lists —
+  the second one's now-unnecessary `j` press was removed, since row 0 is
+  already the intended destination once the current view is excluded.
+- Verified full green: ran the suite twice end to end against the fixed
+  release binary — once as `run_p10.sh` itself, once under a
+  `p10fix2-*`-renamed copy (distinct tmux session/workspace names, distinct
+  scratch port `4799`, distinct scratch `GARAGE_DIR`) to prove there's no
+  hidden dependency on the literal `p10e2e-*` names and to stay clear of any
+  other concurrently-running suite in the same shared tmux server. **67/67
+  checks pass** on the `p10fix2-*` run. `tmux ls`/`lsof` confirmed no leaked
+  sessions or ports after; the real daemon on 4747 and `~/.garage/wall.json`
+  were unaffected throughout (checked before and after).
+
+`cargo test` (`wall/`): **341 passed** (lib) — 0 failed.
+`cargo clippy --all-targets -- -D warnings`: clean.
+`cargo build --release`: clean.
+
+(`tests/injection.rs`'s single integration test,
+`teardown_never_injects_bytes_into_attached_panes`, is unrelated to this
+change and environment-sensitive — it string-matches a zsh prompt that
+includes the git branch/dirty-marker, so it fails whenever the working tree
+has *any* uncommitted changes, `wall/` or not, at the moment it runs, e.g.
+from other work in flight in this same checkout. Confirmed by stashing all
+changes and re-running it in isolation: passes on a clean tree. Not
+touched.)

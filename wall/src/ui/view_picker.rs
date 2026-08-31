@@ -1,6 +1,8 @@
 //! The `D` (shift+d) view-picker overlay (spec tui-views "Move to a group"):
-//! a small modal listing the focused workspace's views plus a trailing
-//! "new group…" entry. Selecting a view moves the focused session into it;
+//! a small modal listing every OTHER view of the focused workspace (the
+//! focused session's own current view is excluded — moving a session to the
+//! view it's already in is a confusing no-op) plus a trailing "new group…"
+//! entry. Selecting a view moves the focused session into it;
 //! selecting "new group…" switches to a text-input sub-mode (reusing the
 //! `workspace_add` field pattern) whose Enter creates the group and moves
 //! the session in. `j`/`k`/arrows move the selection, Enter selects, Esc
@@ -50,10 +52,13 @@ impl ViewPickerState {
     }
 }
 
-/// The list of selectable rows: every view name (order given), then the
+/// The list of selectable rows: every OTHER view of the workspace (order
+/// given, the focused session's own current view dropped — moving a session
+/// to the view it's already in is a no-op row that only confuses), then the
 /// fixed "new group…" entry.
-pub fn picker_entries(view_names: &[String]) -> Vec<String> {
-    let mut entries = view_names.to_vec();
+pub fn picker_entries(view_names: &[String], current_view: &str) -> Vec<String> {
+    let mut entries: Vec<String> =
+        view_names.iter().filter(|name| name.as_str() != current_view).cloned().collect();
     entries.push(NEW_GROUP_LABEL.to_owned());
     entries
 }
@@ -160,12 +165,30 @@ mod tests {
     #[test]
     fn entries_append_the_new_group_row() {
         let names = vec!["main".to_owned(), "backend".to_owned()];
-        assert_eq!(picker_entries(&names), ["main", "backend", NEW_GROUP_LABEL]);
+        // Neither name is the focused session's current view here, so both
+        // survive the exclusion filter untouched.
+        assert_eq!(picker_entries(&names, "solo"), ["main", "backend", NEW_GROUP_LABEL]);
+    }
+
+    #[test]
+    fn entries_drop_the_focused_sessions_current_view() {
+        // Moving a session to the view it's already in is a no-op row that
+        // only confuses — it must never appear alongside the OTHER views.
+        let names = vec!["main".to_owned(), "backend".to_owned(), "solo".to_owned()];
+        assert_eq!(picker_entries(&names, "backend"), ["main", "solo", NEW_GROUP_LABEL]);
+    }
+
+    #[test]
+    fn entries_are_just_new_group_when_the_current_view_is_the_only_one() {
+        // A lone/solo view with nowhere else to go: still never a
+        // zero-row modal — "new group…" is always present.
+        let names = vec!["solo".to_owned()];
+        assert_eq!(picker_entries(&names, "solo"), [NEW_GROUP_LABEL]);
     }
 
     #[test]
     fn list_lines_mark_the_selected_row() {
-        let entries = picker_entries(&["main".to_owned()]);
+        let entries = picker_entries(&["main".to_owned()], "solo");
         let lines = picker_lines(&entries, 1, None, 40);
         assert_eq!(lines[0].to_string(), "  main");
         assert_eq!(lines[1].to_string(), format!("▸ {NEW_GROUP_LABEL}"));
@@ -175,14 +198,14 @@ mod tests {
 
     #[test]
     fn out_of_range_selection_clamps_to_the_last_row() {
-        let entries = picker_entries(&["main".to_owned()]);
+        let entries = picker_entries(&["main".to_owned()], "solo");
         let lines = picker_lines(&entries, 99, None, 40);
         assert_eq!(lines[1].to_string(), format!("▸ {NEW_GROUP_LABEL}"));
     }
 
     #[test]
     fn new_group_input_mode_shows_the_field_and_its_own_footer() {
-        let entries = picker_entries(&["main".to_owned()]);
+        let entries = picker_entries(&["main".to_owned()], "solo");
         let lines = picker_lines(&entries, 0, Some("back"), 40);
         assert_eq!(lines[0].to_string(), "new group name");
         assert!(lines[1].to_string().starts_with("back"));
@@ -191,7 +214,7 @@ mod tests {
 
     #[test]
     fn empty_input_shows_the_placeholder() {
-        let entries = picker_entries(&[]);
+        let entries = picker_entries(&[], "solo");
         let lines = picker_lines(&entries, 0, Some(""), 40);
         assert!(lines[1].to_string().starts_with("group name"));
     }
@@ -217,7 +240,7 @@ mod tests {
     #[test]
     fn modal_rect_fits_and_centers() {
         let area = Rect::new(0, 0, 120, 40);
-        let entries = picker_entries(&["main".to_owned(), "backend".to_owned()]);
+        let entries = picker_entries(&["main".to_owned(), "backend".to_owned()], "solo");
         let r = picker_modal_rect(area, entries.len());
         assert!(r.width < area.width && r.height < area.height);
         assert_eq!(r.height, 3 + 2 + 4, "3 rows + blank/footer + border/padding");
