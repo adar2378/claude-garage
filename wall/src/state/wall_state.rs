@@ -80,6 +80,17 @@ impl WallSession {
         self.status == "needs-input"
     }
 
+    /// The session's user-facing name (spec tui-wall "Title as display
+    /// name"): the live title when there is one, else the auto-label —
+    /// `claude-1` tells a user nothing once Claude Code has said what the
+    /// session is about.
+    pub fn display_name(&self) -> &str {
+        match self.title.as_deref() {
+            Some(t) if !t.trim().is_empty() => t,
+            _ => &self.label,
+        }
+    }
+
     /// True when this session's context (if any) came from the statusline
     /// wrapper, not the transcript fallback — the install hint's gate (spec
     /// tui-context-meters "Install affordance": "no session has

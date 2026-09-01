@@ -62,7 +62,9 @@ pub fn triage_modal_rect(area: Rect, n_rows: usize) -> Rect {
 }
 
 fn row_line(s: &WallSession, selected: bool, width: usize, now_ms: i64) -> Line<'static> {
-    let identity = format!("{}/{}", s.workspace, s.label);
+    // Spec tui-wall "Title as display name": the queue names sessions by
+    // their title when one exists; the auto-label adds nothing here.
+    let identity = format!("{}/{}", s.workspace, s.display_name());
     let waiting = format_elapsed(s.since, now_ms);
     // '▸ ● ' prefix (4) + identity + 2 spaces + waiting + 2 spaces.
     let head = 4 + identity.chars().count() + 2 + waiting.chars().count();
@@ -98,22 +100,8 @@ fn row_line(s: &WallSession, selected: bool, width: usize, now_ms: i64) -> Line<
             Style::default().fg(colors::DIM),
         ));
     }
-    // Subtitle (spec tui-wall "Auto-subtitle in the tile bar": "The triage
-    // queue row MAY show the same subtitle dim when present"), lowest
-    // priority — fitted into whatever's left after identity/waiting/message.
-    if let Some(title) = s.title.as_deref() {
-        if title != s.label {
-            let used: usize = spans.iter().map(Span::width).sum();
-            let remaining = width.saturating_sub(used + 2);
-            let fitted = fit(title, remaining);
-            if !fitted.is_empty() {
-                spans.push(Span::styled(
-                    format!("  {fitted}"),
-                    Style::default().fg(colors::DIM),
-                ));
-            }
-        }
-    }
+    // p13: no trailing subtitle — the title IS the identity now (spec
+    // tui-wall "Title as display name"); repeating it here was noise.
     Line::from(spans)
 }
 
@@ -265,21 +253,22 @@ mod tests {
     }
 
     #[test]
-    fn row_shows_the_subtitle_dim_when_present_and_distinct_from_the_label() {
+    fn row_identity_uses_the_title_as_the_name() {
+        // p13 (spec tui-wall "Title as display name"): the title IS the
+        // identity — no auto-label, no trailing subtitle duplicate.
         let mut s = session("api-fix", "needs-input", Some(0));
         s.title = Some("✳ writing tests".to_owned());
         let line = row_line(&s, false, 78, 240_000);
-        assert!(line.to_string().ends_with("✳ writing tests"), "{line}");
-        let subtitle_span = line.spans.last().unwrap();
-        assert_eq!(subtitle_span.style.fg, Some(colors::DIM));
+        let text = line.to_string();
+        assert!(text.contains("ws/✳ writing tests"), "{text}");
+        assert!(!text.contains("api-fix"), "{text}");
     }
 
     #[test]
-    fn row_omits_a_title_matching_the_label() {
-        let mut s = session("api-fix", "needs-input", Some(0));
-        s.title = Some("api-fix".to_owned());
+    fn row_identity_falls_back_to_the_label_without_a_title() {
+        let s = session("api-fix", "needs-input", Some(0));
         let line = row_line(&s, false, 78, 240_000);
-        assert!(!line.to_string().contains("api-fix  api-fix"));
+        assert!(line.to_string().contains("ws/api-fix"), "{line}");
     }
 
     #[test]

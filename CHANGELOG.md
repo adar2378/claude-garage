@@ -2,6 +2,15 @@
 
 ## 0.3.1
 
+### Changed
+
+- **The title is the name now (TUI).** `claude-1` means nothing to a user;
+  when Claude Code broadcasts what a session is about ("George employment
+  history"), that title renders as the session's primary name in the tile
+  bar, workspace rail, and triage queue — with the auto-label demoted to a
+  dim trailing id in the tile bar. No title → the label renders exactly as
+  before.
+
 ### Fixed
 
 - **Context meters no longer overstate usage ~5× on current models.** The
@@ -15,6 +24,10 @@
   payload field, which wins over every heuristic. (The statusline-fed
   percentage — the `I` install — was always correct; only the fallback
   was wrong.)
+- **`npm run build:tui` no longer produces a binary macOS refuses to run.**
+  Copying over the dist binary's existing inode while a running TUI still
+  had it mapped made arm64 macOS SIGKILL every fresh exec of the file; the
+  script now removes the old binary before copying.
 
 ## 0.3.0 — the TUI arc
 

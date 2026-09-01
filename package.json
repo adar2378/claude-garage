@@ -44,7 +44,7 @@
   "scripts": {
     "dev": "concurrently -n daemon,ui -c blue,magenta \"npm:dev --workspace daemon\" \"npm:dev --workspace ui\"",
     "test": "node --test \"daemon/test/*.test.js\" \"ui/test/*.test.js\"",
-    "build:tui": "cd wall && cargo build --release && mkdir -p dist && cp target/release/garage-wall dist/garage-wall-$(node -p \"process.platform+'-'+process.arch\")",
+    "build:tui": "cd wall && cargo build --release && mkdir -p dist && rm -f dist/garage-wall-$(node -p \"process.platform+'-'+process.arch\") && cp target/release/garage-wall dist/garage-wall-$(node -p \"process.platform+'-'+process.arch\")",
     "postinstall": "chmod +x node_modules/node-pty/prebuilds/darwin-*/spawn-helper 2>/dev/null || true",
     "prepack": "npm run build --workspace ui"
   },

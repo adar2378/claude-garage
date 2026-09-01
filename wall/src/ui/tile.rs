@@ -101,80 +101,92 @@ fn fit_subtitle(text: &str, width: usize) -> String {
     out
 }
 
-/// The border-title status bar: glyph, label, ⎇ branch, elapsed (waiting
-/// time for needs-input), frozen affordance, and — lowest priority, only
-/// when it still fits — the daemon-provided subtitle (spec tui-wall
-/// "Auto-subtitle in the tile bar"). `width` is the tile's rendered width
-/// (the Block's top edge, corners included); everything but the subtitle
-/// renders unconditionally exactly as before this feature — the subtitle is
-/// the only thing the truncation ladder ever drops or shortens.
+/// The border-title status bar: glyph, display name (spec tui-wall "Title
+/// as display name" — the live title when there is one, else the label),
+/// ⎇ branch, elapsed (waiting time for needs-input), frozen affordance,
+/// context meter, and — lowest priority, only when it still fits — the
+/// demoted auto-label as a dim trailing id. `width` is the tile's rendered
+/// width (the Block's top edge, corners included). Ladder: glyph, branch,
+/// elapsed, frozen, and the meter never shrink; the name ellipsis-truncates
+/// into what's left (falling back to the untruncated label when not even
+/// one character of the title fits); the trailing id drops first.
 pub fn title_line(v: &TileView, width: u16) -> Line<'static> {
     let s = v.session;
     let blocked = s.needs_input();
     let glyph_color = status_color(&s.status, s.since, v.now_ms);
-    let label_color = if blocked {
+    let name_color = if blocked {
         colors::AMBER
     } else if v.engaged || v.focused {
         colors::FG
     } else {
         colors::DIM
     };
-    let mut label_style = Style::default().fg(label_color);
+    let mut name_style = Style::default().fg(name_color);
     if v.engaged {
-        label_style = label_style.add_modifier(Modifier::BOLD);
+        name_style = name_style.add_modifier(Modifier::BOLD);
     }
     if v.focused {
-        label_style = label_style.add_modifier(Modifier::UNDERLINED);
+        name_style = name_style.add_modifier(Modifier::UNDERLINED);
     }
 
-    let mut spans = vec![
-        Span::styled(format!(" {} ", glyph_for(&s.status)), Style::default().fg(glyph_color)),
-        Span::styled(s.label.clone(), label_style),
-    ];
+    // Everything that never shrinks, built first so the name knows how much
+    // room it actually has.
+    let mut tail: Vec<Span<'static>> = Vec::new();
     if let Some(branch) = &s.branch {
-        spans.push(Span::styled(
+        tail.push(Span::styled(
             format!(" ⎇ {branch}"),
             Style::default().fg(colors::FAINT),
         ));
     }
     if let Some(elapsed) = elapsed_for(&s.status, s.since, v.now_ms) {
-        spans.push(Span::styled(
+        tail.push(Span::styled(
             format!(" {elapsed}"),
             Style::default().fg(if blocked { colors::AMBER } else { colors::DIM }),
         ));
     }
     if let Some(n) = v.frozen_new_lines {
-        spans.push(Span::styled(
+        tail.push(Span::styled(
             format!(" ↓ live · +{n} lines "),
             Style::default().fg(colors::FG).add_modifier(Modifier::BOLD),
         ));
     }
-    // Context meter (spec tui-context-meters "Tile context meter"): ladder
-    // priority above the subtitle, below glyph/label/branch/elapsed — it
-    // renders unconditionally (never truncated itself) exactly like those;
-    // only the subtitle below it ever shrinks or drops to make room. `None`
-    // (never posted / no session) renders exactly as before this feature.
+    // Context meter (spec tui-context-meters "Tile context meter"): renders
+    // unconditionally, never truncated. `None` renders as before.
     if let Some(context) = &s.context {
-        spans.push(Span::styled(
+        tail.push(Span::styled(
             format!(" {}", context_meter_text(context.used_percentage)),
             Style::default().fg(context_meter_color(context.used_percentage)),
         ));
     }
-    // Subtitle: non-null, and only when it differs from the label (spec:
-    // "differs from its label") — otherwise it's pure noise repeating what
-    // the label already says. Lowest priority: fitted into whatever's left
-    // after every span above plus the trailing space this function always
-    // ends with; a title that doesn't fit even one character is dropped.
-    if let Some(title) = s.title.as_deref() {
-        if title != s.label {
-            let used: usize = spans.iter().map(Span::width).sum();
-            // Reserve 1 for the leading separator space and 1 for the
-            // trailing space every title line ends with.
-            let avail = (width as usize).saturating_sub(used + 2);
-            let fitted = fit_subtitle(title, avail);
-            if !fitted.is_empty() {
-                spans.push(Span::styled(format!(" {fitted}"), Style::default().fg(colors::DIM)));
-            }
+
+    let glyph = format!(" {} ", glyph_for(&s.status));
+    let fixed: usize =
+        glyph.chars().count() + tail.iter().map(Span::width).sum::<usize>() + 1; // +1 trailing space
+    let avail = (width as usize).saturating_sub(fixed);
+    let name = s.display_name();
+    let mut fitted = fit_subtitle(name, avail);
+    if fitted.is_empty() {
+        // Not even one character fits — old behavior: the label renders
+        // untruncated rather than the bar losing its identity entirely.
+        fitted = s.label.clone();
+    }
+    let titled = fitted != s.label; // the title, not the label, is the name
+
+    let mut spans = vec![
+        Span::styled(glyph, Style::default().fg(glyph_color)),
+        Span::styled(fitted, name_style),
+    ];
+    spans.extend(tail);
+    // The demoted auto-label id, dim, lowest priority — only when the title
+    // took the name slot and the id still fits whole.
+    if titled && name != s.label {
+        let used: usize = spans.iter().map(Span::width).sum();
+        let room = (width as usize).saturating_sub(used + 2);
+        if s.label.chars().count() <= room {
+            spans.push(Span::styled(
+                format!(" {}", s.label),
+                Style::default().fg(colors::FAINT),
+            ));
         }
     }
     spans.push(Span::raw(" "));
@@ -356,7 +368,7 @@ mod tests {
         assert_eq!(title_line(&view(&s), 200).to_string(), " ✓ lbl ");
     }
 
-    // ── p10: auto-subtitle (spec tui-wall "Auto-subtitle in the tile bar") ─
+    // ── p13: title as display name (spec tui-wall "Title as display name") ─
 
     #[test]
     fn no_title_renders_byte_identical_to_before_the_feature() {
@@ -365,45 +377,57 @@ mod tests {
     }
 
     #[test]
-    fn a_title_matching_the_label_is_suppressed_as_noise() {
+    fn a_title_matching_the_label_adds_no_trailing_id() {
         let mut s = session("idle");
         s.title = Some("lbl".to_owned());
         assert_eq!(title_line(&view(&s), 200).to_string(), " ○ lbl ");
     }
 
     #[test]
-    fn subtitle_renders_dim_after_the_existing_content_when_it_fits() {
+    fn title_takes_the_name_slot_with_the_label_demoted_to_a_dim_id() {
         let mut s = session("idle");
         s.title = Some("build the thing".to_owned());
         let line = title_line(&view(&s), 200);
-        assert_eq!(line.to_string(), " ○ lbl build the thing ");
-        let subtitle_span = &line.spans[line.spans.len() - 2];
-        assert_eq!(subtitle_span.style.fg, Some(colors::DIM));
+        assert_eq!(line.to_string(), " ○ build the thing lbl ");
+        let name_span = &line.spans[1];
+        assert_eq!(name_span.style.fg, Some(colors::DIM)); // idle name color
+        let id_span = &line.spans[line.spans.len() - 2];
+        assert_eq!(id_span.style.fg, Some(colors::FAINT), "demoted id is faint");
     }
 
     #[test]
-    fn subtitle_truncates_with_an_ellipsis_when_the_tile_is_narrow() {
-        // Spec scenario "Subtitle renders and truncates": a 40-wide tile,
-        // long title — the subtitle truncates, label/branch/elapsed unhurt.
+    fn title_name_keeps_amber_salience_when_blocked() {
+        let mut s = session("needs-input");
+        s.title = Some("build the thing".to_owned());
+        let line = title_line(&view(&s), 200);
+        assert_eq!(line.spans[1].style.fg, Some(colors::AMBER));
+    }
+
+    #[test]
+    fn long_title_truncates_without_pushing_branch_or_elapsed_out() {
+        // Spec scenario "Long title truncates without pushing structure
+        // out": 40-wide tile — the name truncates, branch/elapsed unhurt.
         let mut s = session("needs-input");
         s.branch = Some("garage/lbl".to_owned());
         s.title = Some("a very long summary of what this session is doing right now".to_owned());
         let line = title_line(&view(&s), 40);
         let text = line.to_string();
         assert!(text.chars().count() <= 40, "{text}");
-        assert!(text.starts_with(" ● lbl ⎇ garage/lbl 1:05 "), "{text}");
-        assert!(text.trim_end().ends_with('…'), "{text}");
+        assert!(text.contains(" ⎇ garage/lbl 1:05 "), "{text}");
+        assert!(line.spans[1].content.ends_with('…'), "{text}");
     }
 
     #[test]
-    fn subtitle_is_dropped_entirely_when_nothing_is_left() {
-        // The label/branch/elapsed must never be shortened to make room.
+    fn name_falls_back_to_the_label_when_nothing_is_left() {
+        // Branch/elapsed must never be shortened to make room; with zero
+        // room the bar keeps its old identity (the untruncated label).
         let mut s = session("needs-input");
         s.branch = Some("a-genuinely-quite-long-branch-name-here".to_owned());
         s.title = Some("anything".to_owned());
         let line = title_line(&view(&s), 30);
         let text = line.to_string();
         assert!(!text.contains("anything"));
+        assert!(text.contains("lbl"), "{text}");
         assert!(text.contains("a-genuinely-quite-long-branch-name-here"), "{text}");
     }
 

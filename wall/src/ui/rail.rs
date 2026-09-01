@@ -102,7 +102,9 @@ fn session_row(s: &WallSession, gridded: bool, focused: bool, now_ms: i64) -> Li
             format!("{} ", glyph_for(&s.status)),
             Style::default().fg(glyph_color),
         ),
-        Span::styled(s.label.clone(), label_style),
+        // Spec tui-wall "Title as display name": the live title when there
+        // is one, else the label. Paragraph clips at the rail edge.
+        Span::styled(s.display_name().to_owned(), label_style),
     ];
     if let Some(elapsed) = elapsed_for(&s.status, s.since, now_ms) {
         spans.push(Span::styled(
