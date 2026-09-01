@@ -3,19 +3,20 @@
 <img src="docs/banner.png" alt="claude-garage: a pit wall for your Claude Code agents" width="100%" />
 
 **Multiple Claude agents driving you crazy? Park them all in one
-garage.** Every session, every project, on one live wall: no window
-juggling, no tab hunting, and you know the instant one needs you.
+garage.** A needs-input queue that follows you across every project (`a`
+jumps to whoever's waiting), file-by-file diff review, and tmux-owned
+sessions that outlive the tool — reboot the Mac, `tmux attach` still works.
 
 [![npm](https://img.shields.io/npm/v/claude-garage?color=e2a75e&label=npm)](https://www.npmjs.com/package/claude-garage)
 [![license](https://img.shields.io/badge/license-MIT-79b26e)](LICENSE)
 [![node](https://img.shields.io/badge/node-%E2%89%A5%2020-6e9ecc)](package.json)
 [![local](https://img.shields.io/badge/100%25-local-c6cfdb)](#local-only-by-design)
 
-<img src="docs/hero.png" alt="The pit wall: two workspaces, a session asking for permission (amber), a finished worktree session, and the diff pane" width="100%" />
+<img src="docs/hero.png" alt="The web wall: two workspaces, a session asking for permission (amber), a finished worktree session, and the diff pane" width="100%" />
 
 </div>
 
-**▶ 60-second reveal** — the wall, needs-input triage, diff review, and the pit pet, beat by beat:
+**▶ 60-second reveal** — the web wall, needs-input triage, diff review, and the pit pet, beat by beat:
 
 https://github.com/user-attachments/assets/b19defa0-a60d-4082-9ca5-9b8ce9480b18
 
@@ -24,65 +25,90 @@ https://github.com/user-attachments/assets/b19defa0-a60d-4082-9ca5-9b8ce9480b18
 Running multiple Claude Code sessions across multiple projects means juggling
 terminal windows and editor windows. There is no single place to see:
 
-- **which sessions exist**, per project
-- **which one is blocked waiting for your input**. The real pain isn't window
-  count, it's attention routing
+- **which one is blocked waiting for your input** — right now, anywhere.
+  The real pain isn't window count, it's attention routing.
 - **what each session changed**, reviewable without hunting
+- **which sessions exist**, per project, without them dying the moment you
+  close a terminal or reboot
 
 claude-garage is that single place: the garage your agents are parked in,
-one screen, built around four things that rarely coexist.
+built around four things that rarely coexist.
 
-1. 🔌 **Real terminals that survive the tool.** tmux owns every session, not
-   the app. Close the tab, kill the daemon, reboot the Mac:
-   `tmux attach -t garage/<workspace>/<label>` still works, and dead sessions
-   restore with their full conversation (`claude --resume`) in one click.
-2. 🖥️ **Every session of a project on screen at once.** Not a switcher, a
-   live grid of interactive terminals. Split, resize, maximize, or detach
-   into standalone views, VS Code-style.
-3. 🚨 **Needs-input triage as a first-class queue.** Blocked sessions sort
-   first everywhere, light up amber, count into the header badge and the tab
-   title; `a` jumps to whichever agent is waiting, across every project.
-   Notifications reach you even when the wall isn't visible.
-4. 📋 **File-by-file diff review with an editor jump.** Per-workspace or
-   per-worktree changes (committed and uncommitted), a full-screen review mode
-   with viewed-tracking, and `o` to open your editor at the exact line.
+1. 🚨 **Needs-input triage as a first-class queue.** Blocked sessions sort
+   first everywhere, light up amber, and count into the header badge, the
+   tab title, and the TUI's status strip; `a` jumps to whichever agent is
+   waiting, across every project, on either surface.
+2. 🔌 **Real terminals that survive the tool.** tmux owns every session, not
+   the app. Close the terminal, kill the daemon, reboot the Mac:
+   `tmux attach -t garage/<workspace>/<label>` still works, dead sessions
+   restore with their full conversation (`claude --resume`) in one keypress,
+   and `t` pops a live session into its own OS terminal window alongside
+   the wall.
+3. 📋 **File-by-file diff review with an editor jump — in the web wall.**
+   Per-workspace or per-worktree changes (committed and uncommitted), a
+   full-screen review mode with viewed-tracking, and `o` to open your editor
+   at the exact line. (The TUI doesn't have review mode yet — it's on the
+   [Roadmap](#roadmap).)
+4. 🖥️ **Every session of a project visible at once.** Not a switcher: the
+   web wall renders every session in a workspace as a live terminal
+   simultaneously (split/resize/maximize/detach); the TUI groups sessions
+   into named views (`d`/`D`/`Tab`) with a 6-tile grid and an overflow rail
+   for the rest.
 
 ## Quick start
-
-```bash
-npx claude-garage
-```
-
-Opens the pit wall at `http://127.0.0.1:4747`. Add a workspace, spawn
-sessions with the `+` next to its name, and press `?` for the keys.
-
-**Requirements**
-
-- macOS
-- [tmux](https://github.com/tmux/tmux) ≥ 3.2 (garage offers to `brew install` it if missing)
-- [Claude Code](https://docs.claude.com/en/docs/claude-code) CLI on `PATH`
-- Node.js ≥ 20
-
-**Hooks (recommended):** status updates poll every 2s by default. Click
-**install hooks for me** in the banner for instant detection. The daemon
-merges Claude Code's hooks into `~/.claude/settings.json` (backup kept,
-idempotent).
-
-## TUI
-
-The same wall, full-screen in your terminal:
 
 ```bash
 npx claude-garage tui
 ```
 
-Starts the daemon if one isn't already running, then opens the terminal
-wall. Core keys: `1`–`9` switch workspaces, `Enter` engages the focused
-terminal (keys go to the agent), `Ctrl+G` hands keys back to the garage,
-`a` jumps to the session that's waited longest for input, `A` opens the
-triage queue, `q` quits. The daemon and the web wall at
-`http://127.0.0.1:4747` keep working alongside — quitting the TUI leaves
-them (and every tmux session) running.
+A full-screen terminal wall, right in your terminal. Starts the daemon if
+one isn't already running; `1`–`9` switch workspaces, `Enter` engages the
+focused terminal (keys go to the agent byte-exact — Alt+arrows, paste,
+everything), `Ctrl+G` hands keys back to the garage, `a` jumps to whoever's
+waited longest, `?` for the full keymap. Quitting the TUI leaves the daemon
+and every tmux session running. It's also light: ~5ms input latency, ~2%
+CPU, and a 2.4MB binary (measured on the ratatui port — see
+[`openspec/changes/archive/2026-08-31-p9-ratatui-port/verification.md`](openspec/changes/archive/2026-08-31-p9-ratatui-port/verification.md)).
+
+Since p10–p12, the TUI also groups sessions into views (`d` detaches the
+focused one into its own view or rejoins it to the default, `D` moves it to
+a chosen group, `Tab` cycles views), shows a dim auto-subtitle under each
+session's label straight from Claude Code's own terminal-title updates (zero
+config), and tracks context pressure: a per-tile meter plus a `5h`/`7-day`
+usage chip in the strip, fed by a one-keypress `I` install of a chaining
+statusline wrapper (any statusline you already have keeps running). Closing
+a plain session tears it down; closing a worktree session keeps its branch
+and points you at the web wall to merge or discard it.
+
+**Prefer a browser?**
+
+```bash
+npx claude-garage
+```
+
+Opens the web wall at `http://127.0.0.1:4747` — the companion surface, with
+diff review and the worktree finish flow (see [Web wall](#web-wall)). Both
+commands start the same daemon and see the same tmux sessions, so you can
+run either one, or both, at once.
+
+**Requirements**
+
+- macOS (Linux support is on the [Roadmap](#roadmap))
+- Node.js ≥ 20
+- [tmux](https://github.com/tmux/tmux) ≥ 3.2 (garage offers to `brew install` it if missing)
+- [Claude Code](https://docs.claude.com/en/docs/claude-code) CLI on `PATH`
+- Rust — **not required on Apple Silicon.** The TUI ships as a prebuilt
+  `arm64` binary in the npm package. On an Intel Mac, `claude-garage tui`
+  builds it once from source the first time you run it if `cargo` is on
+  `PATH` ([rustup.rs](https://rustup.rs)); without `cargo` you get an
+  actionable error naming exactly what's missing, not a crash. The web wall
+  never needs Rust.
+
+**Hooks (recommended):** status updates poll every 2s by default. Click
+**install hooks for me** in the web wall's banner (or press `I` in the TUI
+for the statusline half of the story) for instant detection. The daemon
+merges Claude Code's hooks/statusline into `~/.claude/settings.json` (backup
+kept, idempotent).
 
 ## Local-only by design
 
@@ -93,8 +119,8 @@ Everything runs on your machine and stays there.
   phones home to no one.
 - All state is a single local file (`~/.garage/state.json`) plus your own
   tmux server and git repos.
-- Your sessions talk to Claude exactly as they would without garage. The
-  wall is a viewer, not a middleman.
+- Your sessions talk to Claude exactly as they would without garage. Both
+  the TUI and the web wall are viewers, not a middleman.
 
 ## Session states
 
@@ -104,12 +130,19 @@ Everything runs on your machine and stays there.
 | `◐` | working | Claude is running. |
 | `✓` | done | Finished a turn since you last looked (fades after 2 min). |
 | `○` | idle | Waiting for you to *ask*, not to *answer*. |
-| `⟳` | restorable | tmux died (reboot?). One click resurrects the conversation. |
+| `⟳` | restorable | tmux died (reboot?). One keypress/click resurrects the conversation. |
 
-## Also on the wall
+## Web wall
 
-- 🌳 **Worktree sessions**: spawn in an isolated git worktree on a
-  `garage/<label>` branch; on close, **merge / discard / keep**.
+The browser companion (`npx claude-garage`, `http://127.0.0.1:4747`) carries
+the features the TUI doesn't have yet:
+
+- 🎨 **Diff review**: the changes pane and full-screen review mode described
+  in [Why](#why) — `Tab`/`j`/`k`/`r`/`v`/`o`, see [Keybindings](#keybindings).
+- 🌳 **Worktree finish flow**: spawn a worktree session from either surface
+  (`N` in the TUI, the worktree toggle here), but **merge / discard / keep**
+  on close is web-only for now — the TUI always keeps the branch and tells
+  you to finish it here.
 - 🎨 **Themes**: garage, claude dark, claude light, or follow the OS.
   Terminals re-skin in place, full ANSI palettes included.
 - 🔔 **Notifications**: badge + tab title in-app, opt-in browser
@@ -117,7 +150,7 @@ Everything runs on your machine and stays there.
   notification when no page is open (clickable with
   [`terminal-notifier`](https://github.com/julienXX/terminal-notifier)).
 
-## The pit pet 🐈
+### The pit pet 🐈 (web wall)
 
 An optional ASCII companion on the key strip whose mood *is* the wall:
 asleep when all is quiet, watching while agents run, **sprinting toward the
@@ -146,45 +179,67 @@ state in character:
 
 ## Keybindings
 
+The TUI's full keymap (`claude-garage tui`, also shown in-app with `?`).
+Bindings apply at the garage layer; `Enter` hands your keystrokes to the
+focused session byte-exact until `Ctrl+G` takes them back.
+
 | Key | Action |
 |---|---|
-| `1`–`9` | switch focused workspace |
-| `[` / `]` | cycle terminals within the workspace |
-| `a` | jump to a session that needs input, anywhere |
-| `\` | split the focused cell (new session beside it) |
-| `m` | maximize the focused cell ⇄ restore |
-| `Tab` | changes pane: toggle list ⇄ diff emphasis |
-| `j` / `k` | next / previous changed file |
-| `r` | enter full-screen review mode |
-| `v` | (review mode) mark file viewed, advance to next unviewed |
-| `o` | open the selected file, or the workspace root, in your editor |
-| `Shift+Enter` | newline in Claude Code's composer (no `/terminal-setup` needed) |
-| `Ctrl+\`` | release keys from the terminal back to garage |
-| `?` | keybindings + status legend |
+| `1`–`9` | focus workspace |
+| `[` / `]` | cycle focused tile |
+| `Enter` | engage focused tile (restore it when restorable) |
+| `Ctrl+G` | disengage (while engaged) |
+| `m` | maximize / restore focused tile |
+| `t` | open focused session in a new terminal window (macOS) |
+| `a` | jump to longest-waiting blocked session |
+| `A` | triage queue |
+| `n` / `N` | spawn session / worktree session |
+| `R` | restore all restorable sessions in workspace |
+| `I` | install statusline feed for context meters |
+| `x x` | close focused session (press twice) |
+| `X X` | remove focused workspace (sessions keep running) |
+| `X K` | remove focused workspace AND kill its sessions |
+| `w` | add workspace |
+| `d` | detach focused session to its own view, or rejoin main |
+| `D` | move focused session to another view / new group |
+| `Tab` | cycle the focused workspace's views |
+| `?` | toggle this help |
+| `q` | quit (tmux sessions keep running) |
 
-Bindings pause while a terminal has keyboard focus. The header chip always
-shows where your keys go.
+The web wall has its own compact keymap for its own features (grid
+navigation plus diff review) — press `?` there for the full list:
+`1`–`9` workspace, `[`/`]` cycle terminal, `a` jump, `\` split cell, `m`
+maximize, `Tab`/`j`/`k`/`r`/`v`/`o` for the changes pane and review mode,
+`` Ctrl+` `` releases keys back to the browser wall.
 
 ## How it works
 
 ```
 tmux  (persistence, source of truth)
-  └─ small Node daemon  (spawn / list / bridge / diff / hooks)
-       └─ browser UI  (React + xterm.js)
+  └─ small Node daemon  (spawn / list / bridge / diff / hooks / statusline)
+       ├─ Rust terminal wall   (ratatui + crossterm — `claude-garage tui`)
+       └─ browser web wall     (React + xterm.js — `npx claude-garage`)
 ```
 
 The daemon is a thin Fastify process that shells out to `tmux`/`git`/`claude`
-rather than re-implementing them; diffs are computed read-only; hook events
-are token-authed. The UI is a viewer over SSE + WebSockets. tmux is the
-registry: garage can be deleted and your sessions won't notice.
+rather than re-implementing them; diffs are computed read-only; hook and
+statusline events are token-authed. Both UIs are viewers over the same
+daemon: the web wall over SSE + WebSockets, the TUI over HTTP/SSE for state
+and direct `tmux attach` PTYs for the terminals themselves — no WebSocket
+terminal bridge in the TUI path. tmux is the registry: garage can be deleted
+and your sessions won't notice.
 
 ## Development
 
 ```bash
 npm install
-npm run dev     # daemon :4747 + Vite :5173
-npm test        # node:test suite (status, poller, hooks, layout, views)
+npm run dev          # daemon :4747 + Vite :5173 (web wall)
+npm test             # node:test suite (status, poller, hooks, layout, views)
+npm run build:tui    # cargo build --release; copies the binary into wall/dist
 ```
+
+`wall/` is a separate Rust workspace with its own unit and e2e suites
+(`cd wall && cargo test`; e2e harnesses under `wall/test/e2e`).
 
 Built through spec-driven phases ([`openspec/`](openspec/)), each verified
 end-to-end on a real system.
@@ -192,9 +247,10 @@ end-to-end on a real system.
 ## Roadmap
 
 - `claude-garage attach`: adopt an existing tmux session onto the wall
-- Phone push (ntfy/webhook) for when you're away from the machine
-- View renaming and drag-between-views
+- Review mode in the TUI (the web wall's file-by-file diff review, ported)
 - Linux support
+- Phone push (ntfy/webhook) for when you're away from the machine
+- View renaming
 
 ## License
 

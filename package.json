@@ -1,7 +1,7 @@
 {
   "name": "claude-garage",
-  "version": "0.2.1",
-  "description": "Multiple Claude agents driving you crazy? Park them all in one garage: every session on one live terminal wall, no window juggling. Needs-input triage, worktree isolation, diff review. tmux owns the sessions; close the app and nothing dies.",
+  "version": "0.3.0",
+  "description": "Multiple Claude agents driving you crazy? Park them all in one garage: a needs-input queue that follows you across projects, a full-screen terminal TUI, and a browser wall with diff review. tmux owns the sessions; close the app and nothing dies.",
   "license": "MIT",
   "author": "Saiful Islam <saifulislamadar@gmail.com>",
   "repository": {
@@ -14,6 +14,7 @@
     "claude",
     "claude-code",
     "tmux",
+    "tui",
     "terminal",
     "agents",
     "session-manager",
