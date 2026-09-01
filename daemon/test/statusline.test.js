@@ -22,6 +22,7 @@ let app;
 let registry;
 let tmux;
 let statusline;
+let transcript;
 
 const RUN = `p11-statusline-${process.pid}`;
 
@@ -33,6 +34,7 @@ before(async () => {
   registry = await import("../src/registry.js");
   tmux = await import("../src/tmux.js");
   statusline = await import("../src/statusline.js");
+  transcript = await import("../src/transcript.js");
   const { default: Fastify } = await import("fastify");
   const { default: statuslineRoutes } = await import("../src/statusline.js");
   app = Fastify();
@@ -157,6 +159,25 @@ test("POST /api/statusline/claude: a resolvable session (cwd fallback) stores cl
   assert.equal(body.ok, true);
   assert.ok(body.applied.includes(id));
   assert.deepEqual(statusline.getStatuslineContext(id), { usedPercentage: 100, source: "statusline" });
+});
+
+test("POST /api/statusline/claude: model.id + context_window_size teach the transcript fallback", async (t) => {
+  const token = await registry.getHookToken();
+  const id = `garage/${RUN}/window-teach`;
+  await tmux.createSession(id, scratch, "sleep", ["60"]);
+  t.after(() => tmux.killSession(id).catch(() => {}));
+
+  const res = await app.inject({
+    method: "POST",
+    url: `/api/statusline/claude?token=${token}`,
+    payload: {
+      cwd: scratch,
+      model: { id: "claude-window-test" },
+      context_window: { used_percentage: 12, context_window_size: 400_000 },
+    },
+  });
+  assert.equal(res.statusCode, 200);
+  assert.equal(transcript.windowForModel("claude-window-test"), 400_000);
 });
 
 test("POST /api/statusline/claude: rate_limits update the account-wide store even without context_window", async (t) => {

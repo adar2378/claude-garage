@@ -54,14 +54,37 @@ test("slugifyCwd replaces every / with -", () => {
   assert.equal(transcript.slugifyCwd("/a/b/c"), "-a-b-c");
 });
 
-test("windowForModel: unknown/missing model defaults to 200000", () => {
-  assert.equal(transcript.windowForModel("claude-sonnet-4-5"), 200_000);
-  assert.equal(transcript.windowForModel(undefined), 200_000);
-  assert.equal(transcript.windowForModel(null), 200_000);
+test("windowForModel: unknown/missing model defaults to 1M (current models are natively 1M)", () => {
+  assert.equal(transcript.windowForModel("claude-opus-5"), 1_000_000);
+  assert.equal(transcript.windowForModel("claude-fable-5"), 1_000_000);
+  assert.equal(transcript.windowForModel("claude-sonnet-4-6"), 1_000_000);
+  assert.equal(transcript.windowForModel(undefined), 1_000_000);
+  assert.equal(transcript.windowForModel(null), 1_000_000);
+});
+
+test("windowForModel: known small-window models get 200k", () => {
+  assert.equal(transcript.windowForModel("claude-haiku-4-5-20251001"), 200_000);
+  assert.equal(transcript.windowForModel("claude-sonnet-4-5-20250929"), 200_000);
+  assert.equal(transcript.windowForModel("claude-opus-4-5-20251101"), 200_000);
+  assert.equal(transcript.windowForModel("claude-sonnet-4-20250514"), 200_000);
+  assert.equal(transcript.windowForModel("claude-3-5-sonnet-20241022"), 200_000);
 });
 
 test("windowForModel: a [1m] model id gets the 1M window", () => {
   assert.equal(transcript.windowForModel("claude-sonnet-4-5-20250929[1m]"), 1_000_000);
+});
+
+test("windowForModel: a statusline-learned window wins over every heuristic", () => {
+  transcript.recordModelWindow("claude-sonnet-4-5-20250929", 1_000_000);
+  assert.equal(transcript.windowForModel("claude-sonnet-4-5-20250929"), 1_000_000);
+});
+
+test("recordModelWindow ignores junk", () => {
+  transcript.recordModelWindow(null, 500_000);
+  transcript.recordModelWindow("claude-junk", NaN);
+  transcript.recordModelWindow("claude-junk", 0);
+  transcript.recordModelWindow("claude-junk", "big");
+  assert.equal(transcript.windowForModel("claude-junk"), 1_000_000); // still the default
 });
 
 test("parseLastAssistantUsage finds the LAST assistant usage, skipping malformed and non-assistant lines", () => {
@@ -82,7 +105,7 @@ test("parseLastAssistantUsage returns null when nothing usable is found", () => 
 
 // --- computeContext (real file IO, tail-bound) ----------------------------
 
-test("computeContext: percentage = tokens / window, default 200000 window", async () => {
+test("computeContext: percentage = tokens / window (200k model)", async () => {
   const dir = "/scratch/proj-a";
   const csid = "session-a";
   await writeTranscript(
@@ -90,7 +113,7 @@ test("computeContext: percentage = tokens / window, default 200000 window", asyn
     csid,
     [
       JSON.stringify({ type: "system" }),
-      assistantLine({ input: 50_000, cacheRead: 50_000, cacheCreation: 0 }), // 100k / 200k = 50%
+      assistantLine({ input: 50_000, cacheRead: 50_000, cacheCreation: 0, model: "claude-haiku-4-5" }), // 100k / 200k = 50%
     ].join("\n")
   );
 
@@ -115,7 +138,7 @@ test("computeContext: malformed trailing lines are skipped, last valid assistant
     dir,
     csid,
     [
-      assistantLine({ input: 20_000, cacheRead: 0, cacheCreation: 0 }), // 10%
+      assistantLine({ input: 20_000, cacheRead: 0, cacheCreation: 0, model: "claude-haiku-4-5" }), // 10%
       "{{{ garbage, not json",
       "", // blank line
     ].join("\n")
@@ -130,7 +153,7 @@ test("computeContext: tail-bounded read finds usage within the last 256KB of a m
   const filler = "x".repeat(1024); // 1KB junk lines, well-formed-but-irrelevant JSON
   const padLine = JSON.stringify({ type: "user", junk: filler });
   const padding = Array.from({ length: 4000 }, () => padLine).join("\n"); // ~4MB
-  const content = `${padding}\n${assistantLine({ input: 30_000, cacheRead: 0, cacheCreation: 0 })}\n`; // 15%
+  const content = `${padding}\n${assistantLine({ input: 30_000, cacheRead: 0, cacheCreation: 0, model: "claude-haiku-4-5" })}\n`; // 15%
   await writeTranscript(dir, csid, content);
 
   const result = await transcript.computeContext({ dir, claudeSessionId: csid });
@@ -162,7 +185,7 @@ test("refreshContext populates the cache asynchronously without blocking the cal
   const id = "cache-async";
   const dir = "/scratch/proj-cache";
   const csid = "session-cache";
-  await writeTranscript(dir, csid, assistantLine({ input: 100_000 })); // 50%
+  await writeTranscript(dir, csid, assistantLine({ input: 100_000, model: "claude-haiku-4-5" })); // 50%
 
   transcript.refreshContext(id, { dir, claudeSessionId: csid });
   // Synchronous call returns immediately — the read hasn't had a chance to
@@ -178,7 +201,7 @@ test("refreshContext respects the 15s TTL and refreshes again once stale", async
   const id = "cache-ttl";
   const dir = "/scratch/proj-ttl";
   const csid = "session-ttl";
-  await writeTranscript(dir, csid, assistantLine({ input: 100_000 })); // 50%
+  await writeTranscript(dir, csid, assistantLine({ input: 100_000, model: "claude-haiku-4-5" })); // 50%
 
   transcript.refreshContext(id, { dir, claudeSessionId: csid });
   await sleep(50);

@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.3.1
+
+### Fixed
+
+- **Context meters no longer overstate usage ~5× on current models.** The
+  transcript fallback assumed a 200k context window unless the model id
+  carried the old `[1m]` beta marker — but the Claude 5 family and the
+  4.6+ generation are natively 1M and their ids carry no marker, so a
+  session at ~5% showed ~27%. The default window is now 1M, with a
+  known-200k list (Haiku, the 3.x family, pre-4.6 Opus/Sonnet). Better
+  still: statusline posts now teach the daemon each model's *actual*
+  window from Claude Code's own `context_window.context_window_size`
+  payload field, which wins over every heuristic. (The statusline-fed
+  percentage — the `I` install — was always correct; only the fallback
+  was wrong.)
+
 ## 0.3.0 — the TUI arc
 
 A full-screen terminal wall joins the browser wall as a second, first-class

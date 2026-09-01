@@ -5,6 +5,7 @@ import { tokenMatches } from "./token-auth.js";
 import { resolveSessionIds } from "./session-resolve.js";
 import { readSettingsOrRefuse, writeSettingsAtomic } from "./settings-install.js";
 import { claudeHome } from "./claude-home.js";
+import { recordModelWindow } from "./transcript.js";
 
 const PORT = Number(process.env.GARAGE_PORT ?? 4747);
 const SETTINGS_PATH = join(claudeHome(), "settings.json");
@@ -181,6 +182,10 @@ export default async function statuslineRoutes(app) {
     if (pct !== null) {
       for (const id of ids) setContext(id, pct);
     }
+    // Teach the transcript fallback this model's real window — the payload's
+    // context_window_size is Claude Code's own metadata, the only local
+    // source of a model id -> window mapping.
+    recordModelWindow(payload?.model?.id, payload?.context_window?.context_window_size);
     setRateLimits(payload?.rate_limits);
 
     return reply.code(200).send({ ok: true, applied: ids });

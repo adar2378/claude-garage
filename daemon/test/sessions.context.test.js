@@ -106,7 +106,7 @@ test("a live session with only transcript data shows source 'transcript' after a
   t.after(() => tmux.killSession(id).catch(() => {}));
 
   await registry.upsertSessionMeta(id, { claudeSessionId, workspace: RUN, label: "transcript-fed" });
-  await writeTranscript(dir, claudeSessionId, assistantLine({ input: 150_000 })); // 75% of 200k
+  await writeTranscript(dir, claudeSessionId, assistantLine({ input: 150_000, model: "claude-haiku-4-5" })); // 75% of 200k
 
   // First fetch: the route must never block on the transcript read — it
   // serves the (still-empty) cache and only kicks a background refresh.
