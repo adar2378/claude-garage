@@ -195,6 +195,13 @@ The TUI's full keymap (`claude-garage tui`, also shown in-app with `?`).
 Bindings apply at the garage layer; `Enter` hands your keystrokes to the
 focused session byte-exact until `Ctrl+G` takes them back.
 
+**Terminal:** Ghostty, iTerm2, kitty and WezTerm pass every Claude Code
+binding through, Shift+Enter included. macOS Terminal.app speaks neither
+the kitty keyboard protocol nor modifyOtherKeys, so Shift+Enter can't be
+told apart from Enter there; either switch terminals or add a Terminal.app
+key mapping (Settings → Profiles → Keyboard) for Shift+Return that sends
+`\033[13;2u`. Option+Enter and Ctrl+J work everywhere.
+
 | Key | Action |
 |---|---|
 | `1`–`9` | focus workspace |

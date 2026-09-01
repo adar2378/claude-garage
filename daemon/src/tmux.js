@@ -176,7 +176,8 @@ export async function createSession(id, dir, command, extraArgs = []) {
 }
 
 // p14: Claude Code's Shift+Enter (kitty protocol, ESC[13;2u) only reaches a
-// pane if the tmux server has extended keys on and advertises them —
+// pane if the tmux server has extended keys on and advertises them (and,
+// since 0.3.4, re-encodes in csi-u form so Option+Enter survives too) —
 // exactly the tmux config Claude Code's own terminal docs prescribe. Server
 // options survive until the tmux server exits, so this runs at daemon boot
 // AND on every createSession (the server may have been started later by a
@@ -185,6 +186,13 @@ export async function createSession(id, dir, command, extraArgs = []) {
 export async function ensureExtendedKeys() {
   try {
     await run("tmux", ["set-option", "-s", "extended-keys", "on"]);
+    // csi-u, not the default xterm `CSI 27;m;k~` form: with extended keys
+    // on, tmux re-encodes every modified key for a pane that asked for
+    // them — Option+Enter becomes `ESC[27;3;13~`, which Claude Code does
+    // not parse, so Option+Enter (its own newline binding on macOS) died
+    // inside every garage session. The kitty form (`ESC[13;3u`) is the one
+    // Claude Code already understands for Shift+Enter. tmux ≥ 3.5.
+    await run("tmux", ["set-option", "-s", "extended-keys-format", "csi-u"]).catch(() => {});
     const { stdout } = await run("tmux", ["show-options", "-s", "terminal-features"]).catch(
       () => ({ stdout: "" })
     );

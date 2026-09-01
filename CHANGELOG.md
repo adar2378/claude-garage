@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.3.4
 
 ### Added
 
@@ -17,6 +17,19 @@
   runs hot, and a greeting when the daemon comes back. Chatter yields to
   anything that matters: never while a session needs input, never over a
   real notice, never inside a tile. Off with the pet; no separate toggle.
+
+### Fixed
+
+- **Option+Enter works inside garage sessions again.** 0.3.3's tmux
+  extended-keys config made tmux re-encode Option+Enter as
+  `ESC[27;3;13~`, which Claude Code doesn't parse. The daemon now also
+  sets `extended-keys-format csi-u`, so modified Enter reaches Claude
+  Code in the kitty form it already understands (tmux ≥ 3.5). Applies to
+  the TUI, the web wall, and plain `tmux attach` alike.
+- **Terminal.app note.** macOS Terminal speaks neither the kitty keyboard
+  protocol nor modifyOtherKeys, so Shift+Enter can't reach Claude Code
+  through the wall there. Use Ghostty, iTerm2, kitty or WezTerm, or add a
+  Terminal.app key mapping for Shift+Return that sends `\033[13;2u`.
 
 ## 0.3.3
 
