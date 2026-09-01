@@ -2,4 +2,5 @@
 //! forwarding. Port of `tui/lib/input/` (encode_key.dart, paste.dart).
 
 pub mod encode;
+pub mod links;
 pub mod paste;

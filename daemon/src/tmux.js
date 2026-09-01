@@ -164,12 +164,37 @@ export async function hasSession(id) {
 // must not pre-join them into a single string.
 export async function createSession(id, dir, command, extraArgs = []) {
   await run("tmux", ["new-session", "-d", "-s", id, "-c", dir, command, ...extraArgs]);
+  // The new-session call may have just started the server — (re)apply the
+  // extended-keys server config so Shift+Enter works in this pane (p14).
+  await ensureExtendedKeys();
   // The pit wall renders its own session title bars, so tmux's status line
   // is visual noise in every grid cell. Per-session option — a plain
   // `tmux attach` escape-hatch user can restore it with `set status on`.
   // set-option does not accept the `=` exact-match target prefix; the full
   // freshly-created name is unambiguous here.
   await run("tmux", ["set-option", "-t", id, "status", "off"]).catch(() => {});
+}
+
+// p14: Claude Code's Shift+Enter (kitty protocol, ESC[13;2u) only reaches a
+// pane if the tmux server has extended keys on and advertises them —
+// exactly the tmux config Claude Code's own terminal docs prescribe. Server
+// options survive until the tmux server exits, so this runs at daemon boot
+// AND on every createSession (the server may have been started later by a
+// plain `tmux` user). Idempotent: `set -as terminal-features` appends
+// duplicates, so the extkeys feature is only appended when missing.
+export async function ensureExtendedKeys() {
+  try {
+    await run("tmux", ["set-option", "-s", "extended-keys", "on"]);
+    const { stdout } = await run("tmux", ["show-options", "-s", "terminal-features"]).catch(
+      () => ({ stdout: "" })
+    );
+    if (!/xterm\*?[^\n]*extkeys/.test(stdout)) {
+      await run("tmux", ["set-option", "-as", "terminal-features", "xterm*:extkeys"]);
+    }
+  } catch {
+    // No server running (or ancient tmux) — nothing to configure; the
+    // createSession call path retries once a server exists.
+  }
 }
 
 export async function killSession(id) {

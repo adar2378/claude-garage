@@ -43,6 +43,7 @@ use crate::api::client::{ApiError, GarageClient};
 use crate::api::models::{SessionInfo, UsageInfo, WorkspaceInfo};
 use crate::api::sse::SseClient;
 use crate::input::encode::encode_key;
+use crate::input::links::url_at;
 use crate::input::paste::wrap_bracketed_paste;
 use crate::state::armed_action::{ArmedAction, ArmedClose};
 use crate::state::persistence;
@@ -1530,6 +1531,28 @@ impl App {
                 self.store.focus_view(&name);
             }
             return;
+        }
+        // Click on a URL in a tile's grid text opens it (spec
+        // tui-key-routing "Click opens links") — our mouse capture starves
+        // the outer terminal of clicks, so the wall must be the linkifier.
+        // Checked before focus/engage: a click ON a link means "open this",
+        // not "type here". Everything else falls through unchanged.
+        if let Some((id, rect)) = self.tile_at(col, row) {
+            let inner = Rect {
+                x: rect.x + 1,
+                y: rect.y + 1,
+                width: rect.width.saturating_sub(2),
+                height: rect.height.saturating_sub(2),
+            };
+            if inner.contains((col, row).into()) {
+                if let Some(line) = self.registry.row_text(&id, row - inner.y) {
+                    if let Some(url) = url_at(&line, usize::from(col - inner.x)) {
+                        let _ = std::process::Command::new("open").arg(&url).spawn();
+                        self.router.notices.show(format!("opened {url}"), 2000, now_ms());
+                        return;
+                    }
+                }
+            }
         }
         // Grid click: focus AND engage (same landing as focus+Enter); a
         // click on a restorable placeholder restores it; while engaged a

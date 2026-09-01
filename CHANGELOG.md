@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.3.3
+
+### Fixed
+
+- **Claude Code's own keybindings now work in the TUI.** Shift+Enter
+  (insert newline) reaches Claude Code instead of submitting: the wall
+  speaks the kitty keyboard protocol to your terminal (when it supports
+  it), encodes modified Enter as CSI-u (`ESC[13;2u`), and the daemon
+  applies Claude Code's documented tmux config (`extended-keys on` +
+  `terminal-features 'xterm*:extkeys'`) idempotently at boot and on every
+  session spawn — which also fixes Shift+Enter for plain `tmux attach`
+  users of garage sessions. Ctrl+Enter passes through too; Option+Enter,
+  `\`+Enter, and Ctrl+J always worked.
+- **Clicking a URL in a tile opens it.** The wall's mouse capture meant
+  your terminal's own Cmd+click linkifier never saw clicks; now a left
+  click on an `http(s)://` URL in any tile's text (live or frozen) opens
+  it via macOS `open` with a notice, without engaging the tile.
+
 ## 0.3.2
 
 ### Changed

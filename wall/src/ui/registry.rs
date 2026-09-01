@@ -226,6 +226,36 @@ impl TileRegistry {
         }
     }
 
+    /// One rendered row of a tile's terminal as plain text, one char per
+    /// cell (blank cells become spaces so byte-column == cell-column for
+    /// the ASCII text URLs are made of). Reads the frozen snapshot when the
+    /// tile is frozen, else the live screen. p14: feeds the click-on-URL
+    /// router (spec tui-key-routing "Click opens links").
+    pub fn row_text(&self, id: &str, row: u16) -> Option<String> {
+        fn screen_row(screen: &vt100::Screen, row: u16) -> String {
+            let (_, cols) = screen.size();
+            let mut out = String::with_capacity(cols as usize);
+            for col in 0..cols {
+                match screen.cell(row, col) {
+                    Some(cell) if !cell.contents().is_empty() => out.push_str(&cell.contents()),
+                    _ => out.push(' '),
+                }
+            }
+            out
+        }
+        let entry = self.entries.get(id)?;
+        if let Some(frozen) = &entry.frozen {
+            return Some(screen_row(frozen.parser.screen(), row));
+        }
+        match &entry.slot {
+            Slot::Attached(client) => {
+                let parser = client.parser().lock().unwrap();
+                Some(screen_row(parser.screen(), row))
+            }
+            _ => None,
+        }
+    }
+
     pub fn frozen(&self, id: &str) -> Option<&FrozenTile> {
         self.entries.get(id).and_then(|e| e.frozen.as_ref())
     }

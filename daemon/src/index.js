@@ -17,6 +17,7 @@ import { attachTermServer } from "./term.js";
 import { rejectForeignOrigins } from "./security.js";
 import { startPoller } from "./poller.js";
 import { healthPayload } from "./health.js";
+import { ensureExtendedKeys } from "./tmux.js";
 
 const HOST = "127.0.0.1";
 const PORT = Number(process.env.GARAGE_PORT ?? 4747);
@@ -63,6 +64,9 @@ if (process.env.GARAGE_SERVE_UI === "1") {
 // Poller feeds StatusStore (busy/idle baseline); hooks.js and notify.js
 // subscribe to the same store — see status.js for the single write path.
 const stopPoller = startPoller(app);
+// p14: Shift+Enter needs the tmux server's extended-keys config — apply it
+// to an already-running server at boot (createSession re-applies later).
+ensureExtendedKeys();
 app.addHook("onClose", async () => {
   stopPoller();
 });

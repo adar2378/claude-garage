@@ -17,6 +17,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use crossterm::event::{
     DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
+    KeyboardEnhancementFlags, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
 };
 use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
@@ -40,6 +41,18 @@ pub fn enter() -> std::io::Result<WallTerminal> {
         EnableBracketedPaste,
         EnableMouseCapture
     )?;
+    // p14 (spec tui-key-routing "Enhanced-keyboard passthrough"): without
+    // the kitty disambiguate flag the outer terminal reports Shift+Enter as
+    // plain Enter — Claude Code's newline binding is unreachable. Guarded:
+    // a terminal without kitty support just ignores the query, and the
+    // probe tells us not to push (pushing unconditionally would leave
+    // legacy terminals fine, but the probe keeps event parsing honest).
+    if matches!(crossterm::terminal::supports_keyboard_enhancement(), Ok(true)) {
+        let _ = crossterm::execute!(
+            stdout(),
+            PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES)
+        );
+    }
     RESTORED.store(false, Ordering::SeqCst);
     // IXOFF is outside cfmakeraw's mask — clear it ourselves (see module
     // docs; ixon/isig are already off, listed defensively). Runs after
@@ -57,8 +70,12 @@ pub fn restore() {
     if RESTORED.swap(true, Ordering::SeqCst) {
         return;
     }
+    // Pop is a no-op stack pop on terminals where nothing was pushed —
+    // safe to emit unconditionally, and it must run BEFORE leaving the alt
+    // screen so the flags never leak into the user's shell.
     let _ = crossterm::execute!(
         stdout(),
+        PopKeyboardEnhancementFlags,
         DisableMouseCapture,
         DisableBracketedPaste,
         LeaveAlternateScreen,
