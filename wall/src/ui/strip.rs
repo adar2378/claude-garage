@@ -47,15 +47,63 @@ fn usage_chip_text(usage: &UsageInfo) -> Option<String> {
     }
 }
 
+/// The pit pet's current frame, as the render layer needs it (spec
+/// tui-pit-pet "One-row sprites and derived mood" / "Species-true one-row
+/// motion") — built by `runtime.rs`'s tick pass from a `pet::StepResult`,
+/// consumed here as plain data so `strip.rs` stays free of `ui::pet`
+/// simulation logic (it only lays the sprite out).
+#[derive(Debug, Clone)]
+pub struct PetRender {
+    /// The sprite frame's text (`pet::Sprite::text` — always single-width
+    /// ASCII/measured glyphs, see `pet.rs`'s width-measurement note).
+    pub text: &'static str,
+    /// Whether this mood carries a `!` column at all (reserved even unlit,
+    /// so the strip never jitters as the bang blinks).
+    pub bang: bool,
+    /// Whether the `!` is lit THIS frame (amber bold) vs reserved-but-blank.
+    pub bang_lit: bool,
+    /// Strip-local column, within the filler, where the sprite starts.
+    pub x: u16,
+    /// True while the mood is Sleep or Box — rendered dim instead of FG.
+    pub dim: bool,
+    /// A chatter/petting line to draw beside the sprite (spec tui-pit-pet
+    /// "Species-voiced chatter"): left of the sprite when there's room,
+    /// else right of it, else dropped for the frame — never in the
+    /// right-aligned notice slot, which can be a hundred columns away.
+    pub say: Option<String>,
+}
+
+/// Both click-routed column ranges the strip paints, plus the filler width
+/// the pet tick needs for its next `PetSim::step` (spec tui-pit-pet "Narrow
+/// strip hides the pet" — the tick has to know how much room there'll be).
+pub struct StripCols {
+    /// Absolute column range of the blocked badge, when rendered.
+    pub badge: Option<Range<u16>>,
+    /// Absolute column range of the pet sprite (sprite + reserved bang
+    /// column), when rendered this frame.
+    pub pet: Option<Range<u16>>,
+    /// The filler's width this frame — the room available for the pet,
+    /// independent of whether a pet is currently selected.
+    pub filler_width: u16,
+}
+
 pub struct StripLine {
     pub line: Line<'static>,
     /// Column range (strip-local) of the blocked badge, when rendered.
     pub badge: Option<Range<u16>>,
+    /// Column range (strip-local) of the pet sprite (incl. its reserved bang
+    /// column), when one was given and there was room for it.
+    pub pet: Option<Range<u16>>,
+    /// The filler's width this frame, regardless of whether a pet occupies
+    /// any of it (spec tui-pit-pet: the tick pass needs this for the next
+    /// step's `filler_width`).
+    pub filler_width: u16,
 }
 
-/// Build the strip's line for `width` columns: tabs left, then a filler, then
+/// Build the strip's line for `width` columns: tabs left, then a filler
+/// (with the pet inserted into it, when given and there's room), then
 /// notice · badge · chip right-aligned.
-pub fn strip_line(state: &WallState, notice: Option<&str>, width: u16) -> StripLine {
+pub fn strip_line(state: &WallState, notice: Option<&str>, width: u16, pet: Option<PetRender>) -> StripLine {
     let mut left: Vec<Span<'static>> = Vec::new();
     for (i, group) in state.groups.iter().take(9).enumerate() {
         let focused = state.focused_workspace.as_deref() == Some(group.name.as_str());
@@ -110,7 +158,70 @@ pub fn strip_line(state: &WallState, notice: Option<&str>, width: u16) -> StripL
     let filler = usize::from(width).saturating_sub(left_w + right_w);
 
     let mut spans = left;
-    spans.push(Span::raw(" ".repeat(filler)));
+    // Pit pet (spec tui-pit-pet "Pet lives in the strip filler"): laid out
+    // left-anchored at `pet.x` within the filler, sprite then a reserved
+    // bang column, then the rest of the filler as before. Skipped for this
+    // frame — falling back to a plain filler span — when there isn't room
+    // (spec "Narrow strip hides the pet").
+    let mut pet_local: Option<Range<usize>> = None;
+    match pet {
+        Some(p) => {
+            let sprite_width = p.text.chars().count();
+            let bang_width = if p.bang { 2 } else { 0 }; // " " + "!" (or blank)
+            let required = sprite_width + bang_width;
+            // One blank gutter column on each side so the pet never touches
+            // the tabs or the right-hand cluster.
+            if filler >= required + 2 {
+                let x = 1 + usize::from(p.x).min(filler - required - 2);
+                let after = filler - x - required;
+                // Speech placement: prefer the side with room, left first
+                // (the pet's home is the right end, so text reads toward it).
+                let say = p.say.as_deref().filter(|t| !t.is_empty());
+                let say_w = say.map_or(0, |t| t.chars().count() + 2);
+                let (say_left, say_right) = match say {
+                    Some(t) if say_w <= x - 1 => (Some(t), None),
+                    Some(t) if say_w <= after.saturating_sub(1) => (None, Some(t)),
+                    _ => (None, None),
+                };
+                let say_style = Style::default().fg(colors::FG);
+                if let Some(t) = say_left {
+                    spans.push(Span::raw(" ".repeat(x - say_w)));
+                    spans.push(Span::styled(t.to_owned(), say_style));
+                    spans.push(Span::raw("  "));
+                } else {
+                    spans.push(Span::raw(" ".repeat(x)));
+                }
+                let sprite_style =
+                    Style::default().fg(if p.dim { colors::DIM } else { colors::FG });
+                spans.push(Span::styled(p.text, sprite_style));
+                pet_local = Some(x..x + required);
+                if p.bang {
+                    spans.push(Span::raw(" "));
+                    if p.bang_lit {
+                        spans.push(Span::styled(
+                            "!",
+                            Style::default().fg(colors::AMBER).add_modifier(Modifier::BOLD),
+                        ));
+                    } else {
+                        // Unlit: still a column-wide space, so the bang's
+                        // blink never shifts anything else (spec "bang unlit
+                        // still reserves the column").
+                        spans.push(Span::raw(" "));
+                    }
+                }
+                if let Some(t) = say_right {
+                    spans.push(Span::raw("  "));
+                    spans.push(Span::styled(t.to_owned(), say_style));
+                    spans.push(Span::raw(" ".repeat(after - say_w)));
+                } else {
+                    spans.push(Span::raw(" ".repeat(after)));
+                }
+            } else {
+                spans.push(Span::raw(" ".repeat(filler)));
+            }
+        }
+        None => spans.push(Span::raw(" ".repeat(filler))),
+    }
     let right_start = left_w + filler;
     spans.extend(right);
 
@@ -120,22 +231,33 @@ pub fn strip_line(state: &WallState, notice: Option<&str>, width: u16) -> StripL
             (right_start + r.start).min(usize::from(width)) as u16
                 ..(right_start + r.end).min(usize::from(width)) as u16
         }),
+        pet: pet_local.map(|r| {
+            (left_w + r.start).min(usize::from(width)) as u16
+                ..(left_w + r.end).min(usize::from(width)) as u16
+        }),
+        filler_width: filler as u16,
     }
 }
 
-/// Render the strip into its 1-row rect; returns the badge's absolute
-/// column range for click routing.
+/// Render the strip into its 1-row rect; returns the badge's and pet's
+/// absolute column ranges for click routing, plus the filler width the
+/// pet's next tick needs (spec tui-pit-pet).
 pub fn render_strip(
     buf: &mut Buffer,
     rect: Rect,
     state: &WallState,
     notice: Option<&str>,
-) -> Option<Range<u16>> {
-    let built = strip_line(state, notice, rect.width);
+    pet: Option<PetRender>,
+) -> StripCols {
+    let built = strip_line(state, notice, rect.width, pet);
     Paragraph::new(built.line)
         .style(Style::default().bg(Color::Black))
         .render(rect, buf);
-    built.badge.map(|r| rect.x + r.start..rect.x + r.end)
+    StripCols {
+        badge: built.badge.map(|r| rect.x + r.start..rect.x + r.end),
+        pet: built.pet.map(|r| rect.x + r.start..rect.x + r.end),
+        filler_width: built.filler_width,
+    }
 }
 
 #[cfg(test)]
@@ -185,7 +307,7 @@ mod tests {
     #[test]
     fn tabs_follow_salience_order_with_amber_dots() {
         let store = store();
-        let s = strip_line(store.state(), None, 120);
+        let s = strip_line(store.state(), None, 120, None);
         let text = s.line.to_string();
         // beta is blocked → salience puts it first, with the dot.
         assert!(text.starts_with(" 1:beta● 2:alpha"), "{text}");
@@ -194,7 +316,7 @@ mod tests {
     #[test]
     fn badge_and_chip_sit_at_the_right_edge() {
         let store = store();
-        let s = strip_line(store.state(), None, 120);
+        let s = strip_line(store.state(), None, 120, None);
         let text = s.line.to_string();
         assert_eq!(text.chars().count(), 120);
         assert!(text.ends_with(" ● 1 blocked  keys → garage "), "{text}");
@@ -212,7 +334,7 @@ mod tests {
         let mut store = WallStore::new();
         store.workspaces_fetched(vec![ws("a")]);
         store.sessions_fetched(vec![si("a", "one", "working")]);
-        let s = strip_line(store.state(), None, 80);
+        let s = strip_line(store.state(), None, 80, None);
         assert!(s.badge.is_none());
         assert!(!s.line.to_string().contains("blocked"));
     }
@@ -222,7 +344,7 @@ mod tests {
         let mut store = store();
         store.focus_session("garage/beta/blocked");
         store.engage();
-        let s = strip_line(store.state(), None, 120);
+        let s = strip_line(store.state(), None, 120, None);
         let text = s.line.to_string();
         assert!(text.ends_with(" keys → beta/blocked "), "{text}");
         let chip = s.line.spans.last().unwrap();
@@ -233,7 +355,7 @@ mod tests {
     #[test]
     fn notice_renders_before_the_badge() {
         let store = store();
-        let s = strip_line(store.state(), Some("closed ghost"), 120);
+        let s = strip_line(store.state(), Some("closed ghost"), 120, None);
         let text = s.line.to_string();
         assert!(
             text.ends_with(" closed ghost  ● 1 blocked  keys → garage "),
@@ -244,7 +366,7 @@ mod tests {
     #[test]
     fn overflow_keeps_positions_consistent_with_the_clipped_paint() {
         let store = store();
-        let s = strip_line(store.state(), Some("a very long notice that overflows"), 30);
+        let s = strip_line(store.state(), Some("a very long notice that overflows"), 30, None);
         // Whatever fits, the badge range never exceeds the width.
         if let Some(badge) = s.badge {
             assert!(badge.end <= 30);
@@ -256,7 +378,7 @@ mod tests {
     #[test]
     fn usage_chip_hidden_entirely_when_both_windows_are_null() {
         let store = store(); // fresh: no /api/usage post yet
-        let text = strip_line(store.state(), None, 120).line.to_string();
+        let text = strip_line(store.state(), None, 120, None).line.to_string();
         assert!(!text.contains("5h"));
         assert!(!text.contains("wk"));
     }
@@ -268,7 +390,7 @@ mod tests {
             five_hour: Some(UsageWindow { used_percentage: 24, resets_at: None }),
             seven_day: Some(UsageWindow { used_percentage: 61, resets_at: None }),
         });
-        let s = strip_line(store.state(), None, 120);
+        let s = strip_line(store.state(), None, 120, None);
         let text = s.line.to_string();
         assert!(text.contains("5h 24% · wk 61%"), "{text}");
         let chip_span = s
@@ -287,7 +409,7 @@ mod tests {
             five_hour: Some(UsageWindow { used_percentage: 24, resets_at: None }),
             seven_day: None,
         });
-        let text = strip_line(five_only.state(), None, 120).line.to_string();
+        let text = strip_line(five_only.state(), None, 120, None).line.to_string();
         assert!(text.contains("5h 24%"), "{text}");
         assert!(!text.contains("wk"), "{text}");
 
@@ -296,7 +418,7 @@ mod tests {
             five_hour: None,
             seven_day: Some(UsageWindow { used_percentage: 61, resets_at: None }),
         });
-        let text = strip_line(week_only.state(), None, 120).line.to_string();
+        let text = strip_line(week_only.state(), None, 120, None).line.to_string();
         assert!(text.contains("wk 61%"), "{text}");
         assert!(!text.contains("5h"), "{text}");
     }
@@ -308,7 +430,7 @@ mod tests {
             five_hour: Some(UsageWindow { used_percentage: 24, resets_at: None }),
             seven_day: Some(UsageWindow { used_percentage: 61, resets_at: None }),
         });
-        let s = strip_line(store.state(), Some("closed ghost"), 140);
+        let s = strip_line(store.state(), Some("closed ghost"), 140, None);
         let text = s.line.to_string();
         assert!(text.contains("closed ghost"), "{text}");
         assert!(text.contains("5h 24% · wk 61%"), "{text}");
@@ -331,7 +453,7 @@ mod tests {
     #[test]
     fn install_hint_notice_renders_dim_never_bright_or_amber() {
         let store = store();
-        let s = strip_line(store.state(), Some(STATUSLINE_HINT), 120);
+        let s = strip_line(store.state(), Some(STATUSLINE_HINT), 120, None);
         let hint_span = s
             .line
             .spans
@@ -345,7 +467,7 @@ mod tests {
     #[test]
     fn an_ordinary_notice_still_renders_bright() {
         let store = store();
-        let s = strip_line(store.state(), Some("closed ghost"), 120);
+        let s = strip_line(store.state(), Some("closed ghost"), 120, None);
         let notice_span = s
             .line
             .spans
@@ -353,5 +475,106 @@ mod tests {
             .find(|sp| sp.content.contains("closed ghost"))
             .unwrap();
         assert_eq!(notice_span.style.fg, Some(colors::FG));
+    }
+
+    // ── p15: pit pet (spec tui-pit-pet) ─────────────────────────────────
+
+    fn pet_render(x: u16) -> PetRender {
+        PetRender { text: "=o.o=", bang: false, bang_lit: false, x, dim: false, say: None }
+    }
+
+    #[test]
+    fn pet_renders_at_200_cols_with_correct_columns() {
+        let store = store();
+        let s = strip_line(store.state(), None, 200, Some(pet_render(3)));
+        let pet = s.pet.expect("plenty of filler at 200 cols");
+        let text = s.line.to_string();
+        let sprite: String = text
+            .chars()
+            .skip(usize::from(pet.start))
+            .take(usize::from(pet.end - pet.start))
+            .collect();
+        assert_eq!(sprite, "=o.o=", "no bang: the reserved range is exactly the sprite text");
+    }
+
+    #[test]
+    fn pet_at_x_zero_still_leaves_a_gutter_after_the_tabs() {
+        let store = store();
+        let s = strip_line(store.state(), None, 200, Some(pet_render(0)));
+        let pet = s.pet.expect("room at 200 cols");
+        let text: Vec<char> = s.line.to_string().chars().collect();
+        let start = usize::from(pet.start);
+        assert_eq!(text[start - 1], ' ', "one blank column before the sprite");
+        assert_ne!(text[start - 2], ' ', "…and the tab text sits right before that gutter");
+    }
+
+    #[test]
+    fn speech_sits_left_of_a_right_homed_pet_and_right_of_a_left_one() {
+        let store = store();
+        let mut right_home = pet_render(150);
+        right_home.say = Some("you're doing great!!".to_owned());
+        let s = strip_line(store.state(), None, 200, Some(right_home));
+        let text = s.line.to_string();
+        let pet = s.pet.expect("room at 200 cols");
+        let before: String = text.chars().take(usize::from(pet.start)).collect();
+        assert!(before.trim_end().ends_with("you're doing great!!"), "speech reads toward the sprite: {before:?}");
+        assert!(before.ends_with("  "), "two-column gap between speech and sprite");
+
+        let mut left_home = pet_render(0);
+        left_home.say = Some("quack.".to_owned());
+        let s = strip_line(store.state(), None, 200, Some(left_home));
+        let text = s.line.to_string();
+        let pet = s.pet.expect("room at 200 cols");
+        let after: String = text.chars().skip(usize::from(pet.end)).collect();
+        assert!(after.starts_with("  quack."), "no room on the left: speech goes right: {after:?}");
+    }
+
+    #[test]
+    fn speech_is_dropped_but_the_sprite_stays_when_neither_side_fits() {
+        let store = store();
+        let mut p = pet_render(0);
+        p.say = Some("x".repeat(400));
+        let s = strip_line(store.state(), None, 200, Some(p));
+        let text = s.line.to_string();
+        assert!(s.pet.is_some(), "sprite still renders");
+        assert!(!text.contains("xxxx"), "oversized speech dropped for the frame");
+    }
+
+    #[test]
+    fn pet_hidden_at_80_cols_with_six_workspaces_and_a_notice() {
+        let mut store = WallStore::new();
+        store.workspaces_fetched((1..=6).map(|i| ws(&format!("ws{i}"))).collect());
+        store.sessions_fetched(
+            (1..=6)
+                .map(|i| si(&format!("ws{i}"), "one", "working"))
+                .collect(),
+        );
+        let s = strip_line(
+            store.state(),
+            Some("a longish strip notice sits here"),
+            80,
+            Some(pet_render(0)),
+        );
+        assert!(s.pet.is_none(), "six tabs + a notice leave no filler room at 80 cols");
+        assert!(!s.line.to_string().contains("=o.o="));
+    }
+
+    #[test]
+    fn badge_range_unaffected_by_pet_presence() {
+        let store = store(); // one blocked session baked in (beta/blocked)
+        let without = strip_line(store.state(), None, 120, None);
+        let with = strip_line(store.state(), None, 120, Some(pet_render(2)));
+        assert_eq!(without.badge, with.badge, "badge sits at the same absolute columns either way");
+    }
+
+    #[test]
+    fn bang_unlit_still_reserves_the_column() {
+        let store = store();
+        let lit = PetRender { text: "(O.O)", bang: true, bang_lit: true, x: 0, dim: false, say: None };
+        let unlit = PetRender { text: "(O.O)", bang: true, bang_lit: false, x: 0, dim: false, say: None };
+        let s_lit = strip_line(store.state(), None, 120, Some(lit));
+        let s_unlit = strip_line(store.state(), None, 120, Some(unlit));
+        assert_eq!(s_lit.pet, s_unlit.pet, "the bang column's width never changes on blink");
+        assert_eq!(s_lit.badge, s_unlit.badge, "and nothing downstream shifts either");
     }
 }

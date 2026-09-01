@@ -150,7 +150,7 @@ the features the TUI doesn't have yet:
   notification when no page is open (clickable with
   [`terminal-notifier`](https://github.com/julienXX/terminal-notifier)).
 
-### The pit pet 🐈 (web wall)
+### The pit pet 🐈
 
 An optional ASCII companion on the key strip whose mood *is* the wall:
 asleep when all is quiet, watching while agents run, **sprinting toward the
@@ -176,6 +176,18 @@ state in character:
 | **Arthur** (shop cat) | saunters, barely deigns to bounce, ignores about 40% of your strolls, and celebrates by kneading in place. Cats don't jump for joy in front of you |
 | **Papito** (rubber duck) | deadpan: waddles, **never** bounces, and alerts with a single motionless stare; celebration is exactly one flap |
 | **Segan** (pit pup) | maximum enthusiasm: fastest runner, biggest bounce, and celebrates with zoomies across the strip |
+
+**In the TUI** the pet lives at the right end of the bottom strip, beside
+the keys chip, as a one-row sprite (`=o.o=`, `<(o )___`, `(·ᴥ·)`), same
+moods, same manners. It speaks right next to itself:
+`you're doing great!!  (·ᴥ·)  keys → garage`. Press **`P`** to
+cycle Arthur → Papito → Segan → off; the choice is remembered. Click the
+pet while it's alert to jump to the blocked session, click it otherwise to
+pet it. TUI pets also **talk**: every few minutes, in character, the strip
+gets a line like *"water. now. i'm not asking."* (Arthur), *"acceptable."*
+(Papito) or *"you're doing great!!"* (Segan). They notice long days, late
+nights, and a usage window running hot, and they never interrupt a session
+that needs you. Set `GARAGE_PET_ASCII=1` if your font lacks `ᴥ`.
 
 ## Keybindings
 

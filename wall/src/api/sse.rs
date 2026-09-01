@@ -191,12 +191,18 @@ impl SseClient {
 
     /// Run until `stop` flips. `on_event` receives each dispatched event;
     /// `on_poll_fallback` fires every [`SSE_POLL_FALLBACK_INTERVAL`] while
-    /// disconnected — wire it to a sessions refetch.
+    /// disconnected — wire it to a sessions refetch. `on_connection` fires
+    /// with `true`/`false` at exactly the existing `on_connected`/
+    /// `on_disconnected` call sites below (spec tui-pit-pet
+    /// `AppEvent::Connection`) — a pure observer, it changes no timing: the
+    /// reconnect/backoff/poll-fallback behavior is unchanged from before
+    /// this parameter existed.
     pub fn run(
         &mut self,
         stop: Arc<AtomicBool>,
         mut on_event: impl FnMut(SseEvent),
         mut on_poll_fallback: impl FnMut(),
+        mut on_connection: impl FnMut(bool),
     ) {
         self.machine.start();
         let agent = ureq::AgentBuilder::new()
@@ -212,6 +218,7 @@ impl SseClient {
                 .call();
             if let Ok(response) = connected {
                 self.machine.on_connected();
+                on_connection(true);
                 let mut reader = response.into_reader();
                 let mut parser = SseParser::new();
                 let mut buf = [0u8; 8192];
@@ -239,6 +246,7 @@ impl SseClient {
             // Connect failure or mid-stream drop — back off, polling while
             // disconnected, in short slices so `stop` stays responsive.
             let delay = self.machine.on_disconnected();
+            on_connection(false);
             let deadline = Instant::now() + delay;
             while Instant::now() < deadline && !stop.load(Ordering::Relaxed) {
                 if self.machine.poll_fallback_active()

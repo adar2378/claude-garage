@@ -169,6 +169,21 @@ pub struct WallState {
     /// tui-context-meters "Strip usage chip") — both windows `None` until a
     /// statusline post arrives, which hides the chip entirely.
     pub usage: UsageInfo,
+    /// p15: the persisted pit-pet choice (spec tui-pit-pet "Opt-in roster
+    /// cycled by `P`") — `"cat"` | `"duck"` | `"pup"`, `None` = off (the
+    /// default). Kept as a plain string here, not `ui::pet::Species`: state
+    /// has no business depending on the render module, and this is exactly
+    /// the shape `wall.json` stores (see `state::persistence::WallFile`).
+    /// The wiring phase maps this to `Species` at the render boundary.
+    pub pet: Option<String>,
+    /// p15: whether the daemon SSE stream is currently connected (spec
+    /// tui-pit-pet "One-row sprites and derived mood": "daemon SSE
+    /// disconnected → box"). Defaults to `true` — see
+    /// `state::store::WallStore::connection` and design.md's risk note: the
+    /// wall never starts against an already-dead daemon, so only an
+    /// *observed* drop should ever box the pet, not the gap before the
+    /// first connect.
+    pub daemon_live: bool,
 }
 
 impl Default for WallState {
@@ -196,6 +211,8 @@ impl WallState {
             views: HashMap::new(),
             focused_view: HashMap::new(),
             usage: UsageInfo::default(),
+            pet: None,
+            daemon_live: true,
         }
     }
 

@@ -1,5 +1,23 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **The pit pet comes to the TUI.** Arthur, Papito and Segan now live in
+  the bottom strip as one-row sprites with the same derived moods as the
+  web wall (sleeping, watching, alert-with-`!`, boxed when the daemon
+  drops, celebrating when the last blocked session clears) and the same
+  manners (the cat ignores you, the duck never blinks, the pup does
+  zoomies). `P` cycles the roster; the choice persists in `wall.json`;
+  clicking an alert pet is the `a` jump, clicking it otherwise pets it.
+- **Pets talk.** Every few minutes, in character, the strip shows a line
+  from the pet: hydrate, stretch, encouragement, a proud word when you
+  clear the queue, a late-night nudge, a heads-up when a usage window
+  runs hot, and a greeting when the daemon comes back. Chatter yields to
+  anything that matters: never while a session needs input, never over a
+  real notice, never inside a tile. Off with the pet; no separate toggle.
+
 ## 0.3.3
 
 ### Fixed

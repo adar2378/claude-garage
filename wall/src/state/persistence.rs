@@ -1,15 +1,20 @@
 //! `wall.json` — the client-side persistence file for view assignments
-//! (spec tui-views "View persistence"). Disposable by design: a missing or
-//! invalid file collapses every workspace to its default view with no
-//! error; nothing here is authoritative — the daemon never sees this file
-//! and its absence is never a fault.
+//! (spec tui-views "View persistence") and the pit-pet choice (spec
+//! tui-pit-pet "Opt-in roster cycled by `P`"). Disposable by design: a
+//! missing or invalid file collapses every workspace to its default view
+//! (and the pet to off) with no error; nothing here is authoritative — the
+//! daemon never sees this file and its absence is never a fault.
 //!
 //! Schema: `{"version": 1, "views": {"<workspace>": [{"name", "sessions":
-//! [id, ...]}, ...]}}`. Only *named* (non-default) views are written — the
-//! default view's membership is always the derived complement (see
-//! `state::views` module docs), so an untouched workspace costs nothing in
-//! the file, and a workspace with no named views at all is omitted rather
-//! than written as `[]`.
+//! [id, ...]}, ...]}, "pet": "cat"|"duck"|"pup"}`. Only *named* (non-default)
+//! views are written — the default view's membership is always the derived
+//! complement (see `state::views` module docs), so an untouched workspace
+//! costs nothing in the file, and a workspace with no named views at all is
+//! omitted rather than written as `[]`. `pet` is optional and omitted
+//! entirely when the pet is off — no version bump: old `wall.json` files
+//! (with no `pet` key) load the pet as off, and old wall builds simply
+//! ignore the field on read/write (spec: "a missing or unrecognized value
+//! SHALL load as `off` with no error").
 //!
 //! **Ownership split** (this module vs. the runtime wave): everything here
 //! is either pure (`serialize`/`deserialize`) or a small, self-contained
@@ -28,6 +33,22 @@ use serde_json::{json, Value};
 use crate::state::views::{View, ViewsByWorkspace, DEFAULT_VIEW};
 
 pub const SCHEMA_VERSION: u64 = 1;
+
+/// The three valid `pet` field values (spec tui-pit-pet) — kept here as
+/// plain strings rather than an enum: this crate's persistence layer has no
+/// business knowing about `ui::pet::Species`, and the wiring phase maps
+/// these to it. Anything else read from disk is not a pet, per the lenient-
+/// read rule.
+const PET_VALUES: [&str; 3] = ["cat", "duck", "pup"];
+
+/// The full `wall.json` document: view assignments plus the pit-pet choice.
+/// `pet` is `None` for "off" — the default, and the only value never
+/// written to disk (see [`serialize`]).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct WallFile {
+    pub views: ViewsByWorkspace,
+    pub pet: Option<String>,
+}
 
 /// `$GARAGE_DIR/wall.json`, else `~/.garage/wall.json` — mirrors the
 /// daemon's `registry.js` GARAGE_DIR convention (same override, same
@@ -48,10 +69,10 @@ fn garage_dir_from(garage_dir_env: Option<&str>, home_env: Option<&str>) -> Path
     }
 }
 
-/// Render `views` as the `wall.json` document text.
-pub fn serialize(views: &ViewsByWorkspace) -> String {
+/// Render `file` as the `wall.json` document text.
+pub fn serialize(file: &WallFile) -> String {
     let mut by_workspace = serde_json::Map::new();
-    for (workspace, list) in views {
+    for (workspace, list) in &file.views {
         if list.is_empty() {
             continue;
         }
@@ -61,31 +82,41 @@ pub fn serialize(views: &ViewsByWorkspace) -> String {
             .collect();
         by_workspace.insert(workspace.clone(), Value::Array(entries));
     }
-    let doc = json!({ "version": SCHEMA_VERSION, "views": by_workspace });
+    let mut doc = json!({ "version": SCHEMA_VERSION, "views": by_workspace });
+    // Written only when not off (spec: off is the default and never takes
+    // disk space) — an unconditional write would also happily persist a
+    // caller's typo, which the lenient reader would then just discard.
+    if let Some(pet) = file.pet.as_deref() {
+        if PET_VALUES.contains(&pet) {
+            doc["pet"] = Value::String(pet.to_owned());
+        }
+    }
     // A `Value` built from owned strings/numbers always serializes; the
     // fallback is unreachable in practice but keeps this function total.
     serde_json::to_string_pretty(&doc).unwrap_or_else(|_| "{}".to_owned())
 }
 
 /// Parse `raw`; anything that isn't exactly the expected shape — invalid
-/// JSON, an unrecognized `version`, a malformed entry — yields the empty
-/// map (every workspace collapses to its default view). Never errors: spec
-/// "View persistence" — "if missing or invalid, all sessions collapse into
-/// the default view with no error." A malformed *individual* entry is
+/// JSON, an unrecognized `version`, a malformed entry — yields the default
+/// (empty views, pet off). Never errors: spec "View persistence" — "if
+/// missing or invalid, all sessions collapse into the default view with no
+/// error" — and spec tui-pit-pet — "a missing or unrecognized value SHALL
+/// load as `off` with no error." A malformed *individual* view entry is
 /// skipped rather than invalidating the whole file, so one bad line can't
-/// cost every other workspace its view assignments.
-pub fn deserialize(raw: &str) -> ViewsByWorkspace {
+/// cost every other workspace its view assignments; the same leniency
+/// applies to `pet` alone without touching `views`.
+pub fn deserialize(raw: &str) -> WallFile {
     let Ok(value) = serde_json::from_str::<Value>(raw) else {
-        return HashMap::new();
+        return WallFile::default();
     };
     let Some(root) = value.as_object() else {
-        return HashMap::new();
+        return WallFile::default();
     };
     if root.get("version").and_then(Value::as_u64) != Some(SCHEMA_VERSION) {
-        return HashMap::new();
+        return WallFile::default();
     }
     let Some(by_workspace) = root.get("views").and_then(Value::as_object) else {
-        return HashMap::new();
+        return WallFile::default();
     };
 
     let mut out = HashMap::new();
@@ -109,18 +140,28 @@ pub fn deserialize(raw: &str) -> ViewsByWorkspace {
             out.insert(workspace.clone(), list);
         }
     }
-    out
+
+    // Lenient: missing, non-string, or anything other than cat/duck/pup all
+    // collapse to `None` (off) — never an error, never rejects the `views`
+    // half of the file (spec tui-pit-pet).
+    let pet = root
+        .get("pet")
+        .and_then(Value::as_str)
+        .filter(|p| PET_VALUES.contains(p))
+        .map(str::to_owned);
+
+    WallFile { views: out, pet }
 }
 
 /// Load `wall.json` from `path`. Missing file, unreadable, or invalid
-/// content all collapse to the empty map — see [`deserialize`]. Does not
-/// prune against the live session set; the caller (`WallStore::load_views`)
-/// does that once it knows one, via `state::views::prune_views`, the same
-/// path a later refetch uses.
-pub fn load(path: &Path) -> ViewsByWorkspace {
+/// content all collapse to [`WallFile::default`] — see [`deserialize`].
+/// Does not prune `views` against the live session set; the caller
+/// (`WallStore::load_views`) does that once it knows one, via
+/// `state::views::prune_views`, the same path a later refetch uses.
+pub fn load(path: &Path) -> WallFile {
     match std::fs::read_to_string(path) {
         Ok(raw) => deserialize(&raw),
-        Err(_) => HashMap::new(),
+        Err(_) => WallFile::default(),
     }
 }
 
@@ -128,12 +169,12 @@ pub fn load(path: &Path) -> ViewsByWorkspace {
 /// `rename()` (atomic on the same filesystem — a crash mid-write leaves
 /// either the previous complete file or the new one, never a truncation),
 /// matching the daemon's `registry.js` `writeState` convention.
-pub fn save(path: &Path, views: &ViewsByWorkspace) -> std::io::Result<()> {
+pub fn save(path: &Path, file: &WallFile) -> std::io::Result<()> {
     let dir = path.parent().unwrap_or_else(|| Path::new("."));
     std::fs::create_dir_all(dir)?;
     let file_name = path.file_name().and_then(|f| f.to_str()).unwrap_or("wall.json");
     let tmp = dir.join(format!(".{file_name}.{}.tmp", std::process::id()));
-    let write_result = std::fs::write(&tmp, serialize(views));
+    let write_result = std::fs::write(&tmp, serialize(file));
     if write_result.is_err() {
         let _ = std::fs::remove_file(&tmp);
     }
@@ -150,6 +191,10 @@ mod tests {
 
     fn view(name: &str, ids: &[&str]) -> View {
         View { name: name.to_owned(), session_ids: ids.iter().map(|s| (*s).to_owned()).collect() }
+    }
+
+    fn file(views: ViewsByWorkspace, pet: Option<&str>) -> WallFile {
+        WallFile { views, pet: pet.map(str::to_owned) }
     }
 
     // ── path resolution ─────────────────────────────────────────────────
@@ -174,33 +219,76 @@ mod tests {
     fn serialize_then_deserialize_round_trips() {
         let mut views: ViewsByWorkspace = HashMap::new();
         views.insert("apexlabs".to_owned(), vec![view("api-fix", &["garage/apexlabs/api-fix"])]);
-        let raw = serialize(&views);
-        assert_eq!(deserialize(&raw), views);
+        let doc = file(views, None);
+        let raw = serialize(&doc);
+        assert_eq!(deserialize(&raw), doc);
     }
 
     #[test]
     fn serialize_omits_workspaces_with_no_named_views() {
         let mut views: ViewsByWorkspace = HashMap::new();
         views.insert("empty".to_owned(), vec![]);
-        let raw = serialize(&views);
+        let raw = serialize(&file(views, None));
         let parsed: Value = serde_json::from_str(&raw).unwrap();
         assert_eq!(parsed["views"].as_object().unwrap().len(), 0);
+    }
+
+    // ── pet round trip (spec tui-pit-pet "Choice survives restart") ────
+
+    #[test]
+    fn serialize_then_deserialize_round_trips_a_pet_choice() {
+        let doc = file(HashMap::new(), Some("duck"));
+        let raw = serialize(&doc);
+        assert_eq!(deserialize(&raw), doc);
+    }
+
+    #[test]
+    fn serialize_omits_the_pet_key_entirely_when_off() {
+        let raw = serialize(&file(HashMap::new(), None));
+        let parsed: Value = serde_json::from_str(&raw).unwrap();
+        assert!(parsed.get("pet").is_none(), "off must not take disk space");
+    }
+
+    #[test]
+    fn deserialize_treats_a_garbage_pet_value_as_off() {
+        let raw = r#"{"version":1,"views":{},"pet":"velociraptor"}"#;
+        assert_eq!(deserialize(raw).pet, None);
+    }
+
+    #[test]
+    fn deserialize_treats_a_non_string_pet_value_as_off() {
+        let raw = r#"{"version":1,"views":{},"pet":42}"#;
+        assert_eq!(deserialize(raw).pet, None);
+    }
+
+    #[test]
+    fn deserialize_of_an_old_file_with_no_pet_field_is_off() {
+        let raw = r#"{"version":1,"views":{}}"#;
+        assert_eq!(deserialize(raw).pet, None);
+    }
+
+    #[test]
+    fn deserialize_accepts_each_valid_pet_value() {
+        for species in ["cat", "duck", "pup"] {
+            let raw = format!(r#"{{"version":1,"views":{{}},"pet":"{species}"}}"#);
+            assert_eq!(deserialize(&raw).pet.as_deref(), Some(species));
+        }
     }
 
     // ── invalid file ────────────────────────────────────────────────────
 
     #[test]
-    fn deserialize_of_garbage_is_the_empty_map_never_an_error() {
-        assert_eq!(deserialize("not json"), HashMap::new());
-        assert_eq!(deserialize(""), HashMap::new());
-        assert_eq!(deserialize("[]"), HashMap::new());
-        assert_eq!(deserialize("{}"), HashMap::new());
+    fn deserialize_of_garbage_is_the_default_never_an_error() {
+        assert_eq!(deserialize("not json"), WallFile::default());
+        assert_eq!(deserialize(""), WallFile::default());
+        assert_eq!(deserialize("[]"), WallFile::default());
+        assert_eq!(deserialize("{}"), WallFile::default());
     }
 
     #[test]
     fn deserialize_rejects_an_unrecognized_version() {
-        assert_eq!(deserialize(r#"{"version":2,"views":{}}"#), HashMap::new());
-        assert_eq!(deserialize(r#"{"views":{}}"#), HashMap::new());
+        assert_eq!(deserialize(r#"{"version":2,"views":{}}"#), WallFile::default());
+        assert_eq!(deserialize(r#"{"views":{}}"#), WallFile::default());
     }
 
     #[test]
@@ -209,7 +297,7 @@ mod tests {
             "a":[{"name":"solo","sessions":["garage/a/one"]}, {"name":123}],
             "b":"not-an-array"
         }}"#;
-        let views = deserialize(raw);
+        let views = deserialize(raw).views;
         assert_eq!(views.get("a").unwrap(), &[view("solo", &["garage/a/one"])]);
         assert!(!views.contains_key("b"));
     }
@@ -217,7 +305,7 @@ mod tests {
     #[test]
     fn deserialize_never_stores_the_default_view_by_name() {
         let raw = r#"{"version":1,"views":{"a":[{"name":"main","sessions":["x"]}]}}"#;
-        assert!(deserialize(raw).is_empty());
+        assert!(deserialize(raw).views.is_empty());
     }
 
     // ── prune (composition with state::views::prune_views) ────────────
@@ -225,7 +313,7 @@ mod tests {
     #[test]
     fn a_loaded_file_referencing_a_dead_session_is_pruned_by_the_shared_prune_fn() {
         let raw = r#"{"version":1,"views":{"a":[{"name":"solo","sessions":["live","dead"]}]}}"#;
-        let mut views = deserialize(raw);
+        let mut views = deserialize(raw).views;
         let valid: HashSet<&str> = ["live"].into_iter().collect();
         crate::state::views::prune_views(&mut views, &valid);
         assert_eq!(views.get("a").unwrap(), &[view("solo", &["live"])]);
@@ -247,17 +335,17 @@ mod tests {
     }
 
     #[test]
-    fn load_of_a_missing_file_is_the_empty_map() {
+    fn load_of_a_missing_file_is_the_default() {
         let path = scratch_path("missing").join("wall.json");
-        assert_eq!(load(&path), HashMap::new());
+        assert_eq!(load(&path), WallFile::default());
     }
 
     #[test]
-    fn load_of_an_unreadable_directory_path_is_the_empty_map() {
+    fn load_of_an_unreadable_directory_path_is_the_default() {
         // `path` itself is a directory, not a file — read_to_string fails.
         let dir = scratch_path("is-a-dir");
         std::fs::create_dir_all(&dir).unwrap();
-        assert_eq!(load(&dir), HashMap::new());
+        assert_eq!(load(&dir), WallFile::default());
         std::fs::remove_dir_all(&dir).ok();
     }
 
@@ -267,15 +355,16 @@ mod tests {
         let path = dir.join("wall.json");
         let mut views: ViewsByWorkspace = HashMap::new();
         views.insert("a".to_owned(), vec![view("solo", &["garage/a/one"])]);
+        let mut doc = file(views, Some("cat"));
 
-        save(&path, &views).expect("save should create the dir and write atomically");
-        assert_eq!(load(&path), views);
+        save(&path, &doc).expect("save should create the dir and write atomically");
+        assert_eq!(load(&path), doc);
 
         // A second save overwrites cleanly (exercises the rename-over-
         // existing-file path, not just create-fresh).
-        views.get_mut("a").unwrap()[0].session_ids.push("garage/a/two".to_owned());
-        save(&path, &views).unwrap();
-        assert_eq!(load(&path), views);
+        doc.views.get_mut("a").unwrap()[0].session_ids.push("garage/a/two".to_owned());
+        save(&path, &doc).unwrap();
+        assert_eq!(load(&path), doc);
 
         std::fs::remove_dir_all(&dir).ok();
     }
@@ -286,7 +375,7 @@ mod tests {
         let path = dir.join("wall.json");
         let mut views: ViewsByWorkspace = HashMap::new();
         views.insert("a".to_owned(), vec![view("solo", &["x"])]);
-        save(&path, &views).unwrap();
+        save(&path, &file(views, None)).unwrap();
 
         let names: Vec<String> = std::fs::read_dir(&dir)
             .unwrap()

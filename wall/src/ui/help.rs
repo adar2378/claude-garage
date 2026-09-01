@@ -13,7 +13,7 @@ use crate::ui::theme::colors;
 
 /// The full binding legend (the Dart `_bindings` list, verbatim — the help
 /// overlay must list every p8.1–p8.4 key).
-pub const BINDINGS: [(&str, &str); 20] = [
+pub const BINDINGS: [(&str, &str); 21] = [
     ("1-9", "focus workspace"),
     ("[ ]", "cycle focused tile"),
     ("Enter", "engage focused tile (restore it when restorable)"),
@@ -22,6 +22,7 @@ pub const BINDINGS: [(&str, &str); 20] = [
     ("t", "open focused session in a new terminal window (macOS)"),
     ("a", "jump to longest-waiting blocked session"),
     ("A", "triage queue"),
+    ("P", "cycle the pit pet: Arthur / Papito / Segan / off"),
     ("n / N", "spawn session / worktree session"),
     ("R", "restore all restorable sessions in workspace"),
     ("I", "install statusline feed for context meters"),

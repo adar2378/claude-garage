@@ -46,7 +46,7 @@ use crate::input::encode::encode_key;
 use crate::input::links::url_at;
 use crate::input::paste::wrap_bracketed_paste;
 use crate::state::armed_action::{ArmedAction, ArmedClose};
-use crate::state::persistence;
+use crate::state::persistence::{self, WallFile};
 use crate::state::salience::restorable_session_ids;
 use crate::state::store::{garage_command_for, GarageCommand, WallStore};
 use crate::state::views::{self, ViewSummary};
@@ -58,10 +58,11 @@ use crate::ui::hit_targets::{
     rail_target_at, tile_index_at, triage_row_index_at, view_picker_row_index_at, RailTarget,
 };
 use crate::ui::layout::{tile_inner, wall_layout, WallLayout};
+use crate::ui::pet;
 use crate::ui::rail::render_rail;
 use crate::ui::registry::{FrozenTile, TileRegistry};
 use crate::ui::scroll::{capture_frozen, page_lines, tmux_history_size, ScrollModel, WHEEL_LINES};
-use crate::ui::strip::render_strip;
+use crate::ui::strip::{render_strip, PetRender};
 use crate::ui::theme::colors;
 use crate::ui::tile::{render_centered_lines, render_tile, TileView};
 use crate::ui::triage::{render_triage, triage_queue_rows, wrap_selection};
@@ -117,6 +118,11 @@ pub enum AppEvent {
         status: String,
         since: Option<i64>,
     },
+    /// The daemon SSE stream's connect state changed (spec tui-pit-pet "One-
+    /// row sprites and derived mood": "daemon SSE disconnected → box").
+    /// Emitted only on transitions by `spawn_sse_task` — `true` on
+    /// `on_connected`, `false` the moment it drops into the poll fallback.
+    Connection(bool),
     /// A transient strip notice (fetch/effect errors, lifecycle results).
     Notice { text: String, ttl_ms: i64 },
     /// A spawn effect settled (success or failure) — clears the busy guard.
@@ -144,27 +150,65 @@ fn now_ms() -> i64 {
         .unwrap_or(0)
 }
 
+/// A tiny xorshift64 PRNG (design.md decision 2: `pet.rs` takes time and
+/// randomness injected as `rng: &mut impl FnMut() -> f64`; this is the one
+/// concrete source the runtime feeds it — no new crate for one PRNG). Not
+/// cryptographic, not seeded for reproducibility across runs: the pet's
+/// idle strolls and chatter picks only need to look unpredictable, not be.
+fn xorshift_next(state: &mut u64) -> f64 {
+    let mut x = *state;
+    x ^= x << 13;
+    x ^= x >> 7;
+    x ^= x << 17;
+    *state = x;
+    // Top 53 bits → [0.0, 1.0), matching the precision of an f64 mantissa.
+    (x >> 11) as f64 * (1.0 / (1u64 << 53) as f64)
+}
+
 // ── Strip notices ─────────────────────────────────────────────────────────
 
 /// The garage-layer typing hint (post-review Dart wording, verbatim — the
 /// click-smoke harness greps it).
 pub const TYPING_HINT: &str = "enter engages the focused terminal — keys go to garage now";
 
+/// Who put the current strip notice up (spec tui-pit-pet "Species-voiced
+/// chatter": "SHALL NOT replace a non-pet notice that is still showing").
+/// `User` covers everything that existed before p15 — armed-close/-remove
+/// wording, the typing hint, lifecycle results, the statusline hint — all
+/// of which must always win over a pet's chatter line.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum NoticeKind {
+    #[default]
+    User,
+    Pet,
+}
+
 /// Transient strip notice with a TTL, plus the Dart TUI's two behaviors the
 /// armed flows depend on: prefix-clearing (disarming clears its own arm
 /// notice, never an unrelated one) and the rate-limited typing hint (a burst
 /// of typing does not restart the hint's timer). Time is injected (ms) so it
 /// unit-tests without timers.
+///
+/// p15 adds a second, lower-priority writer (pit-pet chatter, spec
+/// tui-pit-pet): [`Notices::show_pet`] is the only entry point that checks
+/// before overwriting — every pre-existing call goes through [`Notices::show`]
+/// or [`Notices::show_typing_hint`], which are `NoticeKind::User` and always
+/// win, exactly as they did before chatter existed.
 #[derive(Default)]
 pub struct Notices {
     text: Option<String>,
     expires_at_ms: i64,
+    kind: NoticeKind,
 }
 
 impl Notices {
+    /// Always wins, regardless of what (if anything) is currently showing —
+    /// every call site that predates p15 uses this, so none of that
+    /// behavior changes: a user notice can never be blocked.
     pub fn show(&mut self, text: impl Into<String>, ttl_ms: i64, now_ms: i64) {
         self.text = Some(text.into());
         self.expires_at_ms = now_ms + ttl_ms;
+        self.kind = NoticeKind::User;
     }
 
     /// Garage-layer typing hint, rate-limited: while the hint is already up,
@@ -174,6 +218,40 @@ impl Notices {
             return;
         }
         self.show(TYPING_HINT, 2500, now_ms);
+    }
+
+    /// Pit-pet chatter (spec tui-pit-pet "Species-voiced chatter"): refuses
+    /// — leaving whatever is showing untouched — while a live `User` notice
+    /// is up; a pet line freely replaces another pet line (or nothing).
+    /// Returns whether it was shown, so the chatter scheduler knows the line
+    /// wasn't dropped on the floor (it can retry, rather than treat the tick
+    /// as having "said" a line it didn't).
+    pub fn show_pet(&mut self, text: impl Into<String>, ttl_ms: i64, now_ms: i64) -> bool {
+        if self.user_notice_active(now_ms) {
+            return false;
+        }
+        self.text = Some(text.into());
+        self.expires_at_ms = now_ms + ttl_ms;
+        self.kind = NoticeKind::Pet;
+        true
+    }
+
+    /// Drop a showing `Pet`-kind notice (spec tui-pit-pet "Chatter yields
+    /// to attention": a chatter line must not linger once a session needs
+    /// input). User notices are untouched. Returns true when one was cleared.
+    pub fn clear_pet(&mut self) -> bool {
+        if self.text.is_some() && self.kind == NoticeKind::Pet {
+            self.text = None;
+            return true;
+        }
+        false
+    }
+
+    /// True while a live (unexpired) `User`-kind notice is showing — the
+    /// gate [`Notices::show_pet`] checks, exposed for the chatter scheduler
+    /// to consult before even building a line.
+    pub fn user_notice_active(&self, now_ms: i64) -> bool {
+        self.kind == NoticeKind::User && self.text.is_some() && now_ms < self.expires_at_ms
     }
 
     /// Clear the current notice iff it starts with `prefix` (the Dart
@@ -189,6 +267,15 @@ impl Notices {
             return None;
         }
         self.text.as_deref()
+    }
+
+    /// The showing notice split by kind: `User` lines belong in the strip's
+    /// right-aligned slot, `Pet` lines are drawn beside the pet's sprite.
+    pub fn current_of(&self, kind: NoticeKind, now_ms: i64) -> Option<&str> {
+        if self.kind != kind {
+            return None;
+        }
+        self.current(now_ms)
     }
 
     /// Drop an expired notice; returns true when the visible state changed
@@ -339,6 +426,14 @@ impl GarageRouter {
         if key != "X" {
             self.disarm_remove();
         }
+        // `P` (spec tui-pit-pet "Opt-in roster cycled by `P`"): not a
+        // `GarageCommand` — `pet.rs` (the render module) has no business
+        // being a store dependency, so this stays here rather than growing
+        // `state::store`'s command enum for one field's cycling.
+        if key == "P" {
+            self.cycle_pet_pressed(store, now_ms);
+            return effects;
+        }
         let Some(command) = garage_command_for(key) else {
             // Unbound garage keys are consumed (never reach an agent), but
             // silence reads as a dead wall — show where the keys actually go.
@@ -443,6 +538,26 @@ impl GarageRouter {
             id: session.id.clone(),
             label: session.label.clone(),
         });
+    }
+
+    /// `P`: cycle the pit-pet roster off → Arthur → Papito → Segan → off
+    /// (spec tui-pit-pet), persist the choice, and show the arrival notice
+    /// (or "the strip is quiet again" for off). Resetting `PetSim`/ticking
+    /// the sprite promptly is the caller's job (`App::handle_key` — it owns
+    /// the sim, the router doesn't).
+    fn cycle_pet_pressed(&mut self, store: &mut WallStore, now_ms: i64) {
+        let current = store
+            .state()
+            .pet
+            .as_deref()
+            .and_then(pet::Species::from_str);
+        let next = pet::Species::cycle(current);
+        store.set_pet(next.map(|s| s.as_str().to_owned()));
+        let text = match next {
+            Some(species) => format!("{} is on the wall", species.label()),
+            None => "the strip is quiet again".to_owned(),
+        };
+        self.notices.show(text, 3000, now_ms);
     }
 
     /// A click on a restorable placeholder restores it (Enter's landing,
@@ -1165,7 +1280,19 @@ fn spawn_sse_task(
             let client = &client;
             move || refetch(client)
         };
-        sse.run(stop, on_event, on_poll);
+        // `AppEvent::Connection` transitions only (spec tui-pit-pet: the
+        // pet boxes on an observed drop, not on every internal reconnect
+        // tick) — `last_live` collapses `SseReconnectMachine`'s repeated
+        // connect/disconnect calls (one per attempt/poll cycle) down to an
+        // edge so the state loop isn't spammed with redundant events.
+        let last_live = std::cell::Cell::new(None::<bool>);
+        let on_connection = move |live: bool| {
+            if last_live.get() != Some(live) {
+                last_live.set(Some(live));
+                let _ = tx.send(AppEvent::Connection(live));
+            }
+        };
+        sse.run(stop, on_event, on_poll, on_connection);
     });
 }
 
@@ -1209,6 +1336,48 @@ struct App {
     triage_rect: Option<Rect>,
     ws_add_rect: Option<Rect>,
     view_picker_rect: Option<Rect>,
+
+    // ── p15: pit pet (spec tui-pit-pet) ───────────────────────────────────
+    /// Motion state; reset to `default()` whenever `P` changes the species
+    /// (a fresh pet starts centered, not wherever the last one wandered).
+    pet_sim: pet::PetSim,
+    /// Chatter's own rate-limit/dedup state — never reset by `P` (the spec
+    /// doesn't ask for it, and it'd only let a species-swap dodge the
+    /// floor).
+    pet_chatter: pet::Chatter,
+    /// Next epoch ms the 300 ms tick is due; `0` so a freshly-enabled pet
+    /// renders on the very next loop pass instead of waiting out a stale
+    /// deadline from before it was off.
+    pet_next_tick_ms: i64,
+    /// This frame's sprite, built by [`App::pet_tick`] — `None` whenever the
+    /// pet is off (design.md decision 3: "off → the branch is one `if`").
+    pet_render: Option<PetRender>,
+    /// `GARAGE_PET_ASCII=1`, read once at construction (spec risk note: the
+    /// pup's face glyphs have an ASCII fallback for fonts that mangle them).
+    pet_ascii: bool,
+    /// Epoch ms the wall started — `ChatterCtx::uptime_ms`'s zero point.
+    started_ms: i64,
+    /// The effective mood from the last tick — used only to detect a fresh
+    /// transition INTO `Celebrate` (`ChatterCtx::just_celebrated`); the
+    /// authoritative mood for click routing.
+    pet_mood: pet::Mood,
+    /// `daemon_live` as of the last tick — used only to detect a box → live
+    /// edge (`ChatterCtx::just_back_live`).
+    prev_daemon_live: bool,
+    /// Strip-absolute pet columns from the last frame (like `badge_cols`),
+    /// when the pet rendered.
+    pet_cols: Option<Range<u16>>,
+    /// The filler width the last-drawn strip had — the room `pet_tick`'s
+    /// next `PetSim::step` has to work with. `0` until the first frame
+    /// (falls back to a conservative default — see `pet_tick`).
+    last_strip_filler: u16,
+    /// xorshift64 state feeding every `rng: &mut impl FnMut() -> f64` the
+    /// pet module needs (design.md decision 2: time/randomness injected).
+    pet_rng: u64,
+    /// `(minute-bucket, hour)` — `ChatterCtx::local_hour` is shelled out to
+    /// `date +%H` (no time crate in this workspace — see Cargo.toml) at most
+    /// once a minute, not once per 300 ms tick.
+    local_hour_cache: Option<(i64, u8)>,
 }
 
 impl App {
@@ -1223,6 +1392,7 @@ impl App {
             AppEvent::Status { id, status, since } => {
                 self.store.status_changed(&id, &status, since);
             }
+            AppEvent::Connection(live) => self.store.connection(live),
             AppEvent::Notice { text, ttl_ms } => {
                 self.router.notices.show(text, ttl_ms, now_ms());
             }
@@ -1328,9 +1498,20 @@ impl App {
                 if key_str == "D" {
                     self.view_picker.reset();
                 }
+                // `P` (spec tui-pit-pet): a fresh pet starts its motion sim
+                // from scratch and renders on the very next tick, rather
+                // than carrying over the outgoing (or newly-arriving)
+                // species' position/frame counters. `GarageRouter` owns the
+                // choice + persistence + notice; it doesn't own the sim, so
+                // the reset happens here by comparing before/after.
+                let pet_before = self.store.state().pet.clone();
                 let effects = self
                     .router
                     .on_garage_key(&mut self.store, &key_str, now_ms());
+                if self.store.state().pet != pet_before {
+                    self.pet_sim = pet::PetSim::default();
+                    self.pet_next_tick_ms = 0;
+                }
                 self.run_effects(effects)
             }
         }
@@ -1602,6 +1783,13 @@ impl App {
             }
             return;
         }
+        // Pet click (spec tui-pit-pet "Click routing"): checked BEFORE the
+        // badge so an alert pet sitting near the badge never gets swallowed
+        // by it.
+        if row >= layout.strip.y && self.pet_cols.as_ref().is_some_and(|r| r.contains(&col)) {
+            self.handle_pet_click(now_ms());
+            return;
+        }
         // Strip badge click: open the triage queue (the `A` binding).
         if row >= layout.strip.y && self.badge_cols.as_ref().is_some_and(|r| r.contains(&col)) {
             if self.store.state().layer == KeyLayer::Engaged {
@@ -1610,6 +1798,173 @@ impl App {
             self.queue_selection = 0;
             self.store.open_overlay(OverlayKind::TriageQueue);
         }
+    }
+
+    /// A click on the pet's strip columns (spec tui-pit-pet "Click
+    /// routing"): while alert, the same jump `a` performs; otherwise a
+    /// petting interaction (a short celebrate + a species-voiced reply).
+    fn handle_pet_click(&mut self, now: i64) {
+        if self.store.state().layer == KeyLayer::Engaged {
+            self.store.disengage();
+        }
+        if self.pet_mood == pet::Mood::Alert {
+            if !self.store.jump_to_longest_waiting() {
+                // Same wording as the `a` key's decline (spec tui-triage).
+                self.router.notices.show("no session needs you", 2000, now);
+            }
+            return;
+        }
+        let Some(species) = self
+            .store
+            .state()
+            .pet
+            .as_deref()
+            .and_then(pet::Species::from_str)
+        else {
+            return; // race: `P` turned it off between paint and click
+        };
+        self.pet_sim.pet(now);
+        // Petting is a celebrate the sim will report next tick; pre-set the
+        // mood so it is not mistaken for a blocked→clear transition (which
+        // would trigger a Proud line over the petting reply).
+        self.pet_mood = pet::Mood::Celebrate;
+        let mut rng_state = self.pet_rng;
+        let mut rng = || xorshift_next(&mut rng_state);
+        let line = pet::petting_line(species, &mut rng);
+        self.pet_rng = rng_state;
+        if let Some(line) = line {
+            self.router.notices.show_pet(line, 2500, now);
+        }
+    }
+
+    // ── p15: pit pet tick (spec tui-pit-pet) ──────────────────────────────
+
+    /// `ChatterCtx::local_hour`, shelled out to `date +%H` at most once a
+    /// minute (no time crate in this workspace's `Cargo.toml`; task 4.3
+    /// explicitly calls for the `date` fallback, cached, "not per tick").
+    /// Falls back to noon (never late-night, never usage-adjacent) if the
+    /// shell-out ever fails — chatter staying silent on a broken clock beats
+    /// it misfiring the late-night lines all day.
+    fn local_hour(&mut self, now: i64) -> u8 {
+        let minute_bucket = now.div_euclid(60_000);
+        if let Some((bucket, hour)) = self.local_hour_cache {
+            if bucket == minute_bucket {
+                return hour;
+            }
+        }
+        let hour = std::process::Command::new("date")
+            .arg("+%H")
+            .output()
+            .ok()
+            .filter(|o| o.status.success())
+            .and_then(|o| String::from_utf8(o.stdout).ok())
+            .and_then(|s| s.trim().parse::<u8>().ok())
+            .unwrap_or(12);
+        self.local_hour_cache = Some((minute_bucket, hour));
+        hour
+    }
+
+    /// The 300 ms pet tick (spec tui-pit-pet "Species-true one-row motion":
+    /// "Motion SHALL run on a 300 ms tick while the pet is on"). Off → one
+    /// early-return `if` and nothing else runs (design.md decision 3). On →
+    /// steps the sim, updates `pet_render`, and runs the chatter scheduler
+    /// in the same beat (task 4.3). Returns whether the caller should mark
+    /// the frame dirty.
+    fn pet_tick(&mut self, now: i64) -> bool {
+        let Some(species) = self
+            .store
+            .state()
+            .pet
+            .as_deref()
+            .and_then(pet::Species::from_str)
+        else {
+            // Off: nothing to render, nothing to say — cheap by construction.
+            return self.pet_render.take().is_some();
+        };
+        if now < self.pet_next_tick_ms {
+            return false;
+        }
+        self.pet_next_tick_ms = now + 300;
+
+        let (daemon_live, blocked, any_working, session_count, usage_pct_max) = {
+            let state = self.store.state();
+            let usage_pct_max = [state.usage.five_hour.as_ref(), state.usage.seven_day.as_ref()]
+                .into_iter()
+                .flatten()
+                .map(|w| w.used_percentage.min(u32::from(u8::MAX)) as u8)
+                .max();
+            (
+                state.daemon_live,
+                state.blocked_count(),
+                state.sessions.iter().any(|s| s.status == "working"),
+                state.sessions.len(),
+                usage_pct_max,
+            )
+        };
+        let mood_in = pet::mood(daemon_live, blocked > 0, any_working, session_count);
+        // `last_strip_filler` is `0` before the first frame is ever drawn —
+        // a conservative fallback keeps the very first tick from computing
+        // against a zero-width filler and hiding the pet before it's ever
+        // been seen.
+        // Minus the strip's two gutter columns (see `strip_line`), so the sim's
+        // clamp and the paint's clamp agree.
+        let filler_width = if self.last_strip_filler > 0 { self.last_strip_filler.saturating_sub(2) } else { 20 };
+
+        let mut rng_state = self.pet_rng;
+        let mut rng = || xorshift_next(&mut rng_state);
+        let result = self.pet_sim.step(
+            species,
+            mood_in,
+            blocked,
+            session_count,
+            filler_width,
+            now,
+            self.pet_ascii,
+            &mut rng,
+        );
+        self.pet_rng = rng_state;
+
+        let just_celebrated = self.pet_mood != pet::Mood::Celebrate && result.mood == pet::Mood::Celebrate;
+        let just_back_live = !self.prev_daemon_live && daemon_live;
+        self.pet_mood = result.mood;
+        self.prev_daemon_live = daemon_live;
+
+        let was_none = self.pet_render.is_none();
+        self.pet_render = Some(PetRender {
+            text: result.sprite.text,
+            bang: result.sprite.bang,
+            bang_lit: result.bang_lit,
+            x: result.x,
+            dim: matches!(result.mood, pet::Mood::Sleep | pet::Mood::Box),
+            say: None, // filled at draw time from the live pet notice
+        });
+        let mut dirty = result.changed || was_none;
+
+        if result.mood == pet::Mood::Alert && self.router.notices.clear_pet() {
+            dirty = true;
+        }
+        let ctx = pet::ChatterCtx {
+            now_ms: now,
+            uptime_ms: now - self.started_ms,
+            local_hour: self.local_hour(now),
+            usage_pct_max,
+            mood: result.mood,
+            just_celebrated,
+            just_back_live,
+            alert: result.mood == pet::Mood::Alert,
+            user_notice_active: self.router.notices.user_notice_active(now),
+        };
+        let mut rng_state = self.pet_rng;
+        let mut rng = || xorshift_next(&mut rng_state);
+        let line = self.pet_chatter.next_line(species, &ctx, &mut rng);
+        self.pet_rng = rng_state;
+        if let Some(line) = line {
+            if self.router.notices.show_pet(line, 4000, now) {
+                dirty = true;
+            }
+        }
+
+        dirty
     }
 
     /// A click inside the `D` view-picker overlay (task 3.3 "picker overlay
@@ -1844,12 +2199,23 @@ impl App {
             }
         }
 
-        self.badge_cols = render_strip(
+        let strip_cols = render_strip(
             buf,
             layout.strip,
             self.store.state(),
-            self.router.notices.current(now_ms),
+            self.router.notices.current_of(NoticeKind::User, now_ms),
+            self.pet_render.clone().map(|mut p| {
+                p.say = self
+                    .router
+                    .notices
+                    .current_of(NoticeKind::Pet, now_ms)
+                    .map(str::to_owned);
+                p
+            }),
         );
+        self.badge_cols = strip_cols.badge;
+        self.pet_cols = strip_cols.pet;
+        self.last_strip_filler = strip_cols.filler_width;
 
         self.triage_rect = None;
         self.ws_add_rect = None;
@@ -1907,6 +2273,14 @@ impl App {
     }
 }
 
+/// Snapshot the two fields `wall.json` persists (spec tui-views "View
+/// persistence" + tui-pit-pet "Opt-in roster cycled by `P`") into a
+/// [`WallFile`] ready for [`persistence::save`]. `daemon_live` and every
+/// other transient field never reach disk.
+fn wall_file_snapshot(store: &WallStore) -> WallFile {
+    WallFile { views: store.state().views.clone(), pet: store.state().pet.clone() }
+}
+
 /// Whether the one-time statusline-install hint should appear now (spec
 /// tui-context-meters "Install affordance"): not shown yet this run, the
 /// startup delay has elapsed, and no session carries statusline-sourced
@@ -1932,6 +2306,16 @@ async fn state_loop(
     base_url: &str,
     client_id: &str,
 ) -> std::io::Result<()> {
+    let started_ms = now_ms();
+    // `GARAGE_PET_CHATTER_MS` (task 4.3, E2E-only): lowers `Chatter`'s
+    // rate-limit floor so a harness doesn't have to wait 3 real minutes for
+    // a line. Absent in every normal run — `Chatter::default()`'s floor is
+    // the spec's `CHATTER_FLOOR_MS`.
+    let pet_chatter = std::env::var("GARAGE_PET_CHATTER_MS")
+        .ok()
+        .and_then(|s| s.parse::<i64>().ok())
+        .map(pet::Chatter::with_floor_ms)
+        .unwrap_or_default();
     let mut app = App {
         store: WallStore::new(),
         router: GarageRouter::default(),
@@ -1949,6 +2333,18 @@ async fn state_loop(
         triage_rect: None,
         ws_add_rect: None,
         view_picker_rect: None,
+        pet_sim: pet::PetSim::default(),
+        pet_chatter,
+        pet_next_tick_ms: 0,
+        pet_render: None,
+        pet_ascii: std::env::var("GARAGE_PET_ASCII").ok().as_deref() == Some("1"),
+        started_ms,
+        pet_mood: pet::Mood::Sleep,
+        prev_daemon_live: true, // matches WallState::initial()'s daemon_live default
+        pet_cols: None,
+        last_strip_filler: 0,
+        pet_rng: (started_ms as u64) | 1, // xorshift64 needs a non-zero seed
+        local_hour_cache: None,
     };
     // View persistence (spec tui-views "View persistence"): load whatever
     // wall.json holds, then debounce a save (≥500ms after the last
@@ -1962,7 +2358,7 @@ async fn state_loop(
     // so calling it before any session exists would prune every loaded
     // assignment on the spot and silently lose the whole file.
     let views_path = persistence::wall_json_path();
-    let mut pending_views = Some(persistence::load(&views_path));
+    let mut pending_file = Some(persistence::load(&views_path));
     let mut saved_views_revision = app.store.views_revision();
     let mut views_dirty_since: Option<Instant> = None;
     const VIEWS_SAVE_DEBOUNCE: Duration = Duration::from_millis(500);
@@ -2011,6 +2407,11 @@ async fn state_loop(
         if app.refresh_frozen_counts() {
             dirty = true;
         }
+        // Pit pet (spec tui-pit-pet): a 300 ms tick while a species is
+        // selected, one cheap `if` otherwise (design.md decision 3).
+        if app.pet_tick(now) {
+            dirty = true;
+        }
         // Debounced wall.json save (spec tui-views "View persistence"):
         // start the timer the moment views_revision moves, fire once it's
         // sat still for VIEWS_SAVE_DEBOUNCE — a burst of view mutations
@@ -2022,10 +2423,10 @@ async fn state_loop(
             if since.elapsed() >= VIEWS_SAVE_DEBOUNCE {
                 saved_views_revision = app.store.views_revision();
                 views_dirty_since = None;
-                let views = app.store.state().views.clone();
+                let file = wall_file_snapshot(&app.store);
                 let path = views_path.clone();
                 tokio::task::spawn_blocking(move || {
-                    let _ = persistence::save(&path, &views);
+                    let _ = persistence::save(&path, &file);
                 });
             }
         }
@@ -2042,7 +2443,7 @@ async fn state_loop(
         let first = match tokio::time::timeout(timeout, rx.recv()).await {
             Err(_) => continue, // timeout: loop back to tick + render
             Ok(None) => {
-                let _ = persistence::save(&views_path, &app.store.state().views);
+                let _ = persistence::save(&views_path, &wall_file_snapshot(&app.store));
                 return Ok(());
             }
             Ok(Some(ev)) => ev,
@@ -2056,14 +2457,17 @@ async fn state_loop(
             let was_sessions = matches!(ev, AppEvent::Sessions(_));
             dirty = true;
             if app.apply(ev) {
-                let _ = persistence::save(&views_path, &app.store.state().views);
+                let _ = persistence::save(&views_path, &wall_file_snapshot(&app.store));
                 return Ok(());
             }
             // The first Sessions fetch has now populated state().sessions —
-            // safe to load the persisted views (see the comment above).
+            // safe to load the persisted views (see the comment above). The
+            // pet choice needs no such pruning (it isn't session-shaped), so
+            // it's applied in the same beat, right alongside `load_views`.
             if was_sessions {
-                if let Some(views) = pending_views.take() {
-                    app.store.load_views(views);
+                if let Some(file) = pending_file.take() {
+                    app.store.load_views(file.views);
+                    app.store.set_pet(file.pet);
                 }
             }
         }
@@ -2687,6 +3091,53 @@ mod tests {
         assert!(!notices.tick(2000), "not expired yet — no change");
         assert!(notices.tick(3000), "expired — visible state changed");
         assert_eq!(notices.current(3000), None);
+    }
+
+    // ── pit-pet chatter vs. user notices (spec tui-pit-pet "Species-voiced
+    // chatter": "SHALL NOT replace a non-pet notice that is still showing")
+
+    #[test]
+    fn show_pet_is_refused_over_a_live_user_notice() {
+        let mut notices = Notices::default();
+        notices.show("press x again to close", 3000, 1000);
+        assert!(!notices.show_pet("drink some water", 4000, 1500));
+        // The user notice is untouched, not clobbered nor extended.
+        assert_eq!(notices.current(1500), Some("press x again to close"));
+    }
+
+    #[test]
+    fn show_pet_is_allowed_once_the_user_notice_has_expired() {
+        let mut notices = Notices::default();
+        notices.show("press x again to close", 1000, 1000); // expires at 2000
+        assert!(notices.show_pet("drink some water", 4000, 2500));
+        assert_eq!(notices.current(2500), Some("drink some water"));
+    }
+
+    #[test]
+    fn a_user_notice_always_overrides_a_live_pet_notice_immediately() {
+        let mut notices = Notices::default();
+        assert!(notices.show_pet("drink some water", 4000, 1000));
+        notices.show(TYPING_HINT, 2500, 1500);
+        assert_eq!(notices.current(1500), Some(TYPING_HINT));
+    }
+
+    #[test]
+    fn a_pet_notice_freely_replaces_another_pet_notice() {
+        let mut notices = Notices::default();
+        assert!(notices.show_pet("drink some water", 4000, 1000));
+        assert!(notices.show_pet("proud of you", 4000, 1200));
+        assert_eq!(notices.current(1200), Some("proud of you"));
+    }
+
+    #[test]
+    fn user_notice_active_tracks_kind_and_expiry() {
+        let mut notices = Notices::default();
+        assert!(!notices.user_notice_active(1000), "nothing showing yet");
+        notices.show("press x again to close", 1000, 1000); // expires at 2000
+        assert!(notices.user_notice_active(1500));
+        assert!(!notices.user_notice_active(2000), "expired");
+        notices.show_pet("drink some water", 4000, 2000);
+        assert!(!notices.user_notice_active(2500), "a pet notice is not a user notice");
     }
 
     // ── key-event reduction ─────────────────────────────────────────────

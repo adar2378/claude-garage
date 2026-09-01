@@ -9,6 +9,10 @@
 // waddles, alerts with a single motionless stare, and celebrates with
 // exactly one flap; the pup runs fastest, bounces big, and celebrates
 // with zoomies. Validated in the design-mockup artifact before landing.
+//
+// The TUI port of this pet lives in `wall/src/ui/pet.rs` (spec
+// tui-pit-pet) — same species, names, personalities, and mood rules,
+// re-cut for one strip row; edit the two together.
 
 // The family, by name (named by the user, 2026-07-19).
 export const PET_NAMES = {
