@@ -175,6 +175,24 @@ export async function createSession(id, dir, command, extraArgs = []) {
   await run("tmux", ["set-option", "-t", id, "status", "off"]).catch(() => {});
 }
 
+// p16-restart D1: in-place restart — kills the pane's running process (tmux
+// sends SIGHUP) and starts `command` in the SAME pane/session/tmux identity
+// in one call, so the tmux session (and everything the daemon/UI key off
+// its name) never dies. `-c <dir>` re-roots the new command exactly the way
+// `createSession`'s `-c` does; extraArgs join the same way createSession's
+// do — see the comment above it. No try/catch: a tmux failure (unknown
+// target, bad dir) rejects with tmux's stderr in the message, same as every
+// other call through `run`.
+//
+// Target: `-t <id>` targets a PANE, not a session (unlike every other
+// single-target call here, which targets a session) — bare `=<id>` exact-
+// matches nothing (tmux looks for a pane literally named that), so a
+// trailing `:` is required to say "this session, exactly; its active
+// window's active pane" (garage sessions only ever have the one pane).
+export async function respawnPane(id, dir, command, extraArgs = []) {
+  await run("tmux", ["respawn-pane", "-k", "-c", dir, "-t", `${exact(id)}:`, command, ...extraArgs]);
+}
+
 // p14: Claude Code's Shift+Enter (kitty protocol, ESC[13;2u) only reaches a
 // pane if the tmux server has extended keys on and advertises them (and,
 // since 0.3.4, re-encodes in csi-u form so Option+Enter survives too) —

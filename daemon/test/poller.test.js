@@ -57,7 +57,7 @@ test("same-state poller tick must not clear a hook-set message", () => {
   assert.equal(getStatusEntry(ID).message, "Claude needs your permission to use Bash");
 });
 
-// p10 wave-2 fix: diffSessionState is the pure id+title diff tick() uses to
+// p10 wave-2 fix: diffSessionState is the pure id+title diff pollBody() uses to
 // decide whether to emit "sessions-changed" — exercised directly here with
 // plain data so title-only-change coverage doesn't need a live tmux server.
 const session = (id) => ({ id, workspace: "ws", label: id.split("/").pop() });

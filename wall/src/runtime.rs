@@ -7,7 +7,8 @@
 //!   - garage layer: single-key app commands through the ported
 //!     [`GarageCommand`] mapping, incl. every p8.1–p8.4 lifecycle key
 //!     (`1-9 [ ] a A n N x X K w m R Enter ? q`), the armed `x`/`X`/`K`
-//!     double-press flows and their exact Dart strip-notice wording;
+//!     double-press flows and their exact Dart strip-notice wording, plus
+//!     the p16-restart `r` prefix (`r r` / `r a` / `r d`);
 //!   - engaged layer: every key re-encoded to raw bytes
 //!     ([`crate::input::encode`]) and written to the focused [`TileClient`],
 //!     except the reserved Ctrl+G disengage chord; `Event::Paste` is
@@ -40,7 +41,7 @@ use serde_json::Value;
 use tokio::sync::mpsc;
 
 use crate::api::client::{ApiError, GarageClient};
-use crate::api::models::{SessionInfo, UsageInfo, WorkspaceInfo};
+use crate::api::models::{RestartResponse, SessionInfo, UsageInfo, WorkspaceInfo};
 use crate::api::sse::SseClient;
 use crate::input::encode::encode_key;
 use crate::input::links::url_at;
@@ -48,7 +49,10 @@ use crate::input::paste::wrap_bracketed_paste;
 use crate::state::armed_action::{ArmedAction, ArmedClose};
 use crate::state::persistence::{self, WallFile};
 use crate::state::salience::restorable_session_ids;
-use crate::state::store::{garage_command_for, GarageCommand, WallStore};
+use crate::state::store::{
+    garage_command_for, restart_arm_notice, restart_command_for, ArmedRestart, GarageCommand,
+    WallStore, RESTART_PREFIX,
+};
 use crate::state::views::{self, ViewSummary};
 use crate::state::wall_state::{KeyLayer, OverlayKind, WallSession, WallState};
 use crate::state::workspace_remove::{confirm_kill_target, kill_remove_notice, remove_arm_notice};
@@ -170,6 +174,11 @@ fn xorshift_next(state: &mut u64) -> f64 {
 /// The garage-layer typing hint (post-review Dart wording, verbatim — the
 /// click-smoke harness greps it).
 pub const TYPING_HINT: &str = "enter engages the focused terminal — keys go to garage now";
+
+/// What the one-shot `r` prefix is waiting for (p16-restart). Without it the
+/// prefix would swallow the next keystroke in silence — the same reason
+/// unbound garage keys raise [`TYPING_HINT`] instead of doing nothing.
+pub const RESTART_PREFIX_HINT: &str = "r: r session · a workspace · d daemon";
 
 /// Who put the current strip notice up (spec tui-pit-pet "Species-voiced
 /// chatter": "SHALL NOT replace a non-pet notice that is still showing").
@@ -326,6 +335,22 @@ pub enum Effect {
     /// LIVE session (macOS only — the router declines before this is ever
     /// built off macOS; see [`crate::ui::window_open`]).
     OpenWindow { id: String, label: String },
+    /// Confirmed `r r` (p16-restart): `POST /api/sessions/restart {id,
+    /// force}`. `name` is captured at press time so the result notice names
+    /// what the user was looking at, even if the tile's title moved on
+    /// while the call was in flight.
+    RestartSession {
+        id: String,
+        name: String,
+        force: bool,
+    },
+    /// `r a`: one restart call per idle/done session of the focused
+    /// workspace (the daemon has no workspace filter), aggregated into one
+    /// result notice.
+    RestartWorkspace { ids: Vec<String> },
+    /// `r d`: `POST /api/daemon/restart` — tmux sessions untouched; the SSE
+    /// task's existing reconnect handles the dropped connection.
+    RestartDaemon,
 }
 
 // ── Garage-layer router ──────────────────────────────────────────────────
@@ -361,10 +386,12 @@ fn is_printable(key: &str) -> bool {
 }
 
 /// Garage-layer key routing (spec tui-key-routing: "Garage-layer bindings" +
-/// p8.1–p8.4). Pure — state transitions go through the store, IO becomes
-/// returned [`Effect`]s, notices land in [`Notices`] — so the armed
-/// `x`/`X`/`K` flows and their exact strip wording unit-test without a
-/// daemon. Mirrors the Dart `_onGarageKey` ordering exactly.
+/// p8.1–p8.4, plus spec restart "TUI chords"). Pure — state transitions go
+/// through the store, IO becomes returned [`Effect`]s, notices land in
+/// [`Notices`] — so the armed `x`/`X`/`K` flows, the p16-restart `r` chords
+/// and their exact strip wording unit-test without a daemon. Mirrors the
+/// Dart `_onGarageKey` ordering, with the one-shot `r` prefix resolved ahead
+/// of it (p16-restart, design.md D5).
 #[derive(Default)]
 pub struct GarageRouter {
     /// The `x` double-press close arming (3s window, keyed by session id).
@@ -379,6 +406,16 @@ pub struct GarageRouter {
     spawning: bool,
     /// A statusline-install call in flight — guards concurrent installs.
     installing_statusline: bool,
+    /// The `r r` double-press restart arming (p16-restart) — an instance
+    /// independent of `armed_close`, keyed by session id.
+    armed_restart: ArmedRestart,
+    /// The exact `r r` arm notice currently showing, so disarming clears
+    /// its own line and nothing else: the two arm wordings differ (plain vs
+    /// busy), so there is no shared prefix for `Notices::clear_prefix`.
+    armed_restart_notice: Option<String>,
+    /// True between the `r` prefix press and the very next key (p16-restart,
+    /// design.md D5: a one-shot prefix, like `X` → `X`/`K`).
+    restart_prefix: bool,
     pub notices: Notices,
 }
 
@@ -409,6 +446,13 @@ impl GarageRouter {
         now_ms: i64,
     ) -> Vec<Effect> {
         let mut effects = Vec::new();
+        // p16-restart (design.md D5): the `r` prefix is one-shot — the very
+        // next key is the chord's second half, resolved BEFORE anything else
+        // so `r a` / `r d` never reach the plain `a` / `d` bindings.
+        if std::mem::take(&mut self.restart_prefix) {
+            self.restart_chord(store, key, now_ms, &mut effects);
+            return effects;
+        }
         // p8.4: while an `X` remove arm is active, `K` confirms the removal
         // WITH session kill — checked BEFORE the disarm pass (K would
         // otherwise disarm the very arm it confirms). Outside a live arm `K`
@@ -425,6 +469,23 @@ impl GarageRouter {
         }
         if key != "X" {
             self.disarm_remove();
+        }
+        // p16-restart: the `r r` arm survives only the prefix key itself —
+        // the second `r` arrives through the chord branch above, so every
+        // key that reaches here (including a bare `r` opening a fresh
+        // prefix) leaves the arm alone or disarms it, same rule as `x`.
+        if key != RESTART_PREFIX {
+            self.disarm_restart();
+        }
+        // p16-restart: `r` alone is a prefix, not a command — consume it and
+        // wait for the chord. The hint would bury a live `r r` arm notice
+        // (which already says what the next press does), so it yields to it.
+        if key == RESTART_PREFIX {
+            self.restart_prefix = true;
+            if self.armed_restart.armed_id().is_none() {
+                self.notices.show(RESTART_PREFIX_HINT, 3000, now_ms);
+            }
+            return effects;
         }
         // `P` (spec tui-pit-pet "Opt-in roster cycled by `P`"): not a
         // `GarageCommand` — `pet.rs` (the render module) has no business
@@ -709,6 +770,127 @@ impl GarageRouter {
         }
         self.armed_remove.disarm();
         self.notices.clear_prefix("press X again to remove ");
+    }
+
+    /// The key after the `r` prefix (p16-restart, spec restart "TUI
+    /// chords"). Anything that is not `r`/`a`/`d` cancels: the prefix is
+    /// consumed, a pending `r r` arm disarms, and the key does NOT fall
+    /// through to its own binding — a mistyped chord must never fire an
+    /// unrelated command.
+    fn restart_chord(
+        &mut self,
+        store: &WallStore,
+        key: &str,
+        now_ms: i64,
+        effects: &mut Vec<Effect>,
+    ) {
+        self.notices.clear_prefix(RESTART_PREFIX_HINT);
+        match restart_command_for(key) {
+            Some(GarageCommand::RestartFocused) => {
+                self.restart_focused_pressed(store, now_ms, effects)
+            }
+            Some(GarageCommand::RestartWorkspace) => {
+                self.restart_workspace_pressed(store, now_ms, effects)
+            }
+            Some(GarageCommand::RestartDaemon) => {
+                self.notices.show("restarting the daemon…", 5000, now_ms);
+                effects.push(Effect::RestartDaemon);
+            }
+            _ => self.disarm_restart(),
+        }
+    }
+
+    /// `r r`: armed double-press restart of the focused session (spec
+    /// restart "TUI chords"). The first press arms with the wording that
+    /// promises the conversation resumes — or, on a `working`/`needs-input`
+    /// session, warns that a second press restarts it anyway; the second
+    /// press within the 3s window fires, forcing when the session was busy
+    /// at arm time (design.md D2: the armed press IS the force).
+    fn restart_focused_pressed(
+        &mut self,
+        store: &WallStore,
+        now_ms: i64,
+        effects: &mut Vec<Effect>,
+    ) {
+        let Some(session) = store
+            .state()
+            .session_by_id(store.state().focused_session_id.as_deref())
+        else {
+            return;
+        };
+        if !session.live() {
+            // A restorable placeholder has no tmux pane to respawn — Enter
+            // restores it instead.
+            self.notices.show("no live session to restart", 2000, now_ms);
+            return;
+        }
+        let busy = session.status == "working" || session.needs_input();
+        // The display name, not the label: post-p13 that is what the tile
+        // the user is looking at calls this session.
+        let (id, name) = (session.id.clone(), session.display_name().to_owned());
+        match self.armed_restart.press(&id, busy, now_ms) {
+            Some(force) => {
+                self.clear_restart_arm_notice();
+                self.notices.show(
+                    format!("restarting {name} — resumes the conversation"),
+                    5000,
+                    now_ms,
+                );
+                effects.push(Effect::RestartSession { id, name, force });
+            }
+            None => {
+                let text = restart_arm_notice(&name, busy);
+                self.notices.show(text.clone(), 3000, now_ms);
+                self.armed_restart_notice = Some(text);
+            }
+        }
+    }
+
+    /// `r a`: restart every idle/done session of the focused workspace —
+    /// one call per id (the daemon has no workspace filter), fired at once,
+    /// no arming. Busy sessions were never targets, so a workspace with
+    /// nothing idle says so instead of firing an empty round.
+    fn restart_workspace_pressed(
+        &mut self,
+        store: &WallStore,
+        now_ms: i64,
+        effects: &mut Vec<Effect>,
+    ) {
+        let Some(workspace) = store.state().focused_workspace.clone() else {
+            return;
+        };
+        let ids = store.restart_targets_for_workspace();
+        if ids.is_empty() {
+            self.notices.show(
+                format!("nothing to restart in {workspace} (all busy or none)"),
+                3000,
+                now_ms,
+            );
+            return;
+        }
+        self.notices.show(
+            format!("restarting {} sessions in {workspace}", ids.len()),
+            5000,
+            now_ms,
+        );
+        effects.push(Effect::RestartWorkspace { ids });
+    }
+
+    fn disarm_restart(&mut self) {
+        if self.armed_restart.armed_id().is_none() {
+            return;
+        }
+        self.armed_restart.disarm();
+        self.clear_restart_arm_notice();
+    }
+
+    /// Clear the `r r` arm notice and only it — the plain and busy wordings
+    /// share no prefix, so the line that was actually shown is remembered
+    /// rather than guessed.
+    fn clear_restart_arm_notice(&mut self) {
+        if let Some(text) = self.armed_restart_notice.take() {
+            self.notices.clear_prefix(&text);
+        }
     }
 }
 
@@ -998,6 +1180,42 @@ fn failure_notice(prefix: &str, e: &ApiError) -> String {
     }
 }
 
+/// p16-restart: the strip line for ONE `r r` restart's response. Every
+/// branch names an outcome — a response that restarted nothing still says
+/// so, rather than leaving the strip silent about a key the user pressed.
+fn restart_notice(name: &str, response: &RestartResponse) -> String {
+    if let Some(entry) = response.restarted.first() {
+        return if entry.resumed {
+            format!("{name} restarted")
+        } else {
+            format!("{name} restarted fresh (no conversation to resume)")
+        };
+    }
+    if let Some(entry) = response.failed.first() {
+        return format!("{name}: {}", entry.error);
+    }
+    if let Some(entry) = response.skipped.first() {
+        return format!("{name} skipped — {}", entry.status);
+    }
+    format!("{name}: the daemon reported no outcome")
+}
+
+/// p16-restart: the aggregated `r a` result line. Skips and failures are
+/// named only when there are any — the targets were filtered to idle/done
+/// before the calls went out, so "skipped 0" is the normal case and would
+/// be pure noise; a skip that does appear is a session that went busy
+/// between the keypress and the call.
+fn restart_all_notice(restarted: usize, skipped: usize, failures: &[String]) -> String {
+    let mut parts = vec![format!("restarted {restarted}")];
+    if skipped > 0 {
+        parts.push(format!("skipped {skipped} (working/waiting)"));
+    }
+    if let Some(first) = failures.first() {
+        parts.push(format!("failed {}: {first}", failures.len()));
+    }
+    parts.join(" · ")
+}
+
 /// Refetch both listings and feed them into the channel (the Dart
 /// `_refetchSessions`: workspaces too, so worktree flags never derive from a
 /// stale registered dir).
@@ -1111,6 +1329,43 @@ fn run_effect(effect: Effect, tx: &EventSender, base_url: &str) {
             Effect::OpenWindow { id, label } => match crate::ui::window_open::launch(&id) {
                 Ok(()) => send_notice(&tx, format!("opened {label} in a new window"), 3000),
                 Err(e) => send_notice(&tx, format!("open window failed: {e}"), 5000),
+            },
+            Effect::RestartSession { id, name, force } => {
+                match client.restart_session(&id, force) {
+                    Ok(response) => send_notice(&tx, restart_notice(&name, &response), 5000),
+                    Err(e) => send_notice(&tx, failure_notice("restart failed", &e), 5000),
+                }
+                // The pane is new: title, status and context all moved.
+                fetch_and_send(&client, &tx);
+            }
+            Effect::RestartWorkspace { ids } => {
+                let mut restarted = 0usize;
+                let mut skipped = 0usize;
+                let mut failures: Vec<String> = Vec::new();
+                // Sequential, one id per call (design.md: the daemon has no
+                // workspace filter) — a workspace holds at most a handful of
+                // sessions, and one failure must never stop the rest.
+                for id in &ids {
+                    match client.restart_session(id, false) {
+                        Ok(response) => {
+                            restarted += response.restarted.len();
+                            skipped += response.skipped.len();
+                            failures.extend(response.failed.iter().map(|f| f.error.clone()));
+                        }
+                        Err(e) => failures.push(failure_notice("restart failed", &e)),
+                    }
+                }
+                send_notice(&tx, restart_all_notice(restarted, skipped, &failures), 5000);
+                fetch_and_send(&client, &tx);
+            }
+            Effect::RestartDaemon => match client.restart_daemon() {
+                // The successor's pid is the daemon's own bookkeeping; the
+                // wall's side of the handoff is already told by the SSE
+                // task's `AppEvent::Connection` transitions (the pet boxes
+                // on the drop, unboxes on the reconnect), so a success adds
+                // no notice of its own.
+                Ok(_pid) => {}
+                Err(e) => send_notice(&tx, failure_notice("daemon restart failed", &e), 5000),
             },
             Effect::Quit => unreachable!("Quit is handled by the state loop"),
         }
@@ -2527,6 +2782,13 @@ mod tests {
         }
     }
 
+    fn si_status(workspace: &str, label: &str, status: &str) -> SessionInfo {
+        SessionInfo {
+            status: status.to_owned(),
+            ..si(workspace, label)
+        }
+    }
+
     fn si_restorable(workspace: &str, label: &str) -> SessionInfo {
         SessionInfo {
             status: "restorable".to_owned(),
@@ -2765,6 +3027,233 @@ mod tests {
             .notices
             .current(1301)
             .is_some_and(|n| n.starts_with("press X again to remove proj")));
+    }
+
+    // ── p16-restart: the `r` prefix chords (spec restart "TUI chords") ──
+
+    #[test]
+    fn r_opens_the_prefix_with_a_hint_and_r_r_arms_then_restarts() {
+        let mut store = store_with(vec![ws("a")], vec![si_status("a", "one", "idle")]);
+        let mut router = GarageRouter::default();
+        assert_eq!(key_at(&mut router, &mut store, "r", 1000), vec![]);
+        assert_eq!(router.notices.current(1001), Some(RESTART_PREFIX_HINT));
+        assert_eq!(key_at(&mut router, &mut store, "r", 1100), vec![]);
+        assert_eq!(
+            router.notices.current(1101),
+            Some("restart one? r r again — resumes the conversation")
+        );
+        // Second `r r` inside the window fires, unforced (the session is idle).
+        assert_eq!(key_at(&mut router, &mut store, "r", 1200), vec![]);
+        assert_eq!(
+            key_at(&mut router, &mut store, "r", 1300),
+            vec![Effect::RestartSession {
+                id: id("a", "one"),
+                name: "one".to_owned(),
+                force: false,
+            }]
+        );
+        assert_eq!(
+            router.notices.current(1301),
+            Some("restarting one — resumes the conversation")
+        );
+    }
+
+    #[test]
+    fn r_r_on_a_working_session_warns_and_the_second_press_forces() {
+        // `si` defaults to `working`.
+        let mut store = store_with(vec![ws("a")], vec![si("a", "busy")]);
+        let mut router = GarageRouter::default();
+        key_at(&mut router, &mut store, "r", 1000);
+        key_at(&mut router, &mut store, "r", 1100);
+        assert_eq!(
+            router.notices.current(1101),
+            Some("busy is working — r r again to restart anyway")
+        );
+        key_at(&mut router, &mut store, "r", 1200);
+        assert_eq!(
+            key_at(&mut router, &mut store, "r", 1300),
+            vec![Effect::RestartSession {
+                id: id("a", "busy"),
+                name: "busy".to_owned(),
+                force: true,
+            }]
+        );
+    }
+
+    #[test]
+    fn an_expired_r_r_arm_re_arms_instead_of_restarting() {
+        let mut store = store_with(vec![ws("a")], vec![si_status("a", "one", "idle")]);
+        let mut router = GarageRouter::default();
+        key_at(&mut router, &mut store, "r", 1000);
+        key_at(&mut router, &mut store, "r", 1100);
+        key_at(&mut router, &mut store, "r", 5000);
+        assert_eq!(
+            key_at(&mut router, &mut store, "r", 5100),
+            vec![],
+            "the 3s window expired — this re-arms"
+        );
+        assert_eq!(
+            router.notices.current(5101),
+            Some("restart one? r r again — resumes the conversation")
+        );
+    }
+
+    #[test]
+    fn any_other_key_after_r_cancels_the_prefix_and_is_swallowed() {
+        let mut store = store_with(vec![ws("a")], vec![si_status("a", "one", "idle")]);
+        let mut router = GarageRouter::default();
+        key_at(&mut router, &mut store, "r", 1000);
+        // `x` after the prefix neither closes nor arms a close: the chord
+        // cancelled and ate the key.
+        assert_eq!(key_at(&mut router, &mut store, "x", 1100), vec![]);
+        assert_eq!(router.notices.current(1101), None, "the hint is cleared");
+        assert_eq!(key_at(&mut router, &mut store, "x", 1200), vec![]);
+        assert_eq!(
+            router.notices.current(1201),
+            Some("press x again to close one"),
+            "the close arms from scratch"
+        );
+    }
+
+    #[test]
+    fn a_cancelled_chord_disarms_a_pending_r_r() {
+        let mut store = store_with(vec![ws("a")], vec![si_status("a", "one", "idle")]);
+        let mut router = GarageRouter::default();
+        key_at(&mut router, &mut store, "r", 1000);
+        key_at(&mut router, &mut store, "r", 1100); // armed
+        key_at(&mut router, &mut store, "r", 1200);
+        key_at(&mut router, &mut store, "z", 1300); // cancels the chord
+        assert_eq!(router.notices.current(1301), None, "the arm notice went too");
+        // The next full chord must re-arm, not fire.
+        key_at(&mut router, &mut store, "r", 1400);
+        assert_eq!(key_at(&mut router, &mut store, "r", 1500), vec![]);
+    }
+
+    #[test]
+    fn r_r_on_a_restorable_placeholder_explains_instead_of_restarting() {
+        let mut store = store_with(vec![ws("a")], vec![si_restorable("a", "dead")]);
+        let mut router = GarageRouter::default();
+        key_at(&mut router, &mut store, "r", 1000);
+        assert_eq!(key_at(&mut router, &mut store, "r", 1100), vec![]);
+        assert_eq!(
+            router.notices.current(1101),
+            Some("no live session to restart")
+        );
+    }
+
+    #[test]
+    fn r_a_restarts_the_workspaces_idle_and_done_sessions_never_the_busy_ones() {
+        let mut store = store_with(
+            vec![ws("a")],
+            vec![
+                si_status("a", "idle-one", "idle"),
+                si("a", "busy"),
+                si_blocked("a", "blocked", 900),
+                si_status("a", "done-one", "done"),
+                si_restorable("a", "dead"),
+            ],
+        );
+        let mut router = GarageRouter::default();
+        let focused = store.state().focused_session_id.clone();
+        key_at(&mut router, &mut store, "r", 1000);
+        assert_eq!(
+            key_at(&mut router, &mut store, "a", 1100),
+            vec![Effect::RestartWorkspace {
+                ids: vec![id("a", "idle-one"), id("a", "done-one")],
+            }]
+        );
+        assert_eq!(
+            router.notices.current(1101),
+            Some("restarting 2 sessions in a")
+        );
+        // The `a` jump never ran: it would have engaged the blocked session.
+        assert_eq!(store.state().layer, KeyLayer::Garage);
+        assert_eq!(store.state().focused_session_id, focused);
+    }
+
+    #[test]
+    fn r_a_with_no_idle_session_says_so_and_fires_nothing() {
+        let mut store = store_with(vec![ws("a")], vec![si("a", "busy")]);
+        let mut router = GarageRouter::default();
+        key_at(&mut router, &mut store, "r", 1000);
+        assert_eq!(key_at(&mut router, &mut store, "a", 1100), vec![]);
+        assert_eq!(
+            router.notices.current(1101),
+            Some("nothing to restart in a (all busy or none)")
+        );
+    }
+
+    #[test]
+    fn r_d_restarts_the_daemon_at_once() {
+        let mut store = store_with(vec![ws("a")], vec![si("a", "one")]);
+        let mut router = GarageRouter::default();
+        key_at(&mut router, &mut store, "r", 1000);
+        assert_eq!(
+            key_at(&mut router, &mut store, "d", 1100),
+            vec![Effect::RestartDaemon]
+        );
+        assert_eq!(router.notices.current(1101), Some("restarting the daemon…"));
+        // The prefix is one-shot: a bare `d` afterwards is the ordinary
+        // detach binding again, never a second daemon restart.
+        assert_eq!(key_at(&mut router, &mut store, "d", 1200), vec![]);
+    }
+
+    #[test]
+    fn the_restart_response_names_every_outcome() {
+        use crate::api::models::{FailedEntry, RestartedEntry, SkippedEntry};
+        let resumed = RestartResponse {
+            restarted: vec![RestartedEntry {
+                id: id("a", "one"),
+                resumed: true,
+            }],
+            ..RestartResponse::default()
+        };
+        assert_eq!(restart_notice("one", &resumed), "one restarted");
+        let fresh = RestartResponse {
+            restarted: vec![RestartedEntry {
+                id: id("a", "one"),
+                resumed: false,
+            }],
+            ..RestartResponse::default()
+        };
+        assert_eq!(
+            restart_notice("one", &fresh),
+            "one restarted fresh (no conversation to resume)"
+        );
+        let failed = RestartResponse {
+            failed: vec![FailedEntry {
+                id: id("a", "one"),
+                error: "no server running".to_owned(),
+            }],
+            ..RestartResponse::default()
+        };
+        assert_eq!(restart_notice("one", &failed), "one: no server running");
+        let skipped = RestartResponse {
+            skipped: vec![SkippedEntry {
+                id: id("a", "one"),
+                status: "working".to_owned(),
+            }],
+            ..RestartResponse::default()
+        };
+        assert_eq!(restart_notice("one", &skipped), "one skipped — working");
+        assert_eq!(
+            restart_notice("one", &RestartResponse::default()),
+            "one: the daemon reported no outcome",
+            "an empty response is still reported, never silent"
+        );
+    }
+
+    #[test]
+    fn the_workspace_restart_line_names_skips_and_failures_only_when_there_are_any() {
+        assert_eq!(restart_all_notice(3, 0, &[]), "restarted 3");
+        assert_eq!(
+            restart_all_notice(2, 1, &[]),
+            "restarted 2 · skipped 1 (working/waiting)"
+        );
+        assert_eq!(
+            restart_all_notice(1, 1, &["tmux: no such pane".to_owned()]),
+            "restarted 1 · skipped 1 (working/waiting) · failed 1: tmux: no such pane"
+        );
     }
 
     // ── restore (p8.1: Enter on restorable, R restore-all) ──────────────

@@ -13,6 +13,7 @@ import notifyRoutes from "./notify.js";
 import diffRoutes from "./diff.js";
 import editorRoutes from "./editor.js";
 import worktreeRoutes from "./worktrees.js";
+import daemonRestartRoutes, { waitForPredecessor } from "./daemon-restart.js";
 import { attachTermServer } from "./term.js";
 import { rejectForeignOrigins } from "./security.js";
 import { startPoller } from "./poller.js";
@@ -45,6 +46,7 @@ app.register(notifyRoutes);
 app.register(diffRoutes);
 app.register(editorRoutes);
 app.register(worktreeRoutes);
+app.register(daemonRestartRoutes);
 attachTermServer(app);
 
 // D-packaging: flag-gated so dev mode (Vite on :5173 proxying to this
@@ -71,15 +73,38 @@ app.addHook("onClose", async () => {
   stopPoller();
 });
 
-app.listen({ host: HOST, port: PORT }).catch((err) => {
-  if (err.code === "EADDRINUSE") {
-    app.log.error(
-      `port ${PORT} is already in use — set GARAGE_PORT to choose a different port`
-    );
-  } else {
+// p16-restart D3/D6: a successor spawned by POST /api/daemon/restart carries
+// GARAGE_PREDECESSOR_PID — wait for that pid's /api/health to stop answering
+// (port free) before binding it, so the handoff never races two daemons for
+// one port. Fails loud (non-zero exit, listen() never called) if the
+// predecessor doesn't let go within 10s, naming the port and pid — see
+// daemon-restart.js. `readyToListen` (rather than exiting straight from the
+// catch below) keeps this a single, unambiguous control-flow path down to
+// exactly one of listen() or process.exit(1) — never both.
+let readyToListen = true;
+if (process.env.GARAGE_PREDECESSOR_PID) {
+  await waitForPredecessor({
+    port: PORT,
+    pid: Number(process.env.GARAGE_PREDECESSOR_PID),
+  }).catch((err) => {
     app.log.error(err);
-  }
+    readyToListen = false;
+  });
+}
+
+if (readyToListen) {
+  app.listen({ host: HOST, port: PORT }).catch((err) => {
+    if (err.code === "EADDRINUSE") {
+      app.log.error(
+        `port ${PORT} is already in use — set GARAGE_PORT to choose a different port`
+      );
+    } else {
+      app.log.error(err);
+    }
+    process.exit(1);
+  });
+} else {
   process.exit(1);
-});
+}
 
 export { app };

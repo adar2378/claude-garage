@@ -8,7 +8,7 @@ import { glyphFor, colorFor, tipFor } from "../lib/status.js";
 import { formatElapsed, useTicker } from "../lib/elapsed.js";
 import { useEffectiveTheme } from "../lib/theme.js";
 import { useSettings } from "../lib/settings.js";
-import { restoreSession, deleteSession, finishWorktree, createSession } from "../lib/api.js";
+import { restoreSession, deleteSession, restartSession, finishWorktree, createSession } from "../lib/api.js";
 import {
   loadOrBuildLayout,
   reconcile,
@@ -760,10 +760,21 @@ function SessionCellTab({ api }) {
   const armTimerRef = useRef(null);
   const errorTimerRef = useRef(null);
 
+  // p16-restart: same two-step armed pattern as close, but its own state —
+  // an independent, unrelated action that must arm/error separately (e.g.
+  // arming restart must not also arm close, and vice versa).
+  const [restartArmed, setRestartArmed] = useState(false);
+  const [restarting, setRestarting] = useState(false);
+  const [restartError, setRestartError] = useState(null);
+  const restartArmTimerRef = useRef(null);
+  const restartErrorTimerRef = useRef(null);
+
   useEffect(
     () => () => {
       clearTimeout(armTimerRef.current);
       clearTimeout(errorTimerRef.current);
+      clearTimeout(restartArmTimerRef.current);
+      clearTimeout(restartErrorTimerRef.current);
     },
     []
   );
@@ -781,6 +792,41 @@ function SessionCellTab({ api }) {
   // 404 (see daemon/src/sessions.js).
   const isLive = s.status !== "restorable";
   const isNeedsInput = s.status === "needs-input";
+  // p16-restart D2: a session mid-turn (working) or waiting on the user
+  // (needs-input) loses that turn on restart — the armed second click on a
+  // busy session is the force (mirrors the TUI's `r r` — see design D2/D5).
+  const isBusy = s.status === "working" || s.status === "needs-input";
+
+  async function handleRestart() {
+    if (!restartArmed) {
+      setRestartArmed(true);
+      clearTimeout(restartArmTimerRef.current);
+      restartArmTimerRef.current = setTimeout(() => setRestartArmed(false), 3000);
+      return;
+    }
+    clearTimeout(restartArmTimerRef.current);
+    setRestartArmed(false);
+    setRestarting(true);
+    setRestartError(null);
+    try {
+      const body = await restartSession(id, isBusy);
+      // The daemon reports a skip/failure with 200, not a thrown error (a
+      // busy session raced back into that state, or the pane's tmux call
+      // failed) — surface it the same way a thrown Error would.
+      if (body.failed?.length) {
+        throw new Error(body.failed[0].error);
+      }
+      if (body.skipped?.length) {
+        throw new Error(`still ${body.skipped[0].status} — try again`);
+      }
+    } catch (err) {
+      setRestartError(err.message);
+      clearTimeout(restartErrorTimerRef.current);
+      restartErrorTimerRef.current = setTimeout(() => setRestartError(null), 4000);
+    } finally {
+      setRestarting(false);
+    }
+  }
 
   async function handleClose() {
     if (!closeArmed) {
@@ -856,6 +902,11 @@ function SessionCellTab({ api }) {
       {closeError && (
         <span className="max-w-[9rem] truncate text-garage-red" title={closeError}>
           {closeError}
+        </span>
+      )}
+      {restartError && (
+        <span className="max-w-[9rem] truncate text-garage-red" title={restartError}>
+          {restartError}
         </span>
       )}
       {/* Rest-state hint that this cell has controls, shown ONLY at rest:
@@ -949,6 +1000,32 @@ function SessionCellTab({ api }) {
         >
           –
         </button>
+        {/* p16-restart: respawns `claude --resume` in the same tmux pane —
+            same armed double-click mechanics as close, its own arm/error
+            state so the two controls never interfere with each other. */}
+        {isLive && (
+          <button
+            type="button"
+            onMouseDown={(e) => e.stopPropagation()}
+            onClick={(e) => {
+              e.stopPropagation();
+              handleRestart();
+            }}
+            disabled={restarting}
+            title={
+              restartArmed
+                ? "click again to restart — resumes the conversation"
+                : isBusy
+                  ? `restart this session — it is ${s.status}; a second click will restart it anyway`
+                  : "restart this session — resumes the conversation via claude --resume"
+            }
+            className={`rounded-md p-1 disabled:opacity-40 ${
+              restartArmed ? "text-garage-red" : "text-garage-faint hover:bg-garage-sel hover:text-garage-ink"
+            }`}
+          >
+            {restartArmed ? "sure?" : "↻"}
+          </button>
+        )}
         {isLive && (
           <button
             type="button"

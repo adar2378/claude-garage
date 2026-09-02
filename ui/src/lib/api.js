@@ -240,6 +240,32 @@ export async function deleteSession(id) {
   return body;
 }
 
+// p16-restart: respawns the REAL tmux pane behind {id} running `claude
+// --resume <claudeSessionId>` in place — the tmux session, wall tile and
+// title all survive (see daemon/src/sessions.js POST /api/sessions/restart,
+// design D1). `force` (default false) restarts a `working`/`needs-input`
+// session anyway; without it the daemon reports it in `skipped` instead of
+// losing an in-flight turn (D2). Resolves
+// {restarted: [{id, resumed}], skipped: [{id, status}], failed: [{id, error}]}
+// — callers read `restarted[0]`/`skipped[0]`/`failed[0]` for a single-id
+// call. Non-2xx surfaces via the thrown Error's message, same as every
+// other helper here.
+export async function restartSession(id, force = false) {
+  const res = await fetch("/api/sessions/restart", {
+    method: "POST",
+    headers: JSON_HEADERS,
+    body: JSON.stringify({ id, force }),
+  });
+  const body = await parseJsonSafe(res);
+  if (!res.ok) {
+    if (res.status === 404) {
+      throw new Error(body.error || `no live session: ${id}`);
+    }
+    throw new Error(body.error || `could not restart session (${res.status})`);
+  }
+  return body;
+}
+
 // Resolves a dead worktree session's branch (design D-wt-finish) —
 // {worktree} is the exact {path, branch, repoDir} record returned by
 // deleteSession, since the session (and its metadata) are already gone by

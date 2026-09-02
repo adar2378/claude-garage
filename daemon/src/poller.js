@@ -127,7 +127,15 @@ export function diffSessionState(sessions, panePids, hostname, prevIds, prevTitl
   return { changed, ids: currentIds, titles };
 }
 
-async function tick() {
+// p16-restart follow-up: renamed from `tick` (body unchanged) and split so
+// a route (POST /api/sessions/restart) can `await pollOnce(app)` for one
+// fresh poll — e.g. right after a restarted daemon boots with an empty
+// status store, planning off getStatus's "idle" default would be wrong
+// (status.js's hasStatus). `pollOnce` catches internally and logs via
+// `app` exactly like startPoller's interval always has, so it never
+// rejects — a caller awaiting it never needs its own try/catch, and
+// startPoller's own error-logging shape is preserved unchanged below.
+async function pollBody() {
   const sessions = await listSessions().catch(() => []);
 
   if (sessions.length === 0) {
@@ -192,9 +200,17 @@ async function tick() {
   }
 }
 
+export async function pollOnce(app) {
+  try {
+    await pollBody();
+  } catch (err) {
+    app?.log?.warn?.({ err }, "poller tick failed");
+  }
+}
+
 export function startPoller(app) {
   const timer = setInterval(() => {
-    tick().catch((err) => app?.log?.warn?.({ err }, "poller tick failed"));
+    pollOnce(app);
   }, POLL_MS);
   timer.unref?.();
   return () => clearInterval(timer);

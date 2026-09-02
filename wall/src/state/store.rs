@@ -6,6 +6,7 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::api::models::{SessionInfo, UsageInfo, WorkspaceInfo};
+use crate::state::armed_action::ArmedAction;
 use crate::state::salience::{build_groups, jump_target};
 use crate::state::views::{
     compute_views, derive_view_name, prune_views, view_exists, view_of, View, ViewsByWorkspace,
@@ -15,7 +16,9 @@ use crate::state::wall_state::{KeyLayer, OverlayKind, WallSession, WallState};
 
 /// Garage-layer commands (spec tui-key-routing: "Garage-layer bindings" +
 /// "p8.1 session lifecycle bindings" + "p8.3 workspace removal",
-/// `1-9 [ ] a A n N m R x X w Enter ? q`).
+/// `1-9 [ ] a A n N m R x X w Enter ? q`, plus the p16-restart `r` prefix's
+/// `r r` / `r a` / `r d`, which come from [`restart_command_for`] rather
+/// than [`garage_command_for`]).
 /// State-affecting commands are applied by [`WallStore::dispatch`];
 /// [`GarageCommand::Spawn`], [`GarageCommand::RestoreAll`],
 /// [`GarageCommand::Close`], [`GarageCommand::WorkspaceRemove`] and
@@ -69,12 +72,30 @@ pub enum GarageCommand {
     /// (macOS only) — a detached `tmux attach` client alongside the wall's
     /// own, so the store never does IO and always declines it.
     OpenWindow,
+    /// `r r` (p16-restart, spec restart "TUI chords"): armed double-press
+    /// restart of the focused session in place — an effect
+    /// (`POST /api/sessions/restart {id, force}`), so the store always
+    /// declines it.
+    RestartFocused,
+    /// `r a`: restart every idle/done session of the focused workspace
+    /// ([`WallStore::restart_targets_for_workspace`]) — an effect (one
+    /// `POST /api/sessions/restart` per id, since the daemon has no
+    /// workspace filter), always declined.
+    RestartWorkspace,
+    /// `r d`: restart the daemon itself (`POST /api/daemon/restart`) —
+    /// tmux sessions are untouched and the SSE task's existing reconnect
+    /// carries the wall across the handoff. An effect, always declined.
+    RestartDaemon,
     Quit,
 }
 
 /// Maps a garage-layer key to its command; `None` for unbound keys (which
 /// are consumed silently — garage typing never reaches an agent). Enter
 /// arrives as `"\n"` or `"\r"` depending on the host terminal.
+///
+/// [`RESTART_PREFIX`] is deliberately absent: on its own `r` is a prefix,
+/// never a command — the router consumes it and resolves the NEXT key
+/// through [`restart_command_for`] (p16-restart, design.md D5).
 ///
 /// `Tab` is mapped here as `"\t"` ahead of the UI wave that actually
 /// delivers it: `garage_key_string` (runtime.rs) currently returns `None`
@@ -108,6 +129,78 @@ pub fn garage_command_for(key: &str) -> Option<GarageCommand> {
         "t" => Some(GarageCommand::OpenWindow),
         "q" => Some(GarageCommand::Quit),
         _ => None,
+    }
+}
+
+/// The one-shot restart prefix key (p16-restart, design.md D5: "`r` opens a
+/// one-shot prefix, same mechanism as `X` → `X`/`K`").
+pub const RESTART_PREFIX: &str = "r";
+
+/// The key AFTER the [`RESTART_PREFIX`]: `r r` the focused session, `r a`
+/// the focused workspace's idle/done sessions, `r d` the daemon. `None` for
+/// anything else — the router then cancels the prefix and swallows the key,
+/// so a mistyped chord can never fire the unrelated binding that key
+/// normally carries (`a` jump, `d` detach…).
+pub fn restart_command_for(key: &str) -> Option<GarageCommand> {
+    match key {
+        "r" => Some(GarageCommand::RestartFocused),
+        "a" => Some(GarageCommand::RestartWorkspace),
+        "d" => Some(GarageCommand::RestartDaemon),
+        _ => None,
+    }
+}
+
+/// The `r r` arming (p16-restart, spec restart "TUI chords"): the generic
+/// [`ArmedAction`] machine (3s window, same as the `x x` close) plus the one
+/// bit the confirming press needs — whether the target was busy when it
+/// armed. Busy at ARM time, not at fire time: the arming notice warned about
+/// the state the user saw, and the second press is that warning's answer, so
+/// it carries `force` even if a status tick landed in between.
+#[derive(Default)]
+pub struct ArmedRestart {
+    action: ArmedAction,
+    /// Whether the CURRENT arm was made on a busy session.
+    force: bool,
+}
+
+impl ArmedRestart {
+    /// The session id currently armed, or `None` (rendering/tests only —
+    /// [`ArmedRestart::press`] is what checks the clock).
+    pub fn armed_id(&self) -> Option<&str> {
+        self.action.armed_id()
+    }
+
+    /// One `r r` press aimed at `id`; `busy` = the session is
+    /// `working`/`needs-input` right now. `Some(force)` means FIRE the
+    /// restart (`force` = it was busy when it armed); `None` means it armed
+    /// — show [`restart_arm_notice`].
+    pub fn press(&mut self, id: &str, busy: bool, now_ms: i64) -> Option<bool> {
+        if self.action.press(id, now_ms) {
+            let force = self.force;
+            self.force = false;
+            return Some(force);
+        }
+        self.force = busy;
+        None
+    }
+
+    /// Any key but the prefix disarms — the same "any other key disarms"
+    /// rule the `x x` close follows.
+    pub fn disarm(&mut self) {
+        self.action.disarm();
+        self.force = false;
+    }
+}
+
+/// The `r r` arming notice (p16-restart, spec restart "TUI chords": it says
+/// the conversation resumes, and warns when the session is busy — the
+/// second press is then the force). `needs-input` shares the busy wording:
+/// both mean a live turn would be lost.
+pub fn restart_arm_notice(name: &str, busy: bool) -> String {
+    if busy {
+        format!("{name} is working — r r again to restart anyway")
+    } else {
+        format!("restart {name}? r r again — resumes the conversation")
     }
 }
 
@@ -650,11 +743,34 @@ impl WallStore {
         true
     }
 
+    /// The `r a` target set (p16-restart, spec restart "TUI chords"): every
+    /// LIVE `idle`/`done` session of the FOCUSED workspace, listing order
+    /// preserved. `working` and `needs-input` are excluded — a restart
+    /// mid-turn loses the turn (design.md D2) — and so are restorable
+    /// placeholders, which have no tmux pane to respawn (a `restorable`
+    /// status is neither `idle` nor `done`, so the same test covers them).
+    /// The caller issues one `POST /api/sessions/restart` per id, the same
+    /// shape as the `R` restore-all, since the daemon has no workspace
+    /// filter.
+    pub fn restart_targets_for_workspace(&self) -> Vec<String> {
+        let Some(workspace) = self.state.focused_workspace.as_deref() else {
+            return Vec::new();
+        };
+        self.state
+            .sessions
+            .iter()
+            .filter(|s| s.workspace == workspace)
+            .filter(|s| s.status == "idle" || s.status == "done")
+            .map(|s| s.id.clone())
+            .collect()
+    }
+
     // ── Command dispatch ──────────────────────────────────────────────────
 
     /// Apply a garage-layer command to the state. Returns true when the
-    /// store handled it; `Spawn`, `RestoreAll`, `Close`, `WorkspaceRemove`
-    /// and `Quit` always return false — they are the caller's effects.
+    /// store handled it; `Spawn`, `RestoreAll`, `Close`, `WorkspaceRemove`,
+    /// the three p16-restart commands and `Quit` always return false — they
+    /// are the caller's effects.
     /// `Engage` returns false when the focused tile cannot engage (a
     /// restorable placeholder), so the caller can run the restore effect.
     /// `ToggleHelp` also closes an open help overlay, so `?` toggles.
@@ -680,6 +796,9 @@ impl WallStore {
             | GarageCommand::WorkspaceRemove
             | GarageCommand::InstallStatusline
             | GarageCommand::OpenWindow
+            | GarageCommand::RestartFocused
+            | GarageCommand::RestartWorkspace
+            | GarageCommand::RestartDaemon
             | GarageCommand::Quit => false,
             _ if self.state.layer != KeyLayer::Garage => false,
             GarageCommand::FocusWorkspace(index) => {
@@ -2214,5 +2333,124 @@ mod tests {
         store.connection(true);
         assert!(store.state().daemon_live);
         assert_eq!(store.views_revision(), before);
+    }
+
+    // ── p16-restart: the `r` prefix, the `r r` arming, `r a` targets ─────
+
+    #[test]
+    fn the_r_prefix_routes_all_three_chords_and_cancels_on_anything_else() {
+        assert_eq!(
+            restart_command_for("r"),
+            Some(GarageCommand::RestartFocused)
+        );
+        assert_eq!(
+            restart_command_for("a"),
+            Some(GarageCommand::RestartWorkspace)
+        );
+        assert_eq!(restart_command_for("d"), Some(GarageCommand::RestartDaemon));
+        // Anything else cancels the prefix (the router swallows the key).
+        assert_eq!(restart_command_for("x"), None);
+        assert_eq!(restart_command_for("q"), None);
+        assert_eq!(restart_command_for(""), None);
+        // `r` alone is a prefix, never a command of its own.
+        assert_eq!(garage_command_for(RESTART_PREFIX), None);
+    }
+
+    #[test]
+    fn the_three_restart_commands_are_effects_the_store_declines() {
+        let mut store = store_with(vec![ws("a")], vec![si("a", "one")]);
+        assert!(!store.dispatch(GarageCommand::RestartFocused));
+        assert!(!store.dispatch(GarageCommand::RestartWorkspace));
+        assert!(!store.dispatch(GarageCommand::RestartDaemon));
+    }
+
+    #[test]
+    fn r_r_arms_then_the_second_press_fires_within_the_window() {
+        let mut armed = ArmedRestart::default();
+        assert_eq!(armed.press(&id("a", "one"), false, 1000), None, "armed");
+        assert_eq!(armed.armed_id(), Some(id("a", "one").as_str()));
+        assert_eq!(
+            armed.press(&id("a", "one"), false, 2500),
+            Some(false),
+            "fires without force on an idle session"
+        );
+        assert_eq!(armed.armed_id(), None, "firing consumes the arm");
+    }
+
+    #[test]
+    fn an_expired_r_r_arm_re_arms_instead_of_firing() {
+        let mut armed = ArmedRestart::default();
+        armed.press(&id("a", "one"), false, 1000);
+        assert_eq!(armed.press(&id("a", "one"), false, 4001), None, "expired");
+        assert_eq!(armed.press(&id("a", "one"), false, 4500), Some(false));
+    }
+
+    #[test]
+    fn a_busy_session_armed_busy_fires_with_force() {
+        let mut armed = ArmedRestart::default();
+        assert_eq!(armed.press(&id("a", "one"), true, 1000), None);
+        // Even if the status settled between the presses, the arm the user
+        // answered was the busy one — it forces.
+        assert_eq!(armed.press(&id("a", "one"), false, 2000), Some(true));
+        // The next cycle starts clean: an idle arm never forces.
+        assert_eq!(armed.press(&id("a", "one"), false, 3000), None);
+        assert_eq!(armed.press(&id("a", "one"), false, 3500), Some(false));
+    }
+
+    #[test]
+    fn disarming_the_restart_drops_the_force_bit_too() {
+        let mut armed = ArmedRestart::default();
+        armed.press(&id("a", "one"), true, 1000);
+        armed.disarm();
+        assert_eq!(armed.armed_id(), None);
+        assert_eq!(armed.press(&id("a", "one"), false, 1100), None, "from scratch");
+        assert_eq!(armed.press(&id("a", "one"), false, 1200), Some(false));
+    }
+
+    #[test]
+    fn the_arm_notice_promises_a_resume_and_warns_when_busy() {
+        assert_eq!(
+            restart_arm_notice("claude-1", false),
+            "restart claude-1? r r again — resumes the conversation"
+        );
+        assert_eq!(
+            restart_arm_notice("claude-1", true),
+            "claude-1 is working — r r again to restart anyway"
+        );
+    }
+
+    #[test]
+    fn r_a_targets_only_idle_and_done_live_sessions_of_the_focused_workspace() {
+        let mut store = store_with(
+            vec![ws("a"), ws("b")],
+            vec![
+                si_status("a", "idle-one", "idle", Some(1000)),
+                si_status("a", "busy", "working", Some(1000)),
+                si_status("a", "blocked", "needs-input", Some(1000)),
+                si_status("a", "done-one", "done", Some(1000)),
+                si_restorable("a", "dead"),
+                si_status("b", "elsewhere", "idle", Some(1000)),
+            ],
+        );
+        assert_eq!(store.state().focused_workspace.as_deref(), Some("a"));
+        assert_eq!(
+            store.restart_targets_for_workspace(),
+            vec![id("a", "idle-one"), id("a", "done-one")]
+        );
+
+        store.focus_workspace_named("b");
+        assert_eq!(
+            store.restart_targets_for_workspace(),
+            vec![id("b", "elsewhere")]
+        );
+    }
+
+    #[test]
+    fn a_workspace_with_nothing_idle_has_no_restart_targets() {
+        let store = store_with(
+            vec![ws("a")],
+            vec![si("a", "busy"), si_restorable("a", "dead")],
+        );
+        assert!(store.restart_targets_for_workspace().is_empty());
     }
 }

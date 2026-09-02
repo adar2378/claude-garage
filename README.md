@@ -189,6 +189,39 @@ gets a line like *"water. now. i'm not asking."* (Arthur), *"acceptable."*
 nights, and a usage window running hot, and they never interrupt a session
 that needs you. Set `GARAGE_PET_ASCII=1` if your font lacks `ᴥ`.
 
+## Restarting
+
+Two things go stale under a running wall: the garage daemon itself (after
+a `npm` upgrade) and the `claude` binary inside every session (after
+Anthropic ships a release — Claude Code shows "update available", but a
+running session keeps the old process until it's restarted).
+
+```bash
+claude-garage restart
+```
+
+Restarts the daemon only. Sessions are untouched; the TUI and web wall
+reconnect on their own through the existing SSE reconnect.
+
+```bash
+claude-garage restart --sessions
+```
+
+Restarts the daemon, then respawns every idle/done session in place —
+`tmux respawn-pane -k` running `claude --resume <id>` in the same tmux
+session, so the tile, its title and the conversation all survive. Sessions
+that are `working` or `needs-input` are skipped and listed rather than
+losing an in-flight turn; `--all` restarts those too.
+
+**In the TUI:** `r r` restarts the focused session (press twice — the
+first press warns if it's busy), `r a` restarts every idle/done session
+in the focused workspace, `r d` restarts the daemon. `?` lists all three.
+
+**In the web wall:** the `↻` in a cell's hover controls restarts that
+session, with the same two-click confirmation.
+
+Upgrading the garage package itself is still `npx claude-garage@latest tui`.
+
 ## Keybindings
 
 The TUI's full keymap (`claude-garage tui`, also shown in-app with `?`).
@@ -216,6 +249,9 @@ key mapping (Settings → Profiles → Keyboard) for Shift+Return that sends
 | `R` | restore all restorable sessions in workspace |
 | `I` | install statusline feed for context meters |
 | `x x` | close focused session (press twice) |
+| `r r` | restart focused session — resumes on the current claude binary |
+| `r a` | restart idle/done sessions in workspace |
+| `r d` | restart the daemon (sessions untouched) |
 | `X X` | remove focused workspace (sessions keep running) |
 | `X K` | remove focused workspace AND kill its sessions |
 | `w` | add workspace |

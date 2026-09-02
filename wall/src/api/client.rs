@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use serde_json::{json, Value};
 
-use super::models::{SessionInfo, SpawnedSession, UsageInfo, WorkspaceInfo};
+use super::models::{RestartResponse, SessionInfo, SpawnedSession, UsageInfo, WorkspaceInfo};
 
 /// Pure port-selection logic behind [`garage_daemon_port`], split out so it
 /// unit-tests without touching the process environment.
@@ -169,6 +169,33 @@ impl GarageClient {
             }
         }
         Ok(None)
+    }
+
+    /// `POST /api/sessions/restart {id, force}` (p16-restart, spec restart
+    /// "Restart sessions in place") — respawns the session's tmux pane on
+    /// `claude --resume <claudeSessionId>`, keeping the tmux session, the
+    /// tile and the title. `force` restarts a `working`/`needs-input`
+    /// session the daemon would otherwise skip (design.md D2). Restart-all
+    /// is the caller issuing one call per id — the daemon has no workspace
+    /// filter — exactly like restore-all.
+    pub fn restart_session(&self, id: &str, force: bool) -> Result<RestartResponse, ApiError> {
+        let body = self.post_json("/api/sessions/restart", &json!({ "id": id, "force": force }))?;
+        body.as_ref()
+            .and_then(RestartResponse::from_json)
+            .ok_or_else(|| ApiError::Transport("unexpected restart response shape".into()))
+    }
+
+    /// `POST /api/daemon/restart` → the successor daemon's pid (design.md
+    /// D3). The daemon replies 202 and then drops this connection; nothing
+    /// here waits for the successor — the SSE task's existing reconnect
+    /// backoff carries the wall across the handoff.
+    pub fn restart_daemon(&self) -> Result<u32, ApiError> {
+        let body = self.post_json("/api/daemon/restart", &json!({}))?;
+        body.as_ref()
+            .and_then(|b| b.get("pid"))
+            .and_then(Value::as_u64)
+            .map(|pid| pid as u32)
+            .ok_or_else(|| ApiError::Transport("daemon restart reply carried no pid".into()))
     }
 
     /// `DELETE /api/sessions/<id>` — kill a live session (and drop its resume

@@ -1,5 +1,30 @@
 # Changelog
 
+## Unreleased — p16-restart
+
+### Added
+
+- **`claude-garage restart` / `--sessions` / `--all`.** Restarts the
+  daemon in place (health pid, lsof fallback, wait for health, print the
+  version); `--sessions` additionally respawns every idle/done session's
+  tmux pane with `claude --resume`, printing one line per restarted,
+  skipped and failed session; `--all` includes busy sessions.
+- **`POST /api/daemon/restart`.** Self-replace: spawns a detached
+  successor daemon with the same environment, replies 202 with its pid,
+  then closes and exits; the successor waits for the old pid's port to
+  free before listening.
+- **`POST /api/sessions/restart`.** `{id}` or `{all: true, force?}`
+  respawns each target's tmux pane with `claude --resume <id>` in place,
+  skipping `working`/`needs-input` sessions unless `force`. Returns
+  `{restarted: [{id, resumed}], skipped: [{id, status}], failed: [{id,
+  error}]}`.
+- **TUI chords.** `r r` restarts the focused session (armed double-press,
+  warns and forces on a busy session), `r a` restarts every idle/done
+  session in the focused workspace, `r d` restarts the daemon; all three
+  show a strip notice and are listed in `?`.
+- **Web wall control.** A restart button (`↻`) in the session cell's
+  hover controls, with the same armed double-click as close.
+
 ## 0.3.4
 
 ### Added

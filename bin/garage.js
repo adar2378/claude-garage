@@ -491,8 +491,121 @@ async function tuiMain() {
   });
 }
 
-if (process.argv[2] === "tui") {
-  tuiMain();
-} else {
+// ---------------------------------------------------------------------------
+// `claude-garage restart` (p16-restart)
+// ---------------------------------------------------------------------------
+
+const JSON_HEADERS = { "content-type": "application/json" };
+
+// D4: same 15s-cap/250ms-poll shape as waitForHealth above, but also
+// requires the answering pid to differ from `previousPid` (undefined counts
+// as "no prior daemon", so any live match immediately satisfies it) AND the
+// version to match this launcher's own — a daemon that hasn't actually
+// swapped yet (still the old process, mid-handoff) must not read as done.
+async function waitForHealthChanged(previousPid, deadlineMs = 15000) {
+  const start = Date.now();
+  while (Date.now() - start < deadlineMs) {
+    const health = await fetchHealth(500);
+    if (health && health.version === VERSION && health.pid !== previousPid) return health;
+    await new Promise((r) => setTimeout(r, 250));
+  }
+  return null;
+}
+
+// D4/D5: `claude-garage restart --sessions` — POSTs /api/sessions/restart
+// with `{all: true, force: <--all>}` and prints one line per restarted,
+// skipped and failed session, then a summary line.
+async function restartSessionsCLI(force) {
+  const res = await fetch(`http://127.0.0.1:${PORT}/api/sessions/restart`, {
+    method: "POST",
+    headers: JSON_HEADERS,
+    body: JSON.stringify({ all: true, force }),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    console.error(body.error || `session restart failed (${res.status})`);
+    process.exit(1);
+  }
+
+  for (const r of body.restarted ?? []) {
+    console.log(
+      r.resumed
+        ? `restarted ${r.id} (resumed)`
+        : `restarted ${r.id} (fresh — no conversation to resume)`
+    );
+  }
+  for (const s of body.skipped ?? []) {
+    console.log(`skipped ${s.id} — ${s.status} (use --all to include)`);
+  }
+  for (const f of body.failed ?? []) {
+    console.log(`failed ${f.id} — ${f.error}`);
+  }
+
+  const restartedN = body.restarted?.length ?? 0;
+  const skippedN = body.skipped?.length ?? 0;
+  const failedN = body.failed?.length ?? 0;
+  console.log(`${restartedN} restarted, ${skippedN} skipped, ${failedN} failed`);
+}
+
+// D3/D4: restarts the daemon — via its own self-restart endpoint when one
+// is already healthy (so the in-process successor logic is exercised the
+// same way the TUI's stale-daemon gate exercises stopStaleDaemon), else
+// there's nothing to hand off from, so just start one detached the same way
+// `tui` does when no daemon answers. `--sessions` then restarts every live
+// Claude Code session in place; `--all` also includes busy ones.
+async function restartMain() {
+  const args = process.argv.slice(3);
+  const sessions = args.includes("--sessions");
+  const all = args.includes("--all");
+
+  const before = await fetchHealth();
+  if (before) {
+    const res = await fetch(`http://127.0.0.1:${PORT}/api/daemon/restart`, { method: "POST" });
+    if (!res.ok) {
+      console.error(
+        `daemon restart request failed (${res.status}) — the running daemon ` +
+          `(v${before.version ?? "?"}, pid ${before.pid ?? "?"}) may predate this endpoint; ` +
+          `stop it yourself (lsof -ti tcp:${PORT} | xargs kill) and re-run "claude-garage"`
+      );
+      process.exit(1);
+    }
+    if (!(await waitForHealthChanged(before.pid))) {
+      console.error(
+        `garage daemon did not come back up on port ${PORT} within 15s of restarting`
+      );
+      process.exit(1);
+    }
+  } else {
+    console.log(`no daemon on port ${PORT} — starting one`);
+    startDetachedDaemon();
+    if (!(await waitForHealth())) {
+      console.error(`claude-garage daemon did not come up on port ${PORT}`);
+      process.exit(1);
+    }
+  }
+
+  const after = await fetchHealth();
+  console.log(`garage daemon restarted → v${after.version} (pid ${after.pid})`);
+
+  if (sessions) {
+    // p16-restart follow-up: the daemon now awaits one fresh poll before
+    // planning restart targets whenever any of them has no status entry
+    // yet (exactly the case right after this handoff) — say why there's a
+    // short pause instead of leaving the user staring at silence.
+    console.log("daemon restarted — refreshing session status before restarting sessions");
+    await restartSessionsCLI(all);
+  }
+}
+
+const subcommand = process.argv[2];
+if (subcommand === undefined) {
   main();
+} else if (subcommand === "tui") {
+  tuiMain();
+} else if (subcommand === "restart") {
+  restartMain();
+} else {
+  console.error(`unknown subcommand: ${subcommand}`);
+  console.error(`usage: claude-garage [tui|restart [--sessions] [--all]]`);
+  process.exit(1);
 }

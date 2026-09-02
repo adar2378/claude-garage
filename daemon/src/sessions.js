@@ -11,6 +11,7 @@ import {
   hasSession,
   createSession,
   killSession,
+  respawnPane,
 } from "./tmux.js";
 import {
   getWorkspace,
@@ -19,12 +20,90 @@ import {
   upsertSessionMeta,
   removeSessionMeta,
 } from "./registry.js";
-import { getStatusEntry } from "./status.js";
+import { getStatusEntry, getStatus, hasStatus, dropSession as dropStatus } from "./status.js";
+import { dropSession as dropStatuslineContext } from "./statusline.js";
+import { pollerEvents, pollOnce } from "./poller.js";
 import { createWorktree } from "./worktrees.js";
 import { getStatuslineContext, getRateLimits } from "./statusline.js";
 import { getCachedContext, refreshContext } from "./transcript.js";
 
 const CLAUDE_CMD = process.env.GARAGE_CLAUDE_CMD ?? "claude";
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// D-restore-flow / p16-restart D1: shared by restore (spawn === createSession,
+// a fresh tmux session) and restart (spawn === respawnPane, the SAME tmux
+// session) — both need "start `claude --resume <claudeSessionId>`, then
+// confirm it didn't immediately die". `claude --resume` exits (after
+// printing "No conversation found") when the conversation was never
+// persisted — a session with no submitted exchange — killing the pane/
+// session it just started. The exit isn't instant, so confirm twice before
+// trusting the resume; if it died, or there was no claudeSessionId to resume
+// in the first place (p16-restart out-of-scope note: a fresh session that
+// never wrote a transcript), fall back to a plain `claude` and report
+// `resumed: false` rather than silently defaulting a required value.
+// `spawn` takes the same (id, dir, command, extraArgs) shape createSession
+// and respawnPane already share.
+// Exported alongside planRestartTargets so the missing-claudeSessionId
+// branch (no tmux call at all — it never reaches hasSession) is
+// unit-testable with a fake `spawn`, same discipline as the target-
+// selection tests below (daemon/test/restart.test.js).
+export async function spawnClaudeResumed(spawn, id, dir, claudeSessionId) {
+  if (!claudeSessionId) {
+    await spawn(id, dir, CLAUDE_CMD);
+    return false;
+  }
+
+  await spawn(id, dir, CLAUDE_CMD, ["--resume", claudeSessionId]);
+
+  await sleep(1500);
+  if (await hasSession(id)) {
+    await sleep(2000);
+  }
+  if (await hasSession(id)) {
+    return true;
+  }
+
+  await spawn(id, dir, CLAUDE_CMD);
+  return false;
+}
+
+// p16-restart D2: pure target-selection step for POST /api/sessions/restart
+// — no tmux/IO, so it's exhaustively unit-testable without a live tmux
+// server (daemon/test/restart.test.js). `sessions` is the already-scoped
+// candidate list ({id, status} — either the one requested id or every live
+// session for {all:true}); busy sessions (`working`/`needs-input`) are
+// skipped unless `force`. p16-restart follow-up: a status of "unknown"
+// (the route's stand-in for "the poller has never observed this id" — see
+// hasStatus/needsPollBeforePlan below) is treated the same way — never
+// silently planned as if it were idle (D6: never default a required
+// value). Exported for the test suite.
+export function planRestartTargets(sessions, force) {
+  const targets = [];
+  const skipped = [];
+  for (const s of sessions) {
+    const busy = s.status === "working" || s.status === "needs-input" || s.status === "unknown";
+    if (!force && busy) {
+      skipped.push({ id: s.id, status: s.status });
+    } else {
+      targets.push(s.id);
+    }
+  }
+  return { targets, skipped };
+}
+
+// p16-restart follow-up: pure decision — should the restart route await one
+// fresh poll (pollOnce) before planning? Yes whenever ANY id in `ids` has no
+// status entry yet (`hasStatusFn` is status.js's `hasStatus`, injected so
+// this is unit-testable without the real store). This is exactly the
+// window right after `claude-garage restart` hands off to a fresh successor
+// daemon: its status store is empty, so getStatus(id) would silently read
+// "idle" for a session that is actually mid-turn (status.js docs this
+// default deliberately) — planning off that default would restart a
+// `working` session without `force`.
+export function needsPollBeforePlan(ids, hasStatusFn) {
+  return ids.some((id) => !hasStatusFn(id));
+}
 
 export default async function sessionRoutes(app) {
   app.get("/api/sessions", async () => {
@@ -220,8 +299,6 @@ export default async function sessionRoutes(app) {
       targets = [meta];
     }
 
-    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-
     // Targets are independent — restore them concurrently so the
     // died-on-resume confirmation waits below don't serialize restore-all.
     const results = await Promise.all(
@@ -247,25 +324,12 @@ export default async function sessionRoutes(app) {
           return { failed: { id: meta.id, reason: "session already running" } };
         }
 
-        await createSession(meta.id, spawnDir, CLAUDE_CMD, [
-          "--resume",
-          meta.claudeSessionId,
-        ]);
-
-        // `claude --resume` exits (after printing "No conversation found")
-        // when the conversation was never persisted — a session with no
-        // submitted exchange — killing the new tmux session and leaving a
-        // restore loop. The exit isn't instant, so confirm twice before
-        // trusting the resume; if it died, fall back to a fresh claude.
-        let resumed = true;
-        await sleep(1500);
-        if (await hasSession(meta.id)) {
-          await sleep(2000);
-        }
-        if (!(await hasSession(meta.id))) {
-          resumed = false;
-          await createSession(meta.id, spawnDir, CLAUDE_CMD);
-        }
+        const resumed = await spawnClaudeResumed(
+          createSession,
+          meta.id,
+          spawnDir,
+          meta.claudeSessionId
+        );
 
         return {
           restored: {
@@ -285,6 +349,103 @@ export default async function sessionRoutes(app) {
 
     const status = restored.length > 0 ? (all ? 200 : 201) : 409;
     return reply.code(status).send({ restored, failed });
+  });
+
+  // p16-restart: restart every LIVE session matching {id}, or every live
+  // session for {all:true}, in place — tmux respawn-pane (D1), not
+  // kill+restore, so the tmux session identity (and everything keyed off
+  // it: the wall tile, dockview panel, title) survives. Restorable
+  // (non-live) sessions are never targets — they have no pane to respawn;
+  // restore them via /api/sessions/restore instead. `force` restarts a
+  // working/needs-input session anyway; without it those land in `skipped`
+  // (D2) rather than losing an in-flight turn.
+  app.post("/api/sessions/restart", async (req, reply) => {
+    const { id, all, force } = req.body ?? {};
+    if (!id && !all) {
+      return reply.code(400).send({ error: "must provide id or all:true" });
+    }
+
+    const liveSessions = await listSessions();
+    if (id && !liveSessions.some((s) => s.id === id)) {
+      return reply.code(404).send({ error: `no live session: ${id}` });
+    }
+    const scoped = id ? liveSessions.filter((s) => s.id === id) : liveSessions;
+
+    // p16-restart follow-up: getStatus defaults an unobserved id to "idle"
+    // (by design — every other caller wants that safe default), which is
+    // wrong here right after a fresh successor daemon boots with an empty
+    // status store (claude-garage restart, D3) — every session would look
+    // idle and a `working` one would restart without `force`. Await one
+    // real poll first whenever that's the situation, so planning below
+    // reads real signal instead of the default.
+    if (needsPollBeforePlan(scoped.map((s) => s.id), hasStatus)) {
+      await pollOnce(app);
+    }
+
+    const candidates = scoped.map((s) => ({
+      id: s.id,
+      // Still unobserved even after the poll (claude CLI missing, pid join
+      // failed, ...) — "unknown", never silently defaulted to idle; see
+      // planRestartTargets.
+      status: hasStatus(s.id) ? getStatus(s.id) : "unknown",
+    }));
+
+    const { targets, skipped } = planRestartTargets(candidates, Boolean(force));
+
+    const liveById = new Map(liveSessions.map((s) => [s.id, s]));
+    const metas = await listSessionMetas();
+    const metaById = new Map(metas.map((m) => [m.id, m]));
+
+    // Targets are independent — restart them concurrently, same discipline
+    // as restore-all above. A tmux failure (respawnPane rejects with tmux's
+    // stderr) is caught here and reported per-target in `failed`, rather
+    // than letting one bad target take down the rest of the batch.
+    const results = await Promise.all(
+      targets.map(async (targetId) => {
+        const live = liveById.get(targetId);
+        const meta = metaById.get(targetId);
+        try {
+          // Same dir resolution restore uses (D-wt-meta): the worktree
+          // path when this is a worktree session, else the registered
+          // workspace dir — falling back to the live tmux dir only when
+          // the session predates any registry meta (a fresh session the
+          // poller hasn't observed yet).
+          const registered = await getWorkspace(live.workspace);
+          const dir = meta?.worktree?.path ?? registered?.dir ?? live.dir;
+
+          const resumed = await spawnClaudeResumed(
+            respawnPane,
+            targetId,
+            dir,
+            meta?.claudeSessionId ?? null
+          );
+
+          // The pane now runs a fresh claude process (a new pid) — the
+          // status the poller had for the OLD process (working/done/
+          // needs-input) no longer describes anything. Clear it the same
+          // way the poller's own dropSession does for a dead session, so
+          // the next tick's pid-join re-derives the real state instead of
+          // carrying stale signal forward.
+          dropStatus(targetId);
+          dropStatuslineContext(targetId);
+
+          return { restarted: { id: targetId, resumed } };
+        } catch (err) {
+          return { failed: { id: targetId, error: err.message } };
+        }
+      })
+    );
+
+    const restarted = results.filter((r) => r.restarted).map((r) => r.restarted);
+    const failed = results.filter((r) => r.failed).map((r) => r.failed);
+
+    // respawn-pane never changes the tmux session-id set the poller diffs
+    // on (same session, new process), so the poller's own "sessions-changed"
+    // detection never fires for a restart — push it explicitly so the wall
+    // refetches promptly instead of waiting on an unrelated event.
+    if (restarted.length > 0) pollerEvents.emit("sessions-changed");
+
+    return reply.code(200).send({ restarted, skipped, failed });
   });
 
   // id contains slashes — capture the whole tail as a wildcard.

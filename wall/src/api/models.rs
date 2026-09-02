@@ -203,6 +203,104 @@ impl SpawnedSession {
     }
 }
 
+/// One `restarted` entry of `POST /api/sessions/restart` (p16-restart, spec
+/// restart "Restart sessions in place"). `resumed: false` means the daemon
+/// had no Claude session id to resume and respawned a plain `claude` — the
+/// wall says so rather than implying the conversation survived (design.md
+/// D6: fail loud).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RestartedEntry {
+    pub id: String,
+    pub resumed: bool,
+}
+
+impl RestartedEntry {
+    /// `None` for a malformed entry (no `id`, or `resumed` missing/not a
+    /// bool) — the caller turns that into a loud transport error rather
+    /// than counting a restart it cannot describe.
+    pub fn from_json(json: &Value) -> Option<RestartedEntry> {
+        Some(RestartedEntry {
+            id: as_string(json.get("id"))?,
+            resumed: json.get("resumed")?.as_bool()?,
+        })
+    }
+}
+
+/// One `skipped` entry: a `working`/`needs-input` session the daemon left
+/// alone because a restart mid-turn loses the turn (design.md D2).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SkippedEntry {
+    pub id: String,
+    /// The status that caused the skip (`working` | `needs-input`).
+    pub status: String,
+}
+
+impl SkippedEntry {
+    pub fn from_json(json: &Value) -> Option<SkippedEntry> {
+        Some(SkippedEntry {
+            id: as_string(json.get("id"))?,
+            status: as_string(json.get("status"))?,
+        })
+    }
+}
+
+/// One `failed` entry, carrying the daemon's own message (tmux stderr for a
+/// respawn failure) — the strip shows it verbatim.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FailedEntry {
+    pub id: String,
+    pub error: String,
+}
+
+impl FailedEntry {
+    pub fn from_json(json: &Value) -> Option<FailedEntry> {
+        Some(FailedEntry {
+            id: as_string(json.get("id"))?,
+            error: as_string(json.get("error"))?,
+        })
+    }
+}
+
+/// `POST /api/sessions/restart` response body (p16-restart). Every target
+/// lands in exactly one of the three lists, so the caller can always name
+/// an outcome.
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
+pub struct RestartResponse {
+    pub restarted: Vec<RestartedEntry>,
+    pub skipped: Vec<SkippedEntry>,
+    pub failed: Vec<FailedEntry>,
+}
+
+impl RestartResponse {
+    /// `None` when the body is not an object, or when any entry in one of
+    /// the three lists is malformed — a bad entry fails the whole parse
+    /// instead of silently vanishing from the counts.
+    pub fn from_json(json: &Value) -> Option<RestartResponse> {
+        if !json.is_object() {
+            return None;
+        }
+        Some(RestartResponse {
+            restarted: parse_entries(json.get("restarted"), RestartedEntry::from_json)?,
+            skipped: parse_entries(json.get("skipped"), SkippedEntry::from_json)?,
+            failed: parse_entries(json.get("failed"), FailedEntry::from_json)?,
+        })
+    }
+}
+
+/// One of the restart response's three lists: absent or `null` is an empty
+/// list (the daemon may omit a list it has nothing for), anything that is
+/// not an array of well-formed entries is a parse failure.
+fn parse_entries<T>(
+    value: Option<&Value>,
+    parse: impl Fn(&Value) -> Option<T>,
+) -> Option<Vec<T>> {
+    match value {
+        None | Some(Value::Null) => Some(Vec::new()),
+        Some(Value::Array(entries)) => entries.iter().map(parse).collect(),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -271,6 +369,49 @@ mod tests {
         );
         let v = json!({"id": "i", "workspace": "w", "label": "l", "title": null});
         assert_eq!(SessionInfo::from_json(&v).unwrap().title, None);
+    }
+
+    // ── p16-restart: POST /api/sessions/restart ─────────────────────────
+
+    #[test]
+    fn restart_response_parses_all_three_lists() {
+        let v = json!({
+            "restarted": [{"id": "garage/a/one", "resumed": true}],
+            "skipped": [{"id": "garage/a/two", "status": "working"}],
+            "failed": [{"id": "garage/a/three", "error": "no server running"}]
+        });
+        let r = RestartResponse::from_json(&v).unwrap();
+        assert_eq!(
+            r.restarted,
+            vec![RestartedEntry {
+                id: "garage/a/one".to_owned(),
+                resumed: true
+            }]
+        );
+        assert_eq!(r.skipped[0].status, "working");
+        assert_eq!(r.failed[0].error, "no server running");
+    }
+
+    #[test]
+    fn restart_response_absent_lists_are_empty_not_an_error() {
+        let v = json!({"restarted": [{"id": "i", "resumed": false}]});
+        let r = RestartResponse::from_json(&v).unwrap();
+        assert!(!r.restarted[0].resumed, "no conversation to resume");
+        assert_eq!(r, RestartResponse {
+            restarted: vec![RestartedEntry { id: "i".to_owned(), resumed: false }],
+            ..RestartResponse::default()
+        });
+    }
+
+    #[test]
+    fn a_malformed_restart_entry_fails_the_whole_parse() {
+        // `resumed` missing: the wall cannot say whether the conversation
+        // survived, so this must be loud, not counted as a plain restart.
+        let v = json!({"restarted": [{"id": "i"}]});
+        assert_eq!(RestartResponse::from_json(&v), None);
+        let v = json!({"skipped": "working"});
+        assert_eq!(RestartResponse::from_json(&v), None);
+        assert_eq!(RestartResponse::from_json(&json!([])), None);
     }
 
     #[test]

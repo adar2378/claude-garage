@@ -26,6 +26,17 @@ export function getStatus(id) {
   return store.get(id)?.state ?? "idle";
 }
 
+// p16-restart follow-up: true only when the store has a real entry for
+// `id` — unlike getStatus (which reads "idle" for an unobserved id, by
+// design, so every other caller gets a safe default), callers that must
+// tell "genuinely idle" apart from "the poller hasn't looked at this one
+// yet" (e.g. planning a session restart right after a fresh successor
+// daemon boots with an empty store) need this instead. getStatus itself is
+// unchanged.
+export function hasStatus(id) {
+  return store.has(id);
+}
+
 // Same lookup as getStatus but also exposes `since` (epoch ms the current
 // state began, or null for a never-signaled id) so callers can compute
 // elapsed time without a second store.
