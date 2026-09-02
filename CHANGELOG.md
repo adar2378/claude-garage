@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased — p16-restart
+## 0.4.0 — restart
 
 ### Added
 
