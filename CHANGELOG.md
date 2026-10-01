@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.4.1 — no more typing paths
+
+### Added
+
+- **Paste a path into the TUI's add-workspace field.** In the `w`
+  overlay, a paste now lands in the field instead of being dropped.
+  Dragging a folder from Finder into Ghostty works too: the text is
+  cleaned of shell escaping (`My\ Proj` → `My Proj`), wrapping quotes
+  and extra lines. Pastes anywhere else outside a tile are still
+  swallowed, so pasted text can never fire wall commands.
+- **`Ctrl+O` opens the native folder picker** from the `w` overlay,
+  reusing the daemon's `POST /api/pick-directory` (macOS). The picked
+  folder fills the field; cancel keeps what you typed; a non-macOS
+  daemon shows an inline "type or paste a path" hint. The footer now
+  reads `Enter add · ^O browse · Esc cancel`.
+
 ## 0.4.0 — restart
 
 ### Added
