@@ -137,7 +137,7 @@ tmux send-keys -t "=$OUTER:" -l w
 check "w opens the add-workspace overlay (chip keys → add workspace)" \
   wait_for 10 outer_has 'keys → add workspace'
 check "overlay renders the path field affordances" \
-  wait_for 5 outer_has 'Enter add · Esc cancel'
+  wait_for 5 outer_has 'Enter add · ^O browse · Esc cancel'
 # Esc cancels…
 tmux send-keys -t "=$OUTER:" Escape
 check "Esc cancels the overlay (chip back to keys → garage)" \

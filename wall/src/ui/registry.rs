@@ -237,7 +237,7 @@ impl TileRegistry {
             let mut out = String::with_capacity(cols as usize);
             for col in 0..cols {
                 match screen.cell(row, col) {
-                    Some(cell) if !cell.contents().is_empty() => out.push_str(&cell.contents()),
+                    Some(cell) if !cell.contents().is_empty() => out.push_str(cell.contents()),
                     _ => out.push(' '),
                 }
             }

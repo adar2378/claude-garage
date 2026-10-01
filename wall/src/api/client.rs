@@ -76,6 +76,11 @@ fn encode_component(s: &str) -> String {
     out
 }
 
+/// Whole-request timeout for [`GarageClient::pick_directory`]: the daemon's
+/// 120 s osascript timeout (daemon/src/picker.js) plus headroom, so the
+/// daemon's own timeout reply always wins the race.
+const PICK_DIRECTORY_TIMEOUT: Duration = Duration::from_secs(130);
+
 pub struct GarageClient {
     pub base_url: String,
     agent: ureq::Agent,
@@ -249,6 +254,30 @@ impl GarageClient {
         );
         let body = read_json(self.agent.delete(&format!("{}{}", self.base_url, path)).call())?;
         Ok(body.filter(|b| b.is_object()))
+    }
+
+    /// `POST /api/pick-directory` — the daemon opens the native macOS
+    /// "choose folder" dialog and blocks until the user answers. `Some(dir)`
+    /// on a pick, `None` on cancel; a non-macOS daemon answers 501 (surfaced
+    /// as [`ApiError::Status`]). The dialog may legitimately sit open for
+    /// the daemon's full 120 s osascript timeout, so this one request
+    /// overrides the agent's 15 s read timeout.
+    pub fn pick_directory(&self) -> Result<Option<String>, ApiError> {
+        let body = read_json(
+            self.agent
+                .post(&format!("{}/api/pick-directory", self.base_url))
+                .timeout(PICK_DIRECTORY_TIMEOUT)
+                .set("Content-Type", "application/json")
+                .send_string("{}"),
+        )?;
+        let body = body.ok_or_else(|| ApiError::Transport("empty picker reply".into()))?;
+        if let Some(dir) = body.get("dir").and_then(Value::as_str) {
+            return Ok(Some(dir.to_owned()));
+        }
+        if body.get("cancelled").and_then(Value::as_bool) == Some(true) {
+            return Ok(None);
+        }
+        Err(ApiError::Transport("unexpected picker response shape".into()))
     }
 
     fn get_json(&self, path: &str) -> Result<Option<Value>, ApiError> {

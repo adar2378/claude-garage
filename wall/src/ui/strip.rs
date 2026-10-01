@@ -179,7 +179,7 @@ pub fn strip_line(state: &WallState, notice: Option<&str>, width: u16, pet: Opti
                 let say = p.say.as_deref().filter(|t| !t.is_empty());
                 let say_w = say.map_or(0, |t| t.chars().count() + 2);
                 let (say_left, say_right) = match say {
-                    Some(t) if say_w <= x - 1 => (Some(t), None),
+                    Some(t) if say_w < x => (Some(t), None),
                     Some(t) if say_w <= after.saturating_sub(1) => (None, Some(t)),
                     _ => (None, None),
                 };

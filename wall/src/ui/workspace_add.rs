@@ -4,7 +4,10 @@
 //! with one text field for a directory path. Enter submits (`~` expansion,
 //! client-side dir-exists validation, web-UI-style name derivation, then the
 //! PUT effect); Esc cancels; validation/daemon errors render inline and keep
-//! the overlay open.
+//! the overlay open. Pastes land in the field cleaned of shell quoting
+//! (Finder drag-and-drop into Ghostty arrives backslash-escaped), and Ctrl+O
+//! opens the daemon's native folder picker (`POST /api/pick-directory`,
+//! macOS-only).
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
@@ -16,14 +19,32 @@ use crate::state::workspace_form::{derive_workspace_name, expand_tilde};
 use crate::ui::layout::{centered_rect, modal_width};
 use crate::ui::theme::colors;
 
+/// How a Ctrl+O folder-picker call settled — the runtime maps the daemon
+/// response onto this so [`WorkspaceAddForm::pick_settled`] stays pure.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PickOutcome {
+    /// `200 {dir}` — the chosen folder's absolute path.
+    Picked(String),
+    /// `200 {cancelled: true}` — the user dismissed the dialog.
+    Cancelled,
+    /// `501` — no native picker on this host (non-macOS daemon).
+    Unsupported,
+    /// Anything else (500, transport error, malformed reply).
+    Failed,
+}
+
 /// The overlay's state: one text buffer plus the inline error and the
-/// in-flight guard. Pure (IO is injected) so the whole submit flow
+/// in-flight guards. Pure (IO is injected) so the whole submit flow
 /// unit-tests without a filesystem or daemon.
 #[derive(Default)]
 pub struct WorkspaceAddForm {
     pub input: String,
     pub error: Option<String>,
     pub busy: bool,
+    /// A Ctrl+O folder-picker call is in flight (the osascript dialog may
+    /// sit open for up to 120 s): further Ctrl+O and Enter are ignored,
+    /// typing and Esc still work.
+    pub picking: bool,
 }
 
 impl WorkspaceAddForm {
@@ -32,6 +53,9 @@ impl WorkspaceAddForm {
         self.input.clear();
         self.error = None;
         self.busy = false;
+        // Clearing this is what makes a picker result that lands after the
+        // overlay closed (Esc / outside click / re-open) a no-op.
+        self.picking = false;
     }
 
     pub fn insert_char(&mut self, c: char) {
@@ -44,6 +68,75 @@ impl WorkspaceAddForm {
         self.input.pop();
     }
 
+    /// A bracketed paste into the field, appended like any paste. The text
+    /// is cleaned first: surrounding whitespace trimmed, only the first
+    /// non-empty line kept, one pair of wrapping `'…'`/`"…"` quotes
+    /// stripped, shell backslash escapes undone (`\ ` → space — dragging a
+    /// folder from Finder into Ghostty pastes `/a/My\ Proj`), control
+    /// chars dropped. Clears a stale error; a no-op while the PUT is in
+    /// flight.
+    pub fn insert_paste(&mut self, text: &str) {
+        if self.busy {
+            return;
+        }
+        let line = text
+            .lines()
+            .map(str::trim)
+            .find(|l| !l.is_empty())
+            .unwrap_or("");
+        let line = strip_wrapping_quotes(line);
+        let mut chars = line.chars();
+        while let Some(c) = chars.next() {
+            // `\x` → `x`; a dangling trailing backslash is dropped.
+            let c = if c == '\\' {
+                match chars.next() {
+                    Some(next) => next,
+                    None => break,
+                }
+            } else {
+                c
+            };
+            if !c.is_control() {
+                self.input.push(c);
+            }
+        }
+        self.error = None;
+    }
+
+    /// Ctrl+O: start a folder-picker call. `true` = the caller fires the
+    /// effect; `false` while busy or already picking (one dialog at a time).
+    pub fn start_pick(&mut self) -> bool {
+        if self.busy || self.picking {
+            return false;
+        }
+        self.picking = true;
+        self.error = None;
+        true
+    }
+
+    /// The folder-picker call settled. A pick replaces the input (the
+    /// dialog chose the whole path); a cancel keeps whatever was typed;
+    /// failures render inline. Ignored when no pick is in flight (the
+    /// overlay was closed or re-opened meanwhile — `reset` cleared it).
+    pub fn pick_settled(&mut self, outcome: PickOutcome) {
+        if !self.picking {
+            return;
+        }
+        self.picking = false;
+        match outcome {
+            PickOutcome::Picked(dir) => {
+                self.input = dir;
+                self.error = None;
+            }
+            PickOutcome::Cancelled => {}
+            PickOutcome::Unsupported => {
+                self.error =
+                    Some("folder picker is macOS-only — type or paste a path".to_owned());
+            }
+            PickOutcome::Failed => self.error = Some("folder picker failed".to_owned()),
+        }
+    }
+
     /// Enter: validate and derive. `Some((name, dir))` starts the PUT (the
     /// caller sets an effect in motion and this form goes busy); `None`
     /// keeps the overlay open with `error` set — or is the busy-guard no-op.
@@ -53,7 +146,7 @@ impl WorkspaceAddForm {
         existing_names: &[String],
         dir_exists: impl Fn(&str) -> bool,
     ) -> Option<(String, String)> {
-        if self.busy {
+        if self.busy || self.picking {
             return None;
         }
         let path = expand_tilde(&self.input, home);
@@ -77,6 +170,16 @@ impl WorkspaceAddForm {
         self.busy = false;
         self.error = error;
     }
+}
+
+/// Strip ONE pair of matching wrapping quotes (`'…'` or `"…"`).
+fn strip_wrapping_quotes(s: &str) -> &str {
+    for q in ['\'', '"'] {
+        if s.len() >= 2 && s.starts_with(q) && s.ends_with(q) {
+            return &s[1..s.len() - 1];
+        }
+    }
+    s
 }
 
 fn field_line(form: &WorkspaceAddForm, width: usize) -> Line<'static> {
@@ -124,8 +227,11 @@ pub fn workspace_add_lines(form: &WorkspaceAddForm, width: usize) -> Vec<Line<'s
     lines.push(Line::styled(
         if form.busy {
             "registering…".to_owned()
+        } else if form.picking {
+            "waiting for folder picker…".to_owned()
         } else {
-            "Enter add · Esc cancel · name derives from the folder".to_owned()
+            // ≤ 58 cols: fits the widest modal's content (64 − border − pad).
+            "Enter add · ^O browse · Esc cancel".to_owned()
         },
         Style::default().fg(colors::FAINT),
     ));
@@ -256,7 +362,7 @@ mod tests {
         assert!(lines[1].to_string().contains("~/dev/my-project"), "placeholder");
         assert_eq!(
             lines[3].to_string(),
-            "Enter add · Esc cancel · name derives from the folder"
+            "Enter add · ^O browse · Esc cancel"
         );
         let busy = WorkspaceAddForm {
             busy: true,
@@ -264,6 +370,132 @@ mod tests {
         };
         let lines = workspace_add_lines(&busy, 40);
         assert_eq!(lines.last().unwrap().to_string(), "registering…");
+        let picking = WorkspaceAddForm {
+            picking: true,
+            ..WorkspaceAddForm::default()
+        };
+        let lines = workspace_add_lines(&picking, 40);
+        assert_eq!(lines.last().unwrap().to_string(), "waiting for folder picker…");
+    }
+
+    // ── paste cleanup ────────────────────────────────────────────────────
+
+    fn pasted(existing: &str, text: &str) -> String {
+        let mut form = form_with(existing);
+        form.insert_paste(text);
+        form.input
+    }
+
+    #[test]
+    fn paste_unescapes_finder_drag_spaces() {
+        assert_eq!(
+            pasted("", "/Users/me/dev/My\\ Proj\\ \\(old\\) "),
+            "/Users/me/dev/My Proj (old)"
+        );
+    }
+
+    #[test]
+    fn paste_strips_one_pair_of_wrapping_quotes() {
+        assert_eq!(pasted("", "'/a/My Proj'"), "/a/My Proj");
+        assert_eq!(pasted("", "\"/a/b\""), "/a/b");
+        assert_eq!(pasted("", "\"\"/a\"\""), "\"/a\"", "only one pair");
+        assert_eq!(pasted("", "'/a\""), "'/a\"", "mismatched quotes stay");
+    }
+
+    #[test]
+    fn paste_keeps_only_the_first_non_empty_line() {
+        assert_eq!(pasted("", "\r\n  \n/a/b\r\n/c/d\n"), "/a/b");
+        assert_eq!(pasted("", "\n\n"), "");
+    }
+
+    #[test]
+    fn paste_trims_surrounding_whitespace_and_drops_control_chars() {
+        assert_eq!(pasted("", "  \t/a/b \t "), "/a/b");
+        assert_eq!(pasted("", "/a\u{1b}/b\u{7}"), "/a/b");
+        assert_eq!(pasted("", "/a/b\\"), "/a/b", "dangling backslash dropped");
+    }
+
+    #[test]
+    fn paste_appends_to_existing_input_and_clears_the_error() {
+        let mut form = form_with("~/dev/");
+        form.error = Some("no such directory: x".to_owned());
+        form.insert_paste("my\\ proj\n");
+        assert_eq!(form.input, "~/dev/my proj");
+        assert_eq!(form.error, None);
+    }
+
+    #[test]
+    fn paste_is_ignored_while_busy() {
+        let mut form = form_with("/a");
+        form.busy = true;
+        form.insert_paste("/b");
+        assert_eq!(form.input, "/a");
+    }
+
+    // ── Ctrl+O folder picker ─────────────────────────────────────────────
+
+    #[test]
+    fn start_pick_guards_against_busy_and_double_picks() {
+        let mut form = form_with("/typed");
+        form.error = Some("stale".to_owned());
+        assert!(form.start_pick());
+        assert!(form.picking);
+        assert_eq!(form.error, None);
+        assert!(!form.start_pick(), "one dialog at a time");
+        // Enter is ignored while the dialog is open.
+        assert_eq!(form.submit(HOME, &none(), |_| true), None);
+        assert!(!form.busy);
+        let mut busy = form_with("/x");
+        busy.busy = true;
+        assert!(!busy.start_pick());
+        assert!(!busy.picking);
+    }
+
+    #[test]
+    fn a_picked_dir_replaces_the_input() {
+        let mut form = form_with("/typed");
+        form.start_pick();
+        form.pick_settled(PickOutcome::Picked("/Users/me/dev/proj".to_owned()));
+        assert!(!form.picking);
+        assert_eq!(form.input, "/Users/me/dev/proj");
+        assert_eq!(form.error, None);
+    }
+
+    #[test]
+    fn a_cancelled_pick_keeps_the_input() {
+        let mut form = form_with("/typed");
+        form.start_pick();
+        form.pick_settled(PickOutcome::Cancelled);
+        assert!(!form.picking);
+        assert_eq!(form.input, "/typed");
+        assert_eq!(form.error, None);
+    }
+
+    #[test]
+    fn picker_failures_render_inline() {
+        let mut form = form_with("/typed");
+        form.start_pick();
+        form.pick_settled(PickOutcome::Unsupported);
+        assert_eq!(
+            form.error.as_deref(),
+            Some("folder picker is macOS-only — type or paste a path")
+        );
+        assert_eq!(form.input, "/typed");
+        form.start_pick();
+        form.pick_settled(PickOutcome::Failed);
+        assert_eq!(form.error.as_deref(), Some("folder picker failed"));
+        assert!(!form.picking);
+    }
+
+    #[test]
+    fn a_pick_result_after_reset_is_ignored() {
+        let mut form = WorkspaceAddForm::default();
+        form.start_pick();
+        form.reset(); // Esc / outside click / re-open
+        assert!(!form.picking);
+        form.pick_settled(PickOutcome::Picked("/late".to_owned()));
+        assert_eq!(form.input, "");
+        assert_eq!(form.error, None);
     }
 
     #[test]

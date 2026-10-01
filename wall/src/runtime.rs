@@ -72,7 +72,7 @@ use crate::ui::tile::{render_centered_lines, render_tile, TileView};
 use crate::ui::triage::{render_triage, triage_queue_rows, wrap_selection};
 use crate::ui::view_picker::{picker_entries, render_view_picker, ViewPickerState};
 use crate::ui::view_strip::render_view_strip;
-use crate::ui::workspace_add::{render_workspace_add, WorkspaceAddForm};
+use crate::ui::workspace_add::{render_workspace_add, PickOutcome, WorkspaceAddForm};
 
 const FRAME_CAP: Duration = Duration::from_millis(33); // ~30fps render cap (not spec-mandated)
 
@@ -142,6 +142,9 @@ pub enum AppEvent {
         name: String,
         error: Option<String>,
     },
+    /// The `w` overlay's Ctrl+O folder-picker call settled — applied to the
+    /// form only while the overlay is still open and picking.
+    PickDirectorySettled(PickOutcome),
     Quit,
 }
 
@@ -326,6 +329,10 @@ pub enum Effect {
     RemoveWorkspace { name: String, kill: bool },
     /// The `w` overlay's validated submit: `PUT /api/workspaces {name, dir}`.
     AddWorkspace { name: String, dir: String },
+    /// The `w` overlay's Ctrl+O: `POST /api/pick-directory` (native macOS
+    /// folder dialog). Runs on its own blocking task like every effect, so
+    /// the up-to-120 s dialog never stalls other effects.
+    PickDirectory,
     /// `q`: orderly quit.
     Quit,
     /// `I`: `POST /api/statusline/install` (spec tui-context-meters
@@ -946,8 +953,10 @@ pub fn engaged_input_for(key: &KeyEvent) -> EngagedInput {
 /// queue: `j`/`k` (and arrows) move the selection with wrap, Enter closes
 /// and jump-engages the selected session, Esc closes. Add-workspace: the
 /// text field owns the keys — Enter submits (validation via the injected
-/// `dir_exists`, so this routes pure in tests), Esc cancels and resets the
-/// form. Returned effects are the caller's IO (the PUT).
+/// `dir_exists`, so this routes pure in tests), Ctrl+O opens the native
+/// folder picker (ignored while busy or already picking), Esc cancels and
+/// resets the form. Returned effects are the caller's IO (the PUT / the
+/// picker call).
 pub fn handle_overlay_key(
     store: &mut WallStore,
     key: &KeyEvent,
@@ -1018,6 +1027,12 @@ pub fn handle_overlay_key(
                     .collect();
                 if let Some((name, dir)) = form.submit(home, &existing, dir_exists) {
                     effects.push(Effect::AddWorkspace { name, dir });
+                }
+            }
+            // Before the plain-char arm: Ctrl+O must never type an `o`.
+            KeyCode::Char('o' | 'O') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                if form.start_pick() {
+                    effects.push(Effect::PickDirectory);
                 }
             }
             KeyCode::Char(c)
@@ -1228,6 +1243,27 @@ fn fetch_and_send(client: &GarageClient, tx: &EventSender) {
     }
 }
 
+/// Where a bracketed paste goes (see [`App::handle_paste`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PasteTarget {
+    /// Engaged: the focused tile's PTY.
+    Tile,
+    /// The `w` overlay's path field.
+    WorkspaceField,
+    /// Consumed — garage layer and every other overlay.
+    Drop,
+}
+
+/// Pure paste routing: only the engaged layer and the `w` overlay's text
+/// field accept pastes; nothing pasted ever reaches the key dispatch.
+fn paste_target(layer: KeyLayer, overlay: Option<OverlayKind>) -> PasteTarget {
+    match (layer, overlay) {
+        (KeyLayer::Engaged, _) => PasteTarget::Tile,
+        (KeyLayer::Overlay, Some(OverlayKind::WorkspaceAdd)) => PasteTarget::WorkspaceField,
+        _ => PasteTarget::Drop,
+    }
+}
+
 /// Run one router effect on a blocking task; results flow back through the
 /// channel. `Effect::Quit` is the loop's own concern and never lands here.
 fn run_effect(effect: Effect, tx: &EventSender, base_url: &str) {
@@ -1317,6 +1353,17 @@ fn run_effect(effect: Effect, tx: &EventSender, base_url: &str) {
                     });
                 }
             },
+            Effect::PickDirectory => {
+                // Blocks this task (not the loop, not other effects) for as
+                // long as the dialog is open.
+                let outcome = match client.pick_directory() {
+                    Ok(Some(dir)) => PickOutcome::Picked(dir),
+                    Ok(None) => PickOutcome::Cancelled,
+                    Err(ApiError::Status { status: 501, .. }) => PickOutcome::Unsupported,
+                    Err(_) => PickOutcome::Failed,
+                };
+                let _ = tx.send(AppEvent::PickDirectorySettled(outcome));
+            }
             Effect::InstallStatusline => {
                 match client.install_statusline() {
                     Ok(()) => send_notice(&tx, INSTALL_STATUSLINE_SUCCESS.to_owned(), 5000),
@@ -1669,6 +1716,14 @@ impl App {
                     );
                 }
             }
+            AppEvent::PickDirectorySettled(outcome) => {
+                // Closed meanwhile → `reset` already cleared `picking`, and
+                // `pick_settled` ignores it; the overlay check covers any
+                // other way the overlay went away.
+                if self.store.state().overlay == Some(OverlayKind::WorkspaceAdd) {
+                    self.ws_form.pick_settled(outcome);
+                }
+            }
             AppEvent::Term(Event::Resize(_, _)) => {} // layout recomputes per frame
             AppEvent::Term(Event::Paste(text)) => self.handle_paste(&text),
             AppEvent::Term(Event::Mouse(mouse)) => self.handle_mouse(&mouse),
@@ -1693,18 +1748,23 @@ impl App {
         false
     }
 
-    /// Bracketed paste (crossterm `Event::Paste`): while engaged, forward to
-    /// the focused tile wrapped in the paste guards (spec: "Paste
-    /// forwarding"), snapping a frozen view live first like any PTY write.
-    /// In the garage/overlay layers pastes are consumed — pasted text must
-    /// never fire app commands.
+    /// Bracketed paste (crossterm `Event::Paste`), routed by [`paste_target`]:
+    /// while engaged, forward to the focused tile wrapped in the paste guards
+    /// (spec: "Paste forwarding"), snapping a frozen view live first like any
+    /// PTY write; in the `w` overlay, into the path field (cleaned — see
+    /// [`WorkspaceAddForm::insert_paste`]); everywhere else consumed —
+    /// pasted text must never fire app commands.
     fn handle_paste(&mut self, text: &str) {
-        if self.store.state().layer != KeyLayer::Engaged {
-            return;
-        }
-        if let Some(id) = self.store.state().focused_session_id.clone() {
-            self.registry.set_frozen(&id, None);
-            self.registry.write(&id, &wrap_bracketed_paste(text));
+        let state = self.store.state();
+        match paste_target(state.layer, state.overlay) {
+            PasteTarget::Tile => {
+                if let Some(id) = state.focused_session_id.clone() {
+                    self.registry.set_frozen(&id, None);
+                    self.registry.write(&id, &wrap_bracketed_paste(text));
+                }
+            }
+            PasteTarget::WorkspaceField => self.ws_form.insert_paste(text),
+            PasteTarget::Drop => {}
         }
     }
 
@@ -3878,6 +3938,74 @@ mod tests {
         assert!(effects.is_empty());
         assert_eq!(form.error.as_deref(), Some("no such directory: /nope"));
         assert_eq!(store.state().overlay, Some(OverlayKind::WorkspaceAdd));
+    }
+
+    #[test]
+    fn workspace_add_ctrl_o_fires_the_picker_once_and_blocks_enter() {
+        let mut store = store_with(vec![ws("a")], vec![si("a", "one")]);
+        store.open_overlay(OverlayKind::WorkspaceAdd);
+        let (mut sel, mut form) = (0, WorkspaceAddForm::default());
+        form.input = "~/dev/proj".to_owned();
+        let ctrl_o = KeyEvent::new(KeyCode::Char('o'), KeyModifiers::CONTROL);
+        let effects = overlay_key(&mut store, &mut sel, &mut form, ctrl_o);
+        assert_eq!(effects, vec![Effect::PickDirectory]);
+        assert!(form.picking);
+        assert_eq!(form.input, "~/dev/proj", "Ctrl+O never types an o");
+        // While the dialog is open: a second Ctrl+O and Enter are no-ops.
+        assert!(overlay_key(&mut store, &mut sel, &mut form, ctrl_o).is_empty());
+        assert!(overlay_key(&mut store, &mut sel, &mut form, plain(KeyCode::Enter)).is_empty());
+        assert!(!form.busy);
+        // Esc still closes, and clears the in-flight pick.
+        overlay_key(&mut store, &mut sel, &mut form, plain(KeyCode::Esc));
+        assert_eq!(store.state().overlay, None);
+        assert!(!form.picking);
+    }
+
+    #[test]
+    fn workspace_add_ctrl_o_is_ignored_while_registering() {
+        let mut store = store_with(vec![ws("a")], vec![si("a", "one")]);
+        store.open_overlay(OverlayKind::WorkspaceAdd);
+        let (mut sel, mut form) = (0, WorkspaceAddForm::default());
+        form.busy = true;
+        let ctrl_o = KeyEvent::new(KeyCode::Char('o'), KeyModifiers::CONTROL);
+        assert!(overlay_key(&mut store, &mut sel, &mut form, ctrl_o).is_empty());
+        assert!(!form.picking);
+    }
+
+    #[test]
+    fn pastes_route_only_to_the_tile_or_the_workspace_field() {
+        assert_eq!(paste_target(KeyLayer::Engaged, None), PasteTarget::Tile);
+        assert_eq!(
+            paste_target(KeyLayer::Overlay, Some(OverlayKind::WorkspaceAdd)),
+            PasteTarget::WorkspaceField
+        );
+        for overlay in [
+            OverlayKind::Help,
+            OverlayKind::TriageQueue,
+            OverlayKind::ViewPicker,
+        ] {
+            assert_eq!(
+                paste_target(KeyLayer::Overlay, Some(overlay)),
+                PasteTarget::Drop,
+                "{overlay:?} must swallow pastes"
+            );
+        }
+        assert_eq!(paste_target(KeyLayer::Garage, None), PasteTarget::Drop);
+    }
+
+    #[test]
+    fn a_paste_in_the_workspace_overlay_lands_in_the_field() {
+        // The WorkspaceField branch of handle_paste, end to end on the form.
+        let mut store = store_with(vec![ws("a")], vec![si("a", "one")]);
+        store.open_overlay(OverlayKind::WorkspaceAdd);
+        let mut form = WorkspaceAddForm::default();
+        let state = store.state();
+        assert_eq!(
+            paste_target(state.layer, state.overlay),
+            PasteTarget::WorkspaceField
+        );
+        form.insert_paste("/Users/me/dev/My\\ Proj\n");
+        assert_eq!(form.input, "/Users/me/dev/My Proj");
     }
 
     #[test]
