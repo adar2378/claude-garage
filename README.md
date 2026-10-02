@@ -18,9 +18,9 @@ review comes along for the ride.
 
 </div>
 
-**▶ 60-second reveal** — the web wall, needs-input triage, diff review, and the pit pet, beat by beat:
+**▶ 33-second showreel** — the Rust terminal wall: the agent that needs you comes to you, sessions that survive a reboot, and the numbers (2.6 MB binary, 6 MB RAM, ~2% CPU):
 
-https://github.com/user-attachments/assets/b19defa0-a60d-4082-9ca5-9b8ce9480b18
+https://github.com/user-attachments/assets/5c545e4b-508e-4754-9b7a-df73c589e323
 
 ## Why
 
