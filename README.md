@@ -3,16 +3,18 @@
 <img src="docs/banner.png" alt="claude-garage: a pit wall for your Claude Code agents" width="100%" />
 
 **Multiple Claude agents driving you crazy? Park them all in one
-garage.** A needs-input queue that follows you across every project (`a`
-jumps to whoever's waiting), file-by-file diff review, and tmux-owned
-sessions that outlive the tool — reboot the Mac, `tmux attach` still works.
+garage.** A full-screen terminal wall that shows every session at once, a
+needs-input queue that follows you across every project (`a` jumps to
+whoever's waiting), and tmux-owned sessions that outlive the tool — reboot
+the Mac, `tmux attach` still works. A browser wall with file-by-file diff
+review comes along for the ride.
 
 [![npm](https://img.shields.io/npm/v/claude-garage?color=e2a75e&label=npm)](https://www.npmjs.com/package/claude-garage)
 [![license](https://img.shields.io/badge/license-MIT-79b26e)](LICENSE)
 [![node](https://img.shields.io/badge/node-%E2%89%A5%2020-6e9ecc)](package.json)
 [![local](https://img.shields.io/badge/100%25-local-c6cfdb)](#local-only-by-design)
 
-<img src="docs/hero.png" alt="The web wall: two workspaces, a session asking for permission (amber), a finished worktree session, and the diff pane" width="100%" />
+<img src="docs/hero-tui.png" alt="The terminal wall: two workspaces in the rail, four live Claude sessions, one asking for permission (amber), and the status strip with the blocked count" width="100%" />
 
 </div>
 
@@ -70,7 +72,7 @@ and every tmux session running. It's also light: ~5ms input latency, ~2%
 CPU, and a 2.4MB binary (measured on the ratatui port — see
 [`openspec/changes/archive/2026-08-31-p9-ratatui-port/verification.md`](openspec/changes/archive/2026-08-31-p9-ratatui-port/verification.md)).
 
-Since p10–p12, the TUI also groups sessions into views (`d` detaches the
+The TUI also groups sessions into views (`d` detaches the
 focused one into its own view or rejoins it to the default, `D` moves it to
 a chosen group, `Tab` cycles views), shows a dim auto-subtitle under each
 session's label straight from Claude Code's own terminal-title updates (zero
@@ -78,7 +80,9 @@ config), and tracks context pressure: a per-tile meter plus a `5h`/`7-day`
 usage chip in the strip, fed by a one-keypress `I` install of a chaining
 statusline wrapper (any statusline you already have keeps running). Closing
 a plain session tears it down; closing a worktree session keeps its branch
-and points you at the web wall to merge or discard it.
+and points you at the web wall to merge or discard it. `w` adds a project:
+type a path, paste one, drag a folder in from Finder, or press `^O` for the
+macOS folder picker.
 
 **Prefer a browser?**
 
@@ -254,9 +258,10 @@ key mapping (Settings → Profiles → Keyboard) for Shift+Return that sends
 | `r d` | restart the daemon (sessions untouched) |
 | `X X` | remove focused workspace (sessions keep running) |
 | `X K` | remove focused workspace AND kill its sessions |
-| `w` | add workspace |
+| `w` | add workspace — type, paste or drag a path in, `^O` opens the folder picker |
 | `d` | detach focused session to its own view, or rejoin main |
 | `D` | move focused session to another view / new group |
+| `P` | cycle the pit pet: Arthur / Papito / Segan / off |
 | `Tab` | cycle the focused workspace's views |
 | `?` | toggle this help |
 | `q` | quit (tmux sessions keep running) |
@@ -294,7 +299,9 @@ npm run build:tui    # cargo build --release; copies the binary into wall/dist
 ```
 
 `wall/` is a separate Rust workspace with its own unit and e2e suites
-(`cd wall && cargo test`; e2e harnesses under `wall/test/e2e`).
+(`cd wall && cargo test --lib --bins` for the unit tests; e2e harnesses under
+`wall/test/e2e`). Plain `cargo test` also runs `tests/injection.rs`, which
+creates and kills scratch sessions on your real tmux server.
 
 Built through spec-driven phases ([`openspec/`](openspec/)), each verified
 end-to-end on a real system.
