@@ -1,7 +1,7 @@
 {
   "name": "claude-garage",
-  "version": "0.4.1",
-  "description": "Multiple Claude agents driving you crazy? Park them all in one garage: a needs-input queue that follows you across projects, a full-screen terminal TUI, and a browser wall with diff review. tmux owns the sessions; close the app and nothing dies.",
+  "version": "0.5.0",
+  "description": "Multiple Claude agents driving you crazy? Park them all in one garage: a full-screen terminal wall with a needs-input queue that follows you across projects. tmux owns the sessions; close the app and nothing dies.",
   "license": "MIT",
   "author": "Saiful Islam <saifulislamadar@gmail.com>",
   "repository": {
@@ -19,7 +19,6 @@
     "agents",
     "session-manager",
     "dashboard",
-    "xterm",
     "git-worktree",
     "developer-tools"
   ],
@@ -34,27 +33,16 @@
     "bin",
     "daemon/src",
     "daemon/package.json",
-    "ui/dist",
     "wall/dist"
   ],
   "workspaces": [
-    "daemon",
-    "ui"
+    "daemon"
   ],
   "scripts": {
-    "dev": "concurrently -n daemon,ui -c blue,magenta \"npm:dev --workspace daemon\" \"npm:dev --workspace ui\"",
-    "test": "node --test \"daemon/test/*.test.js\" \"ui/test/*.test.js\"",
-    "build:tui": "cd wall && cargo build --release && mkdir -p dist && rm -f dist/garage-wall-$(node -p \"process.platform+'-'+process.arch\") && cp target/release/garage-wall dist/garage-wall-$(node -p \"process.platform+'-'+process.arch\")",
-    "postinstall": "chmod +x node_modules/node-pty/prebuilds/darwin-*/spawn-helper 2>/dev/null || true",
-    "prepack": "npm run build --workspace ui"
+    "test": "node --test \"daemon/test/*.test.js\"",
+    "build:tui": "cd wall && cargo build --release && mkdir -p dist && rm -f dist/garage-wall-$(node -p \"process.platform+'-'+process.arch\") && cp target/release/garage-wall dist/garage-wall-$(node -p \"process.platform+'-'+process.arch\")"
   },
   "dependencies": {
-    "@fastify/static": "^10.1.0",
-    "fastify": "^5.3.0",
-    "node-pty": "^1.1.0",
-    "ws": "^8.18.0"
-  },
-  "devDependencies": {
-    "concurrently": "^10.0.3"
+    "fastify": "^5.3.0"
   }
 }

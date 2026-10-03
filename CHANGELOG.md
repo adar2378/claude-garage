@@ -1,5 +1,41 @@
 # Changelog
 
+## 0.5.0 — terminal only
+
+### Breaking
+
+- **The web wall is gone.** garage is now a terminal app. `npx
+  claude-garage` with no subcommand opens the TUI; `tui` still works as
+  an alias. The daemon no longer serves a page on `http://127.0.0.1:4747`
+  or terminal WebSockets on `/term`. Its HTTP API is unchanged.
+- **Diff review is unavailable** until it lands in the TUI (on the
+  roadmap). The daemon's diff API stays in place for it.
+- Clicking a macOS notification no longer opens a browser tab.
+
+### Added
+
+- **Finish a worktree from the TUI.** Closing a worktree session (`x x`,
+  live or restorable) opens an overlay: `m` merges the branch into the
+  branch checked out in the repo (shown in the prompt), `d d` discards
+  it, `k` or `Esc` keeps it. A dirty worktree or a merge conflict shows
+  inline, and the overlay stays open so you can retry or keep.
+- **`I` installs hooks too.** One key now installs the Claude Code hooks
+  (instant status) and the statusline (context meter), with one notice
+  that covers both, including "already installed".
+
+### Fixed
+
+- **A failed merge is aborted.** When finishing a worktree hits a
+  conflict, the daemon runs `git merge --abort`, so the repo is never
+  left mid-merge.
+
+### Removed
+
+- The React web wall (`ui/`), the `/term` WebSocket bridge, static file
+  serving and the Vite dev origins.
+- Dependencies `@fastify/static`, `node-pty`, `ws` and `concurrently`,
+  plus the `dev`, `postinstall` and `prepack` scripts.
+
 ## 0.4.1 — no more typing paths
 
 ### Added

@@ -135,8 +135,8 @@ export default async function hookRoutes(app) {
 
   app.get("/api/hooks/snippet", async () => hookSnippet());
 
-  // p7 hooks-install: browser-called (rides the normal Origin allowlist,
-  // like every /api route except /api/hooks/claude's token scheme).
+  // p7 hooks-install: called by the TUI's `I` key (rides the normal Origin
+  // allowlist, like every /api route except /api/hooks/claude's token scheme).
   app.post("/api/hooks/install", async (req, reply) => {
     try {
       return await installHooks();

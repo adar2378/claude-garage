@@ -469,7 +469,7 @@ export default async function sessionRoutes(app) {
     // p8.1: `?meta=1` deletes ONLY the stored resume metadata of a NON-live
     // (restorable) session — the plain DELETE below 404s for those since
     // there is no tmux session to kill. Behavior without the param is
-    // unchanged (the web UI never sends it). The worktree record rides the
+    // unchanged. The worktree record rides the
     // response the same way, so the caller can still surface "worktree
     // kept" for a discarded restorable worktree session.
     if (req.query?.meta === "1") {

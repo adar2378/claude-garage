@@ -1,21 +1,12 @@
 // Browser pages are confused deputies: any website can fire requests at
-// 127.0.0.1, and WebSockets are exempt from CORS. Browsers always send an
-// Origin header, so we allowlist the UI's origin. Requests WITHOUT an Origin
-// (curl, scripts) are allowed — a local process needs no browser to reach
-// tmux and already runs with the user's privileges.
+// 127.0.0.1. Browsers always send an Origin header; the TUI, claude's hook
+// posts, curl and scripts send none. So requests WITHOUT an Origin are
+// allowed (a local process needs no browser to reach tmux and already runs
+// with the user's privileges), and any Origin is refused unless listed.
 //
-// D-packaging: in same-process serving mode (GARAGE_SERVE_UI=1) the UI is
-// served from the daemon's own origin instead of Vite's :5173, so that
-// origin (following GARAGE_PORT, same as index.js) must be allowlisted too —
-// otherwise the served UI's own fetch/EventSource calls would be rejected as
-// foreign.
-const PORT = Number(process.env.GARAGE_PORT ?? 4747);
-const DEFAULT_ORIGINS = [
-  "http://127.0.0.1:5173",
-  "http://localhost:5173",
-  `http://127.0.0.1:${PORT}`,
-  `http://localhost:${PORT}`,
-];
+// p17-tui-only: garage serves no web UI any more, so the default allowlist
+// is empty. GARAGE_UI_ORIGINS (comma-separated) can still opt an origin in.
+const DEFAULT_ORIGINS = [];
 
 export const ALLOWED_ORIGINS = new Set(
   process.env.GARAGE_UI_ORIGINS?.split(",").map((s) => s.trim()) ??

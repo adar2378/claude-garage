@@ -18,3 +18,14 @@
 | `I` twice | "hooks installed · statusline feed installed…", then "hooks already installed · …"; scratch settings.json has the hook |
 
 **Fixes made during review:** merge request timeout raised to 120 s; conflict message no longer tells the user to "fix conflicts and then commit" after the abort; word-wrapping for overlay errors; "(or Esc)" on the keep line.
+
+## Phase B (remove the web wall), 2026-10-03
+
+**Unit:** `npm test` 119/119 pass (ui tests removed, new `security.test.js`). `cargo test --lib --bins` 507 pass. `cargo clippy --all-targets` clean.
+
+**Package:** `npm pack --dry-run`: 29 files, 1.2 MB, no `ui/` files; includes `daemon/src` and `wall/dist/garage-wall-darwin-arm64`.
+
+**Fresh install:** packed tarball installed into a scratch dir (only `fastify` and its deps pulled in). `npx claude-garage` (no subcommand) with scratch `GARAGE_PORT=4798`, `GARAGE_DIR`, `GARAGE_CLAUDE_HOME`:
+- started a detached daemon reporting `0.5.0`, then opened the TUI full-screen; no browser opened
+- `GET /` → 404 JSON (no HTML); `/term/x` WebSocket upgrade → 404; `/api/health` → 200
+- `q` exited 0; scratch daemon stopped afterwards. The user's daemon (:4747, 0.4.1) was untouched.

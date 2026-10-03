@@ -1,8 +1,4 @@
-import { existsSync } from "node:fs";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
 import Fastify from "fastify";
-import fastifyStatic from "@fastify/static";
 import sessionRoutes from "./sessions.js";
 import workspaceRoutes from "./workspaces.js";
 import pickerRoutes from "./picker.js";
@@ -14,7 +10,6 @@ import diffRoutes from "./diff.js";
 import editorRoutes from "./editor.js";
 import worktreeRoutes from "./worktrees.js";
 import daemonRestartRoutes, { waitForPredecessor } from "./daemon-restart.js";
-import { attachTermServer } from "./term.js";
 import { rejectForeignOrigins } from "./security.js";
 import { startPoller } from "./poller.js";
 import { healthPayload } from "./health.js";
@@ -23,13 +18,9 @@ import { ensureExtendedKeys } from "./tmux.js";
 const HOST = "127.0.0.1";
 const PORT = Number(process.env.GARAGE_PORT ?? 4747);
 
-// daemon/src/index.js -> repo root is two levels up.
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const REPO_ROOT = path.resolve(__dirname, "..", "..");
-
 // forceCloseConnections: close() actively terminates keep-alive and
-// hijacked connections (SSE, upgraded sockets) instead of waiting for
-// them to drain — they never would; see bin/garage.js shutdown.
+// hijacked connections (SSE streams) instead of waiting for them to
+// drain — they never would; see daemon-restart.js.
 const app = Fastify({ logger: { level: "info" }, forceCloseConnections: true });
 
 app.addHook("onRequest", rejectForeignOrigins);
@@ -47,21 +38,6 @@ app.register(diffRoutes);
 app.register(editorRoutes);
 app.register(worktreeRoutes);
 app.register(daemonRestartRoutes);
-attachTermServer(app);
-
-// D-packaging: flag-gated so dev mode (Vite on :5173 proxying to this
-// daemon) never double-registers a static root — registered last, after
-// every /api/* route above, so those routes win over static's own wildcard.
-if (process.env.GARAGE_SERVE_UI === "1") {
-  const uiDist = path.join(REPO_ROOT, "ui", "dist");
-  if (existsSync(uiDist)) {
-    app.register(fastifyStatic, { root: uiDist, prefix: "/" });
-  } else {
-    app.log.error(
-      `GARAGE_SERVE_UI is set but ${uiDist} does not exist — run "npm run build --workspace ui" first`
-    );
-  }
-}
 
 // Poller feeds StatusStore (busy/idle baseline); hooks.js and notify.js
 // subscribe to the same store — see status.js for the single write path.

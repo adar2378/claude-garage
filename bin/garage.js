@@ -1,14 +1,12 @@
 #!/usr/bin/env node
-// D-packaging: the `npx claude-garage` entrypoint. Checks prerequisites,
-// starts the daemon in-process with GARAGE_SERVE_UI=1 (same-process
-// UI+API serving — see daemon/src/index.js), then prints and best-effort
-// opens the URL. Never touches tmux on shutdown — SIGINT/SIGTERM close the
-// HTTP server only, so live garage sessions survive the process exiting.
+// D-packaging: the `npx claude-garage` entrypoint.
 //
-// p8-packaging: `claude-garage tui` runs the same prerequisite checks, then
-// attaches the compiled TUI to a running daemon — starting one detached
-// first (so it outlives the TUI) when /api/health is unreachable. Quitting
-// the TUI leaves the daemon and every tmux session running.
+// p17-tui-only: the bare command runs the TUI (`tui` stays as an alias).
+// It checks prerequisites, then attaches the compiled TUI to a running
+// daemon, starting one detached first (so it outlives the TUI) when
+// /api/health is unreachable. Quitting the TUI leaves the daemon and every
+// tmux session running. `restart` restarts the daemon (and optionally the
+// sessions) in place.
 import { execFile, spawn, spawnSync } from "node:child_process";
 import { accessSync, chmodSync, constants as fsConstants, copyFileSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, statSync } from "node:fs";
 import os from "node:os";
@@ -18,7 +16,6 @@ import { fileURLToPath } from "node:url";
 
 const PORT = Number(process.env.GARAGE_PORT ?? 4747);
 const HEALTH_URL = `http://127.0.0.1:${PORT}/api/health`;
-const UI_URL = `http://127.0.0.1:${PORT}`;
 
 // bin/garage.js -> repo/package root is one level up. Resolves correctly
 // whether run from a checkout or an installed package.
@@ -26,8 +23,8 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 // The launcher's own package version — compared against the version the
 // daemon reports on /api/health to detect a stale (pre-upgrade) daemon
-// still serving old code (p8.2; symptom: 404s on routes the new UI/TUI
-// call, e.g. `?meta=1`).
+// still serving old code (p8.2; symptom: 404s on routes the new TUI
+// calls, e.g. `?meta=1`).
 const VERSION = JSON.parse(
   readFileSync(path.join(ROOT, "package.json"), "utf8")
 ).version;
@@ -95,7 +92,7 @@ async function offerTmuxInstall() {
   }
 }
 
-// Shared by the web and TUI paths — identical checks, identical errors.
+// Run before the TUI starts: readable errors for a missing tmux or claude.
 async function checkPrerequisites() {
   try {
     await execFileP("tmux", ["-V"]);
@@ -115,63 +112,6 @@ async function checkPrerequisites() {
     ["--version"],
     "see https://docs.claude.com/en/docs/claude-code for install instructions"
   );
-}
-
-async function main() {
-  await checkPrerequisites();
-
-  // Stale-daemon gate (p8.2), same as the tui path: a healthy daemon that
-  // predates this launcher is stopped by its reported pid so the
-  // in-process daemon below can bind the freed port and serve current
-  // code. A daemon at the launcher's own version is left alone (the
-  // import below will then report EADDRINUSE as before).
-  const health = await fetchHealth();
-  if (daemonIsStale(health)) await stopStaleDaemon(health);
-
-  process.env.GARAGE_SERVE_UI = "1";
-
-  // Relative to this file's URL, not cwd — resolves correctly whether run
-  // from a checkout or an installed package (see root package.json `files`).
-  const { app } = await import("../daemon/src/index.js");
-
-  const shutdown = async () => {
-    // app.close() drains connections — but SSE streams and terminal
-    // WebSockets never end on their own, so a polite close hangs forever
-    // when a browser tab is open. Race it against a hard deadline: tmux
-    // owns everything that matters, so force-exiting loses nothing.
-    const deadline = new Promise((r) => setTimeout(r, 1500));
-    try {
-      await Promise.race([app.close(), deadline]);
-    } catch {
-      // best-effort — we're exiting regardless
-    } finally {
-      process.exit(0);
-    }
-  };
-  process.on("SIGINT", shutdown);
-  process.on("SIGTERM", shutdown);
-
-  setTimeout(async () => {
-    try {
-      const res = await fetch(HEALTH_URL);
-      if (!res.ok) throw new Error(`health check returned ${res.status}`);
-
-      console.log(`claude-garage pit wall → ${UI_URL}`);
-
-      if (process.platform === "darwin") {
-        // Best-effort convenience, same "never throw for a non-critical
-        // extra" discipline as notify.js's osascript call — swallow any
-        // failure silently.
-        execFile("open", [UI_URL], () => {});
-      }
-    } catch {
-      console.error(
-        `claude-garage did not come up on port ${PORT} — see the log above ` +
-          `(port already in use? set GARAGE_PORT to pick a different one)`
-      );
-      process.exit(1);
-    }
-  }, 600);
 }
 
 // ---------------------------------------------------------------------------
@@ -277,11 +217,8 @@ async function stopStaleDaemon(health) {
   }
 }
 
-// Start the daemon as a detached child so it outlives the TUI — same daemon
-// module the web entrypoint imports in-process, same GARAGE_SERVE_UI=1 flag.
-// daemon/src/index.js degrades gracefully when ui/dist is absent (logs and
-// serves API-only), so the TUI path never requires a built UI, while the web
-// wall keeps working alongside whenever ui/dist exists.
+// Start the daemon as a detached child so it outlives the TUI. It serves
+// the HTTP API only (p17-tui-only: no web UI).
 function startDetachedDaemon() {
   const daemonEntry = path.join(ROOT, "daemon", "src", "index.js");
   // daemon.log lives beside the daemon's state: honor GARAGE_DIR (the
@@ -294,7 +231,7 @@ function startDetachedDaemon() {
   const child = spawn(process.execPath, [daemonEntry], {
     detached: true,
     stdio: ["ignore", out, out],
-    env: { ...process.env, GARAGE_SERVE_UI: "1" },
+    env: process.env,
   });
   child.unref();
   return logPath;
@@ -479,8 +416,8 @@ async function tuiMain() {
   }
 
   // Foreground, inherited stdio: the TUI owns the terminal until it exits.
-  // The daemon (in-process elsewhere or the detached child above) is left
-  // running — tmux sessions and the web wall stay live.
+  // The daemon (already running, or the detached child above) is left
+  // running, and so are the tmux sessions.
   const child = spawn(tuiBinary, [], { stdio: "inherit", env: process.env });
   child.on("error", (err) => {
     console.error(`failed to start TUI binary at ${tuiBinary}: ${err.message}`);
@@ -597,15 +534,23 @@ async function restartMain() {
   }
 }
 
+const USAGE = `usage: claude-garage [command]
+
+  (none)                       open the TUI (starts the daemon if needed)
+  tui                          same as no command
+  restart                      restart the background daemon
+  restart --sessions [--all]   also restart idle sessions (--all: busy ones too)
+  help, --help, -h             show this help`;
+
 const subcommand = process.argv[2];
-if (subcommand === undefined) {
-  main();
-} else if (subcommand === "tui") {
+if (subcommand === undefined || subcommand === "tui") {
   tuiMain();
 } else if (subcommand === "restart") {
   restartMain();
+} else if (subcommand === "help" || subcommand === "--help" || subcommand === "-h") {
+  console.log(USAGE);
 } else {
   console.error(`unknown subcommand: ${subcommand}`);
-  console.error(`usage: claude-garage [tui|restart [--sessions] [--all]]`);
+  console.error(USAGE);
   process.exit(1);
 }

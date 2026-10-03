@@ -1,19 +1,15 @@
 import { execFile } from "node:child_process";
 import { statusEvents } from "./status.js";
 
-const PORT = Number(process.env.GARAGE_PORT ?? 4747);
-const UI_URL = `http://127.0.0.1:${PORT}`;
-
 // D-notify: notification on transition INTO needs-input, edge-triggered
 // (the store only emits "transition" on an actual state change, so this
 // handler naturally fires once per transition, not once per poll tick).
 // Darwin only; a no-op elsewhere. Never throws — a notification failure
 // must not affect the daemon.
 //
-// Clickability: osascript's `display notification` cannot carry a click
-// action — it is a dead-end toast. When terminal-notifier is installed
-// (brew install terminal-notifier), use it instead: its -open flag makes
-// clicking the notification open the pit wall. Checked once, lazily.
+// terminal-notifier is used when installed (brew install terminal-notifier),
+// osascript's `display notification` otherwise. Neither opens anything on
+// click (p17-tui-only: there is no web wall to open). Checked once, lazily.
 let hasTerminalNotifier = null; // null = not yet probed
 function probeTerminalNotifier(cb) {
   if (hasTerminalNotifier !== null) return cb(hasTerminalNotifier);
@@ -31,7 +27,7 @@ function notifyDarwin(id) {
       if (available) {
         execFile(
           "terminal-notifier",
-          ["-title", "claude-garage", "-message", message, "-open", UI_URL],
+          ["-title", "claude-garage", "-message", message],
           () => {}
         );
       } else {
@@ -44,10 +40,10 @@ function notifyDarwin(id) {
   }
 }
 
-// Visibility contract: the UI posts here periodically while a pit-wall
-// page is in the foreground. "a visible page exists" = any client entry
-// visible && seen within TTL_MS. Called from the browser, so it stays
-// behind the normal Origin allowlist (unlike /api/hooks/claude).
+// Visibility contract: the TUI posts here periodically while it is in the
+// foreground. "a visible client exists" = any client entry visible && seen
+// within TTL_MS. Rides the normal Origin allowlist (the TUI sends no
+// Origin), unlike /api/hooks/claude's token scheme.
 const TTL_MS = 45_000;
 const clients = new Map(); // clientId -> { visible, lastSeen }
 

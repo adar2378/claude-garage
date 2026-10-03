@@ -30,21 +30,21 @@
 
 ## 5. Remove the web wall
 
-- [ ] 5.1 Delete `ui/`; drop the `ui` workspace, `ui/dist` from `files`, `prepack`, `ui/test` from `npm test`, the `dev` script and `concurrently`
-- [ ] 5.2 Check `grep -rn "node-pty\|ws\b\|@fastify/static" daemon/src`; delete `term.js` and its registration; drop `ws`, `node-pty`, `@fastify/static`, the `postinstall` chmod; refresh `package-lock.json`
-- [ ] 5.3 `daemon/src/index.js`: remove static serving and `GARAGE_SERVE_UI`; `security.js`: remove `:5173` and own-origin UI entries, confirm Origin-less requests still pass
-- [ ] 5.4 `notify.js`: drop `-open <UI_URL>` from `terminal-notifier`
-- [ ] 5.5 `bin/garage.js`: bare command runs `tuiMain`; `tui` alias; delete web `main()` path and browser `open`; stop passing `GARAGE_SERVE_UI` in `startDetachedDaemon`; update header comments and usage text
-- [ ] 5.6 `package.json` description and keywords: drop browser / xterm wording
+- [x] 5.1 Delete `ui/`; drop the `ui` workspace, `ui/dist` from `files`, `prepack`, `ui/test` from `npm test`, the `dev` script and `concurrently`
+- [x] 5.2 Check `grep -rn "node-pty\|ws\b\|@fastify/static" daemon/src`; delete `term.js` and its registration; drop `ws`, `node-pty`, `@fastify/static`, the `postinstall` chmod; refresh `package-lock.json`
+- [x] 5.3 `daemon/src/index.js`: remove static serving and `GARAGE_SERVE_UI`; `security.js`: remove `:5173` and own-origin UI entries, confirm Origin-less requests still pass
+- [x] 5.4 `notify.js`: drop `-open <UI_URL>` from `terminal-notifier`
+- [x] 5.5 `bin/garage.js`: bare command runs `tuiMain`; `tui` alias; delete web `main()` path and browser `open`; stop passing `GARAGE_SERVE_UI` in `startDetachedDaemon`; update header comments and usage text
+- [x] 5.6 `package.json` description and keywords: drop browser / xterm wording
 
 ## 6. Docs and release
 
-- [ ] 6.1 README: `I` row says hooks + context meter; install command becomes `npx claude-garage`; mention worktree finish under keys
-- [ ] 6.2 CHANGELOG 0.5.0 entry marking the breaking change; bump version
-- [ ] 6.3 Update `RELEASE-CHECKLIST.md` (no web wall, no ui prepack) and `lefthook.yml` if it references the UI
+- [x] 6.1 README: `I` row says hooks + context meter; install command becomes `npx claude-garage`; mention worktree finish under keys
+- [x] 6.2 CHANGELOG 0.5.0 entry marking the breaking change; bump version
+- [x] 6.3 Update `RELEASE-CHECKLIST.md` (no web wall, no ui prepack) and `lefthook.yml` if it references the UI
 
 ## 7. Phase B verification
 
-- [ ] 7.1 `npm test`, `cargo test --lib --bins`, `cargo clippy` green; `npm pack --dry-run` lists no `ui/` files
-- [ ] 7.2 Fresh install from the packed tarball into a scratch dir: `npx claude-garage` opens the TUI, `GET /` serves no HTML, `/api/health` is 200
-- [ ] 7.3 Record results in `verification.md`
+- [x] 7.1 `npm test`, `cargo test --lib --bins`, `cargo clippy` green; `npm pack --dry-run` lists no `ui/` files
+- [x] 7.2 Fresh install from the packed tarball into a scratch dir: `npx claude-garage` opens the TUI, `GET /` serves no HTML, `/api/health` is 200
+- [x] 7.3 Record results in `verification.md`

@@ -1,7 +1,7 @@
 // p8.1 — DELETE /api/sessions/<id>?meta=1: drop ONLY the stored resume
 // metadata of a non-live (restorable) session. The plain DELETE (no param)
 // must keep its pre-p8.1 behavior exactly (404 for a session with no live
-// tmux match, metadata retained) — the web UI depends on that.
+// tmux match, metadata retained) — the TUI depends on that.
 //
 // GARAGE_DIR points the registry at a scratch dir BEFORE the module loads,
 // so this test never reads or writes the real ~/.garage/state.json.

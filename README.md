@@ -38,7 +38,7 @@ You need:
 Then run:
 
 ```bash
-npx claude-garage tui
+npx claude-garage
 ```
 
 On an Intel Mac, the first run builds the app from source, so you also
@@ -100,6 +100,9 @@ Press `q` to quit. Your sessions keep running in the background.
 | `w` | add a project |
 | `X X` | remove the project (sessions keep running) |
 | `X K` | remove the project and close its sessions |
+
+Closing a worktree session (`x x`) asks whether to merge, discard or keep
+its branch.
 
 **Restart and extras**
 
