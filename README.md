@@ -14,6 +14,18 @@
 
 https://github.com/user-attachments/assets/5c545e4b-508e-4754-9b7a-df73c589e323
 
+## Why
+
+Running several Claude Code sessions means juggling terminal windows.
+The hard part isn't the windows. It's knowing **which session is
+waiting for you** right now, and not losing sessions when you close a
+terminal or reboot.
+
+[herdr](https://github.com/ogulcancelik/herdr) solves a lot of this and
+is a good product. I found it too complex and verbose for what I
+needed. So I built something simpler: one wall, one key to jump to
+whoever is waiting, and tmux keeping every session alive.
+
 ## What it does
 
 - **Shows every session at once.** One full-screen grid per project.
