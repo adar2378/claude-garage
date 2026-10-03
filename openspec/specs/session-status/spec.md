@@ -53,11 +53,11 @@ The daemon SHALL determine session status from one or more status sources — a 
 - **THEN** in both cases `GET /api/sessions` reports `needs-input` for that session and `/api/events` emits an equivalent status-change event — no client-visible difference between the two mechanisms
 
 ### Requirement: macOS notification on needs-input while UI hidden
-When a session transitions to `needs-input` while no pit-wall UI is visible (no connected client with an active/foreground page), the daemon SHALL trigger a macOS notification identifying the session. The daemon SHALL trigger at most one notification per needs-input transition — it SHALL NOT repeat the notification for as long as the session remains in `needs-input` without a further transition away and back.
+When a session transitions to `needs-input` while no garage client is visible (no TUI has sent a visibility heartbeat within its TTL), the daemon SHALL trigger a macOS notification identifying the session. The notification SHALL NOT open a URL when clicked. The daemon SHALL trigger at most one notification per needs-input transition — it SHALL NOT repeat the notification for as long as the session remains in `needs-input` without a further transition away and back.
 
-#### Scenario: Notification fires when pit wall is not open
-- **WHEN** no browser client is connected to the pit wall and a session transitions from `working` to `needs-input`
-- **THEN** a macOS notification is triggered identifying that session
+#### Scenario: Notification fires when no TUI is visible
+- **WHEN** no TUI is running and a session transitions from `working` to `needs-input`
+- **THEN** a macOS notification is triggered identifying that session, with no click-to-open URL
 
 #### Scenario: Notification does not repeat while status is unchanged
 - **WHEN** a session has already triggered a needs-input notification and remains in `needs-input` with no further status transition

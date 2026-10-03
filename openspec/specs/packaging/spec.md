@@ -4,13 +4,6 @@
 
 The `npx claude-garage` entrypoint: one process serving UI + API on loopback, actionable prerequisite errors, and shutdown that never touches tmux sessions.
 ## Requirements
-### Requirement: Single-process entrypoint serving UI and API
-Running `npx claude-garage` (via the package's `bin` entrypoint) SHALL start a single process that serves both the daemon API and the pre-built UI, listening on `127.0.0.1:4747`. The UI SHALL be reachable at `http://127.0.0.1:4747`, the API SHALL be reachable under `/api`, and terminal WebSocket connections SHALL be reachable under `/term`.
-
-#### Scenario: Single command serves both UI and API
-- **WHEN** a user runs `npx claude-garage`
-- **THEN** a single process starts, `GET http://127.0.0.1:4747/` returns the built UI's HTML, `GET http://127.0.0.1:4747/api/health` returns 200, and a WebSocket connection to `ws://127.0.0.1:4747/term/<id>` is accepted for a live session
-
 ### Requirement: Prerequisite checks before starting
 Before starting the daemon, the entrypoint SHALL verify that both `tmux` and `claude` (Claude Code CLI) are available on `PATH`. If either is missing, the entrypoint SHALL print an actionable error message naming the specific missing tool and SHALL exit with code 1 without starting the daemon.
 
@@ -44,19 +37,8 @@ If the configured port (default 4747) is already in use, the entrypoint SHALL ex
 - **WHEN** `GARAGE_PORT=5050` is set in the environment and `npx claude-garage` is run while 4747 is occupied
 - **THEN** the daemon starts successfully listening on `127.0.0.1:5050`
 
-### Requirement: Daemon origin accepted by the Origin allowlist
-When the daemon serves the UI from its own origin (`http://127.0.0.1:4747`, or the port selected via `GARAGE_PORT`), that origin SHALL be included in the Origin allowlist used for foreign-origin rejection, so that browser requests made from the served UI are not rejected as foreign.
-
-#### Scenario: UI served from the daemon's own origin is not rejected
-- **WHEN** the UI is loaded from `http://127.0.0.1:4747` and it issues `POST /api/sessions` with `Origin: http://127.0.0.1:4747`
-- **THEN** the request is processed normally and is not rejected with 403
-
-#### Scenario: Allowlist follows a custom port
-- **WHEN** `GARAGE_PORT=5050` is set and the UI is served at `http://127.0.0.1:5050`
-- **THEN** requests with `Origin: http://127.0.0.1:5050` are accepted, consistent with the daemon's own serving origin
-
 ### Requirement: TUI subcommand
-`npx claude-garage tui` SHALL launch the TUI client. It SHALL start the daemon first if `GET /api/health` is not reachable (same prerequisite checks and port as the web entrypoint), then run the TUI attached to it. Exiting the TUI SHALL leave the daemon and all tmux sessions running. The bare `npx claude-garage` behavior SHALL be unchanged.
+`npx claude-garage tui` SHALL launch the TUI client. It SHALL start the daemon first if `GET /api/health` is not reachable (same prerequisite checks and port as before), then run the TUI attached to it. Exiting the TUI SHALL leave the daemon and all tmux sessions running. `tui` SHALL remain accepted as an alias of the bare command.
 
 #### Scenario: TUI starts daemon when absent
 - **WHEN** `npx claude-garage tui` is run with no daemon listening on 4747
@@ -76,4 +58,15 @@ The package SHALL provide the compiled TUI binary for the host platform (macOS a
 #### Scenario: Self-build via cargo
 - **WHEN** no prebuilt binary exists but `cargo` is on PATH
 - **THEN** the launcher builds the `wall/` workspace once (announcing it), uses the result, and subsequent launches reuse it
+
+### Requirement: Bare entrypoint runs the TUI
+Running `npx claude-garage` with no subcommand SHALL behave exactly like `npx claude-garage tui`. The daemon SHALL NOT serve any UI files and SHALL NOT accept WebSocket connections under `/term`.
+
+#### Scenario: Bare command opens the TUI
+- **WHEN** a user runs `npx claude-garage` with no daemon running
+- **THEN** the daemon starts detached and the TUI opens full-screen; no browser is opened
+
+#### Scenario: No UI is served
+- **WHEN** the daemon is running and `GET http://127.0.0.1:4747/` is requested
+- **THEN** no HTML page is returned, while `GET /api/health` returns 200
 

@@ -3,9 +3,7 @@
 ## Purpose
 
 One-keystroke jump to VS Code: workspace root or file-at-line, strictly confined to registered workspace directories.
-
 ## Requirements
-
 ### Requirement: Open a workspace root in the editor
 The daemon SHALL expose `POST /api/open-editor` accepting `{workspace}`, which resolves `workspace` via the workspace registry and opens that workspace's root directory in the configured editor CLI (e.g. `code <dir>`).
 
@@ -52,21 +50,3 @@ When the configured editor CLI is not available on the host (e.g. `code` is not 
 - **WHEN** `POST /api/open-editor` arrives with `Origin: http://evil.example`
 - **THEN** the daemon responds 403 and does not spawn the editor CLI
 
-### Requirement: UI affordances to open the editor
-The UI SHALL provide a per-workspace control that opens that workspace's root in the editor, and an `o` keybinding that opens the currently selected file (in the changes pane or in review mode) at its currently viewed line.
-
-#### Scenario: Per-workspace open-root control
-- **WHEN** the user activates the open-root control for workspace `kowboy`
-- **THEN** the UI calls `POST /api/open-editor` with `{workspace:"kowboy"}`
-
-#### Scenario: o opens the current file in the changes pane
-- **WHEN** the changes pane has a file selected and the user presses `o`
-- **THEN** the UI calls `POST /api/open-editor` with `{workspace, file, line}` for the selected file
-
-#### Scenario: o opens the current file in review mode
-- **WHEN** review mode has a file selected and the user presses `o`
-- **THEN** the UI calls `POST /api/open-editor` with `{workspace, file, line}` for the selected file
-
-#### Scenario: o obeys terminal-focus suppression
-- **WHEN** a terminal has input focus and the user types `o` as part of program input
-- **THEN** `o` is sent to the pty and no open-editor call is made
