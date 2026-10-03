@@ -10,7 +10,10 @@ use std::time::Duration;
 
 use serde_json::{json, Value};
 
-use super::models::{RestartResponse, SessionInfo, SpawnedSession, UsageInfo, WorkspaceInfo};
+use super::models::{
+    FinishAction, HooksInstallResult, RestartResponse, SessionInfo, SpawnedSession, UsageInfo,
+    WorkspaceInfo, WorktreeRecord,
+};
 
 /// Pure port-selection logic behind [`garage_daemon_port`], split out so it
 /// unit-tests without touching the process environment.
@@ -76,6 +79,9 @@ fn encode_component(s: &str) -> String {
     out
 }
 
+/// Whole-request timeout for [`GarageClient::finish_worktree`].
+const FINISH_WORKTREE_TIMEOUT: Duration = Duration::from_secs(120);
+
 /// Whole-request timeout for [`GarageClient::pick_directory`]: the daemon's
 /// 120 s osascript timeout (daemon/src/picker.js) plus headroom, so the
 /// daemon's own timeout reply always wins the race.
@@ -128,8 +134,42 @@ impl GarageClient {
         Ok(())
     }
 
+    /// `POST /api/hooks/install` (spec tui-hooks-install) — merges garage's
+    /// Claude Code hooks into `~/.claude/settings.json` (idempotent; backup
+    /// and atomic write daemon-side). A corrupt settings file comes back as
+    /// a 422 whose `error` lands in [`ApiError::Status`].
+    pub fn install_hooks(&self) -> Result<HooksInstallResult, ApiError> {
+        let body = self.post_json("/api/hooks/install", &json!({}))?;
+        Ok(body.as_ref().map(HooksInstallResult::from_json).unwrap_or_default())
+    }
+
+    /// `POST /api/worktrees/finish {worktree, action}` (spec
+    /// tui-worktree-finish) — merge or discard the worktree a closed session
+    /// left behind. A refusal (dirty worktree, merge conflict — 409) comes
+    /// back as [`ApiError::Status`] carrying the daemon's `error`, which is
+    /// already git's trimmed stderr for a conflict.
+    pub fn finish_worktree(
+        &self,
+        record: &WorktreeRecord,
+        action: FinishAction,
+    ) -> Result<(), ApiError> {
+        // A merge on a large repo can outlast the agent's 15 s read timeout;
+        // timing out would report failure for a merge that actually landed.
+        read_json(
+            self.agent
+                .post(&format!("{}/api/worktrees/finish", self.base_url))
+                .timeout(FINISH_WORKTREE_TIMEOUT)
+                .set("Content-Type", "application/json")
+                .send_string(
+                    &json!({ "worktree": record.to_json(), "action": action.as_str() })
+                        .to_string(),
+                ),
+        )?;
+        Ok(())
+    }
+
     /// `POST /api/sessions`. With `worktree` the daemon spawns into an
-    /// isolated git worktree (same contract as the web UI).
+    /// isolated git worktree.
     pub fn spawn_session(
         &self,
         workspace: &str,
@@ -147,8 +187,8 @@ impl GarageClient {
     }
 
     /// Visibility heartbeat (`POST /api/ui/visibility`) so daemon-side macOS
-    /// notifications stay suppressed while the TUI is visible — same contract
-    /// as the web UI (spec tui-triage "Off-screen escalation").
+    /// notifications stay suppressed while the TUI is visible (spec
+    /// tui-triage "Off-screen escalation").
     pub fn post_visibility(&self, client_id: &str, visible: bool) -> Result<(), ApiError> {
         self.post_json(
             "/api/ui/visibility",
@@ -158,9 +198,9 @@ impl GarageClient {
     }
 
     /// `POST /api/sessions/restore {id}` — restore one restorable session
-    /// (same per-id contract the web UI uses; restore-all is the caller
-    /// issuing parallel per-id calls). Returns the failure reason for this id
-    /// when the daemon reports one, `None` on success.
+    /// (restore-all is the caller issuing parallel per-id calls). Returns the
+    /// failure reason for this id when the daemon reports one, `None` on
+    /// success.
     pub fn restore_session(&self, id: &str) -> Result<Option<String>, ApiError> {
         let body = self.post_json("/api/sessions/restore", &json!({ "id": id }))?;
         let failed = body.as_ref().and_then(|b| b.get("failed")).and_then(Value::as_array);
@@ -207,8 +247,13 @@ impl GarageClient {
     /// metadata). With `meta_only` (`?meta=1`) only the stored resume metadata
     /// of a NON-live (restorable) session is dropped — the daemon returns 404
     /// for a plain DELETE of a session with no live tmux match. Returns the
-    /// worktree record from the response (`{path, branch, repoDir}`) or `None`.
-    pub fn delete_session(&self, id: &str, meta_only: bool) -> Result<Option<Value>, ApiError> {
+    /// worktree record from the response (`{path, branch, repoDir, target}`)
+    /// or `None` for a plain session.
+    pub fn delete_session(
+        &self,
+        id: &str,
+        meta_only: bool,
+    ) -> Result<Option<WorktreeRecord>, ApiError> {
         let path = format!(
             "/api/sessions/{}{}",
             encode_component(id),
@@ -218,12 +263,10 @@ impl GarageClient {
         Ok(body
             .as_ref()
             .and_then(|b| b.get("worktree"))
-            .filter(|w| w.is_object())
-            .cloned())
+            .and_then(WorktreeRecord::from_json))
     }
 
-    /// `PUT /api/workspaces {name, dir}` — register a workspace (same
-    /// contract as the web UI's putWorkspace).
+    /// `PUT /api/workspaces {name, dir}` — register a workspace.
     pub fn put_workspace(&self, name: &str, dir: &str) -> Result<(), ApiError> {
         read_json(
             self.agent

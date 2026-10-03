@@ -1,8 +1,8 @@
 //! Status vocabulary for the wall (port of `tui/lib/ui/theme.dart`) —
 //! glyphs, colors, elapsed formatting.
 //!
-//! The visual contract is the p7 UX mockup's salience ladder (mirrored from
-//! `ui/src/lib/status.js` semantics): amber is EXCLUSIVELY needs-input — the
+//! The visual contract is the p7 UX mockup's salience ladder: amber is
+//! EXCLUSIVELY needs-input — the
 //! only loud state — `done` is green and fades 2 minutes after the
 //! transition, `working`/`idle` are deliberately colourless neutrals.
 //!
@@ -73,8 +73,7 @@ pub fn status_color(status: &str, since_ms: Option<i64>, now_ms: i64) -> Color {
     }
 }
 
-/// Elapsed-time formatting, ported from `ui/src/lib/elapsed.js`
-/// formatElapsed(): `None` → "—", under an hour → "M:SS", under a day →
+/// Elapsed-time formatting: `None` → "—", under an hour → "M:SS", under a day →
 /// "Hh MMm", else "Nd". Clamps negative deltas to 0 (clock skew reads as
 /// "just now").
 pub fn format_elapsed(since_ms: Option<i64>, now_ms: i64) -> String {

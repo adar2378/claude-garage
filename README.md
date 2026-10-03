@@ -108,7 +108,7 @@ Press `q` to quit. Your sessions keep running in the background.
 | `r r` | restart the focused session on the latest `claude` |
 | `r a` | restart all idle sessions in this project |
 | `r d` | restart garage's background service |
-| `I` | install the context meter (shows how full each session's context is) |
+| `I` | install hooks (instant status) and the context meter |
 | `P` | pick a pit pet |
 | `?` | show all keys |
 | `q` | quit |

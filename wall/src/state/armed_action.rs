@@ -39,6 +39,16 @@ impl ArmedAction {
         self.armed_id.as_deref()
     }
 
+    /// The target id armed AND still inside the window at `now_ms` — for
+    /// surfaces that render the arm themselves (the worktree-finish
+    /// overlay's discard prompt) rather than through a TTL'd strip notice,
+    /// so an expired arm never keeps saying "press again".
+    pub fn armed_live(&self, now_ms: i64) -> Option<&str> {
+        self.armed_id
+            .as_deref()
+            .filter(|_| now_ms - self.armed_at_ms <= self.timeout.as_millis() as i64)
+    }
+
     /// A press aimed at `id` at `now_ms`. Returns true when this press
     /// CONFIRMS the action (same id, within the window) — the caller then
     /// performs the effect. False means the press (re-)armed: show the
@@ -111,6 +121,16 @@ mod armed_action_tests {
         armed.press("ws", 1000);
         assert!(!armed.press("ws", 4001), "window expired");
         assert!(armed.press("ws", 4500));
+    }
+
+    #[test]
+    fn armed_live_hides_an_expired_arm() {
+        let mut armed = ArmedAction::new(Duration::from_secs(3));
+        assert_eq!(armed.armed_live(1000), None);
+        armed.press("discard", 1000);
+        assert_eq!(armed.armed_live(4000), Some("discard"));
+        assert_eq!(armed.armed_live(4001), None, "window expired");
+        assert_eq!(armed.armed_id(), Some("discard"), "raw getter unchanged");
     }
 
     #[test]

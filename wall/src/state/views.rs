@@ -1,5 +1,5 @@
-//! Named views within a workspace (spec tui-views; semantic port of
-//! `ui/src/lib/views.js`'s `computeViews`/`viewOf`/`deriveViewName`).
+//! Named views within a workspace (spec tui-views: `computeViews`/`viewOf`/
+//! `deriveViewName` semantics).
 //!
 //! **Model** (design.md "State model"): every session implicitly belongs to
 //! [`DEFAULT_VIEW`] unless a [`View`] elsewhere in the workspace's list

@@ -101,6 +101,17 @@ export async function createWorktree({ repoDir, workspace, label }) {
   return { path: dirPath, branch };
 }
 
+// The branch checked out in repoDir (what a merge would land on), or null if
+// it can't be read (not a repo, unborn HEAD, ...). Informational only.
+export async function currentBranch(repoDir) {
+  try {
+    const { stdout } = await run("git", ["-C", repoDir, "rev-parse", "--abbrev-ref", "HEAD"]);
+    return stdout.trim() || null;
+  } catch {
+    return null;
+  }
+}
+
 // D-wt-finish: runs after the session is dead — repoDir/path/branch come
 // from the worktree record the caller already holds (DELETE's response
 // body), never re-derived. `merge` and `discard` are guarded to garage/*
@@ -135,9 +146,12 @@ export async function finishWorktree({ repoDir, path: wtPath, branch, action }) 
     try {
       await git(repoDir, ["merge", "--no-ff", branch]);
     } catch (err) {
-      // D-wt-finish: non-zero exit -> 409, worktree and branch kept, the
-      // user resolves manually (no conflict UI in v1).
-      const conflictErr = new Error(err.message);
+      // D-wt-finish: non-zero exit -> 409, worktree and branch kept. Abort
+      // first so repoDir isn't left mid-merge (no conflict UI to finish it).
+      await git(repoDir, ["merge", "--abort"]).catch(() => {});
+      const conflictErr = new Error(
+        "merge conflict — merge aborted, nothing changed; resolve it in the session (merge the target into the branch), then try again"
+      );
       conflictErr.statusCode = 409;
       conflictErr.stderr = err.stderr;
       throw conflictErr;

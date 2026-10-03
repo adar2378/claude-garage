@@ -5,7 +5,8 @@
 //! (`registry`), the capture-pane frozen scrollback (`scroll`), the
 //! off-screen escalation policy (`escalation`), the `t` standalone-window
 //! opener (`window_open`, p12-standalone-window), and the opt-in pit pet
-//! (`pet`, p15-pit-pet — sprites/mood/motion/chatter; pure, no ratatui).
+//! (`pet`, p15-pit-pet — sprites/mood/motion/chatter; pure, no ratatui),
+//! and the p17 worktree merge/discard/keep modal (`worktree_finish`).
 
 pub mod escalation;
 pub mod grid_layout;
@@ -24,3 +25,4 @@ pub mod view_picker;
 pub mod view_strip;
 pub mod window_open;
 pub mod workspace_add;
+pub mod worktree_finish;

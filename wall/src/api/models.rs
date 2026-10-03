@@ -301,10 +301,111 @@ fn parse_entries<T>(
     }
 }
 
+/// `POST /api/hooks/install` response body (`{ok, installed,
+/// alreadyInstalled, backup}`). Only `alreadyInstalled` changes the strip
+/// wording — an idempotent re-run is reported as such, never as an error.
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
+pub struct HooksInstallResult {
+    pub already_installed: bool,
+}
+
+impl HooksInstallResult {
+    pub fn from_json(json: &Value) -> HooksInstallResult {
+        HooksInstallResult {
+            already_installed: json.get("alreadyInstalled").and_then(Value::as_bool) == Some(true),
+        }
+    }
+}
+
+/// The worktree record a `DELETE /api/sessions/*` response carries for a
+/// session spawned into a git worktree (`daemon/src/sessions.js`, live and
+/// `?meta=1`). The session and its metadata are gone after the DELETE, so
+/// this record is the only handle `POST /api/worktrees/finish` gets.
+/// `target` is the branch checked out in `repoDir` (the merge target) —
+/// informational only, `None` when the daemon omits it or reports `null`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WorktreeRecord {
+    pub path: String,
+    pub branch: String,
+    pub repo_dir: String,
+    pub target: Option<String>,
+}
+
+impl WorktreeRecord {
+    pub fn from_json(json: &Value) -> Option<WorktreeRecord> {
+        Some(WorktreeRecord {
+            path: as_string(json.get("path"))?,
+            branch: as_string(json.get("branch"))?,
+            repo_dir: as_string(json.get("repoDir"))?,
+            target: as_string(json.get("target")).filter(|t| !t.is_empty()),
+        })
+    }
+
+    /// The finish endpoint's `worktree` body — exactly the three fields it
+    /// reads (`target` is display-only and never sent back).
+    pub fn to_json(&self) -> Value {
+        serde_json::json!({
+            "path": self.path,
+            "branch": self.branch,
+            "repoDir": self.repo_dir,
+        })
+    }
+}
+
+/// The two `POST /api/worktrees/finish` actions the TUI sends. `keep` is
+/// never sent: keeping is just closing the overlay (the daemon's `keep` is a
+/// no-op anyway).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FinishAction {
+    Merge,
+    Discard,
+}
+
+impl FinishAction {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            FinishAction::Merge => "merge",
+            FinishAction::Discard => "discard",
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
+
+    // ── p17: hooks install + worktree record ─────────────────────────────
+
+    #[test]
+    fn hooks_install_result_reads_already_installed() {
+        let fresh = json!({"ok": true, "installed": true, "alreadyInstalled": false});
+        assert!(!HooksInstallResult::from_json(&fresh).already_installed);
+        let again = json!({"ok": true, "installed": true, "alreadyInstalled": true});
+        assert!(HooksInstallResult::from_json(&again).already_installed);
+        assert!(!HooksInstallResult::from_json(&json!({})).already_installed);
+    }
+
+    #[test]
+    fn worktree_record_parses_target_as_optional() {
+        let v = json!({"path": "/w/x", "branch": "garage/x", "repoDir": "/r", "target": "main"});
+        let r = WorktreeRecord::from_json(&v).unwrap();
+        assert_eq!(r.target.as_deref(), Some("main"));
+        let null = json!({"path": "/w/x", "branch": "garage/x", "repoDir": "/r", "target": null});
+        assert_eq!(WorktreeRecord::from_json(&null).unwrap().target, None);
+        let missing = json!({"path": "/w/x", "branch": "garage/x", "repoDir": "/r"});
+        assert_eq!(WorktreeRecord::from_json(&missing).unwrap().target, None);
+        assert_eq!(WorktreeRecord::from_json(&json!({"path": "/w/x"})), None);
+    }
+
+    #[test]
+    fn worktree_record_body_omits_target() {
+        let v = json!({"path": "/w/x", "branch": "garage/x", "repoDir": "/r", "target": "main"});
+        assert_eq!(
+            WorktreeRecord::from_json(&v).unwrap().to_json(),
+            json!({"path": "/w/x", "branch": "garage/x", "repoDir": "/r"})
+        );
+    }
 
     #[test]
     fn session_info_parses_daemon_shape_with_defaults() {

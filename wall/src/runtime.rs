@@ -41,7 +41,10 @@ use serde_json::Value;
 use tokio::sync::mpsc;
 
 use crate::api::client::{ApiError, GarageClient};
-use crate::api::models::{RestartResponse, SessionInfo, UsageInfo, WorkspaceInfo};
+use crate::api::models::{
+    FinishAction, HooksInstallResult, RestartResponse, SessionInfo, UsageInfo, WorkspaceInfo,
+    WorktreeRecord,
+};
 use crate::api::sse::SseClient;
 use crate::input::encode::encode_key;
 use crate::input::links::url_at;
@@ -73,6 +76,9 @@ use crate::ui::triage::{render_triage, triage_queue_rows, wrap_selection};
 use crate::ui::view_picker::{picker_entries, render_view_picker, ViewPickerState};
 use crate::ui::view_strip::render_view_strip;
 use crate::ui::workspace_add::{render_workspace_add, PickOutcome, WorkspaceAddForm};
+use crate::ui::worktree_finish::{
+    finish_notice, render_worktree_finish, FinishChoice, WorktreeFinishState,
+};
 
 const FRAME_CAP: Duration = Duration::from_millis(33); // ~30fps render cap (not spec-mandated)
 
@@ -133,9 +139,24 @@ pub enum AppEvent {
     SpawnSettled,
     /// A restore effect settled for this session id.
     RestoreSettled(String),
-    /// The statusline-install effect settled (success or failure) — clears
-    /// the busy guard (spec tui-context-meters "Install affordance").
-    InstallStatuslineSettled,
+    /// The `I` install effect settled: both results (statusline first, then
+    /// hooks — spec tui-hooks-install) in one event, so one notice and one
+    /// busy guard.
+    InstallSettled {
+        statusline: Result<(), ApiError>,
+        hooks: Result<HooksInstallResult, ApiError>,
+    },
+    /// A closed session left a worktree behind (the DELETE response's
+    /// record) — opens the finish overlay (spec tui-worktree-finish).
+    WorktreeClosed(WorktreeRecord),
+    /// The finish overlay's merge/discard call settled: `error: None` moves
+    /// on (closing the overlay when nothing else waits) with a strip notice;
+    /// `Some` keeps the record on screen with the daemon's message inline.
+    WorktreeFinishSettled {
+        record: WorktreeRecord,
+        action: FinishAction,
+        error: Option<String>,
+    },
     /// The add-workspace PUT settled: `error: None` closes the overlay and
     /// focuses the new workspace; `Some` keeps it open with the inline error.
     WorkspaceAddSettled {
@@ -335,9 +356,17 @@ pub enum Effect {
     PickDirectory,
     /// `q`: orderly quit.
     Quit,
-    /// `I`: `POST /api/statusline/install` (spec tui-context-meters
-    /// "Install affordance").
-    InstallStatusline,
+    /// `I`: `POST /api/statusline/install` then `POST /api/hooks/install`
+    /// on one blocking task (spec tui-context-meters "Install affordance",
+    /// spec tui-hooks-install).
+    Install,
+    /// The finish overlay's `m` / confirmed `d d`: `POST
+    /// /api/worktrees/finish` with the held record (spec
+    /// tui-worktree-finish). Keep never becomes an effect.
+    FinishWorktree {
+        record: WorktreeRecord,
+        action: FinishAction,
+    },
     /// `t`: launch a detached OS terminal window attached to the focused
     /// LIVE session (macOS only — the router declines before this is ever
     /// built off macOS; see [`crate::ui::window_open`]).
@@ -362,8 +391,8 @@ pub enum Effect {
 
 // ── Garage-layer router ──────────────────────────────────────────────────
 
-/// First free `claude-N` label in the workspace (the web UI's default label
-/// family — port of the Dart `_nextLabel`).
+/// First free `claude-N` label in the workspace (the default label family —
+/// port of the Dart `_nextLabel`).
 fn next_label(state: &WallState, workspace: &str) -> String {
     let taken: HashSet<u32> = state
         .sessions
@@ -411,8 +440,9 @@ pub struct GarageRouter {
     restoring: HashSet<String>,
     /// A spawn call in flight — guards concurrent spawns.
     spawning: bool,
-    /// A statusline-install call in flight — guards concurrent installs.
-    installing_statusline: bool,
+    /// The `I` install (statusline + hooks) in flight — guards concurrent
+    /// installs.
+    installing: bool,
     /// The `r r` double-press restart arming (p16-restart) — an instance
     /// independent of `armed_close`, keyed by session id.
     armed_restart: ArmedRestart,
@@ -439,8 +469,8 @@ impl GarageRouter {
         self.restoring.remove(id);
     }
 
-    pub fn install_statusline_settled(&mut self) {
-        self.installing_statusline = false;
+    pub fn install_settled(&mut self) {
+        self.installing = false;
     }
 
     /// Handle one garage-layer key (already reduced to its string form by
@@ -544,7 +574,7 @@ impl GarageRouter {
             GarageCommand::RestoreAll => self.restore_all(store, now_ms, &mut effects),
             GarageCommand::Close => self.close_pressed(store, now_ms, &mut effects),
             GarageCommand::WorkspaceRemove => self.remove_pressed(store, now_ms, &mut effects),
-            GarageCommand::InstallStatusline => self.install_statusline_pressed(&mut effects),
+            GarageCommand::InstallStatusline => self.install_pressed(&mut effects),
             GarageCommand::OpenWindow => self.open_window_pressed(store, now_ms, &mut effects),
             _ => {}
         }
@@ -569,15 +599,15 @@ impl GarageRouter {
         });
     }
 
-    /// `I`: fire the statusline-install effect, busy-guarded against a
-    /// second press before the first settles (spec tui-context-meters
-    /// "Install affordance").
-    fn install_statusline_pressed(&mut self, effects: &mut Vec<Effect>) {
-        if self.installing_statusline {
+    /// `I`: fire the install effect (statusline + hooks), busy-guarded
+    /// against a second press before the first settles (spec
+    /// tui-context-meters "Install affordance", spec tui-hooks-install).
+    fn install_pressed(&mut self, effects: &mut Vec<Effect>) {
+        if self.installing {
             return;
         }
-        self.installing_statusline = true;
-        effects.push(Effect::InstallStatusline);
+        self.installing = true;
+        effects.push(Effect::Install);
     }
 
     /// `t`: open the focused session in its own OS terminal window (p12
@@ -646,8 +676,7 @@ impl GarageRouter {
     }
 
     /// `R`: restore ALL restorable sessions in the focused workspace —
-    /// parallel per-id calls (the web UI's restore-all shape), so one
-    /// failure never blocks the rest.
+    /// parallel per-id calls, so one failure never blocks the rest.
     fn restore_all(&mut self, store: &WallStore, now_ms: i64, effects: &mut Vec<Effect>) {
         let Some(workspace) = store.state().focused_workspace.clone() else {
             return;
@@ -1047,6 +1076,9 @@ pub fn handle_overlay_key(
         OverlayKind::ViewPicker => {
             notice = handle_view_picker_key(store, key, plain_char, view_picker);
         }
+        // Routed by `App::handle_key` to [`handle_worktree_finish_key`]: the
+        // armed discard needs the clock, which this router never sees.
+        OverlayKind::WorktreeFinish => {}
     }
     (effects, notice)
 }
@@ -1149,6 +1181,90 @@ fn move_to_view_and_notice(store: &mut WallStore, view_name: &str) -> Option<Str
     }
 }
 
+/// Finish-overlay key routing (spec tui-worktree-finish): `m` merges, `d`
+/// arms and a second `d` within the window discards, `k`/Esc keeps (no
+/// request; the overlay closes once no record waits). Everything else is
+/// consumed — the overlay is modal — and disarms a pending discard. While a
+/// request is in flight every choice is ignored.
+fn handle_worktree_finish_key(
+    store: &mut WallStore,
+    key: &KeyEvent,
+    finish: &mut WorktreeFinishState,
+    now_ms: i64,
+) -> Vec<Effect> {
+    let plain_char = match key.code {
+        KeyCode::Char(c)
+            if !key
+                .modifiers
+                .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
+        {
+            Some(c)
+        }
+        _ => None,
+    };
+    let choice = match (key.code, plain_char) {
+        (KeyCode::Esc, _) | (_, Some('k')) => finish.keep(),
+        (_, Some('m')) => finish.merge(),
+        (_, Some('d')) => finish.discard(now_ms),
+        _ => {
+            finish.other_key();
+            FinishChoice::Nothing
+        }
+    };
+    match choice {
+        FinishChoice::Run(record, action) => vec![Effect::FinishWorktree { record, action }],
+        FinishChoice::Kept { close: true } => {
+            store.close_overlay();
+            Vec::new()
+        }
+        FinishChoice::Kept { close: false } | FinishChoice::Nothing => Vec::new(),
+    }
+}
+
+/// Queue a closed session's worktree record and bring the finish overlay up
+/// (spec tui-worktree-finish). The DELETE settles asynchronously, so the
+/// wall may have moved on: an engaged tile is disengaged and any other
+/// overlay is closed — the record is the only handle on the worktree and
+/// must not wait behind them. Returns true when another overlay was
+/// displaced (the caller resets that overlay's state).
+fn show_worktree_finish(
+    store: &mut WallStore,
+    finish: &mut WorktreeFinishState,
+    record: WorktreeRecord,
+) -> bool {
+    finish.push(record);
+    let mut displaced = false;
+    match (store.state().layer, store.state().overlay) {
+        (KeyLayer::Overlay, Some(OverlayKind::WorktreeFinish)) => return false,
+        (KeyLayer::Overlay, _) => {
+            store.close_overlay();
+            displaced = true;
+        }
+        (KeyLayer::Engaged, _) => store.disengage(),
+        (KeyLayer::Garage, _) => {}
+    }
+    store.open_overlay(OverlayKind::WorktreeFinish);
+    displaced
+}
+
+/// Apply a finish call's settle: success returns the strip notice and
+/// closes the overlay once no record waits; a failure keeps the overlay
+/// open with the daemon's message inline (no notice).
+fn worktree_finish_settled(
+    store: &mut WallStore,
+    finish: &mut WorktreeFinishState,
+    record: &WorktreeRecord,
+    action: FinishAction,
+    error: Option<String>,
+) -> Option<String> {
+    let failed = error.is_some();
+    let close = finish.settled(error);
+    if close && store.state().overlay == Some(OverlayKind::WorktreeFinish) {
+        store.close_overlay();
+    }
+    (!failed).then(|| finish_notice(record, action))
+}
+
 // ── Latency instrumentation ──────────────────────────────────────────────
 
 /// `GARAGE_TUI_KEYLOG=<file>` appends `<epoch_us> <layer> <desc>` per
@@ -1193,6 +1309,27 @@ fn failure_notice(prefix: &str, e: &ApiError) -> String {
         ApiError::Status { message, .. } => format!("{prefix}: {message}"),
         ApiError::Transport(_) => prefix.to_owned(),
     }
+}
+
+/// The one strip line for `I` (spec tui-hooks-install): the hooks result,
+/// then the statusline result. Each side is reported on its own — a failure
+/// names which install failed and its error without hiding the other — and
+/// an idempotent hooks re-run reads "already installed", never as an error.
+/// The statusline success keeps its exact wording.
+fn install_notice(
+    statusline: &Result<(), ApiError>,
+    hooks: &Result<HooksInstallResult, ApiError>,
+) -> String {
+    let hooks = match hooks {
+        Ok(result) if result.already_installed => "hooks already installed".to_owned(),
+        Ok(_) => "hooks installed".to_owned(),
+        Err(e) => failure_notice("hooks install failed", e),
+    };
+    let statusline = match statusline {
+        Ok(()) => INSTALL_STATUSLINE_SUCCESS.to_owned(),
+        Err(e) => failure_notice("statusline install failed", e),
+    };
+    format!("{hooks} · {statusline}")
 }
 
 /// p16-restart: the strip line for ONE `r r` restart's response. Every
@@ -1298,19 +1435,11 @@ fn run_effect(effect: Effect, tx: &EventSender, base_url: &str) {
                 meta_only,
             } => {
                 match client.delete_session(&id, meta_only) {
-                    Ok(Some(worktree)) => {
-                        // v1 worktree policy = keep: the strip says where to
-                        // finish it (exact Dart wording — harness greps it).
-                        let branch = worktree
-                            .get("branch")
-                            .and_then(Value::as_str)
-                            .map(str::to_owned)
-                            .unwrap_or_else(|| format!("garage/{label}"));
-                        send_notice(
-                            &tx,
-                            format!("worktree kept: {branch} — merge or discard in the web wall"),
-                            8000,
-                        );
+                    Ok(Some(record)) => {
+                        // Spec tui-worktree-finish: the worktree outlives the
+                        // session — hand its record to the finish overlay.
+                        send_notice(&tx, format!("closed {label}"), 2000);
+                        let _ = tx.send(AppEvent::WorktreeClosed(record));
                     }
                     Ok(None) => send_notice(&tx, format!("closed {label}"), 2000),
                     Err(e) => send_notice(&tx, failure_notice("close failed", &e), 5000),
@@ -1364,14 +1493,25 @@ fn run_effect(effect: Effect, tx: &EventSender, base_url: &str) {
                 };
                 let _ = tx.send(AppEvent::PickDirectorySettled(outcome));
             }
-            Effect::InstallStatusline => {
-                match client.install_statusline() {
-                    Ok(()) => send_notice(&tx, INSTALL_STATUSLINE_SUCCESS.to_owned(), 5000),
-                    Err(e) => {
-                        send_notice(&tx, failure_notice("statusline install failed", &e), 5000)
+            Effect::Install => {
+                // Statusline first, then hooks — both always run, so one
+                // failing never hides the other's result.
+                let statusline = client.install_statusline();
+                let hooks = client.install_hooks();
+                let _ = tx.send(AppEvent::InstallSettled { statusline, hooks });
+            }
+            Effect::FinishWorktree { record, action } => {
+                let error = match client.finish_worktree(&record, action) {
+                    Ok(()) => None,
+                    Err(ApiError::Status { status, message }) if message.trim().is_empty() => {
+                        Some(format!("{} failed ({status})", action.as_str()))
                     }
-                }
-                let _ = tx.send(AppEvent::InstallStatuslineSettled);
+                    Err(ApiError::Status { message, .. }) => Some(message),
+                    Err(ApiError::Transport(_)) => {
+                        Some("could not reach the daemon — try again or keep".to_owned())
+                    }
+                };
+                let _ = tx.send(AppEvent::WorktreeFinishSettled { record, action, error });
             }
             Effect::OpenWindow { id, label } => match crate::ui::window_open::launch(&id) {
                 Ok(()) => send_notice(&tx, format!("opened {label} in a new window"), 3000),
@@ -1626,6 +1766,9 @@ struct App {
     ws_form: WorkspaceAddForm,
     /// The `D` overlay's selection + "new group…" text-input sub-mode.
     view_picker: ViewPickerState,
+    /// The worktree-finish overlay's queued records, busy flag, inline
+    /// error and armed discard (p17).
+    wt_finish: WorktreeFinishState,
     /// Rects of the last drawn frame — the mouse router reads the SAME
     /// geometry the paint used. `None` until the first frame.
     layout: Option<WallLayout>,
@@ -1700,7 +1843,33 @@ impl App {
             }
             AppEvent::SpawnSettled => self.router.spawn_settled(),
             AppEvent::RestoreSettled(id) => self.router.restore_settled(&id),
-            AppEvent::InstallStatuslineSettled => self.router.install_statusline_settled(),
+            AppEvent::InstallSettled { statusline, hooks } => {
+                self.router.install_settled();
+                let failed = statusline.is_err() || hooks.is_err();
+                self.router.notices.show(
+                    install_notice(&statusline, &hooks),
+                    if failed { 8000 } else { 5000 },
+                    now_ms(),
+                );
+            }
+            AppEvent::WorktreeClosed(record) => {
+                if show_worktree_finish(&mut self.store, &mut self.wt_finish, record) {
+                    self.ws_form.reset();
+                    self.view_picker.reset();
+                }
+            }
+            AppEvent::WorktreeFinishSettled { record, action, error } => {
+                let notice = worktree_finish_settled(
+                    &mut self.store,
+                    &mut self.wt_finish,
+                    &record,
+                    action,
+                    error,
+                );
+                if let Some(text) = notice {
+                    self.router.notices.show(text, 5000, now_ms());
+                }
+            }
             AppEvent::WorkspaceAddSettled { name, error } => {
                 let failed = error.is_some();
                 self.ws_form.settled(error);
@@ -1774,6 +1943,16 @@ impl App {
             KeyLayer::Overlay => {
                 self.keylog
                     .log("overlay", &format!("{:?} {:?}", key.code, key.modifiers));
+                if self.store.state().overlay == Some(OverlayKind::WorktreeFinish) {
+                    let effects = handle_worktree_finish_key(
+                        &mut self.store,
+                        key,
+                        &mut self.wt_finish,
+                        now_ms(),
+                    );
+                    self.run_effects(effects);
+                    return false;
+                }
                 let home = std::env::var("HOME").unwrap_or_default();
                 let (effects, notice) = handle_overlay_key(
                     &mut self.store,
@@ -2009,6 +2188,9 @@ impl App {
                     }
                 }
                 OverlayKind::ViewPicker => self.handle_view_picker_click(col, row),
+                // Modal: clicks anywhere are swallowed — an outside click
+                // must not quietly "keep" a worktree the user never saw.
+                OverlayKind::WorktreeFinish => {}
             }
             return;
         }
@@ -2556,6 +2738,9 @@ impl App {
                     self.view_picker.new_group_input.as_deref(),
                 ));
             }
+            Some(OverlayKind::WorktreeFinish) => {
+                render_worktree_finish(buf, area, &self.wt_finish, now_ms);
+            }
             None => {}
         }
         self.layout = Some(layout);
@@ -2642,6 +2827,7 @@ async fn state_loop(
         queue_selection: 0,
         ws_form: WorkspaceAddForm::default(),
         view_picker: ViewPickerState::default(),
+        wt_finish: WorktreeFinishState::default(),
         layout: None,
         badge_cols: None,
         view_strip_targets: Vec::new(),
@@ -3426,20 +3612,14 @@ mod tests {
     fn shift_i_fires_the_install_effect_busy_guarded_until_settled() {
         let mut store = store_with(vec![ws("a")], vec![si("a", "one")]);
         let mut router = GarageRouter::default();
-        assert_eq!(
-            key_at(&mut router, &mut store, "I", 1000),
-            vec![Effect::InstallStatusline]
-        );
+        assert_eq!(key_at(&mut router, &mut store, "I", 1000), vec![Effect::Install]);
         assert_eq!(
             key_at(&mut router, &mut store, "I", 1100),
             vec![],
             "in flight"
         );
-        router.install_statusline_settled();
-        assert_eq!(
-            key_at(&mut router, &mut store, "I", 1200),
-            vec![Effect::InstallStatusline]
-        );
+        router.install_settled();
+        assert_eq!(key_at(&mut router, &mut store, "I", 1200), vec![Effect::Install]);
     }
 
     #[test]
@@ -3458,6 +3638,57 @@ mod tests {
                 &ApiError::Status { status: 500, message: "boom".into() }
             ),
             "statusline install failed: boom"
+        );
+    }
+
+    // ── p17: `I` installs hooks too (spec tui-hooks-install) ─────────────
+
+    fn hooks(already_installed: bool) -> Result<HooksInstallResult, ApiError> {
+        Ok(HooksInstallResult { already_installed })
+    }
+
+    fn status_err(status: u16, message: &str) -> ApiError {
+        ApiError::Status { status, message: message.to_owned() }
+    }
+
+    #[test]
+    fn install_notice_both_installed() {
+        assert_eq!(
+            install_notice(&Ok(()), &hooks(false)),
+            "hooks installed · statusline feed installed — meters go live as agents work"
+        );
+    }
+
+    #[test]
+    fn install_notice_hooks_already_installed_is_not_an_error() {
+        assert_eq!(
+            install_notice(&Ok(()), &hooks(true)),
+            "hooks already installed · statusline feed installed — meters go live as agents \
+             work"
+        );
+    }
+
+    #[test]
+    fn install_notice_names_the_failed_side_and_still_reports_the_other() {
+        let corrupt = "~/.claude/settings.json is not valid JSON";
+        assert_eq!(
+            install_notice(&Ok(()), &Err(status_err(422, corrupt))),
+            format!(
+                "hooks install failed: {corrupt} · statusline feed installed — meters go live \
+                 as agents work"
+            )
+        );
+        assert_eq!(
+            install_notice(&Err(status_err(500, "boom")), &hooks(false)),
+            "hooks installed · statusline install failed: boom"
+        );
+        assert_eq!(
+            install_notice(&Err(ApiError::Transport("x".into())), &hooks(true)),
+            "hooks already installed · statusline install failed"
+        );
+        assert_eq!(
+            install_notice(&Err(status_err(500, "a")), &Err(status_err(422, "b"))),
+            "hooks install failed: b · statusline install failed: a"
         );
     }
 
@@ -3983,6 +4214,7 @@ mod tests {
             OverlayKind::Help,
             OverlayKind::TriageQueue,
             OverlayKind::ViewPicker,
+            OverlayKind::WorktreeFinish,
         ] {
             assert_eq!(
                 paste_target(KeyLayer::Overlay, Some(overlay)),
@@ -4154,5 +4386,164 @@ mod tests {
         handle_view_picker_key(&mut store, &plain(KeyCode::Esc), None, &mut view_picker);
         assert_eq!(store.state().overlay, None);
         assert!(view_picker.new_group_input.is_none());
+    }
+
+    // ── p17: worktree finish overlay (spec tui-worktree-finish) ─────────
+
+    fn wt_record(branch: &str) -> WorktreeRecord {
+        WorktreeRecord {
+            path: format!("/w/{branch}"),
+            branch: branch.to_owned(),
+            repo_dir: "/r".to_owned(),
+            target: Some("main".to_owned()),
+        }
+    }
+
+    fn finish_open(store: &mut WallStore, branch: &str) -> WorktreeFinishState {
+        let mut finish = WorktreeFinishState::default();
+        assert!(!show_worktree_finish(store, &mut finish, wt_record(branch)));
+        assert_eq!(store.state().overlay, Some(OverlayKind::WorktreeFinish));
+        finish
+    }
+
+    fn finish_key(
+        store: &mut WallStore,
+        finish: &mut WorktreeFinishState,
+        c: char,
+        now_ms: i64,
+    ) -> Vec<Effect> {
+        handle_worktree_finish_key(store, &plain(KeyCode::Char(c)), finish, now_ms)
+    }
+
+    #[test]
+    fn worktree_close_opens_the_finish_overlay_even_from_engaged_or_another_overlay() {
+        let mut store = store_with(vec![ws("a")], vec![si("a", "one")]);
+        assert!(store.engage());
+        let mut finish = WorktreeFinishState::default();
+        assert!(!show_worktree_finish(&mut store, &mut finish, wt_record("garage/x")));
+        assert_eq!(store.state().layer, KeyLayer::Overlay);
+        assert_eq!(store.state().overlay, Some(OverlayKind::WorktreeFinish));
+
+        let mut store = store_with(vec![ws("a")], vec![si("a", "one")]);
+        store.open_overlay(OverlayKind::WorkspaceAdd);
+        let mut finish = WorktreeFinishState::default();
+        assert!(show_worktree_finish(&mut store, &mut finish, wt_record("garage/x")), "displaced");
+        assert_eq!(store.state().overlay, Some(OverlayKind::WorktreeFinish));
+    }
+
+    #[test]
+    fn a_second_worktree_close_queues_behind_the_first() {
+        let mut store = store_with(vec![ws("a")], vec![si("a", "one")]);
+        let mut finish = finish_open(&mut store, "garage/a");
+        assert!(!show_worktree_finish(&mut store, &mut finish, wt_record("garage/b")));
+        assert_eq!(finish.current().unwrap().branch, "garage/a", "first stays on screen");
+        assert_eq!(finish_key(&mut store, &mut finish, 'k', 1000), vec![]);
+        assert_eq!(store.state().overlay, Some(OverlayKind::WorktreeFinish), "b still waits");
+        assert_eq!(finish.current().unwrap().branch, "garage/b");
+        assert_eq!(finish_key(&mut store, &mut finish, 'k', 1100), vec![]);
+        assert_eq!(store.state().overlay, None);
+    }
+
+    #[test]
+    fn m_merges_once_and_ignores_choices_while_busy() {
+        let mut store = store_with(vec![ws("a")], vec![si("a", "one")]);
+        let mut finish = finish_open(&mut store, "garage/x");
+        assert_eq!(
+            finish_key(&mut store, &mut finish, 'm', 1000),
+            vec![Effect::FinishWorktree {
+                record: wt_record("garage/x"),
+                action: FinishAction::Merge,
+            }]
+        );
+        for c in ['m', 'd', 'k'] {
+            assert_eq!(finish_key(&mut store, &mut finish, c, 1100), vec![], "{c} while busy");
+        }
+        assert_eq!(
+            handle_worktree_finish_key(&mut store, &plain(KeyCode::Esc), &mut finish, 1100),
+            vec![]
+        );
+        assert_eq!(store.state().overlay, Some(OverlayKind::WorktreeFinish), "still open");
+    }
+
+    #[test]
+    fn d_arms_and_a_second_d_discards_any_other_key_disarms() {
+        let mut store = store_with(vec![ws("a")], vec![si("a", "one")]);
+        let mut finish = finish_open(&mut store, "garage/x");
+        assert_eq!(finish_key(&mut store, &mut finish, 'd', 1000), vec![], "first d arms");
+        assert!(finish.discard_armed(1001));
+        // An unbound key is consumed (modal) and disarms.
+        assert_eq!(finish_key(&mut store, &mut finish, 'z', 1100), vec![]);
+        assert!(!finish.discard_armed(1101));
+        assert_eq!(finish_key(&mut store, &mut finish, 'd', 1200), vec![], "re-arms");
+        assert_eq!(
+            finish_key(&mut store, &mut finish, 'd', 1300),
+            vec![Effect::FinishWorktree {
+                record: wt_record("garage/x"),
+                action: FinishAction::Discard,
+            }]
+        );
+    }
+
+    #[test]
+    fn keep_and_esc_close_without_any_request() {
+        for key in [plain(KeyCode::Char('k')), plain(KeyCode::Esc)] {
+            let mut store = store_with(vec![ws("a")], vec![si("a", "one")]);
+            let mut finish = finish_open(&mut store, "garage/x");
+            assert_eq!(
+                handle_worktree_finish_key(&mut store, &key, &mut finish, 1000),
+                vec![],
+                "keep never sends a finish request"
+            );
+            assert_eq!(store.state().overlay, None);
+            assert_eq!(finish.current(), None);
+        }
+    }
+
+    #[test]
+    fn the_overlay_is_modal_wall_keys_do_nothing() {
+        let mut store = store_with(vec![ws("a")], vec![si("a", "one")]);
+        let mut finish = finish_open(&mut store, "garage/x");
+        for c in ['q', 'x', 'n', '?'] {
+            assert_eq!(finish_key(&mut store, &mut finish, c, 1000), vec![]);
+        }
+        assert_eq!(store.state().overlay, Some(OverlayKind::WorktreeFinish));
+        assert_eq!(store.state().keys_target_chip(), "keys → finish worktree");
+    }
+
+    #[test]
+    fn a_finish_error_keeps_the_overlay_open_with_the_message() {
+        let mut store = store_with(vec![ws("a")], vec![si("a", "one")]);
+        let mut finish = finish_open(&mut store, "garage/x");
+        finish_key(&mut store, &mut finish, 'm', 1000);
+        let notice = worktree_finish_settled(
+            &mut store,
+            &mut finish,
+            &wt_record("garage/x"),
+            FinishAction::Merge,
+            Some("worktree has uncommitted changes".to_owned()),
+        );
+        assert_eq!(notice, None);
+        assert_eq!(store.state().overlay, Some(OverlayKind::WorktreeFinish));
+        assert_eq!(finish.error.as_deref(), Some("worktree has uncommitted changes"));
+        assert_eq!(finish.busy, None);
+        // Choices are live again: keep closes, no request.
+        assert_eq!(finish_key(&mut store, &mut finish, 'k', 2000), vec![]);
+        assert_eq!(store.state().overlay, None);
+    }
+
+    #[test]
+    fn a_finish_success_closes_with_a_strip_notice() {
+        let mut store = store_with(vec![ws("a")], vec![si("a", "one")]);
+        let mut finish = finish_open(&mut store, "garage/x");
+        finish_key(&mut store, &mut finish, 'm', 1000);
+        let notice = worktree_finish_settled(
+            &mut store,
+            &mut finish,
+            &wt_record("garage/x"),
+            FinishAction::Merge,
+            None,
+        );
+        assert_eq!(notice.as_deref(), Some("merged garage/x into main"));
+        assert_eq!(store.state().overlay, None);
     }
 }

@@ -73,7 +73,8 @@ test("meta=1 drops the metadata and echoes the worktree record", async () => {
   const body = res.json();
   assert.equal(body.deleted, true);
   assert.equal(body.meta, true);
-  assert.deepEqual(body.worktree, worktree);
+  // /tmp/repo is not a repo -> target is null (p17: informational field).
+  assert.deepEqual(body.worktree, { ...worktree, target: null });
   assert.equal(await registry.getSessionMeta(ID), null, "meta must be gone");
 });
 

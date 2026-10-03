@@ -1,6 +1,5 @@
-//! Salience ordering (port of `tui/lib/state/salience.dart`, itself ported
-//! from `ui/src/lib/groups.js` buildGroups() semantics — spec tui-triage:
-//! "Salience-first ordering"):
+//! Salience ordering (port of `tui/lib/state/salience.dart` — spec
+//! tui-triage: "Salience-first ordering"):
 //!  - workspaces containing >=1 needs-input session sort before the rest,
 //!    stable otherwise (registration/discovery order preserved within each
 //!    bucket);
@@ -85,8 +84,7 @@ pub fn build_groups(
 /// The `R` restore-all selection (spec tui-key-routing "p8.1 session
 /// lifecycle bindings"): every restorable session in `workspace`, listing
 /// order preserved. The caller issues one `POST /api/sessions/restore {id}`
-/// per id in parallel — same shape as the web UI's rail restore-all, so one
-/// failure never blocks the rest.
+/// per id in parallel, so one failure never blocks the rest.
 pub fn restorable_session_ids(sessions: &[WallSession], workspace: &str) -> Vec<String> {
     sessions
         .iter()

@@ -1,10 +1,8 @@
 //! Pure helpers for the `w` add-workspace overlay (port of
 //! `tui/lib/state/workspace_form.dart` — spec tui-key-routing "p8.1 session
 //! lifecycle bindings"): `~` expansion for the typed path and the
-//! workspace-name derivation ported from the web UI
-//! (`ui/src/components/AddWorkspaceForm.jsx` deriveName — basename →
-//! lowercase → non-[a-z0-9] runs collapsed to `-` → trimmed; `-2`, `-3`, …
-//! on collision). Pure so both unit-test without IO; the daemon stays the
+//! workspace-name derivation (basename → lowercase → non-[a-z0-9] runs
+//! collapsed to `-` → trimmed; `-2`, `-3`, … on collision). Pure so both unit-test without IO; the daemon stays the
 //! source of truth (a wrong collision guess surfaces as its 409).
 
 use std::collections::HashSet;
@@ -24,8 +22,7 @@ pub fn expand_tilde(path: &str, home: &str) -> String {
 }
 
 /// Derive a workspace name from `dir`'s basename, suffixing `-2`, `-3`, …
-/// against `existing` (case: the web UI's deriveName, byte-for-byte
-/// semantics).
+/// against `existing`.
 pub fn derive_workspace_name<S: AsRef<str>>(dir: &str, existing: &[S]) -> String {
     let names: HashSet<&str> = existing.iter().map(AsRef::as_ref).collect();
     let base = dir

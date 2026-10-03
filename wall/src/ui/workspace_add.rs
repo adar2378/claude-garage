@@ -2,7 +2,7 @@
 //! `tui/lib/ui/workspace_add_overlay.dart` + the submit logic from
 //! `bin/garage_tui.dart` — spec tui-key-routing "p8.1"): a centered modal
 //! with one text field for a directory path. Enter submits (`~` expansion,
-//! client-side dir-exists validation, web-UI-style name derivation, then the
+//! client-side dir-exists validation, basename name derivation, then the
 //! PUT effect); Esc cancels; validation/daemon errors render inline and keep
 //! the overlay open. Pastes land in the field cleaned of shell quoting
 //! (Finder drag-and-drop into Ghostty arrives backslash-escaped), and Ctrl+O

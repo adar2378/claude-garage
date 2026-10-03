@@ -20,12 +20,14 @@ use crate::api::models::UsageInfo;
 use crate::state::wall_state::{KeyLayer, WallState};
 use crate::ui::theme::colors;
 
-/// The one-time statusline-install hint's exact wording (spec
-/// tui-context-meters "Install affordance") — rendered dim, never amber; the
+/// The one-time install hint's exact wording (spec tui-context-meters
+/// "Install affordance", spec tui-hooks-install "Install hint mentions
+/// hooks": `I` installs hooks and the context meter) — rendered dim, never
+/// amber; the
 /// runtime shows it through the same notice slot as any other strip notice
 /// (see `runtime.rs`'s hint scheduling), so `strip_line` special-cases this
 /// text to pick the dim color instead of an ordinary notice's bright one.
-pub const STATUSLINE_HINT: &str = "context meters: press I to install the statusline feed";
+pub const STATUSLINE_HINT: &str = "press I to install hooks (instant status) + context meter";
 
 /// `5h N% · wk M%`-style account usage chip (spec tui-context-meters "Strip
 /// usage chip"): a null window is omitted, not zero-filled; both null hides

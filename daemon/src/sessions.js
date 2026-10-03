@@ -23,7 +23,7 @@ import {
 import { getStatusEntry, getStatus, hasStatus, dropSession as dropStatus } from "./status.js";
 import { dropSession as dropStatuslineContext } from "./statusline.js";
 import { pollerEvents, pollOnce } from "./poller.js";
-import { createWorktree } from "./worktrees.js";
+import { createWorktree, currentBranch } from "./worktrees.js";
 import { getStatuslineContext, getRateLimits } from "./statusline.js";
 import { getCachedContext, refreshContext } from "./transcript.js";
 
@@ -103,6 +103,14 @@ export function planRestartTargets(sessions, force) {
 // `working` session without `force`.
 export function needsPollBeforePlan(ids, hasStatusFn) {
   return ids.some((id) => !hasStatusFn(id));
+}
+
+// Worktree record + `target` (the branch repoDir has checked out, i.e. where
+// a merge would land) so the finish prompt can name it. Informational only —
+// /api/worktrees/finish ignores it.
+async function withTarget(worktree) {
+  if (!worktree) return null;
+  return { ...worktree, target: await currentBranch(worktree.repoDir) };
 }
 
 export default async function sessionRoutes(app) {
@@ -475,9 +483,11 @@ export default async function sessionRoutes(app) {
         return reply.code(404).send({ error: `no resume metadata for: ${id}` });
       }
       await removeSessionMeta(id).catch(() => {});
-      return reply
-        .code(200)
-        .send({ deleted: true, meta: true, worktree: meta?.worktree ?? null });
+      return reply.code(200).send({
+        deleted: true,
+        meta: true,
+        worktree: await withTarget(meta?.worktree),
+      });
     }
 
     if (!(await hasSession(id))) {
@@ -494,6 +504,8 @@ export default async function sessionRoutes(app) {
     // Deliberate kill: the user is done with this conversation, so there's
     // nothing to offer restoring later.
     await removeSessionMeta(id).catch(() => {});
-    return reply.code(200).send({ deleted: true, worktree: meta?.worktree ?? null });
+    return reply
+      .code(200)
+      .send({ deleted: true, worktree: await withTarget(meta?.worktree) });
   });
 }

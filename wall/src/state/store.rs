@@ -39,8 +39,8 @@ pub enum GarageCommand {
     /// `m`: toggle the focused tile full-grid (spec tui-wall "Maximized tile").
     Maximize,
     /// `R`: restore every restorable session in the focused workspace — an
-    /// effect (parallel per-id `POST /api/sessions/restore` calls, like the
-    /// web UI's restore-all), so the store always declines it.
+    /// effect (parallel per-id `POST /api/sessions/restore` calls), so the
+    /// store always declines it.
     RestoreAll,
     /// `x`: armed double-press close of the focused session — an effect
     /// (`DELETE /api/sessions/<id>`), so the store always declines it.
@@ -64,9 +64,10 @@ pub enum GarageCommand {
     /// overlay for the focused session (its views list + "new group…").
     OpenViewPicker,
     ToggleHelp,
-    /// `I` (shift+i, spec tui-context-meters "Install affordance"):
-    /// `POST /api/statusline/install` — an effect (the store never does
-    /// IO), so the store always declines it.
+    /// `I` (shift+i, spec tui-context-meters "Install affordance", spec
+    /// tui-hooks-install): `POST /api/statusline/install` then `POST
+    /// /api/hooks/install` — an effect (the store never does IO), so the
+    /// store always declines it.
     InstallStatusline,
     /// `t`: open the focused LIVE session in its own OS terminal window
     /// (macOS only) — a detached `tmux attach` client alongside the wall's

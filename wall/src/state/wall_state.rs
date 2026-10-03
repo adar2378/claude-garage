@@ -26,12 +26,18 @@ pub enum OverlayKind {
     WorkspaceAdd,
     /// `D` (spec tui-views "Move to a group"): the view picker.
     ViewPicker,
+    /// p17 (spec tui-worktree-finish): merge / discard / keep for the
+    /// worktree a just-closed session left behind. The record, busy flag,
+    /// inline error and armed discard live in the runtime's
+    /// `WorktreeFinishState` (like the `w` form and the `D` picker state) —
+    /// this tag stays `Copy` so every `overlay == Some(..)` check holds.
+    WorktreeFinish,
 }
 
 /// One session as the wall tracks it. Mirrors the daemon entry plus the
 /// derived `worktree` flag (the listing does not expose the worktree record;
-/// like the web UI, a session whose starting dir differs from its
-/// workspace's registered dir was spawned into a worktree).
+/// a session whose starting dir differs from its workspace's registered dir
+/// was spawned into a worktree).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct WallSession {
     pub id: String,
@@ -284,6 +290,7 @@ impl WallState {
                 Some(OverlayKind::TriageQueue) => "keys → queue".to_owned(),
                 Some(OverlayKind::WorkspaceAdd) => "keys → add workspace".to_owned(),
                 Some(OverlayKind::ViewPicker) => "keys → move to group".to_owned(),
+                Some(OverlayKind::WorktreeFinish) => "keys → finish worktree".to_owned(),
                 _ => "keys → help".to_owned(),
             },
         }

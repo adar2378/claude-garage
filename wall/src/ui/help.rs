@@ -26,7 +26,7 @@ pub const BINDINGS: [(&str, &str); 24] = [
     ("P", "cycle the pit pet: Arthur / Papito / Segan / off"),
     ("n / N", "spawn session / worktree session"),
     ("R", "restore all restorable sessions in workspace"),
-    ("I", "install statusline feed for context meters"),
+    ("I", "install hooks (instant status) + context meter feed"),
     ("x x", "close focused session (press twice)"),
     ("r r", "restart focused session — resumes on the current claude binary"),
     ("r a", "restart idle/done sessions in workspace"),

@@ -1,8 +1,7 @@
-//! Pit pet: the wall's one ambient, opt-in ASCII creature — ported from the
-//! web wall's `ui/src/lib/pet.js` (spec `pit-pet`) onto the TUI's one-row
-//! bottom strip (spec `tui-pit-pet`). Same three pets, same names, same
-//! personalities, same derived-mood rules; motion and art are re-cut for a
-//! single strip row instead of the web's 3-line `<pre>`.
+//! Pit pet: the wall's one ambient, opt-in ASCII creature (spec `pit-pet`)
+//! on the TUI's one-row bottom strip (spec `tui-pit-pet`). Three pets with
+//! their own names, personalities and derived-mood rules; motion and art are
+//! cut for a single strip row.
 //!
 //! Pure module: no ratatui, no IO, no `Instant`/`SystemTime`, no `rand`.
 //! Time and randomness are injected — `now_ms: i64` and `rng: &mut impl
@@ -28,8 +27,7 @@
 
 // ── Species ─────────────────────────────────────────────────────────────
 
-/// The family, by name (named by the user, 2026-07-19 — see
-/// `ui/src/lib/pet.js`'s `PET_NAMES`).
+/// The family, by name (named by the user, 2026-07-19).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Species {
     Cat,
