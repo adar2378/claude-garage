@@ -19,8 +19,8 @@ use crate::state::salience::WorkspaceGroup;
 use crate::state::wall_state::{WallSession, WallState};
 use crate::ui::theme::{colors, elapsed_for, glyph_for, status_color};
 
-/// One rendered line per rail row: each group's header followed by its
-/// sessions — the exact rows `rail_target_at` maps clicks against.
+/// One rendered line per rail row: each group's optional family label, its
+/// header, then its sessions — the exact rows `rail_target_at` maps clicks against.
 pub fn rail_lines(state: &WallState, now_ms: i64) -> Vec<Line<'static>> {
     let gridded: HashSet<&str> = state
         .gridded_session_ids
@@ -30,6 +30,12 @@ pub fn rail_lines(state: &WallState, now_ms: i64) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
     for (i, group) in state.groups.iter().enumerate() {
         let focused_ws = state.focused_workspace.as_deref() == Some(group.name.as_str());
+        if let Some(label) = &group.family_label {
+            lines.push(Line::styled(
+                format!(" {label}"),
+                Style::default().fg(colors::FAINT),
+            ));
+        }
         lines.push(workspace_row(group, i, focused_ws));
         for s in &group.sessions {
             lines.push(session_row(
@@ -143,7 +149,7 @@ mod tests {
     fn ws(name: &str) -> WorkspaceInfo {
         WorkspaceInfo {
             name: name.to_owned(),
-            dir: Some(format!("/repos/{name}")),
+            dir: Some(format!("/repos/{name}/{name}")),
             branch: None,
         }
     }
@@ -224,6 +230,21 @@ mod tests {
         assert!(overflow.to_string().contains("s7"));
         assert_eq!(overflow.spans[1].style.fg, Some(colors::FAINT), "glyph dimmed");
         assert_eq!(overflow.spans[2].style.fg, Some(colors::FAINT), "label dimmed");
+    }
+
+    #[test]
+    fn family_label_row_sits_above_the_first_member_only() {
+        let mut store = WallStore::new();
+        let sib = |name: &str| WorkspaceInfo {
+            name: name.to_owned(),
+            dir: Some(format!("/work/elite-traders/{name}")),
+            branch: None,
+        };
+        store.workspaces_fetched(vec![sib("et-a"), sib("et-b"), ws("solo")]);
+        let lines = rail_lines(store.state(), 0);
+        let rows = texts(&lines);
+        assert_eq!(rows, [" elite-traders", " 1 et-a", " 2 et-b", " 3 solo"]);
+        assert_eq!(lines[0].style.fg, Some(colors::FAINT));
     }
 
     #[test]

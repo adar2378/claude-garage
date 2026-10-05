@@ -1078,7 +1078,7 @@ mod tests {
     fn ws(name: &str) -> WorkspaceInfo {
         WorkspaceInfo {
             name: name.to_owned(),
-            dir: Some(format!("/repos/{name}")),
+            dir: Some(format!("/repos/{name}/{name}")),
             branch: None,
         }
     }
@@ -1088,7 +1088,7 @@ mod tests {
             id: format!("garage/{workspace}/{label}"),
             workspace: workspace.to_owned(),
             label: label.to_owned(),
-            dir: Some(format!("/repos/{workspace}")),
+            dir: Some(format!("/repos/{workspace}/{workspace}")),
             attached: false,
             status: "working".to_owned(),
             since: Some(1000),

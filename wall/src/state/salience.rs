@@ -5,6 +5,9 @@
 //!    bucket);
 //!  - within a workspace, needs-input sessions sort before the rest, stable
 //!    otherwise;
+//!  - workspaces sharing a parent directory form a family: members stay
+//!    contiguous, a family floats if any member is blocked, blocked members
+//!    lead within it (spec tui-triage "Salience-first ordering");
 //!  - sessions whose workspace isn't registered still get a synthesized
 //!    group (registered: false) so nothing is invisible.
 //!
@@ -24,6 +27,10 @@ pub struct WorkspaceGroup {
     pub branch: Option<String>,
     pub registered: bool,
     pub sessions: Vec<WallSession>,
+    /// Parent folder's basename, set on the first member of a family of >=2
+    /// workspaces sharing a parent directory; the rail draws it as a faint
+    /// row above that member's header.
+    pub family_label: Option<String>,
 }
 
 impl WorkspaceGroup {
@@ -38,6 +45,51 @@ fn stable_partition<T>(items: Vec<T>, first: impl Fn(&T) -> bool) -> Vec<T> {
     let (hits, rest): (Vec<T>, Vec<T>) = items.into_iter().partition(|item| first(item));
     let mut out = hits;
     out.extend(rest);
+    out
+}
+
+/// Family key: the group dir's parent, trailing slash stripped, lowercased
+/// (macOS paths differ in case). `None` for a missing dir or one with no
+/// parent, which makes the group its own singleton family.
+fn family_key(dir: Option<&str>) -> Option<String> {
+    let (parent, _) = dir?.trim_end_matches('/').rsplit_once('/')?;
+    (!parent.is_empty()).then(|| parent.to_lowercase())
+}
+
+/// Basename of the dir's parent, original case.
+fn parent_basename(dir: Option<&str>) -> Option<String> {
+    let (parent, _) = dir?.trim_end_matches('/').rsplit_once('/')?;
+    let base = parent.rsplit('/').next()?;
+    (!base.is_empty()).then(|| base.to_owned())
+}
+
+/// Reorder `groups` (insertion order) so family members are contiguous:
+/// families ordered by their first member, members in insertion order.
+/// Blocked families float, blocked members lead within a family, and the
+/// first member of each family of >=2 gets `family_label`.
+fn arrange_families(groups: Vec<WorkspaceGroup>) -> Vec<WorkspaceGroup> {
+    let mut families: Vec<(Option<String>, Vec<WorkspaceGroup>)> = Vec::new();
+    for group in groups {
+        let key = family_key(group.dir.as_deref());
+        match key
+            .as_ref()
+            .and_then(|k| families.iter().position(|(fk, _)| fk.as_ref() == Some(k)))
+        {
+            Some(i) => families[i].1.push(group),
+            None => families.push((key, vec![group])),
+        }
+    }
+    let families = stable_partition(families, |(_, members)| {
+        members.iter().any(WorkspaceGroup::has_needs_input)
+    });
+    let mut out = Vec::new();
+    for (_, members) in families {
+        let mut members = stable_partition(members, WorkspaceGroup::has_needs_input);
+        if members.len() >= 2 {
+            members[0].family_label = parent_basename(members[0].dir.as_deref());
+        }
+        out.extend(members);
+    }
     out
 }
 
@@ -74,11 +126,12 @@ pub fn build_groups(
             branch: ws.and_then(|w| w.branch.clone()),
             registered: ws.is_some(),
             sessions: stable_partition(group_sessions, WallSession::needs_input),
+            family_label: None,
             name,
         })
         .collect();
 
-    stable_partition(groups, WorkspaceGroup::has_needs_input)
+    arrange_families(groups)
 }
 
 /// The `R` restore-all selection (spec tui-key-routing "p8.1 session
@@ -126,7 +179,7 @@ mod tests {
     fn ws(name: &str) -> WorkspaceInfo {
         WorkspaceInfo {
             name: name.to_owned(),
-            dir: Some(format!("/repos/{name}")),
+            dir: Some(format!("/repos/{name}/{name}")),
             branch: None,
         }
     }
@@ -262,6 +315,88 @@ mod tests {
     #[test]
     fn empty_inputs_produce_no_groups() {
         assert!(build_groups(&[], &[]).is_empty());
+    }
+
+    // ── families ────────────────────────────────────────────────────────
+
+    fn wsd(name: &str, dir: Option<&str>) -> WorkspaceInfo {
+        WorkspaceInfo {
+            name: name.to_owned(),
+            dir: dir.map(str::to_owned),
+            branch: None,
+        }
+    }
+
+    fn labels(groups: &[WorkspaceGroup]) -> Vec<Option<&str>> {
+        groups.iter().map(|g| g.family_label.as_deref()).collect()
+    }
+
+    fn real_registry() -> Vec<WorkspaceInfo> {
+        let b = "/Users/saifulislam";
+        vec![
+            wsd("cto-playground", Some(&format!("{b}/development/devmonks/cto-playground"))),
+            wsd("et-mobile-app", Some(&format!("{b}/development/devmonks/elite-traders/et-mobile-app"))),
+            wsd("mobile-apps", Some(&format!("{b}/development/personal/mobile-apps"))),
+            wsd("et-backend", Some(&format!("{b}/development/devmonks/elite-traders/et-backend"))),
+            wsd("et-admin", Some(&format!("{b}/Development/devmonks/elite-traders/et-admin"))),
+            wsd("diary-app", Some(&format!("{b}/Development/personal/diary-app"))),
+        ]
+    }
+
+    #[test]
+    fn real_registry_groups_siblings_and_labels_first_members() {
+        let groups = build_groups(&real_registry(), &[]);
+        assert_eq!(
+            names(&groups),
+            ["cto-playground", "et-mobile-app", "et-backend", "et-admin", "mobile-apps", "diary-app"]
+        );
+        assert_eq!(
+            labels(&groups),
+            [None, Some("elite-traders"), None, None, Some("personal"), None]
+        );
+    }
+
+    #[test]
+    fn family_merge_is_case_insensitive_label_keeps_first_members_case() {
+        let groups = build_groups(
+            &[wsd("a", Some("/X/Dev/a")), wsd("b", Some("/x/dev/b/"))],
+            &[],
+        );
+        assert_eq!(labels(&groups), [Some("Dev"), None]);
+    }
+
+    #[test]
+    fn dir_none_is_its_own_singleton_family() {
+        let groups = build_groups(
+            &[wsd("a", None), wsd("b", None), wsd("c", Some("/r/c"))],
+            &[],
+        );
+        assert_eq!(names(&groups), ["a", "b", "c"]);
+        assert_eq!(labels(&groups), [None, None, None]);
+    }
+
+    #[test]
+    fn a_family_floats_when_one_member_is_blocked() {
+        let groups = build_groups(
+            &[wsd("x", Some("/r/x")), wsd("f1", Some("/p/f/f1")), wsd("f2", Some("/p/f/f2"))],
+            &[session_with("f2", "s", "needs-input", None)],
+        );
+        // blocked member leads its family, the family leads the rail
+        assert_eq!(names(&groups), ["f2", "f1", "x"]);
+        assert_eq!(labels(&groups), [Some("f"), None, None]);
+    }
+
+    #[test]
+    fn synthesized_groups_join_a_family_by_their_session_dir() {
+        let mut stray = session("stray", "s");
+        stray.dir = Some("/p/f/stray".to_owned());
+        let groups = build_groups(
+            &[wsd("f1", Some("/p/f/f1")), wsd("x", Some("/r/x"))],
+            &[stray],
+        );
+        assert_eq!(names(&groups), ["f1", "stray", "x"]);
+        assert_eq!(labels(&groups), [Some("f"), None, None]);
+        assert!(!groups[1].registered);
     }
 
     // ── jumpTarget ──────────────────────────────────────────────────────

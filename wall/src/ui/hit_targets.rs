@@ -36,8 +36,9 @@ pub enum RailTarget {
 }
 
 /// Maps a rail-content row (0-based, local to the rail — the rail renders
-/// one line per row: each group's header followed by its sessions) to its
-/// target. `None` for rows past the last group (or an empty rail).
+/// one line per row: each group's optional family label, its header, then
+/// its sessions) to its target. `None` for a label row, rows past the last
+/// group, or an empty rail.
 pub fn rail_target_at(groups: &[WorkspaceGroup], row: i32) -> Option<RailTarget> {
     if row < 0 {
         return None;
@@ -45,6 +46,12 @@ pub fn rail_target_at(groups: &[WorkspaceGroup], row: i32) -> Option<RailTarget>
     let row = row as usize;
     let mut line = 0usize;
     for (g, group) in groups.iter().enumerate() {
+        if group.family_label.is_some() {
+            if row == line {
+                return None;
+            }
+            line += 1;
+        }
         if row == line {
             return Some(RailTarget::Workspace(g));
         }
@@ -119,6 +126,7 @@ mod tests {
             branch: None,
             registered: true,
             sessions,
+            family_label: None,
         }
     }
 
@@ -234,6 +242,26 @@ mod tests {
             rail_target_at(&gs, 2),
             Some(RailTarget::Session("x".to_owned()))
         );
+    }
+
+    #[test]
+    fn a_family_label_row_maps_to_none_and_shifts_rows_below_it() {
+        let mut first = rail_group("alpha", vec![session("a1")]);
+        first.family_label = Some("fam".to_owned());
+        let gs = vec![first, rail_group("beta", vec![session("b1")])];
+        // rows: 0 label, 1 alpha, 2 a1, 3 beta, 4 b1
+        assert_eq!(rail_target_at(&gs, 0), None);
+        assert_eq!(rail_target_at(&gs, 1), Some(RailTarget::Workspace(0)));
+        assert_eq!(
+            rail_target_at(&gs, 2),
+            Some(RailTarget::Session("a1".to_owned()))
+        );
+        assert_eq!(rail_target_at(&gs, 3), Some(RailTarget::Workspace(1)));
+        assert_eq!(
+            rail_target_at(&gs, 4),
+            Some(RailTarget::Session("b1".to_owned()))
+        );
+        assert_eq!(rail_target_at(&gs, 5), None);
     }
 
     // ── triageRowIndexAt ────────────────────────────────────────────────

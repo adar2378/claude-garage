@@ -1,6 +1,6 @@
 {
   "name": "claude-garage",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Multiple Claude agents driving you crazy? Park them all in one garage: a full-screen terminal wall with a needs-input queue that follows you across projects. tmux owns the sessions; close the app and nothing dies.",
   "license": "MIT",
   "author": "Saiful Islam <saifulislamadar@gmail.com>",

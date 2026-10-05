@@ -274,7 +274,7 @@ mod tests {
     fn ws(name: &str) -> WorkspaceInfo {
         WorkspaceInfo {
             name: name.to_owned(),
-            dir: Some(format!("/repos/{name}")),
+            dir: Some(format!("/repos/{name}/{name}")),
             branch: None,
         }
     }

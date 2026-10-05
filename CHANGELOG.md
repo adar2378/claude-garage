@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.6.0 — folder groups in the rail
+
+### Added
+
+- **Sibling workspaces sit together.** Workspaces that live in the same
+  parent folder are now adjacent in the rail, with a faint label row
+  naming the folder (for example `elite-traders`) above the first one.
+  Folder case is ignored. Workspaces with no sibling get no label.
+- **Blocked work floats as a family.** If any workspace in a folder has a
+  session waiting on you, the whole folder moves up, and the blocked
+  workspace comes first inside it.
+
+Workspace numbers `1`-`9` are unchanged. Label rows have no number and
+clicking one does nothing.
+
 ## 0.5.0 — terminal only
 
 ### Breaking
