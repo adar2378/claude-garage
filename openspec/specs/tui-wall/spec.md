@@ -81,7 +81,7 @@ The grid SHALL show at most 6 live tiles for the focused workspace in a balanced
 - **THEN** it takes a grid slot (the least-recently-focused tile leaves the grid) and its terminal is live
 
 ### Requirement: Rail, strip, and salience ladder
-The TUI SHALL render a workspace rail (workspaces with their sessions, glyphs `● ◐ ✓ ○ ⟳`) and a single-line bottom strip (workspace tabs with per-workspace needs-input dots, keys-target chip). Amber SHALL be used exclusively for `needs-input`: amber tile border and title, amber rail row, amber strip dot. `done` SHALL render green and stop being highlighted 2 minutes after the transition.
+The TUI SHALL render a workspace rail (workspaces with their sessions, glyphs `● ◐ ✓ ○ ⟳`) and a single-line bottom strip (workspace tabs with per-workspace needs-input dots, keys-target chip). Above the first workspace of every family of two or more workspaces (sharing a parent folder), the rail SHALL render one faint label row with the parent folder's name; single-workspace families get no label. Label rows SHALL NOT be numbered, SHALL NOT be clickable, and SHALL NOT change workspace numbering or the strip. Amber SHALL be used exclusively for `needs-input`: amber tile border and title, amber rail row, amber strip dot. `done` SHALL render green and stop being highlighted 2 minutes after the transition.
 
 #### Scenario: Only blocked sessions are amber
 - **WHEN** sessions in states needs-input, working, done, and idle are all visible
@@ -90,6 +90,10 @@ The TUI SHALL render a workspace rail (workspaces with their sessions, glyphs `�
 #### Scenario: Done fades
 - **WHEN** a session transitioned to `done` more than 2 minutes ago
 - **THEN** its done highlight is no longer emphasized (glyph remains)
+
+#### Scenario: Family label row
+- **WHEN** workspaces `et-backend` and `et-admin` both live under `.../elite-traders/`
+- **THEN** a faint `elite-traders` row renders above the first of them, workspaces keep their numbers, and clicking the label row does nothing while rows below it still hit the right targets
 
 ### Requirement: Performance under load
 The TUI SHALL remain responsive under output load: with 6 tiles receiving a combined 200+ lines/second, a keypress SHALL be processed within 50 ms and process CPU SHALL stay under 15% of one core. The TUI SHALL disable terminal flow control (`IXON`) and signal generation (`ISIG`) for its own tty at startup so Ctrl+Q/Ctrl+S/Ctrl+C reach the application, and SHALL restore all terminal settings on exit. No specific frame-rate cap is mandated.
