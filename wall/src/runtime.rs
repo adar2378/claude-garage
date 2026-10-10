@@ -2189,6 +2189,16 @@ impl App {
             self.registry.set_frozen(&id, None);
             return;
         }
+        // Ctrl+C with a highlighted selection means "copy", not "interrupt":
+        // re-copy it and keep the ^C away from the session (it would cancel
+        // the running turn / clear the prompt). Without a selection ^C passes.
+        if key.code == KeyCode::Char('c')
+            && key.modifiers == KeyModifiers::CONTROL
+            && self.selection.as_ref().is_some_and(|s| s.dragged && s.id == id)
+        {
+            self.copy_selection();
+            return;
+        }
         // Ctrl+A: on Windows it means "select all" (Claude's own meaning,
         // start-of-line, stays on Home). Highlights and copies the prompt.
         if key.code == KeyCode::Char('a')
@@ -2367,6 +2377,15 @@ impl App {
             self.selection = None;
             return;
         }
+        self.copy_selection();
+    }
+
+    /// Copy the current selection's text to the clipboard (shared by mouse
+    /// release and Ctrl+C); an empty selection is dropped.
+    fn copy_selection(&mut self) {
+        let Some(sel) = self.selection.as_ref() else {
+            return;
+        };
         let text = self
             .registry
             .selection_text(&sel.id, sel.anchor, sel.cursor)
