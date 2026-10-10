@@ -34,6 +34,7 @@ pub enum GarageCommand {
     CycleFocus(i32),
     Jump,
     OpenQueue,
+    OpenRecent,
     Spawn { worktree: bool },
     Engage,
     /// `m`: toggle the focused tile full-grid (spec tui-wall "Maximized tile").
@@ -114,6 +115,7 @@ pub fn garage_command_for(key: &str) -> Option<GarageCommand> {
         "]" => Some(GarageCommand::CycleFocus(1)),
         "a" => Some(GarageCommand::Jump),
         "A" => Some(GarageCommand::OpenQueue),
+        "H" => Some(GarageCommand::OpenRecent),
         "n" => Some(GarageCommand::Spawn { worktree: false }),
         "N" => Some(GarageCommand::Spawn { worktree: true }),
         "m" => Some(GarageCommand::Maximize),
@@ -815,6 +817,10 @@ impl WallStore {
                 self.open_overlay(OverlayKind::TriageQueue);
                 true
             }
+            GarageCommand::OpenRecent => {
+                self.open_overlay(OverlayKind::Recent);
+                true
+            }
             GarageCommand::Maximize => {
                 self.toggle_maximize();
                 true
@@ -1157,6 +1163,7 @@ mod tests {
         store.usage_fetched(UsageInfo {
             five_hour: Some(UsageWindow { used_percentage: 24, resets_at: None }),
             seven_day: None,
+            updated_at: None,
         });
         assert_eq!(
             store.state().usage.five_hour.as_ref().map(|w| w.used_percentage),

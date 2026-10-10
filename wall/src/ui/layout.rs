@@ -52,10 +52,26 @@ pub fn wall_layout(
     view_strip: bool,
     framed: bool,
 ) -> WallLayout {
+    wall_layout_with_rail(area, n_tiles, maximized, view_strip, framed, RAIL_WIDTH)
+}
+
+/// Narrowest / widest the sidebar can be dragged or stepped to.
+pub const RAIL_MIN: u16 = 14;
+pub const RAIL_MAX: u16 = 70;
+
+/// [`wall_layout`] with an explicit sidebar width (`0` = hidden).
+pub fn wall_layout_with_rail(
+    area: Rect,
+    n_tiles: usize,
+    maximized: Option<usize>,
+    view_strip: bool,
+    framed: bool,
+    rail_width: u16,
+) -> WallLayout {
     let [main, strip] =
         Layout::vertical([Constraint::Fill(1), Constraint::Length(1)]).areas(area);
     let [rail, grid_full] =
-        Layout::horizontal([Constraint::Length(RAIL_WIDTH.min(main.width)), Constraint::Fill(1)])
+        Layout::horizontal([Constraint::Length(rail_width.min(main.width)), Constraint::Fill(1)])
             .areas(main);
 
     let (view_strip_rect, grid_area) = if view_strip && grid_full.height > 0 {
@@ -143,6 +159,17 @@ mod tests {
 
     fn area(w: u16, h: u16) -> Rect {
         Rect::new(0, 0, w, h)
+    }
+
+    #[test]
+    fn sidebar_width_is_adjustable_and_can_hide() {
+        let wide = wall_layout_with_rail(area(120, 40), 2, None, false, false, 40);
+        assert_eq!(wide.rail.width, 40);
+        assert_eq!(wide.grid.x, 40);
+        let hidden = wall_layout_with_rail(area(120, 40), 2, None, false, false, 0);
+        assert_eq!(hidden.rail.width, 0);
+        assert_eq!(hidden.grid.x, 0, "tiles take the whole width");
+        assert_eq!(hidden.grid.width, 120);
     }
 
     #[test]

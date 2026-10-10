@@ -2,7 +2,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { EventEmitter } from "node:events";
 import os from "node:os";
-import { listSessions, normalizeTitle } from "./tmux.js";
+import { listSessions, listPaneInfo, normalizeTitle, runClaude } from "./tmux.js";
 import { setStatus, getStatus, dropSession as dropStatus } from "./status.js";
 import { dropSession as dropStatuslineContext } from "./statusline.js";
 import { upsertSessionMeta } from "./registry.js";
@@ -16,7 +16,10 @@ function dropSession(id) {
   dropStatuslineContext(id);
 }
 
-const run = promisify(execFile);
+const execFileP = promisify(execFile);
+// The daemon is detached from any console on Windows: without windowsHide
+// every child process (git, ...) flashes its own console window.
+const run = (cmd, args, opts = {}) => execFileP(cmd, args, { windowsHide: true, ...opts });
 const POLL_MS = 2000;
 
 // Emits "sessions-changed" whenever the poller notices something the wall's
@@ -38,7 +41,7 @@ let lastTitles = new Map();
 // per D-status's graceful degradation to poller-absent behavior.
 async function getAgents() {
   try {
-    const { stdout } = await run("claude", ["agents", "--json"]);
+    const { stdout } = await runClaude(["agents", "--json"]);
     return JSON.parse(stdout);
   } catch {
     return [];
@@ -54,19 +57,7 @@ async function getAgents() {
 // rejoined into it (same rationale as tmux.js's parsePaneLine).
 async function getPanePids() {
   try {
-    const { stdout } = await run("tmux", [
-      "list-panes",
-      "-a",
-      "-F",
-      "#{session_name}\t#{pane_pid}\t#{pane_title}",
-    ]);
-    const map = new Map();
-    for (const line of stdout.split("\n")) {
-      if (!line.trim()) continue;
-      const [name, pid, ...rest] = line.split("\t");
-      map.set(name, { pid: Number(pid), title: rest.join("\t") });
-    }
-    return map;
+    return await listPaneInfo();
   } catch {
     return new Map();
   }

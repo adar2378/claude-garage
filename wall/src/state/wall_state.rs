@@ -23,6 +23,14 @@ pub enum KeyLayer {
 pub enum OverlayKind {
     Help,
     TriageQueue,
+    /// `s` / `S`: type a prompt and send it to the focused session (or every
+    /// live session of the focused workspace) without engaging it.
+    QuickSend,
+    /// `/`: fuzzy jump palette over sessions, projects and recent
+    /// conversations.
+    Palette,
+    /// `H`: recently closed conversations, reopenable with `claude --resume`.
+    Recent,
     WorkspaceAdd,
     /// `D` (spec tui-views "Move to a group"): the view picker.
     ViewPicker,
@@ -107,7 +115,19 @@ impl WallSession {
 
     /// A live session has a tmux session behind it — anything but restorable.
     pub fn live(&self) -> bool {
-        self.status != "restorable"
+        self.status != "restorable" && self.status != "closed"
+    }
+
+    /// A closed chat kept in the rail (grey) — reopens with
+    /// `claude --resume`; has no tile and is never gridded.
+    pub fn closed(&self) -> bool {
+        self.status == "closed"
+    }
+
+    /// The Claude session id a closed chat reopens with (its id is
+    /// `garage/<ws>/closed-<claudeSessionId>`).
+    pub fn closed_claude_session_id(&self) -> Option<&str> {
+        self.closed().then(|| self.id.rsplit_once("/closed-").map(|(_, c)| c)).flatten()
     }
 
     /// Port of the Dart `copyWith`: status replaced when given; since/message
@@ -272,7 +292,7 @@ impl WallState {
         group
             .sessions
             .iter()
-            .filter(|s| views::view_of(named, &s.id) == view)
+            .filter(|s| !s.closed() && views::view_of(named, &s.id) == view)
             .map(|s| s.id.clone())
             .collect()
     }
@@ -288,6 +308,9 @@ impl WallState {
             },
             KeyLayer::Overlay => match self.overlay {
                 Some(OverlayKind::TriageQueue) => "keys → queue".to_owned(),
+                Some(OverlayKind::Recent) => "keys → recent".to_owned(),
+                Some(OverlayKind::Palette) => "keys → jump".to_owned(),
+                Some(OverlayKind::QuickSend) => "keys → send prompt".to_owned(),
                 Some(OverlayKind::WorkspaceAdd) => "keys → add workspace".to_owned(),
                 Some(OverlayKind::ViewPicker) => "keys → move to group".to_owned(),
                 Some(OverlayKind::WorktreeFinish) => "keys → finish worktree".to_owned(),

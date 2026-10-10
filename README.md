@@ -41,10 +41,11 @@ It's small: a 2.6 MB binary, about 6 MB of RAM and ~2% CPU.
 
 You need:
 
-- macOS
+- macOS, or Windows 10/11 (see [docs/WINDOWS.md](docs/WINDOWS.md) — native,
+  no WSL, no tmux)
 - Node.js 20 or newer
-- [tmux](https://github.com/tmux/tmux) 3.2 or newer (garage offers to
-  install it with `brew`)
+- [tmux](https://github.com/tmux/tmux) 3.2 or newer on macOS (garage offers
+  to install it with `brew`; not needed on Windows)
 - [Claude Code](https://docs.claude.com/en/docs/claude-code) on your `PATH`
 
 Then run:
@@ -56,6 +57,9 @@ npx claude-garage
 On an Intel Mac, the first run builds the app from source, so you also
 need Rust ([rustup.rs](https://rustup.rs)). Apple Silicon needs nothing
 extra.
+
+On Windows, run `claude-garage .` inside a project folder to open garage on
+it. See [docs/WINDOWS.md](docs/WINDOWS.md) for the setup and what is different.
 
 ## First steps
 

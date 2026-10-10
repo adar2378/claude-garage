@@ -11,6 +11,20 @@ use garage_wall::api::client::{default_daemon_base_url, require_daemon};
 use garage_wall::{runtime, term};
 
 fn main() -> ExitCode {
+    // `garage-wall host ...`: the native session host (Windows backend).
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.first().map(String::as_str) == Some("attach") {
+        let Some(id) = args.get(1) else {
+            eprintln!("usage: garage-wall attach <session-id>");
+            return ExitCode::from(2);
+        };
+        let code = garage_wall::attach::run_attach(id);
+        return ExitCode::from(u8::try_from(code).unwrap_or(1));
+    }
+    if args.first().map(String::as_str) == Some("host") {
+        let code = garage_wall::host::run_host(&args[1..]);
+        return ExitCode::from(u8::try_from(code).unwrap_or(1));
+    }
     let base_url = default_daemon_base_url();
     // Exits(1) with an actionable `npx claude-garage` message when the
     // daemon is unreachable (spec packaging / tui-wall health gate).

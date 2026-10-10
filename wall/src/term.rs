@@ -58,6 +58,7 @@ pub fn enter() -> std::io::Result<WallTerminal> {
     // docs; ixon/isig are already off, listed defensively). Runs after
     // enable_raw_mode so crossterm's saved termios still carries the
     // original flags for restore.
+    #[cfg(unix)]
     let _ = std::process::Command::new("/bin/sh")
         .args(["-c", "stty -ixon -ixoff -isig < /dev/tty"])
         .status();
@@ -97,4 +98,83 @@ pub fn install_panic_hook() {
         restore();
         previous(info);
     }));
+}
+
+/// Open a URL in the user's default browser.
+pub fn open_url(url: &str) {
+    #[cfg(windows)]
+    let _ = std::process::Command::new("rundll32")
+        .args(["url.dll,FileProtocolHandler", url])
+        .spawn();
+    #[cfg(not(windows))]
+    let _ = std::process::Command::new("open").arg(url).spawn();
+}
+
+/// Local wall-clock hour (0-23), or `None` when it cannot be determined.
+pub fn local_hour() -> Option<u8> {
+    #[cfg(windows)]
+    {
+        let mut t = unsafe { std::mem::zeroed::<windows_sys::Win32::Foundation::SYSTEMTIME>() };
+        unsafe { windows_sys::Win32::System::SystemInformation::GetLocalTime(&mut t) };
+        u8::try_from(t.wHour).ok()
+    }
+    #[cfg(not(windows))]
+    {
+        std::process::Command::new("date")
+            .arg("+%H")
+            .output()
+            .ok()
+            .filter(|o| o.status.success())
+            .and_then(|o| String::from_utf8(o.stdout).ok())
+            .and_then(|s| s.trim().parse::<u8>().ok())
+    }
+}
+
+/// Put `text` on the system clipboard. Returns whether it worked.
+pub fn copy_to_clipboard(text: &str) -> bool {
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::System::DataExchange::{
+            CloseClipboard, EmptyClipboard, OpenClipboard, SetClipboardData,
+        };
+        use windows_sys::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE};
+        const CF_UNICODETEXT: u32 = 13;
+        let wide: Vec<u16> = text.encode_utf16().chain(std::iter::once(0)).collect();
+        let bytes = wide.len() * 2;
+        unsafe {
+            if OpenClipboard(std::ptr::null_mut()) == 0 {
+                return false;
+            }
+            let mut ok = false;
+            EmptyClipboard();
+            let mem = GlobalAlloc(GMEM_MOVEABLE, bytes);
+            if !mem.is_null() {
+                let ptr = GlobalLock(mem) as *mut u16;
+                if !ptr.is_null() {
+                    std::ptr::copy_nonoverlapping(wide.as_ptr(), ptr, wide.len());
+                    GlobalUnlock(mem);
+                    // On success the system owns `mem`.
+                    ok = !SetClipboardData(CF_UNICODETEXT, mem).is_null();
+                }
+            }
+            CloseClipboard();
+            ok
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        use std::io::Write as _;
+        let spawned = std::process::Command::new("pbcopy")
+            .stdin(std::process::Stdio::piped())
+            .spawn();
+        match spawned {
+            Ok(mut child) => {
+                if let Some(mut stdin) = child.stdin.take() {
+                    let _ = stdin.write_all(text.as_bytes());
+                }
+                child.wait().map(|s| s.success()).unwrap_or(false)
+            }
+            Err(_) => false,
+        }
+    }
 }

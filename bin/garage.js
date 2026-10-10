@@ -8,7 +8,7 @@
 // tmux session running. `restart` restarts the daemon (and optionally the
 // sessions) in place.
 import { execFile, spawn, spawnSync } from "node:child_process";
-import { accessSync, chmodSync, constants as fsConstants, copyFileSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { accessSync, chmodSync, constants as fsConstants, copyFileSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, renameSync, statSync, unlinkSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import readline from "node:readline/promises";
@@ -16,6 +16,10 @@ import { fileURLToPath } from "node:url";
 
 const PORT = Number(process.env.GARAGE_PORT ?? 4747);
 const HEALTH_URL = `http://127.0.0.1:${PORT}/api/health`;
+const IS_WIN = process.platform === "win32";
+// Windows has no tmux: sessions run in native `garage-wall host` processes.
+const USE_HOST = IS_WIN || process.env.GARAGE_BACKEND === "host";
+const EXE = IS_WIN ? ".exe" : "";
 
 // bin/garage.js -> repo/package root is one level up. Resolves correctly
 // whether run from a checkout or an installed package.
@@ -31,7 +35,9 @@ const VERSION = JSON.parse(
 
 function execFileP(cmd, args) {
   return new Promise((resolve, reject) => {
-    execFile(cmd, args, (err, stdout, stderr) => {
+    // `claude` is an npm .cmd shim on many Windows installs; fixed argv only.
+    const opts = IS_WIN ? { shell: true, windowsHide: true } : {};
+    execFile(cmd, args, opts, (err, stdout, stderr) => {
       if (err) reject(err);
       else resolve({ stdout, stderr });
     });
@@ -46,7 +52,10 @@ async function requireBinary(bin, versionArgs, installHint) {
   try {
     await execFileP(bin, versionArgs);
   } catch (err) {
-    if (err && err.code === "ENOENT") {
+    // With shell:true a missing command is a shell failure, not ENOENT.
+    const missing =
+      err && (err.code === "ENOENT" || (IS_WIN && /not recognized/i.test(String(err.stderr ?? ""))));
+    if (missing) {
       console.error(`${bin} not found — install: ${installHint}`);
       process.exit(1);
     }
@@ -94,6 +103,15 @@ async function offerTmuxInstall() {
 
 // Run before the TUI starts: readable errors for a missing tmux or claude.
 async function checkPrerequisites() {
+  if (!USE_HOST) await checkTmux();
+  await requireBinary(
+    "claude",
+    ["--version"],
+    "see https://docs.claude.com/en/docs/claude-code for install instructions"
+  );
+}
+
+async function checkTmux() {
   try {
     await execFileP("tmux", ["-V"]);
   } catch (err) {
@@ -107,11 +125,6 @@ async function checkPrerequisites() {
     // any other failure (odd version-flag behavior) — treat as present,
     // same discipline as requireBinary below
   }
-  await requireBinary(
-    "claude",
-    ["--version"],
-    "see https://docs.claude.com/en/docs/claude-code for install instructions"
-  );
 }
 
 // ---------------------------------------------------------------------------
@@ -163,6 +176,20 @@ async function waitForPortFree(deadlineMs = 10000) {
 // and exact (never process-name matching); null when it cannot be
 // determined unambiguously.
 async function pidListeningOnPort() {
+  if (IS_WIN) {
+    try {
+      const { stdout } = await execFileP("netstat", ["-ano", "-p", "tcp"]);
+      const pids = new Set();
+      for (const line of stdout.split(/\r?\n/)) {
+        const cols = line.trim().split(/\s+/);
+        // Proto  Local  Foreign  State  PID
+        if (cols[3] === "LISTENING" && cols[1]?.endsWith(`:${PORT}`)) pids.add(Number(cols[4]));
+      }
+      return pids.size === 1 ? [...pids][0] : null;
+    } catch {
+      return null;
+    }
+  }
   try {
     const { stdout } = await execFileP("lsof", [
       "-nP", `-iTCP:${PORT}`, "-sTCP:LISTEN", "-t",
@@ -191,7 +218,10 @@ async function stopStaleDaemon(health) {
   if (pid === null) {
     console.error(
       `could not determine the stale daemon's pid — stop it yourself ` +
-        `(lsof -ti tcp:${PORT} | xargs kill) and re-run`
+        (IS_WIN
+          ? `(netstat -ano | findstr :${PORT}, then taskkill /PID <pid> /F)`
+          : `(lsof -ti tcp:${PORT} | xargs kill)`) +
+        ` and re-run`
     );
     process.exit(1);
   }
@@ -232,6 +262,7 @@ function startDetachedDaemon() {
     detached: true,
     stdio: ["ignore", out, out],
     env: process.env,
+    windowsHide: true,
   });
   child.unref();
   return logPath;
@@ -246,6 +277,25 @@ async function waitForHealth(deadlineMs = 15000) {
   return false;
 }
 
+// Windows refuses to overwrite an .exe that is running (live session hosts run
+// from this same binary) but allows renaming it: move the old one aside, then
+// copy the new one in. Leftover `.old-*` files are swept best-effort.
+function installBinary(src, dest) {
+  const dir = path.dirname(dest);
+  for (const f of readdirSync(dir)) {
+    if (f.includes(".old-")) {
+      try { unlinkSync(path.join(dir, f)); } catch { /* still running */ }
+    }
+  }
+  try {
+    copyFileSync(src, dest);
+  } catch (err) {
+    if (!IS_WIN || !["EBUSY", "EPERM", "EACCES"].includes(err.code)) throw err;
+    renameSync(dest, `${dest}.old-${Date.now()}`);
+    copyFileSync(src, dest);
+  }
+}
+
 // cargo build --release, then copy the result into wall/dist/<target-name>
 // (creating the dist dir if needed) and mark it executable. Shared by the
 // "no prebuilt binary yet" path and the p11 staleness-guard rebuild path
@@ -255,13 +305,13 @@ function cargoBuildTuiBinary(rustBinary) {
     cwd: path.join(ROOT, "wall"),
     stdio: "inherit",
   });
-  const built = path.join(ROOT, "wall", "target", "release", "garage-wall");
+  const built = path.join(ROOT, "wall", "target", "release", `garage-wall${EXE}`);
   if (build.status !== 0 || !existsSync(built)) {
     console.error("cargo build failed — see the output above");
     process.exit(1);
   }
   mkdirSync(path.dirname(rustBinary), { recursive: true });
-  copyFileSync(built, rustBinary);
+  installBinary(built, rustBinary);
   chmodSync(rustBinary, 0o755);
 }
 
@@ -337,7 +387,7 @@ function resolveTuiBinary() {
 
   const target = `${process.platform}-${process.arch}`;
   const distDir = path.join(ROOT, "wall", "dist");
-  const rustBinary = path.join(distDir, `garage-wall-${target}`);
+  const rustBinary = path.join(distDir, `garage-wall-${target}${EXE}`);
   const wallSrc = path.join(ROOT, "wall", "Cargo.toml");
 
   if (existsSync(rustBinary)) {
@@ -388,12 +438,105 @@ function resolveTuiBinary() {
   process.exit(1);
 }
 
-async function tuiMain() {
+async function autoRestoreSessions() {
+  try {
+    const res = await fetch(`http://127.0.0.1:${PORT}/api/sessions/restore`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ all: true }),
+      signal: AbortSignal.timeout(30000),
+    });
+    const body = await res.json().catch(() => ({}));
+    const n = body.restored?.length ?? 0;
+    if (n > 0) console.log(`restored ${n} session${n === 1 ? "" : "s"} from last time`);
+    for (const f of body.failed ?? []) console.log(`could not restore ${f.id}: ${f.reason}`);
+  } catch {
+    // best effort — the TUI still offers R / Enter on stopped sessions
+  }
+}
+
+// ── `claude-garage <folder>` / `claude-garage .` ────────────────────────
+// Register the folder as a workspace (if it is not one already), start a
+// session there when it has none, and tell the TUI to open on it. The name
+// follows the TUI's rule (folder name, lowercase, [a-z0-9-]).
+
+function deriveWorkspaceName(dir, existing) {
+  const base = dir.split(/[\\/]/).filter(Boolean).pop() ?? "workspace";
+  const slug =
+    base
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "") || "workspace";
+  if (!existing.includes(slug)) return slug;
+  let n = 2;
+  while (existing.includes(`${slug}-${n}`)) n++;
+  return `${slug}-${n}`;
+}
+
+const samePath = (a, b) =>
+  path.resolve(a).replace(/[\\/]+$/, "").toLowerCase() ===
+  path.resolve(b).replace(/[\\/]+$/, "").toLowerCase();
+
+async function openFolderWorkspace(rawPath) {
+  const dir = path.resolve(rawPath);
+  if (!existsSync(dir) || !statSync(dir).isDirectory()) {
+    console.error(`not a folder: ${dir}`);
+    process.exit(1);
+  }
+  const base = `http://127.0.0.1:${PORT}`;
+  const workspaces = await (await fetch(`${base}/api/workspaces`)).json();
+  let ws = workspaces.find((w) => samePath(w.dir, dir));
+  if (!ws) {
+    const name = deriveWorkspaceName(dir, workspaces.map((w) => w.name));
+    const res = await fetch(`${base}/api/workspaces`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name, dir }),
+    });
+    if (!res.ok) {
+      console.error(`could not add ${dir}: ${(await res.json().catch(() => ({}))).error ?? res.status}`);
+      process.exit(1);
+    }
+    ws = { name, dir };
+    console.log(`added workspace ${name} → ${dir}`);
+  }
+  const sessions = await (await fetch(`${base}/api/sessions`)).json();
+  const inWs = sessions.filter((s) => s.workspace === ws.name);
+  const live = inWs.filter((s) => s.status !== "restorable" && s.status !== "closed");
+  const stopped = inWs.filter((s) => s.status === "restorable");
+
+  // This folder's sessions that died (reboot/crash) come back…
+  for (const s of stopped) {
+    const res = await fetch(`${base}/api/sessions/restore`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ id: s.id }),
+    });
+    if (res.ok) console.log(`restored ${s.label} in ${ws.name}`);
+  }
+  // …and a folder with nothing running or to restore gets a fresh session.
+  if (live.length === 0 && stopped.length === 0) {
+    const used = new Set(inWs.map((s) => s.label));
+    let n = 1;
+    while (used.has(`claude-${n}`)) n++;
+    const res = await fetch(`${base}/api/sessions`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ workspace: ws.name, label: `claude-${n}` }),
+    });
+    if (res.ok) console.log(`new workspace session claude-${n} in ${ws.name}`);
+  }
+  process.env.GARAGE_FOCUS_WORKSPACE = ws.name;
+}
+
+async function tuiMain(openPath = null) {
   await checkPrerequisites();
 
   // Resolve (and if needed build) the binary BEFORE starting a daemon: a
   // missing binary should fail fast without a side-effect daemon appearing.
   const tuiBinary = resolveTuiBinary();
+  // The daemon starts session hosts from this same binary (Windows backend).
+  process.env.GARAGE_HOST_BIN = tuiBinary;
 
   // Stale-daemon gate (p8.2): a healthy daemon that predates this launcher
   // is stopped (by its reported pid) and replaced exactly like the
@@ -413,6 +556,19 @@ async function tuiMain() {
       );
       process.exit(1);
     }
+  }
+
+  if (openPath) {
+    // Opening a folder deals with that folder only: its sessions come back,
+    // or it gets a fresh one. Other projects' stopped sessions stay stopped
+    // (restorable from the rail).
+    await openFolderWorkspace(openPath);
+  } else if (!process.env.GARAGE_NO_AUTORESTORE) {
+    // Plain `claude-garage`: pick up where you left off — bring back every
+    // session that died with a reboot/crash. Live sessions are untouched;
+    // closed chats are never resurrected here. (GARAGE_NO_AUTORESTORE=1
+    // skips it.)
+    await autoRestoreSessions();
   }
 
   // Foreground, inherited stdio: the TUI owns the terminal until it exits.
@@ -534,17 +690,55 @@ async function restartMain() {
   }
 }
 
+// `claude-garage install` — same as pressing `I` in the TUI: installs the
+// statusline feed (context meter + 5h/weekly usage bar) and the hooks
+// (instant needs-input). Both back up ~/.claude/settings.json first and chain
+// any statusline you already have.
+async function installMain() {
+  if (!(await healthOk())) {
+    console.error("garage daemon is not running — start it with `claude-garage` first");
+    process.exit(1);
+  }
+  for (const [label, route] of [
+    ["statusline (context + usage bar)", "/api/statusline/install"],
+    ["hooks (instant needs-input)", "/api/hooks/install"],
+  ]) {
+    const res = await fetch(`http://127.0.0.1:${PORT}${route}`, { method: "POST" });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      console.error(`${label}: failed — ${body.error ?? res.status}`);
+      process.exitCode = 1;
+    } else if (body.alreadyInstalled) {
+      console.log(`${label}: already installed`);
+    } else {
+      console.log(`${label}: installed${body.chained ? " (your existing statusline is chained)" : ""}`);
+    }
+  }
+}
+
 const USAGE = `usage: claude-garage [command]
 
   (none)                       open the TUI (starts the daemon if needed)
   tui                          same as no command
+  <folder> | open <folder>     open the TUI on that folder (adds it as a project and
+                               starts a session there if it has none), e.g. claude-garage .
+  install                      install the statusline feed + hooks (same as pressing I)
   restart                      restart the background daemon
   restart --sessions [--all]   also restart idle sessions (--all: busy ones too)
   help, --help, -h             show this help`;
 
 const subcommand = process.argv[2];
+const looksLikeFolder =
+  subcommand !== undefined &&
+  !["tui", "install", "restart", "help", "--help", "-h"].includes(subcommand) &&
+  existsSync(subcommand) &&
+  statSync(subcommand).isDirectory();
 if (subcommand === undefined || subcommand === "tui") {
   tuiMain();
+} else if (subcommand === "open" || looksLikeFolder) {
+  tuiMain(subcommand === "open" ? (process.argv[3] ?? ".") : subcommand);
+} else if (subcommand === "install") {
+  installMain();
 } else if (subcommand === "restart") {
   restartMain();
 } else if (subcommand === "help" || subcommand === "--help" || subcommand === "-h") {

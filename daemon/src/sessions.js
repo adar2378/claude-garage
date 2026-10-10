@@ -12,13 +12,18 @@ import {
   createSession,
   killSession,
   respawnPane,
+  runClaude,
 } from "./tmux.js";
+import { readDraft, readDraftImages, dropDraft, dropDraftImages, typeDraft } from "./host-backend.js";
 import {
   getWorkspace,
   listSessionMetas,
   getSessionMeta,
   upsertSessionMeta,
   removeSessionMeta,
+  listRecent,
+  pushRecent,
+  removeRecent,
 } from "./registry.js";
 import { getStatusEntry, getStatus, hasStatus, dropSession as dropStatus } from "./status.js";
 import { dropSession as dropStatuslineContext } from "./statusline.js";
@@ -30,6 +35,9 @@ import { getCachedContext, refreshContext } from "./transcript.js";
 const CLAUDE_CMD = process.env.GARAGE_CLAUDE_CMD ?? "claude";
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// Closed chats shown per workspace in the rail (the recent store keeps more).
+const MAX_CLOSED_PER_WORKSPACE = 8;
 
 // D-restore-flow / p16-restart D1: shared by restore (spawn === createSession,
 // a fresh tmux session) and restart (spawn === respawnPane, the SAME tmux
@@ -220,7 +228,38 @@ export default async function sessionRoutes(app) {
       });
     }
 
-    return [...live, ...restorable];
+    // Closed chats (see registry.js pushRecent): listed as status "closed"
+    // so the wall keeps them in the rail, greyed, one click from reopening.
+    // Synthetic ids — they are not sessions and never touch a host.
+    const closed = [];
+    const perWorkspace = new Map();
+    const wsDirs = new Map();
+    for (const r of await listRecent()) {
+      if (!r.claudeSessionId) continue;
+      if (!wsDirs.has(r.workspace)) {
+        wsDirs.set(r.workspace, (await getWorkspace(r.workspace))?.dir ?? null);
+      }
+      if (wsDirs.get(r.workspace) === null) continue;
+      const n = perWorkspace.get(r.workspace) ?? 0;
+      if (n >= MAX_CLOSED_PER_WORKSPACE) continue;
+      perWorkspace.set(r.workspace, n + 1);
+      closed.push({
+        id: `${GARAGE_PREFIX}${r.workspace}/closed-${r.claudeSessionId}`,
+        workspace: r.workspace,
+        label: r.label,
+        dir: wsDirs.get(r.workspace),
+        attached: false,
+        status: "closed",
+        since: r.endedAt ?? null,
+        message: null,
+        title: r.title ?? null,
+        restorable: false,
+        branch: null,
+        context: null,
+      });
+    }
+
+    return [...live, ...restorable, ...closed];
   });
 
   // p11: account-wide rate limits from the most recent statusline post —
@@ -332,12 +371,26 @@ export default async function sessionRoutes(app) {
           return { failed: { id: meta.id, reason: "session already running" } };
         }
 
+        // A prompt the user was mid-typing when the old host died.
+        const draft = readDraft(meta.id);
+        const draftImages = readDraftImages(meta.id);
+
         const resumed = await spawnClaudeResumed(
           createSession,
           meta.id,
           spawnDir,
           meta.claudeSessionId
         );
+
+        if (draft || draftImages.length > 0) {
+          dropDraft(meta.id);
+          // The old "[Image #N]" markers mean nothing to a fresh process: drop
+          // them and re-attach the saved screenshots by path instead.
+          const text = (draft ?? "").replace(/\[Image #\d+\]/g, "").trim();
+          const parts = [text, ...draftImages].filter(Boolean);
+          await typeDraft(meta.id, parts.join("\0")).catch(() => {});
+          // The images stay on disk until the host sees the box empty again.
+        }
 
         return {
           restored: {
@@ -456,6 +509,56 @@ export default async function sessionRoutes(app) {
     return reply.code(200).send({ restarted, skipped, failed });
   });
 
+  // Recently closed conversations (newest first) — see registry.js pushRecent.
+  app.get("/api/sessions/recent", async () => listRecent());
+
+  // Forget one closed chat (the grey rail row's delete button).
+  app.delete("/api/sessions/recent/:claudeSessionId", async (req, reply) => {
+    await removeRecent(req.params.claudeSessionId);
+    return reply.code(200).send({ deleted: true });
+  });
+
+  // Reopen one: a new garage session running `claude --resume <id>`.
+  app.post("/api/sessions/recent/resume", async (req, reply) => {
+    const { claudeSessionId } = req.body ?? {};
+    const entry = (await listRecent()).find((r) => r.claudeSessionId === claudeSessionId);
+    if (!entry) return reply.code(404).send({ error: "no such recent session" });
+
+    const registered = await getWorkspace(entry.workspace);
+    if (!registered) {
+      return reply.code(409).send({ error: "workspace no longer registered" });
+    }
+    let spawnDir = registered.dir;
+    let worktree = null;
+    if (entry.worktree?.path) {
+      const wtStat = await stat(entry.worktree.path).catch(() => null);
+      if (wtStat?.isDirectory()) {
+        spawnDir = entry.worktree.path;
+        worktree = entry.worktree;
+      }
+    }
+    const dirStat = await stat(spawnDir).catch(() => null);
+    if (!dirStat?.isDirectory()) {
+      return reply.code(409).send({ error: `dir no longer exists: ${spawnDir}` });
+    }
+
+    // Free label: the old one if unused, else <label>-2, -3, ...
+    let label = entry.label;
+    for (let n = 2; await hasSession(sessionId(entry.workspace, label)); n++) {
+      label = `${entry.label}-${n}`;
+    }
+    const id = sessionId(entry.workspace, label);
+    const resumed = await spawnClaudeResumed(createSession, id, spawnDir, entry.claudeSessionId);
+    await upsertSessionMeta(id, {
+      claudeSessionId: entry.claudeSessionId,
+      workspace: entry.workspace,
+      label,
+      worktree,
+    });
+    await removeRecent(entry.claudeSessionId);
+    return reply.code(201).send({ id, workspace: entry.workspace, label, resumed });
+  });
+
   // id contains slashes — capture the whole tail as a wildcard.
   app.delete("/api/sessions/*", async (req, reply) => {
     const id = decodeURIComponent(req.params["*"]);
@@ -499,6 +602,28 @@ export default async function sessionRoutes(app) {
     // POST /api/worktrees/finish afterward, since by then the session (and
     // its metadata) are already gone.
     const meta = await getSessionMeta(id).catch(() => null);
+
+    // Remember the conversation so it can be reopened from "recent" later.
+    // The poller may not have learned the Claude session id yet (a session
+    // closed within seconds of starting): ask `claude agents` right now.
+    const pane = (await listPanePaths().catch(() => new Map())).get(id);
+    let claudeSessionId = meta?.claudeSessionId ?? null;
+    if (!claudeSessionId && pane?.pid) {
+      try {
+        const { stdout } = await runClaude(["agents", "--json"]);
+        claudeSessionId = JSON.parse(stdout).find((a) => a.pid === pane.pid)?.sessionId ?? null;
+      } catch {}
+    }
+    if (claudeSessionId) {
+      await pushRecent({
+        claudeSessionId,
+        workspace: meta?.workspace ?? id.split("/")[1],
+        label: meta?.label ?? id.split("/")[2],
+        title: normalizeTitle(pane?.title, os.hostname()),
+        worktree: meta?.worktree ?? null,
+        endedAt: Date.now(),
+      }).catch(() => {});
+    }
 
     await killSession(id);
     // Deliberate kill: the user is done with this conversation, so there's

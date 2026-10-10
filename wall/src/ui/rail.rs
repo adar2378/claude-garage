@@ -81,17 +81,23 @@ fn session_row(s: &WallSession, gridded: bool, focused: bool, now_ms: i64) -> Li
     // amber (amber stays exclusive to needs-input, whose label keeps its hue
     // and just gains bold). The marker column is always reserved so rows
     // never shift as focus moves.
-    let glyph_color = if gridded {
+    let glyph_color = if s.closed() {
+        colors::FAINT
+    } else if gridded {
         status_color(&s.status, s.since, now_ms)
     } else {
         colors::FAINT
     };
+    // Yellow for live sessions, blue for the focused one, grey for closed
+    // chats (amber stays for needs-input).
     let label_color = if s.needs_input() {
         colors::AMBER
+    } else if s.closed() {
+        colors::FAINT
     } else if focused {
-        colors::FG
+        colors::BLUE
     } else if gridded {
-        colors::DIM
+        colors::YELLOW
     } else {
         colors::FAINT
     };
@@ -129,6 +135,9 @@ fn session_row(s: &WallSession, gridded: bool, focused: bool, now_ms: i64) -> Li
 /// rows (only a RIGHT border — no top inset), so the click router can map
 /// `row - rect.y` straight through `rail_target_at`.
 pub fn render_rail(buf: &mut Buffer, rect: Rect, state: &WallState, now_ms: i64) {
+    if rect.width == 0 {
+        return; // sidebar hidden
+    }
     let block = Block::default()
         .borders(Borders::RIGHT)
         .border_style(Style::default().fg(colors::FAINT));

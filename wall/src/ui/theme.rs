@@ -19,6 +19,7 @@ pub fn glyph_for(status: &str) -> &'static str {
         "working" => "◐",
         "done" => "✓",
         "restorable" => "⟳",
+        "closed" => "◌",
         _ => "○", // idle and anything unknown
     }
 }
@@ -37,6 +38,10 @@ pub fn done_faded(since_ms: Option<i64>, now_ms: i64) -> bool {
 pub mod colors {
     use super::Color;
 
+    /// Live sessions' rail labels (yellow); needs-input keeps the hotter AMBER.
+    pub const YELLOW: Color = Color::Rgb(240, 220, 110);
+    /// The focused session's rail label.
+    pub const BLUE: Color = Color::Rgb(97, 175, 239);
     /// Needs-input — the only hue that shouts.
     pub const AMBER: Color = Color::Rgb(255, 179, 64);
     /// Fresh `done`.

@@ -13,7 +13,7 @@ const EDITOR_CMD = process.env.GARAGE_EDITOR_CMD ?? "code";
 // process whose output or lifetime the daemon should own.
 function spawnEditor(args) {
   return new Promise((resolve, reject) => {
-    const child = spawn(EDITOR_CMD, args, { stdio: "ignore", detached: true });
+    const child = spawn(EDITOR_CMD, args, { stdio: "ignore", detached: true, windowsHide: true });
     child.once("error", reject);
     child.once("spawn", () => {
       child.unref();

@@ -189,3 +189,29 @@ export async function getHookToken() {
   await writeState(state);
   return state.hookToken;
 }
+
+// Recently closed conversations, newest first: kept after a deliberate close
+// so the user can jump back into one later (`claude --resume`). Capped, and
+// deduped by Claude session id.
+const RECENT_MAX = 30;
+
+export async function listRecent() {
+  const state = await readState();
+  return Array.isArray(state.recent) ? state.recent : [];
+}
+
+export async function pushRecent(entry) {
+  const state = await readState();
+  const rest = (Array.isArray(state.recent) ? state.recent : []).filter(
+    (r) => r.claudeSessionId !== entry.claudeSessionId
+  );
+  state.recent = [entry, ...rest].slice(0, RECENT_MAX);
+  await writeState(state);
+}
+
+export async function removeRecent(claudeSessionId) {
+  const state = await readState();
+  if (!Array.isArray(state.recent)) return;
+  state.recent = state.recent.filter((r) => r.claudeSessionId !== claudeSessionId);
+  await writeState(state);
+}

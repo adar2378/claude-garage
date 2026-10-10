@@ -5,7 +5,10 @@ import { mkdir } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
 
-const run = promisify(execFile);
+const execFileP = promisify(execFile);
+// The daemon is detached from any console on Windows: without windowsHide
+// every child process (git, ...) flashes its own console window.
+const run = (cmd, args, opts = {}) => execFileP(cmd, args, { windowsHide: true, ...opts });
 
 // D-wt-location: outside any repo, so a worktree never pollutes `git status`
 // for the repo itself. Keyed by workspace so `~/.garage/worktrees/<ws>/` is

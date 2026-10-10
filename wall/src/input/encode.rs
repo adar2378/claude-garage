@@ -79,7 +79,16 @@ pub fn encode_key(key: &KeyEvent) -> Option<Vec<u8>> {
         KeyCode::Home => csi(b'H'),
         KeyCode::End => csi(b'F'),
         KeyCode::Enter => {
-            if shift || ctrl {
+            if ctrl && !shift && crate::host::use_host_backend() {
+                // Native-host (Windows): a ConPTY does not carry Ctrl+Enter.
+                // Claude Code's "send queued message now" (`chat:sendNow`)
+                // also answers to the chord Ctrl+X Ctrl+S, which works in
+                // every terminal.
+                vec![0x18, 0x13]
+            } else if (shift || ctrl) && crate::host::use_host_backend() {
+                // Shift+Enter: Alt+Enter (ESC CR) is a newline in Claude Code.
+                vec![0x1b, 0x0d]
+            } else if shift || ctrl {
                 // p14 (spec tui-key-routing "Enhanced-keyboard
                 // passthrough"): Shift+Enter is Claude Code's newline —
                 // kitty CSI-u form (ESC[13;<mod>u), which tmux with
@@ -451,6 +460,16 @@ mod tests {
         assert_eq!(encode_key(&key(KeyCode::Char('?'), CTRL)), Some(vec![0x7f]));
     }
 
+    #[cfg(windows)]
+    #[test]
+    fn modified_enter_is_alt_enter_on_the_native_host() {
+        // Shift+Enter is a newline; Ctrl+Enter is "send now" (Ctrl+X Ctrl+S).
+        assert_eq!(encode_key(&key(KeyCode::Enter, SHIFT)), Some(vec![0x1b, 0x0d]));
+        assert_eq!(encode_key(&key(KeyCode::Enter, CTRL)), Some(vec![0x18, 0x13]));
+        assert_eq!(encode_key(&key(KeyCode::Enter, CTRL | SHIFT)), Some(vec![0x1b, 0x0d]));
+    }
+
+    #[cfg(not(windows))]
     #[test]
     fn modified_enter_takes_the_kitty_csi_u_form_p14() {
         // Shift+Enter is Claude Code's newline; legacy \r cannot carry it.
