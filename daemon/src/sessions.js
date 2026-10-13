@@ -37,6 +37,9 @@ const CLAUDE_CMD = process.env.GARAGE_CLAUDE_CMD ?? "claude";
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// Closed chats being reopened right now (see POST /api/sessions/recent/resume).
+const resumingNow = new Set();
+
 // Closed chats shown per workspace in the rail (the recent store keeps more).
 const MAX_CLOSED_PER_WORKSPACE = 8;
 
@@ -534,42 +537,62 @@ export default async function sessionRoutes(app) {
   // Reopen one: a new garage session running `claude --resume <id>`.
   app.post("/api/sessions/recent/resume", async (req, reply) => {
     const { claudeSessionId } = req.body ?? {};
-    const entry = (await listRecent()).find((r) => r.claudeSessionId === claudeSessionId);
-    if (!entry) return reply.code(404).send({ error: "no such recent session" });
-
-    const registered = await getWorkspace(entry.workspace);
-    if (!registered) {
-      return reply.code(409).send({ error: "workspace no longer registered" });
+    // A reopen takes seconds. A second request for the same chat in that
+    // window (a double click) must not start a second session: register
+    // before the first await so concurrent requests see it.
+    if (!claudeSessionId || resumingNow.has(claudeSessionId)) {
+      return reply.code(409).send({ error: "already reopening that chat" });
     }
-    let spawnDir = registered.dir;
-    let worktree = null;
-    if (entry.worktree?.path) {
-      const wtStat = await stat(entry.worktree.path).catch(() => null);
-      if (wtStat?.isDirectory()) {
-        spawnDir = entry.worktree.path;
-        worktree = entry.worktree;
+    resumingNow.add(claudeSessionId);
+    let claimed = null; // the entry, once taken off the closed list
+    try {
+      const entry = (await listRecent()).find((r) => r.claudeSessionId === claudeSessionId);
+      if (!entry) return reply.code(404).send({ error: "no such recent session" });
+
+      const registered = await getWorkspace(entry.workspace);
+      if (!registered) {
+        return reply.code(409).send({ error: "workspace no longer registered" });
       }
-    }
-    const dirStat = await stat(spawnDir).catch(() => null);
-    if (!dirStat?.isDirectory()) {
-      return reply.code(409).send({ error: `dir no longer exists: ${spawnDir}` });
-    }
+      let spawnDir = registered.dir;
+      let worktree = null;
+      if (entry.worktree?.path) {
+        const wtStat = await stat(entry.worktree.path).catch(() => null);
+        if (wtStat?.isDirectory()) {
+          spawnDir = entry.worktree.path;
+          worktree = entry.worktree;
+        }
+      }
+      const dirStat = await stat(spawnDir).catch(() => null);
+      if (!dirStat?.isDirectory()) {
+        return reply.code(409).send({ error: `dir no longer exists: ${spawnDir}` });
+      }
 
-    // Free label: the old one if unused, else <label>-2, -3, ...
-    let label = entry.label;
-    for (let n = 2; await hasSession(sessionId(entry.workspace, label)); n++) {
-      label = `${entry.label}-${n}`;
+      // Claim the chat: it leaves the closed list now, not after the slow
+      // spawn, and goes back if the spawn fails.
+      await removeRecent(entry.claudeSessionId);
+      claimed = entry;
+
+      // Free label: the old one if unused, else <label>-2, -3, ...
+      let label = entry.label;
+      for (let n = 2; await hasSession(sessionId(entry.workspace, label)); n++) {
+        label = `${entry.label}-${n}`;
+      }
+      const id = sessionId(entry.workspace, label);
+      const resumed = await spawnClaudeResumed(createSession, id, spawnDir, entry.claudeSessionId);
+      await upsertSessionMeta(id, {
+        claudeSessionId: entry.claudeSessionId,
+        workspace: entry.workspace,
+        label,
+        worktree,
+      });
+      claimed = null; // done: it is a live session now
+      return reply.code(201).send({ id, workspace: entry.workspace, label, resumed });
+    } catch (err) {
+      if (claimed) await pushRecent(claimed).catch(() => {});
+      throw err;
+    } finally {
+      resumingNow.delete(claudeSessionId);
     }
-    const id = sessionId(entry.workspace, label);
-    const resumed = await spawnClaudeResumed(createSession, id, spawnDir, entry.claudeSessionId);
-    await upsertSessionMeta(id, {
-      claudeSessionId: entry.claudeSessionId,
-      workspace: entry.workspace,
-      label,
-      worktree,
-    });
-    await removeRecent(entry.claudeSessionId);
-    return reply.code(201).send({ id, workspace: entry.workspace, label, resumed });
   });
 
   // id contains slashes — capture the whole tail as a wildcard.

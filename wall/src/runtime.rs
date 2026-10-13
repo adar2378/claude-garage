@@ -140,6 +140,8 @@ pub enum AppEvent {
     Connection(bool),
     /// A transient strip notice (fetch/effect errors, lifecycle results).
     Notice { text: String, ttl_ms: i64 },
+    /// A closed chat's reopen finished (success or failure).
+    ResumeSettled(String),
     /// Focus this project as a deliberate choice (e.g. after `n` opened a
     /// session in the home folder).
     SelectWorkspace(String),
@@ -1504,6 +1506,7 @@ fn run_effect(effect: Effect, tx: &EventSender, base_url: &str) {
                 }
             }
             Effect::ResumeRecent { claude_session_id, name } => {
+                let settled_id = claude_session_id.clone();
                 match client.resume_recent(&claude_session_id) {
                     Ok(()) => send_notice(&tx, format!("reopened {name}"), 2500),
                     Err(e) => send_notice(&tx, failure_notice("reopen failed", &e), 5000),
@@ -1512,6 +1515,7 @@ fn run_effect(effect: Effect, tx: &EventSender, base_url: &str) {
                 if let Ok(list) = client.fetch_recent() {
                     let _ = tx.send(AppEvent::Recent(list));
                 }
+                let _ = tx.send(AppEvent::ResumeSettled(settled_id));
             }
             Effect::Restore { id } => {
                 match client.restore_session(&id) {
@@ -1936,6 +1940,9 @@ struct App {
     rail_dragging: bool,
     /// `claude-garage <folder>`: the workspace to focus once it is known.
     pending_focus: Option<String>,
+    /// Closed chats whose reopen is still in flight (a second click on the
+    /// same grey row must not start a second session).
+    resuming: HashSet<String>,
     /// Quick-send overlay: the prompt text, its display scope, and the
     /// session ids it will go to. `pending_enters` are the Enter keystrokes
     /// owed to a pasted prompt (sent a beat later so Claude Code does not
@@ -2014,6 +2021,9 @@ impl App {
                         now_ms(),
                     );
                 }
+            }
+            AppEvent::ResumeSettled(id) => {
+                self.resuming.remove(&id);
             }
             AppEvent::SelectWorkspace(name) => {
                 self.store.focus_workspace_named(&name);
@@ -2201,6 +2211,12 @@ impl App {
     fn run_effects(&mut self, effects: Vec<Effect>) -> bool {
         let mut quit = false;
         for effect in effects {
+            if let Effect::ResumeRecent { claude_session_id, name } = &effect {
+                if !self.resuming.insert(claude_session_id.clone()) {
+                    continue; // already reopening this chat
+                }
+                self.router.notices.show(format!("reopening {name}…"), 4000, now_ms());
+            }
             if matches!(effect, Effect::Quit) {
                 quit = true;
             } else {
@@ -3678,6 +3694,7 @@ async fn state_loop(
         rail_hidden: load_rail_prefs().1,
         rail_dragging: false,
         pending_focus: std::env::var("GARAGE_FOCUS_WORKSPACE").ok().filter(|s| !s.is_empty()),
+        resuming: HashSet::new(),
         palette_query: String::new(),
         palette_sel: 0,
         quick_text: String::new(),
