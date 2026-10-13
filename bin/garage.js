@@ -205,10 +205,12 @@ async function pidListeningOnPort() {
 
 async function stopStaleDaemon(health) {
   const label = health.version ? `v${health.version}` : "with no version (pre-upgrade)";
-  console.log(
-    `garage daemon ${label} is stale (launcher v${VERSION}) — restarting it; ` +
-      `sessions are untouched (tmux owns them)`
-  );
+  // Restarting a stale daemon is routine after an upgrade and loses nothing:
+  // stay quiet unless it fails (errors below still print). GARAGE_VERBOSE=1
+  // brings the message back.
+  if (process.env.GARAGE_VERBOSE) {
+    console.log(`garage daemon ${label} is stale (launcher v${VERSION}) — restarting it`);
+  }
   // Prefer the pid health reports (current daemons); fall back to the
   // port's listener for pre-upgrade daemons that report none.
   let pid = Number(health.pid);
@@ -545,7 +547,7 @@ async function tuiMain(openPath = null) {
   const stale = daemonIsStale(health);
   if (stale) await stopStaleDaemon(health);
   if (health === null || stale) {
-    if (!stale) {
+    if (!stale && process.env.GARAGE_VERBOSE) {
       console.log(`no daemon on port ${PORT} — starting one (it outlives the TUI)`);
     }
     const logPath = startDetachedDaemon();
@@ -716,6 +718,25 @@ async function installMain() {
   }
 }
 
+// `claude-garage prune` — drop projects that have no sessions and no closed
+// chats (the leftovers of folders you opened once).
+async function pruneMain() {
+  if (!(await healthOk())) {
+    console.error("garage daemon is not running — start it with `claude-garage` first");
+    process.exit(1);
+  }
+  const base = `http://127.0.0.1:${PORT}`;
+  const workspaces = await (await fetch(`${base}/api/workspaces`)).json();
+  const sessions = await (await fetch(`${base}/api/sessions`)).json();
+  const used = new Set(sessions.map((s) => s.workspace));
+  const empty = workspaces.filter((w) => !used.has(w.name));
+  for (const w of empty) {
+    await fetch(`${base}/api/workspaces/${encodeURIComponent(w.name)}`, { method: "DELETE" });
+    console.log(`removed empty project ${w.name}`);
+  }
+  if (empty.length === 0) console.log("no empty projects");
+}
+
 const USAGE = `usage: claude-garage [command]
 
   (none)                       open the TUI (starts the daemon if needed)
@@ -723,6 +744,7 @@ const USAGE = `usage: claude-garage [command]
   <folder> | open <folder>     open the TUI on that folder (adds it as a project and
                                starts a session there if it has none), e.g. claude-garage .
   install                      install the statusline feed + hooks (same as pressing I)
+  prune                        remove projects that have no sessions or closed chats
   restart                      restart the background daemon
   restart --sessions [--all]   also restart idle sessions (--all: busy ones too)
   help, --help, -h             show this help`;
@@ -739,6 +761,8 @@ if (subcommand === undefined || subcommand === "tui") {
   tuiMain(subcommand === "open" ? (process.argv[3] ?? ".") : subcommand);
 } else if (subcommand === "install") {
   installMain();
+} else if (subcommand === "prune") {
+  pruneMain();
 } else if (subcommand === "restart") {
   restartMain();
 } else if (subcommand === "help" || subcommand === "--help" || subcommand === "-h") {

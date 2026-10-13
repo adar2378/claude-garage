@@ -190,6 +190,25 @@ export async function getHookToken() {
   return state.hookToken;
 }
 
+// A project with no live session, no resume record and no closed chat left has
+// nothing to show: unregister it (sessions are never touched here). Set
+// GARAGE_KEEP_EMPTY_PROJECTS=1 to keep such projects.
+export async function pruneWorkspaceIfEmpty(name, liveSessionIds) {
+  if (!name || process.env.GARAGE_KEEP_EMPTY_PROJECTS) return false;
+  const state = await readState();
+  if (!(name in state.workspaces)) return false;
+  const prefix = `${GARAGE_PREFIX}${name}/`;
+  const hasLive = liveSessionIds.some((id) => id.startsWith(prefix));
+  const hasMeta = Object.keys(state.sessions).some((id) => id.startsWith(prefix));
+  const hasClosed = (Array.isArray(state.recent) ? state.recent : []).some(
+    (r) => r.workspace === name
+  );
+  if (hasLive || hasMeta || hasClosed) return false;
+  delete state.workspaces[name];
+  await writeState(state);
+  return true;
+}
+
 // Recently closed conversations, newest first: kept after a deliberate close
 // so the user can jump back into one later (`claude --resume`). Capped, and
 // deduped by Claude session id.

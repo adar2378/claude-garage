@@ -33,9 +33,16 @@ claude-garage
 | `claude-garage` | Pick up where you left off. Restores every session that died with a reboot or crash. |
 | `claude-garage .` or `claude-garage <folder>` | Work on that folder only. Adds it as a project if new, restores that folder's stopped sessions, or starts a fresh session if there is nothing to restore. Other projects' stopped sessions stay stopped. |
 | `claude-garage install` | Same as pressing `I`: installs the statusline feed and hooks. |
+| `claude-garage prune` | Remove projects that have no sessions and no closed chats. |
 | `claude-garage restart` | Restart the background daemon (add `--sessions` for sessions). |
 
 Set `GARAGE_NO_AUTORESTORE=1` to skip the automatic restore on a plain start.
+Startup is quiet (no daemon notices); `GARAGE_VERBOSE=1` brings them back.
+
+**Empty projects go away.** When you close a project's last chat and nothing
+is left to reopen (no grey closed chat), the project is unregistered too.
+Set `GARAGE_KEEP_EMPTY_PROJECTS=1` to keep them. Reopen a folder any time with
+`claude-garage <folder>`.
 
 ## How it works
 

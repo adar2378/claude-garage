@@ -21,6 +21,9 @@
 
 ### Changed
 
+- Closing a project's last chat removes the project when nothing is left to
+  reopen (`GARAGE_KEEP_EMPTY_PROJECTS=1` keeps it); `claude-garage prune`
+  clears leftovers. Startup no longer prints daemon notices.
 - The usage chip in the strip is now a bar (`5h ▰▰▰▱▱▱ 47% (1h40m)`).
 - The rail colours live sessions yellow and the focused one blue (needs-input
   stays amber).

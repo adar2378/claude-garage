@@ -24,6 +24,7 @@ import {
   listRecent,
   pushRecent,
   removeRecent,
+  pruneWorkspaceIfEmpty,
 } from "./registry.js";
 import { getStatusEntry, getStatus, hasStatus, dropSession as dropStatus } from "./status.js";
 import { dropSession as dropStatuslineContext } from "./statusline.js";
@@ -514,7 +515,14 @@ export default async function sessionRoutes(app) {
 
   // Forget one closed chat (the grey rail row's delete button).
   app.delete("/api/sessions/recent/:claudeSessionId", async (req, reply) => {
+    const entry = (await listRecent()).find(
+      (r) => r.claudeSessionId === req.params.claudeSessionId
+    );
     await removeRecent(req.params.claudeSessionId);
+    if (entry) {
+      const left = (await listSessions().catch(() => [])).map((s) => s.id);
+      await pruneWorkspaceIfEmpty(entry.workspace, left).catch(() => {});
+    }
     return reply.code(200).send({ deleted: true });
   });
 
@@ -586,6 +594,8 @@ export default async function sessionRoutes(app) {
         return reply.code(404).send({ error: `no resume metadata for: ${id}` });
       }
       await removeSessionMeta(id).catch(() => {});
+      const left = (await listSessions().catch(() => [])).map((s) => s.id);
+      await pruneWorkspaceIfEmpty(id.split("/")[1], left).catch(() => {});
       return reply.code(200).send({
         deleted: true,
         meta: true,
@@ -629,6 +639,10 @@ export default async function sessionRoutes(app) {
     // Deliberate kill: the user is done with this conversation, so there's
     // nothing to offer restoring later.
     await removeSessionMeta(id).catch(() => {});
+    // That was the project's last chat and nothing is left to reopen: the
+    // project itself goes too (see pruneWorkspaceIfEmpty).
+    const remaining = (await listSessions().catch(() => [])).map((s) => s.id);
+    await pruneWorkspaceIfEmpty(id.split("/")[1], remaining).catch(() => {});
     return reply
       .code(200)
       .send({ deleted: true, worktree: await withTarget(meta?.worktree) });
