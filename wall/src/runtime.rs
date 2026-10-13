@@ -140,6 +140,9 @@ pub enum AppEvent {
     Connection(bool),
     /// A transient strip notice (fetch/effect errors, lifecycle results).
     Notice { text: String, ttl_ms: i64 },
+    /// Focus this project as a deliberate choice (e.g. after `n` opened a
+    /// session in the home folder).
+    SelectWorkspace(String),
     /// `GET /api/sessions/recent` result for the `H` overlay.
     Recent(Vec<RecentInfo>),
     /// A spawn effect settled (success or failure) — clears the busy guard.
@@ -391,6 +394,9 @@ pub enum Effect {
     /// workspace (the daemon has no workspace filter), aggregated into one
     /// result notice.
     RestartWorkspace { ids: Vec<String> },
+    /// `n` with no project registered: register the home folder as a project
+    /// and open a session in it.
+    SpawnHome { name: String, dir: String, label: String },
     /// `H` opened: `GET /api/sessions/recent`.
     FetchRecent,
     /// A closed chat's delete button: `DELETE /api/sessions/recent/<id>`.
@@ -453,6 +459,11 @@ pub struct GarageRouter {
     restoring: HashSet<String>,
     /// A spawn call in flight — guards concurrent spawns.
     spawning: bool,
+    /// True from startup until the user actually picks a project or session.
+    /// The wall always shows *some* project as focused (the first one), but
+    /// that is a default, not a choice: `n` only uses a project the user
+    /// selected, otherwise it opens in the home folder.
+    unselected: bool,
     /// The `I` install (statusline + hooks) in flight — guards concurrent
     /// installs.
     installing: bool,
@@ -600,8 +611,25 @@ impl GarageRouter {
         if self.spawning {
             return;
         }
-        let Some(workspace) = store.state().focused_workspace.clone() else {
-            return;
+        let focused = store.state().focused_workspace.clone();
+        let workspace = match focused {
+            Some(w) if !self.unselected => w,
+            _ => {
+                // No project picked: start in the user's home folder
+                // (C:\Users\<you>), as its own project.
+                let home = crate::host::home_dir().to_string_lossy().into_owned();
+                if home.is_empty() {
+                    return;
+                }
+                self.spawning = true;
+                let name = crate::state::workspace_form::derive_workspace_name(
+                    &home,
+                    &Vec::<String>::new(),
+                );
+                let label = next_label(store.state(), &name);
+                effects.push(Effect::SpawnHome { name, dir: home, label });
+                return;
+            }
         };
         self.spawning = true;
         let label = next_label(store.state(), &workspace);
@@ -1442,6 +1470,24 @@ fn run_effect(effect: Effect, tx: &EventSender, base_url: &str) {
                 fetch_and_send(&client, &tx);
                 let _ = tx.send(AppEvent::SpawnSettled);
             }
+            Effect::SpawnHome { name, dir, label } => {
+                match client
+                    .put_workspace(&name, &dir)
+                    .and_then(|()| client.spawn_session(&name, &label, false).map(|_| ()))
+                {
+                    Ok(()) => {
+                        fetch_and_send(&client, &tx);
+                        // Land on the project the session went into.
+                        let _ = tx.send(AppEvent::SelectWorkspace(name));
+                        send_notice(&tx, format!("opened a session in {dir}"), 3000);
+                    }
+                    Err(e) => {
+                        send_notice(&tx, failure_notice("spawn failed", &e), 5000);
+                        fetch_and_send(&client, &tx);
+                    }
+                }
+                let _ = tx.send(AppEvent::SpawnSettled);
+            }
             Effect::FetchRecent => {
                 if let Ok(list) = client.fetch_recent() {
                     let _ = tx.send(AppEvent::Recent(list));
@@ -1961,12 +2007,17 @@ impl App {
                         self.store.close_overlay();
                     }
                     self.store.focus_workspace_named(&name);
+                    self.router.unselected = false;
                     self.router.notices.show(
                         format!("workspace {name} added — press n to spawn a session"),
                         5000,
                         now_ms(),
                     );
                 }
+            }
+            AppEvent::SelectWorkspace(name) => {
+                self.store.focus_workspace_named(&name);
+                self.router.unselected = false;
             }
             AppEvent::Recent(list) => {
                 self.recent_loaded = true;
@@ -2075,6 +2126,7 @@ impl App {
                 false
             }
             KeyLayer::Engaged => {
+                self.router.unselected = false;
                 self.keylog
                     .log("engaged", &format!("{:?} {:?}", key.code, key.modifiers));
                 self.handle_engaged_key(key);
@@ -2086,6 +2138,10 @@ impl App {
                 let Some(key_str) = garage_key_string(key) else {
                     return false; // consumed: garage typing never reaches an agent
                 };
+                // Picking a project/session by key counts as choosing it.
+                if matches!(key_str.as_str(), "1"|"2"|"3"|"4"|"5"|"6"|"7"|"8"|"9"|"["|"]"|"a"|"\r"|"\n") {
+                    self.router.unselected = false;
+                }
                 // Fresh overlay state on every open (the Dart `A`/`w`
                 // branches — reset happens even if the dispatch declines).
                 if key_str == "b" {
@@ -2543,6 +2599,9 @@ impl App {
                 }
             }
         }
+        if self.tile_at(col, row).is_some() {
+            self.router.unselected = false;
+        }
         // Grid click: focus AND engage (same landing as focus+Enter); a
         // click on a restorable placeholder restores it; while engaged a
         // click on a different tile migrates via explicit disengage → focus
@@ -2585,6 +2644,7 @@ impl App {
                 return;
             }
             if let Some(target) = target {
+                self.router.unselected = false;
                 if self.store.state().layer == KeyLayer::Engaged {
                     self.store.disengage();
                 }
@@ -2959,6 +3019,7 @@ impl App {
                 };
                 let target = items[idx].target.clone();
                 let name = items[idx].label.clone();
+                self.router.unselected = false;
                 self.store.close_overlay();
                 match target {
                     PaletteTarget::Session(id) => {
@@ -3133,6 +3194,7 @@ impl App {
         };
         if self.store.state().group_by_name(Some(name.as_str())).is_some() {
             self.store.focus_workspace_named(&name);
+            self.router.unselected = false;
             self.pending_focus = None;
         }
     }
@@ -3576,7 +3638,10 @@ async fn state_loop(
         .unwrap_or_default();
     let mut app = App {
         store: WallStore::new(),
-        router: GarageRouter::default(),
+        router: GarageRouter {
+            unselected: std::env::var("GARAGE_FOCUS_WORKSPACE").map_or(true, |s| s.is_empty()),
+            ..GarageRouter::default()
+        },
         registry: TileRegistry::new(tx.clone()),
         escalation: EscalationPolicy::default(),
         keylog: KeyLog::new(),
@@ -4349,6 +4414,25 @@ mod tests {
                 worktree: false,
             }]
         );
+    }
+
+    #[test]
+    fn n_before_any_project_is_picked_opens_in_the_home_folder() {
+        let mut store = store_with(vec![ws("a")], vec![si("a", "one")]);
+        let mut router = GarageRouter { unselected: true, ..GarageRouter::default() };
+        let effects = key_at(&mut router, &mut store, "n", 1000);
+        assert!(
+            matches!(effects.as_slice(), [Effect::SpawnHome { .. }]),
+            "default focus is not a choice: {effects:?}"
+        );
+    }
+
+    #[test]
+    fn n_after_picking_a_project_opens_inside_it() {
+        let mut store = store_with(vec![ws("a")], vec![si("a", "one")]);
+        let mut router = GarageRouter { unselected: false, ..GarageRouter::default() };
+        let effects = key_at(&mut router, &mut store, "n", 1000);
+        assert!(matches!(effects.as_slice(), [Effect::Spawn { workspace, .. }] if workspace == "a"));
     }
 
     #[test]

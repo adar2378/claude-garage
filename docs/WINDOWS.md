@@ -121,6 +121,14 @@ reboot or if you kill it. Sessions that died come back as `⟳ restorable`
   and re-attaches the screenshots by path.
 - **Turn markers**: a blue bar down a tile's left edge marks the current turn,
   grey ticks mark where older turns began.
+- **`n` goes where you picked.** A new session opens in the project you
+  selected (key `1`-`9`, click, palette). Until you pick one, `n` opens in your
+  home folder as its own project instead of whatever project is listed first.
+  `N` in a folder that is not a git repo opens a normal session.
+- **Recognisable projects and chats**: each project has a stable colour on its
+  row and down the left edge of its chats; Claude Code's generic "Claude Code"
+  title is ignored so chats show their label (`claude-1`) until they have a
+  real summary.
 - **Sidebar**: `b` hides/shows it, `<` `>` resize it, or drag its edge.
   Saved in `~/.garage/ui.json`.
 - **Open on a folder**: `claude-garage .` (see above), and `claude-garage

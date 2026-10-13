@@ -61,6 +61,27 @@ pub mod colors {
     pub const CTX_HOT: Color = Color::Red;
 }
 
+/// A stable colour per project name, so a project's row and chats read as one
+/// group. Avoids amber (needs-input), yellow/blue (live/focused rows), green
+/// (done) and red.
+pub fn project_color(name: &str) -> Color {
+    const PALETTE: [Color; 8] = [
+        Color::Rgb(86, 182, 194),  // teal
+        Color::Rgb(198, 120, 221), // purple
+        Color::Rgb(224, 108, 160), // pink
+        Color::Rgb(150, 160, 235), // lavender
+        Color::Rgb(130, 210, 170), // mint
+        Color::Rgb(190, 170, 140), // sand
+        Color::Rgb(120, 200, 230), // sky
+        Color::Rgb(225, 140, 190), // rose
+    ];
+    let mut h: u32 = 2_166_136_261;
+    for b in name.bytes() {
+        h = (h ^ u32::from(b)).wrapping_mul(16_777_619);
+    }
+    PALETTE[(h as usize) % PALETTE.len()]
+}
+
 /// Status → color per the salience ladder. `since_ms`/`now_ms` drive the
 /// done-fade.
 pub fn status_color(status: &str, since_ms: Option<i64>, now_ms: i64) -> Color {
@@ -109,6 +130,17 @@ mod tests {
     //! Port of `tui/test/theme_test.dart` — glyphs, done-fade, the salience
     //! color ladder, elapsed formatting.
     use super::*;
+
+    #[test]
+    fn project_colors_are_stable_and_never_the_reserved_ones() {
+        assert_eq!(project_color("alpha"), project_color("alpha"));
+        for name in ["a", "b", "webflow", "debris", "user", "claude-garage-pc"] {
+            let c = project_color(name);
+            assert_ne!(c, colors::AMBER, "{name}");
+            assert_ne!(c, colors::YELLOW, "{name}");
+            assert_ne!(c, colors::BLUE, "{name}");
+        }
+    }
 
     #[test]
     fn glyphs_match_the_mockup_set() {

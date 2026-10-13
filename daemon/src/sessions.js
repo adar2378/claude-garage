@@ -302,7 +302,12 @@ export default async function sessionRoutes(app) {
       try {
         worktree = await createWorktree({ repoDir: registered.dir, workspace, label });
       } catch (err) {
-        return reply.code(err.statusCode ?? 400).send({ error: err.message });
+        // `N` in a folder that is not a git repo has nothing to branch from:
+        // open a normal session there instead of failing.
+        if (!/^not a git repository/.test(err.message ?? "")) {
+          return reply.code(err.statusCode ?? 400).send({ error: err.message });
+        }
+        worktree = null;
       }
     }
 

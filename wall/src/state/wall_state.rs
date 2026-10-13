@@ -70,6 +70,14 @@ pub struct WallSession {
     pub context: Option<ContextInfo>,
 }
 
+/// Claude Code's own window title before it has named the chat ("Claude
+/// Code", sometimes with a leading spinner glyph). Every new chat has it, so
+/// showing it makes all chats look the same — fall back to the label.
+pub fn is_generic_title(title: &str) -> bool {
+    let t = title.trim_start_matches(|c: char| !c.is_alphanumeric()).trim().to_lowercase();
+    t == "claude code" || t == "claude"
+}
+
 impl WallSession {
     pub fn from_info(info: &SessionInfo, workspace_dir: Option<&str>) -> WallSession {
         WallSession {
@@ -100,7 +108,7 @@ impl WallSession {
     /// session is about.
     pub fn display_name(&self) -> &str {
         match self.title.as_deref() {
-            Some(t) if !t.trim().is_empty() => t,
+            Some(t) if !t.trim().is_empty() && !is_generic_title(t) => t,
             _ => &self.label,
         }
     }
@@ -317,5 +325,23 @@ impl WallState {
                 _ => "keys → help".to_owned(),
             },
         }
+    }
+}
+
+#[cfg(test)]
+mod generic_title_tests {
+    use super::is_generic_title;
+
+    #[test]
+    fn claude_codes_own_window_title_is_generic() {
+        assert!(is_generic_title("Claude Code"));
+        assert!(is_generic_title("✳ Claude Code"));
+        assert!(is_generic_title("  claude  "));
+    }
+
+    #[test]
+    fn a_real_summary_is_not() {
+        assert!(!is_generic_title("✳ Funded Traders website connection"));
+        assert!(!is_generic_title("Fix Claude Code hooks"));
     }
 }
