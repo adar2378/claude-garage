@@ -31,7 +31,7 @@ import { dropSession as dropStatuslineContext } from "./statusline.js";
 import { pollerEvents, pollOnce } from "./poller.js";
 import { createWorktree, currentBranch } from "./worktrees.js";
 import { getStatuslineContext, getRateLimits } from "./statusline.js";
-import { getCachedContext, refreshContext } from "./transcript.js";
+import { getCachedContext, refreshContext, transcriptExists } from "./transcript.js";
 
 const CLAUDE_CMD = process.env.GARAGE_CLAUDE_CMD ?? "claude";
 
@@ -61,7 +61,10 @@ const MAX_CLOSED_PER_WORKSPACE = 8;
 // unit-testable with a fake `spawn`, same discipline as the target-
 // selection tests below (daemon/test/restart.test.js).
 export async function spawnClaudeResumed(spawn, id, dir, claudeSessionId) {
-  if (!claudeSessionId) {
+  // No saved conversation (never got a first message): `--resume` would only
+  // print "No conversation found", so start a plain session straight away
+  // instead of waiting to see whether it dies.
+  if (!claudeSessionId || !transcriptExists(dir, claudeSessionId)) {
     await spawn(id, dir, CLAUDE_CMD);
     return false;
   }

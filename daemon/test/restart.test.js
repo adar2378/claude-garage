@@ -130,6 +130,18 @@ test("no claudeSessionId spawns plain claude and reports resumed:false", async (
   ]);
 });
 
+test("a claudeSessionId with no saved conversation spawns plain claude, never --resume", async () => {
+  const calls = [];
+  const spawn = async (id, dir, command, extraArgs = []) => {
+    calls.push({ id, dir, command, extraArgs });
+  };
+  const resumed = await spawnClaudeResumed(spawn, "garage/ws/one", "/tmp/never-saved", "no-such-session-id");
+  assert.equal(resumed, false);
+  assert.deepEqual(calls, [
+    { id: "garage/ws/one", dir: "/tmp/never-saved", command: "claude", extraArgs: [] },
+  ]);
+});
+
 // ---------------------------------------------------------------------
 // waitForPredecessor
 // ---------------------------------------------------------------------

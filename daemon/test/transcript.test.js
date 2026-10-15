@@ -54,6 +54,20 @@ test("slugifyCwd replaces every / with -", () => {
   assert.equal(transcript.slugifyCwd("/a/b/c"), "-a-b-c");
 });
 
+test("slugifyCwd maps Windows paths and punctuation the way Claude Code does", () => {
+  assert.equal(transcript.slugifyCwd("C:\\Users\\UseR"), "C--Users-UseR");
+  assert.equal(transcript.slugifyCwd("E:\\Codes\\my.app_x"), "E--Codes-my-app-x");
+});
+
+test("transcriptExists is true only once Claude Code has saved the conversation", async () => {
+  const dir = path.join(scratch, "proj-a");
+  assert.equal(transcript.transcriptExists(dir, "sid-1"), false, "no transcript yet");
+  assert.equal(transcript.transcriptExists(dir, null), false);
+  await writeTranscript(dir, "sid-1", assistantLine());
+  assert.equal(transcript.transcriptExists(dir, "sid-1"), true);
+  assert.equal(transcript.transcriptExists(dir, "sid-2"), false);
+});
+
 test("windowForModel: unknown/missing model defaults to 1M (current models are natively 1M)", () => {
   assert.equal(transcript.windowForModel("claude-opus-5"), 1_000_000);
   assert.equal(transcript.windowForModel("claude-fable-5"), 1_000_000);
