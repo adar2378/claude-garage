@@ -42,8 +42,8 @@ use tokio::sync::mpsc;
 
 use crate::api::client::{ApiError, GarageClient};
 use crate::api::models::{
-    FinishAction, HooksInstallResult, RestartResponse, SessionInfo, UsageInfo, WorkspaceInfo,
-    WorktreeRecord,
+    FinishAction, HooksInstallResult, RecentInfo, RestartResponse, SessionInfo, UsageInfo,
+    WorkspaceInfo, WorktreeRecord,
 };
 use crate::api::sse::SseClient;
 use crate::input::encode::encode_key;
@@ -64,7 +64,9 @@ use crate::ui::help::render_help;
 use crate::ui::hit_targets::{
     rail_target_at, tile_index_at, triage_row_index_at, view_picker_row_index_at, RailTarget,
 };
-use crate::ui::layout::{tile_inner, wall_layout, WallLayout};
+use crate::ui::layout::{
+    tile_inner, wall_layout_with_rail, WallLayout, RAIL_MAX, RAIL_MIN, RAIL_WIDTH,
+};
 use crate::ui::pet;
 use crate::ui::rail::render_rail;
 use crate::ui::registry::{FrozenTile, TileRegistry};
@@ -72,6 +74,9 @@ use crate::ui::scroll::{capture_frozen, page_lines, tmux_history_size, ScrollMod
 use crate::ui::strip::{render_strip, PetRender};
 use crate::ui::theme::colors;
 use crate::ui::tile::{render_centered_lines, render_tile, TileView};
+use crate::ui::palette::{self, PaletteItem, PaletteTarget};
+use crate::ui::quick_send::render_quick_send;
+use crate::ui::recent::render_recent;
 use crate::ui::triage::{render_triage, triage_queue_rows, wrap_selection};
 use crate::ui::view_picker::{picker_entries, render_view_picker, ViewPickerState};
 use crate::ui::view_strip::render_view_strip;
@@ -94,7 +99,7 @@ const FROZEN_COUNT_REFRESH: Duration = Duration::from_secs(1);
 /// chip": "refreshed at least every 60s"). No SSE push exists for
 /// account-wide usage — polling (plus the once-at-startup fetch) is the
 /// only source.
-const USAGE_POLL_INTERVAL: Duration = Duration::from_secs(60);
+const USAGE_POLL_INTERVAL: Duration = Duration::from_secs(10);
 
 /// Delay before the one-time statusline-install hint may appear (spec
 /// tui-context-meters "Install affordance": "~30s after startup").
@@ -135,6 +140,13 @@ pub enum AppEvent {
     Connection(bool),
     /// A transient strip notice (fetch/effect errors, lifecycle results).
     Notice { text: String, ttl_ms: i64 },
+    /// A closed chat's reopen finished (success or failure).
+    ResumeSettled(String),
+    /// Focus this project as a deliberate choice (e.g. after `n` opened a
+    /// session in the home folder).
+    SelectWorkspace(String),
+    /// `GET /api/sessions/recent` result for the `H` overlay.
+    Recent(Vec<RecentInfo>),
     /// A spawn effect settled (success or failure) — clears the busy guard.
     SpawnSettled,
     /// A restore effect settled for this session id.
@@ -384,6 +396,15 @@ pub enum Effect {
     /// workspace (the daemon has no workspace filter), aggregated into one
     /// result notice.
     RestartWorkspace { ids: Vec<String> },
+    /// `n` with no project registered: register the home folder as a project
+    /// and open a session in it.
+    SpawnHome { name: String, dir: String, label: String },
+    /// `H` opened: `GET /api/sessions/recent`.
+    FetchRecent,
+    /// A closed chat's delete button: `DELETE /api/sessions/recent/<id>`.
+    DeleteRecent { claude_session_id: String },
+    /// Enter in the recent overlay: `POST /api/sessions/recent/resume`.
+    ResumeRecent { claude_session_id: String, name: String },
     /// `r d`: `POST /api/daemon/restart` — tmux sessions untouched; the SSE
     /// task's existing reconnect handles the dropped connection.
     RestartDaemon,
@@ -440,6 +461,11 @@ pub struct GarageRouter {
     restoring: HashSet<String>,
     /// A spawn call in flight — guards concurrent spawns.
     spawning: bool,
+    /// True from startup until the user actually picks a project or session.
+    /// The wall always shows *some* project as focused (the first one), but
+    /// that is a default, not a choice: `n` only uses a project the user
+    /// selected, otherwise it opens in the home folder.
+    unselected: bool,
     /// The `I` install (statusline + hooks) in flight — guards concurrent
     /// installs.
     installing: bool,
@@ -587,8 +613,25 @@ impl GarageRouter {
         if self.spawning {
             return;
         }
-        let Some(workspace) = store.state().focused_workspace.clone() else {
-            return;
+        let focused = store.state().focused_workspace.clone();
+        let workspace = match focused {
+            Some(w) if !self.unselected => w,
+            _ => {
+                // No project picked: start in the user's home folder
+                // (C:\Users\<you>), as its own project.
+                let home = crate::host::home_dir().to_string_lossy().into_owned();
+                if home.is_empty() {
+                    return;
+                }
+                self.spawning = true;
+                let name = crate::state::workspace_form::derive_workspace_name(
+                    &home,
+                    &Vec::<String>::new(),
+                );
+                let label = next_label(store.state(), &name);
+                effects.push(Effect::SpawnHome { name, dir: home, label });
+                return;
+            }
         };
         self.spawning = true;
         let label = next_label(store.state(), &workspace);
@@ -627,7 +670,7 @@ impl GarageRouter {
             self.notices.show("no live session to open", 2000, now_ms);
             return;
         }
-        if !cfg!(target_os = "macos") {
+        if !(cfg!(target_os = "macos") || crate::host::use_host_backend()) {
             self.notices
                 .show("standalone windows: macOS only for now", 3000, now_ms);
             return;
@@ -1078,7 +1121,10 @@ pub fn handle_overlay_key(
         }
         // Routed by `App::handle_key` to [`handle_worktree_finish_key`]: the
         // armed discard needs the clock, which this router never sees.
-        OverlayKind::WorktreeFinish => {}
+        OverlayKind::WorktreeFinish
+        | OverlayKind::Recent
+        | OverlayKind::QuickSend
+        | OverlayKind::Palette => {}
     }
     (effects, notice)
 }
@@ -1387,6 +1433,10 @@ enum PasteTarget {
     Tile,
     /// The `w` overlay's path field.
     WorkspaceField,
+    /// The `s` / `S` quick-send box.
+    QuickSend,
+    /// The `/` palette's search box.
+    Palette,
     /// Consumed — garage layer and every other overlay.
     Drop,
 }
@@ -1397,6 +1447,8 @@ fn paste_target(layer: KeyLayer, overlay: Option<OverlayKind>) -> PasteTarget {
     match (layer, overlay) {
         (KeyLayer::Engaged, _) => PasteTarget::Tile,
         (KeyLayer::Overlay, Some(OverlayKind::WorkspaceAdd)) => PasteTarget::WorkspaceField,
+        (KeyLayer::Overlay, Some(OverlayKind::QuickSend)) => PasteTarget::QuickSend,
+        (KeyLayer::Overlay, Some(OverlayKind::Palette)) => PasteTarget::Palette,
         _ => PasteTarget::Drop,
     }
 }
@@ -1419,6 +1471,51 @@ fn run_effect(effect: Effect, tx: &EventSender, base_url: &str) {
                 }
                 fetch_and_send(&client, &tx);
                 let _ = tx.send(AppEvent::SpawnSettled);
+            }
+            Effect::SpawnHome { name, dir, label } => {
+                match client
+                    .put_workspace(&name, &dir)
+                    .and_then(|()| client.spawn_session(&name, &label, false).map(|_| ()))
+                {
+                    Ok(()) => {
+                        fetch_and_send(&client, &tx);
+                        // Land on the project the session went into.
+                        let _ = tx.send(AppEvent::SelectWorkspace(name));
+                        send_notice(&tx, format!("opened a session in {dir}"), 3000);
+                    }
+                    Err(e) => {
+                        send_notice(&tx, failure_notice("spawn failed", &e), 5000);
+                        fetch_and_send(&client, &tx);
+                    }
+                }
+                let _ = tx.send(AppEvent::SpawnSettled);
+            }
+            Effect::FetchRecent => {
+                if let Ok(list) = client.fetch_recent() {
+                    let _ = tx.send(AppEvent::Recent(list));
+                }
+            }
+            Effect::DeleteRecent { claude_session_id } => {
+                match client.delete_recent(&claude_session_id) {
+                    Ok(()) => send_notice(&tx, "removed from closed chats".to_owned(), 2000),
+                    Err(e) => send_notice(&tx, failure_notice("delete failed", &e), 5000),
+                }
+                fetch_and_send(&client, &tx);
+                if let Ok(list) = client.fetch_recent() {
+                    let _ = tx.send(AppEvent::Recent(list));
+                }
+            }
+            Effect::ResumeRecent { claude_session_id, name } => {
+                let settled_id = claude_session_id.clone();
+                match client.resume_recent(&claude_session_id) {
+                    Ok(()) => send_notice(&tx, format!("reopened {name}"), 2500),
+                    Err(e) => send_notice(&tx, failure_notice("reopen failed", &e), 5000),
+                }
+                fetch_and_send(&client, &tx);
+                if let Ok(list) = client.fetch_recent() {
+                    let _ = tx.send(AppEvent::Recent(list));
+                }
+                let _ = tx.send(AppEvent::ResumeSettled(settled_id));
             }
             Effect::Restore { id } => {
                 match client.restore_session(&id) {
@@ -1742,10 +1839,16 @@ fn spawn_sse_task(
 /// and tiles detach before masters close).
 fn spawn_signal_task(rt: &tokio::runtime::Runtime, tx: EventSender) {
     rt.spawn(async move {
+        #[cfg(unix)]
         if let Ok(mut sigterm) =
             tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
         {
             sigterm.recv().await;
+            let _ = tx.send(AppEvent::Quit);
+        }
+        #[cfg(windows)]
+        if let Ok(mut close) = tokio::signal::windows::ctrl_close() {
+            close.recv().await;
             let _ = tx.send(AppEvent::Quit);
         }
     });
@@ -1823,6 +1926,33 @@ struct App {
     /// `date +%H` (no time crate in this workspace — see Cargo.toml) at most
     /// once a minute, not once per 300 ms tick.
     local_hour_cache: Option<(i64, u8)>,
+    /// Mouse text selection inside one tile (tile-local (row, col) cells).
+    selection: Option<Selection>,
+    /// The `H` overlay: recently closed conversations, selection, and
+    /// whether the fetch for the current opening has been issued/answered.
+    recent: Vec<RecentInfo>,
+    recent_selection: usize,
+    recent_fetched: bool,
+    recent_loaded: bool,
+    /// Sidebar: width in columns, hidden flag, and an in-progress edge drag.
+    rail_width: u16,
+    rail_hidden: bool,
+    rail_dragging: bool,
+    /// `claude-garage <folder>`: the workspace to focus once it is known.
+    pending_focus: Option<String>,
+    /// Closed chats whose reopen is still in flight (a second click on the
+    /// same grey row must not start a second session).
+    resuming: HashSet<String>,
+    /// Quick-send overlay: the prompt text, its display scope, and the
+    /// session ids it will go to. `pending_enters` are the Enter keystrokes
+    /// owed to a pasted prompt (sent a beat later so Claude Code does not
+    /// fold them into the paste).
+    palette_query: String,
+    palette_sel: usize,
+    quick_text: String,
+    quick_scope: String,
+    quick_targets: Vec<String>,
+    pending_enters: Vec<(Instant, String)>,
 }
 
 impl App {
@@ -1831,8 +1961,14 @@ impl App {
         match ev {
             AppEvent::Quit => return true,
             AppEvent::TileOutput => {}
-            AppEvent::Workspaces(w) => self.store.workspaces_fetched(w),
-            AppEvent::Sessions(s) => self.store.sessions_fetched(s),
+            AppEvent::Workspaces(w) => {
+                self.store.workspaces_fetched(w);
+                self.apply_pending_focus();
+            }
+            AppEvent::Sessions(s) => {
+                self.store.sessions_fetched(s);
+                self.apply_pending_focus();
+            }
             AppEvent::Usage(u) => self.store.usage_fetched(u),
             AppEvent::Status { id, status, since } => {
                 self.store.status_changed(&id, &status, since);
@@ -1878,12 +2014,25 @@ impl App {
                         self.store.close_overlay();
                     }
                     self.store.focus_workspace_named(&name);
+                    self.router.unselected = false;
                     self.router.notices.show(
                         format!("workspace {name} added — press n to spawn a session"),
                         5000,
                         now_ms(),
                     );
                 }
+            }
+            AppEvent::ResumeSettled(id) => {
+                self.resuming.remove(&id);
+            }
+            AppEvent::SelectWorkspace(name) => {
+                self.store.focus_workspace_named(&name);
+                self.router.unselected = false;
+            }
+            AppEvent::Recent(list) => {
+                self.recent_loaded = true;
+                self.recent_selection = self.recent_selection.min(list.len().saturating_sub(1));
+                self.recent = list;
             }
             AppEvent::PickDirectorySettled(outcome) => {
                 // Closed meanwhile → `reset` already cleared `picking`, and
@@ -1933,6 +2082,11 @@ impl App {
                 }
             }
             PasteTarget::WorkspaceField => self.ws_form.insert_paste(text),
+            PasteTarget::Palette => {
+                self.palette_query.push_str(&text.replace(['\r', '\n'], " "));
+                self.palette_sel = 0;
+            }
+            PasteTarget::QuickSend => self.quick_text.push_str(&text.replace("\r\n", "\n")),
             PasteTarget::Drop => {}
         }
     }
@@ -1953,7 +2107,19 @@ impl App {
                     self.run_effects(effects);
                     return false;
                 }
-                let home = std::env::var("HOME").unwrap_or_default();
+                if self.store.state().overlay == Some(OverlayKind::Recent) {
+                    self.handle_recent_key(key);
+                    return false;
+                }
+                if self.store.state().overlay == Some(OverlayKind::QuickSend) {
+                    self.handle_quick_key(key);
+                    return false;
+                }
+                if self.store.state().overlay == Some(OverlayKind::Palette) {
+                    self.handle_palette_key(key);
+                    return false;
+                }
+                let home = crate::host::home_dir().to_string_lossy().into_owned();
                 let (effects, notice) = handle_overlay_key(
                     &mut self.store,
                     key,
@@ -1970,6 +2136,7 @@ impl App {
                 false
             }
             KeyLayer::Engaged => {
+                self.router.unselected = false;
                 self.keylog
                     .log("engaged", &format!("{:?} {:?}", key.code, key.modifiers));
                 self.handle_engaged_key(key);
@@ -1981,8 +2148,37 @@ impl App {
                 let Some(key_str) = garage_key_string(key) else {
                     return false; // consumed: garage typing never reaches an agent
                 };
+                // Picking a project/session by key counts as choosing it.
+                if matches!(key_str.as_str(), "1"|"2"|"3"|"4"|"5"|"6"|"7"|"8"|"9"|"["|"]"|"a"|"\r"|"\n") {
+                    self.router.unselected = false;
+                }
                 // Fresh overlay state on every open (the Dart `A`/`w`
                 // branches — reset happens even if the dispatch declines).
+                if key_str == "b" {
+                    self.rail_hidden = !self.rail_hidden;
+                    self.save_rail_prefs();
+                    return false;
+                }
+                if key_str == "<" || key_str == ">" {
+                    if !self.rail_hidden {
+                        let step: i32 = if key_str == ">" { 4 } else { -4 };
+                        self.rail_width = (i32::from(self.rail_width) + step)
+                            .clamp(i32::from(RAIL_MIN), i32::from(RAIL_MAX))
+                            as u16;
+                        self.save_rail_prefs();
+                    }
+                    return false;
+                }
+                if key_str == "/" {
+                    self.palette_query.clear();
+                    self.palette_sel = 0;
+                    self.store.open_overlay(OverlayKind::Palette);
+                    return false;
+                }
+                if key_str == "s" || key_str == "S" {
+                    self.open_quick_send(key_str == "S");
+                    return false;
+                }
                 if key_str == "A" {
                     self.queue_selection = 0;
                 }
@@ -2015,6 +2211,12 @@ impl App {
     fn run_effects(&mut self, effects: Vec<Effect>) -> bool {
         let mut quit = false;
         for effect in effects {
+            if let Effect::ResumeRecent { claude_session_id, name } = &effect {
+                if !self.resuming.insert(claude_session_id.clone()) {
+                    continue; // already reopening this chat
+                }
+                self.router.notices.show(format!("reopening {name}…"), 4000, now_ms());
+            }
             if matches!(effect, Effect::Quit) {
                 quit = true;
             } else {
@@ -2059,11 +2261,52 @@ impl App {
             self.registry.set_frozen(&id, None);
             return;
         }
+        // Ctrl+C with a highlighted selection means "copy", not "interrupt":
+        // re-copy it and keep the ^C away from the session (it would cancel
+        // the running turn / clear the prompt). Without a selection ^C passes.
+        if key.code == KeyCode::Char('c')
+            && key.modifiers == KeyModifiers::CONTROL
+            && self.selection.as_ref().is_some_and(|s| s.dragged && s.id == id)
+        {
+            self.copy_selection();
+            return;
+        }
+        // Ctrl+A: on Windows it means "select all" (Claude's own meaning,
+        // start-of-line, stays on Home). Highlights and copies the prompt.
+        if key.code == KeyCode::Char('a')
+            && key.modifiers == KeyModifiers::CONTROL
+            && crate::host::use_host_backend()
+        {
+            self.select_whole_input(&id);
+            return;
+        }
         if let EngagedInput::Write(bytes) = engaged_input_for(key) {
+            self.selection = None; // typing replaces the highlight
             // Any key that reaches the PTY snaps the tile back to live first
             // (spec tui-scrollback "Typing snaps to live").
             self.registry.set_frozen(&id, None);
             self.registry.write(&id, &bytes);
+        }
+    }
+
+    /// Select (highlight + copy) everything typed in the focused prompt box.
+    fn select_whole_input(&mut self, id: &str) {
+        match self.registry.input_selection(id) {
+            Some((anchor, cursor, text)) => {
+                self.selection = Some(Selection {
+                    id: id.to_owned(),
+                    anchor,
+                    cursor,
+                    dragged: true,
+                });
+                let msg = if crate::term::copy_to_clipboard(&text) {
+                    format!("selected prompt · copied {} chars", text.chars().count())
+                } else {
+                    "selected prompt (copy failed)".to_owned()
+                };
+                self.router.notices.show(msg, 2000, now_ms());
+            }
+            None => self.router.notices.show("nothing typed to select", 1500, now_ms()),
         }
     }
 
@@ -2118,13 +2361,141 @@ impl App {
 
     fn handle_mouse(&mut self, mouse: &MouseEvent) {
         match mouse.kind {
-            MouseEventKind::Down(MouseButton::Left) => {
-                self.handle_click(mouse.column, mouse.row);
+            MouseEventKind::Down(MouseButton::Left)
+                if self.on_rail_divider(mouse.column, mouse.row) =>
+            {
+                self.rail_dragging = true;
             }
+            MouseEventKind::Drag(MouseButton::Left) if self.rail_dragging => {
+                self.rail_width = (mouse.column + 1).clamp(RAIL_MIN, RAIL_MAX);
+            }
+            MouseEventKind::Up(MouseButton::Left) if self.rail_dragging => {
+                self.rail_dragging = false;
+                self.save_rail_prefs();
+            }
+            MouseEventKind::Down(MouseButton::Left) => {
+                self.selection = None;
+                self.handle_click(mouse.column, mouse.row);
+                self.begin_selection(mouse.column, mouse.row);
+            }
+            MouseEventKind::Drag(MouseButton::Left) => {
+                self.extend_selection(mouse.column, mouse.row);
+            }
+            MouseEventKind::Up(MouseButton::Left) => self.finish_selection(),
             MouseEventKind::ScrollUp => self.handle_wheel(mouse.column, mouse.row, true),
             MouseEventKind::ScrollDown => self.handle_wheel(mouse.column, mouse.row, false),
             _ => {}
         }
+    }
+
+    /// Tile-local cell under a screen point, clamped into the tile's inner
+    /// area when `clamp`; `None` outside it otherwise.
+    fn tile_cell(&self, id: &str, col: u16, row: u16, clamp: bool) -> Option<(u16, u16)> {
+        let layout = self.layout.as_ref()?;
+        let index = self.store.state().gridded_session_ids.iter().position(|g| g == id)?;
+        let rect = match layout.maximized {
+            Some(_) => *layout.tiles.get(layout.maximized?)?,
+            None => *layout.tiles.get(index)?,
+        };
+        let inner = Rect {
+            x: rect.x + 1,
+            y: rect.y + 1,
+            width: rect.width.saturating_sub(2),
+            height: rect.height.saturating_sub(2),
+        };
+        if inner.width == 0 || inner.height == 0 {
+            return None;
+        }
+        if !clamp && !inner.contains((col, row).into()) {
+            return None;
+        }
+        let c = col.clamp(inner.x, inner.x + inner.width - 1) - inner.x;
+        let r = row.clamp(inner.y, inner.y + inner.height - 1) - inner.y;
+        Some((r, c))
+    }
+
+    fn begin_selection(&mut self, col: u16, row: u16) {
+        if self.store.state().overlay.is_some() {
+            return;
+        }
+        let Some((id, _)) = self.tile_at(col, row) else {
+            return;
+        };
+        if let Some(cell) = self.tile_cell(&id, col, row, false) {
+            self.selection = Some(Selection { id, anchor: cell, cursor: cell, dragged: false });
+        }
+    }
+
+    fn extend_selection(&mut self, col: u16, row: u16) {
+        let Some(sel) = self.selection.as_ref() else {
+            return;
+        };
+        let id = sel.id.clone();
+        if let Some(cell) = self.tile_cell(&id, col, row, true) {
+            if let Some(sel) = self.selection.as_mut() {
+                sel.cursor = cell;
+                sel.dragged = sel.dragged || cell != sel.anchor;
+            }
+        }
+    }
+
+    /// Mouse released: a real drag copies its text to the clipboard (the
+    /// highlight stays until the next click); a plain click selects nothing.
+    fn finish_selection(&mut self) {
+        let Some(sel) = self.selection.as_ref() else {
+            return;
+        };
+        if !sel.dragged {
+            self.selection = None;
+            return;
+        }
+        self.copy_selection();
+    }
+
+    /// Copy the current selection's text to the clipboard (shared by mouse
+    /// release and Ctrl+C); an empty selection is dropped.
+    fn copy_selection(&mut self) {
+        let Some(sel) = self.selection.as_ref() else {
+            return;
+        };
+        let text = self
+            .registry
+            .selection_text(&sel.id, sel.anchor, sel.cursor)
+            .unwrap_or_default();
+        let text = text.trim_end().to_owned();
+        if text.is_empty() {
+            self.selection = None;
+            return;
+        }
+        let msg = if crate::term::copy_to_clipboard(&text) {
+            format!("copied {} chars", text.chars().count())
+        } else {
+            "copy failed".to_owned()
+        };
+        self.router.notices.show(msg, 1500, now_ms());
+    }
+
+    /// The sidebar's right edge (its border column) — grab it to resize.
+    fn on_rail_divider(&self, col: u16, row: u16) -> bool {
+        let Some(layout) = self.layout.as_ref() else {
+            return false;
+        };
+        let rail = layout.rail;
+        rail.width > 0
+            && self.store.state().overlay.is_none()
+            && col + 1 >= rail.x + rail.width
+            && col <= rail.x + rail.width
+            && row >= rail.y
+            && row < rail.y + rail.height
+    }
+
+    fn save_rail_prefs(&self) {
+        let path = persistence::wall_json_path().with_file_name("ui.json");
+        let doc = serde_json::json!({ "railWidth": self.rail_width, "railHidden": self.rail_hidden });
+        if let Some(dir) = path.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        let _ = std::fs::write(path, doc.to_string());
     }
 
     /// The session id under a grid point, honoring maximize (a maximized
@@ -2191,6 +2562,10 @@ impl App {
                 // Modal: clicks anywhere are swallowed — an outside click
                 // must not quietly "keep" a worktree the user never saw.
                 OverlayKind::WorktreeFinish => {}
+                OverlayKind::Recent => self.store.close_overlay(),
+                // Typing into it: a stray click must not discard the prompt.
+                OverlayKind::QuickSend => {}
+                OverlayKind::Palette => self.store.close_overlay(),
             }
             return;
         }
@@ -2210,6 +2585,14 @@ impl App {
             }
             return;
         }
+        // The ✕ in a tile's top-right corner closes that session (press
+        // twice, like `x x`).
+        if let Some((id, rect)) = self.tile_at(col, row) {
+            if row == rect.y && tile_button_hit(rect, col) {
+                self.press_close_button(&id);
+                return;
+            }
+        }
         // Click on a URL in a tile's grid text opens it (spec
         // tui-key-routing "Click opens links") — our mouse capture starves
         // the outer terminal of clicks, so the wall must be the linkifier.
@@ -2225,12 +2608,15 @@ impl App {
             if inner.contains((col, row).into()) {
                 if let Some(line) = self.registry.row_text(&id, row - inner.y) {
                     if let Some(url) = url_at(&line, usize::from(col - inner.x)) {
-                        let _ = std::process::Command::new("open").arg(&url).spawn();
+                        crate::term::open_url(&url);
                         self.router.notices.show(format!("opened {url}"), 2000, now_ms());
                         return;
                     }
                 }
             }
+        }
+        if self.tile_at(col, row).is_some() {
+            self.router.unselected = false;
         }
         // Grid click: focus AND engage (same landing as focus+Enter); a
         // click on a restorable placeholder restores it; while engaged a
@@ -2269,13 +2655,37 @@ impl App {
                 &self.store.state().groups,
                 i32::from(row - layout.rail.y),
             );
+            if let (Some(RailTarget::Session(id)), true) = (&target, rail_button_hit(layout.rail, col)) {
+                self.press_close_button(&id.clone());
+                return;
+            }
             if let Some(target) = target {
+                self.router.unselected = false;
                 if self.store.state().layer == KeyLayer::Engaged {
                     self.store.disengage();
                 }
                 match target {
                     RailTarget::Workspace(index) => self.store.focus_workspace(index),
-                    RailTarget::Session(id) => self.store.focus_session(&id),
+                    RailTarget::Session(id) => {
+                        // A closed (grey) chat has no tile: clicking reopens it.
+                        let closed = self
+                            .store
+                            .state()
+                            .session_by_id(Some(&id))
+                            .and_then(|s| {
+                                s.closed_claude_session_id()
+                                    .map(|c| (c.to_owned(), s.display_name().to_owned()))
+                            });
+                        match closed {
+                            Some((claude_session_id, name)) => {
+                                self.run_effects(vec![Effect::ResumeRecent {
+                                    claude_session_id,
+                                    name,
+                                }]);
+                            }
+                            None => self.store.focus_session(&id),
+                        }
+                    }
                 }
             }
             return;
@@ -2349,14 +2759,7 @@ impl App {
                 return hour;
             }
         }
-        let hour = std::process::Command::new("date")
-            .arg("+%H")
-            .output()
-            .ok()
-            .filter(|o| o.status.success())
-            .and_then(|o| String::from_utf8(o.stdout).ok())
-            .and_then(|s| s.trim().parse::<u8>().ok())
-            .unwrap_or(12);
+        let hour = crate::term::local_hour().unwrap_or(12);
         self.local_hour_cache = Some((minute_bucket, hour));
         hour
     }
@@ -2542,7 +2945,10 @@ impl App {
             .is_some_and(WallSession::live);
         let engaged_here = self.store.state().layer == KeyLayer::Engaged
             && self.store.state().focused_session_id.as_deref() == Some(id.as_str());
-        if engaged_here && live {
+        // Forward the wheel only to a program that asked for mouse reporting;
+        // Claude Code in a plain terminal does not, so there the wheel scrolls
+        // the tile's history instead of vanishing.
+        if engaged_here && live && self.registry.mouse_reporting(&id) {
             let seq = format!(
                 "\x1b[<{};{};{}M",
                 if up { 64 } else { 65 },
@@ -2555,6 +2961,7 @@ impl App {
         if live && up {
             self.scroll_tile(&id, WHEEL_LINES); // frozen peek, layer untouched
         }
+        let _ = engaged_here;
     }
 
     // ── Downstream of state changes ──────────────────────────────────────
@@ -2563,7 +2970,298 @@ impl App {
     /// PTY registry against the gridded live set, drop engagement whose
     /// tile is dead (keys must never black-hole), and emit escalation
     /// (bell/OSC title) for the new snapshot.
+    /// Everything the palette can jump to: live sessions first, then
+    /// restorable ones, projects, and recent conversations.
+    fn palette_items(&self) -> Vec<PaletteItem> {
+        let state = self.store.state();
+        let mut items = Vec::new();
+        for s in state.sessions.iter().filter(|s| s.live()) {
+            items.push(PaletteItem {
+                target: PaletteTarget::Session(s.id.clone()),
+                label: format!("{}/{}", s.workspace, s.display_name()),
+                detail: s.status.clone(),
+            });
+        }
+        for s in state.sessions.iter().filter(|s| !s.live() && !s.closed()) {
+            items.push(PaletteItem {
+                target: PaletteTarget::Session(s.id.clone()),
+                label: format!("{}/{}", s.workspace, s.display_name()),
+                detail: "stopped".to_owned(),
+            });
+        }
+        for g in &state.groups {
+            items.push(PaletteItem {
+                target: PaletteTarget::Workspace(g.name.clone()),
+                label: g.name.clone(),
+                detail: "project".to_owned(),
+            });
+        }
+        for r in &self.recent {
+            items.push(PaletteItem {
+                target: PaletteTarget::Recent { claude_session_id: r.claude_session_id.clone() },
+                label: format!("{}/{}", r.workspace, r.display_name()),
+                detail: "closed · reopen".to_owned(),
+            });
+        }
+        items
+    }
+
+    fn handle_palette_key(&mut self, key: &KeyEvent) {
+        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        let items = self.palette_items();
+        let matches = palette::filter(&items, &self.palette_query);
+        match key.code {
+            KeyCode::Esc => self.store.close_overlay(),
+            KeyCode::Down => self.palette_sel = wrap_selection(self.palette_sel, 1, matches.len()),
+            KeyCode::Up => self.palette_sel = wrap_selection(self.palette_sel, -1, matches.len()),
+            KeyCode::Char('n') if ctrl => {
+                self.palette_sel = wrap_selection(self.palette_sel, 1, matches.len());
+            }
+            KeyCode::Char('p') if ctrl => {
+                self.palette_sel = wrap_selection(self.palette_sel, -1, matches.len());
+            }
+            KeyCode::Char('u') if ctrl => {
+                self.palette_query.clear();
+                self.palette_sel = 0;
+            }
+            KeyCode::Backspace => {
+                self.palette_query.pop();
+                self.palette_sel = 0;
+            }
+            KeyCode::Enter => {
+                let Some(&idx) = matches.get(self.palette_sel.min(matches.len().saturating_sub(1)))
+                else {
+                    return;
+                };
+                let target = items[idx].target.clone();
+                let name = items[idx].label.clone();
+                self.router.unselected = false;
+                self.store.close_overlay();
+                match target {
+                    PaletteTarget::Session(id) => {
+                        self.store.focus_session(&id);
+                        self.store.engage();
+                    }
+                    PaletteTarget::Workspace(name) => self.store.focus_workspace_named(&name),
+                    PaletteTarget::Recent { claude_session_id } => {
+                        self.run_effects(vec![Effect::ResumeRecent { claude_session_id, name }]);
+                    }
+                }
+            }
+            KeyCode::Char(c) if !ctrl && !key.modifiers.contains(KeyModifiers::ALT) => {
+                self.palette_query.push(c);
+                self.palette_sel = 0;
+            }
+            _ => {}
+        }
+    }
+
+    /// `s` (focused session) / `S` (every live session of the focused
+    /// workspace): open the prompt box, or say why it can't.
+    fn open_quick_send(&mut self, all: bool) {
+        let state = self.store.state();
+        let (scope, targets): (String, Vec<String>) = if all {
+            let Some(ws) = state.focused_workspace.clone() else {
+                return;
+            };
+            let ids: Vec<String> = state
+                .sessions
+                .iter()
+                .filter(|s| s.workspace == ws && s.live())
+                .map(|s| s.id.clone())
+                .collect();
+            (format!("all {} live in {ws}", ids.len()), ids)
+        } else {
+            match state.session_by_id(state.focused_session_id.as_deref()) {
+                Some(s) if s.live() => {
+                    (format!("{}/{}", s.workspace, s.display_name()), vec![s.id.clone()])
+                }
+                _ => (String::new(), Vec::new()),
+            }
+        };
+        if targets.is_empty() {
+            self.router.notices.show("no live session to send to", 2000, now_ms());
+            return;
+        }
+        self.quick_scope = scope;
+        self.quick_targets = targets;
+        self.quick_text.clear();
+        self.store.open_overlay(OverlayKind::QuickSend);
+    }
+
+    fn handle_quick_key(&mut self, key: &KeyEvent) {
+        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        match key.code {
+            KeyCode::Esc => self.store.close_overlay(),
+            KeyCode::Char('u') if ctrl => self.quick_text.clear(),
+            KeyCode::Backspace => {
+                self.quick_text.pop();
+            }
+            KeyCode::Enter if key.modifiers.contains(KeyModifiers::SHIFT) => {
+                self.quick_text.push('\n');
+            }
+            KeyCode::Enter => {
+                let text = self.quick_text.trim_end().to_owned();
+                if !text.is_empty() {
+                    let due = Instant::now() + Duration::from_millis(250);
+                    for id in std::mem::take(&mut self.quick_targets) {
+                        self.registry.set_frozen(&id, None);
+                        self.registry.write(&id, &wrap_bracketed_paste(&text));
+                        self.pending_enters.push((due, id));
+                    }
+                    self.router.notices.show("prompt sent", 1500, now_ms());
+                }
+                self.quick_text.clear();
+                self.store.close_overlay();
+            }
+            KeyCode::Char(c) if !ctrl && !key.modifiers.contains(KeyModifiers::ALT) => {
+                self.quick_text.push(c);
+            }
+            _ => {}
+        }
+    }
+
+    /// Send the Enter keystrokes owed to pasted quick-send prompts.
+    fn flush_pending_enters(&mut self) {
+        if self.pending_enters.is_empty() {
+            return;
+        }
+        let now = Instant::now();
+        let mut keep = Vec::new();
+        for (due, id) in std::mem::take(&mut self.pending_enters) {
+            if now >= due {
+                self.registry.write(&id, b"\r");
+            } else {
+                keep.push((due, id));
+            }
+        }
+        self.pending_enters = keep;
+    }
+
+    /// The clickable ✕ (close) / ⌫ (delete a closed chat) for session `id`.
+    /// A live or stopped session arms on the first click and closes on the
+    /// second (same guard as `x x`); a closed chat is forgotten at once.
+    fn press_close_button(&mut self, id: &str) {
+        let closed = self.store.state().session_by_id(Some(id)).and_then(|s| {
+            s.closed_claude_session_id().map(str::to_owned)
+        });
+        if let Some(claude_session_id) = closed {
+            self.run_effects(vec![Effect::DeleteRecent { claude_session_id }]);
+            return;
+        }
+        if self.store.state().layer == KeyLayer::Engaged {
+            self.store.disengage();
+        }
+        self.store.focus_session(id);
+        let effects = self.router.on_garage_key(&mut self.store, "x", now_ms());
+        self.run_effects(effects);
+    }
+
+    fn button_style(&self, id: &str, closed: bool) -> ratatui::style::Style {
+        use ratatui::style::{Modifier, Style};
+        if self.router.armed_close.armed_id() == Some(id) {
+            Style::default().fg(colors::CTX_HOT).add_modifier(Modifier::BOLD)
+        } else if closed {
+            Style::default().fg(colors::FAINT)
+        } else {
+            Style::default().fg(colors::DIM)
+        }
+    }
+
+    fn paint_tile_button(&self, buf: &mut ratatui::buffer::Buffer, rect: Rect, id: &str) {
+        if rect.width < 12 {
+            return;
+        }
+        let style = self.button_style(id, false);
+        let x = rect.x + rect.width - 3;
+        for (dx, ch) in [(0u16, ' '), (1, '✕'), (2, ' ')] {
+            if let Some(cell) = buf.cell_mut((x - 1 + dx, rect.y)) {
+                cell.set_char(ch).set_style(style);
+            }
+        }
+    }
+
+    fn paint_rail_buttons(&self, buf: &mut ratatui::buffer::Buffer, rail: Rect) {
+        if rail.width < 8 {
+            return; // hidden or too narrow
+        }
+        let groups = &self.store.state().groups;
+        for row in 0..rail.height {
+            let Some(RailTarget::Session(id)) = rail_target_at(groups, i32::from(row)) else {
+                continue;
+            };
+            let closed = self
+                .store
+                .state()
+                .session_by_id(Some(&id))
+                .is_some_and(WallSession::closed);
+            let style = self.button_style(&id, closed);
+            if let Some(cell) = buf.cell_mut((rail.x + rail.width - 3, rail.y + row)) {
+                cell.set_char(if closed { '⌫' } else { '✕' }).set_style(style);
+            }
+        }
+    }
+
+    /// Focus the workspace named by `claude-garage <folder>` as soon as the
+    /// wall knows it (once).
+    fn apply_pending_focus(&mut self) {
+        let Some(name) = self.pending_focus.clone() else {
+            return;
+        };
+        if self.store.state().group_by_name(Some(name.as_str())).is_some() {
+            self.store.focus_workspace_named(&name);
+            self.router.unselected = false;
+            self.pending_focus = None;
+        }
+    }
+
+    /// Keys inside the `H` overlay.
+    fn handle_recent_key(&mut self, key: &KeyEvent) {
+        let len = self.recent.len();
+        let plain = match key.code {
+            KeyCode::Char(c)
+                if !key.modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
+            {
+                Some(c)
+            }
+            _ => None,
+        };
+        match (key.code, plain) {
+            (KeyCode::Esc, _) | (_, Some('q' | 'H')) => self.store.close_overlay(),
+            (KeyCode::Down, _) | (_, Some('j')) => {
+                self.recent_selection = wrap_selection(self.recent_selection, 1, len);
+            }
+            (KeyCode::Up, _) | (_, Some('k')) => {
+                self.recent_selection = wrap_selection(self.recent_selection, -1, len);
+            }
+            (KeyCode::Enter, _) => {
+                if let Some(r) = self.recent.get(self.recent_selection).cloned() {
+                    self.store.close_overlay();
+                    self.run_effects(vec![Effect::ResumeRecent {
+                        claude_session_id: r.claude_session_id.clone(),
+                        name: r.display_name().to_owned(),
+                    }]);
+                }
+            }
+            _ => {}
+        }
+    }
+
     fn after_events(&mut self) -> Option<String> {
+        // `H` just opened: fetch the list once per opening.
+        if matches!(
+            self.store.state().overlay,
+            Some(OverlayKind::Recent | OverlayKind::Palette)
+        ) {
+            if !self.recent_fetched {
+                self.recent_fetched = true;
+                self.recent_loaded = false;
+                self.recent_selection = 0;
+                self.run_effects(vec![Effect::FetchRecent]);
+            }
+        } else {
+            self.recent_fetched = false;
+        }
         let live_gridded: Vec<String> = {
             let state = self.store.state();
             state
@@ -2627,7 +3325,9 @@ impl App {
             .find(|v| v.name == focused_view_name)
             .is_some_and(|v| v.session_ids.len() >= 2);
 
-        let layout = wall_layout(area, ids.len(), maximized_index, show_view_strip, framed);
+        let rail_width = if self.rail_hidden { 0 } else { self.rail_width };
+        let layout =
+            wall_layout_with_rail(area, ids.len(), maximized_index, show_view_strip, framed, rail_width);
 
         // PTY size tracks the tile (TIOCSWINSZ) on every layout pass —
         // startup, grid reshape, maximize both ways, terminal resize.
@@ -2638,6 +3338,7 @@ impl App {
 
         let buf = frame.buffer_mut();
         render_rail(buf, layout.rail, self.store.state(), now_ms);
+        self.paint_rail_buttons(buf, layout.rail);
 
         if show_view_strip {
             let ranges = render_view_strip(buf, layout.view_strip, &views, &focused_view_name);
@@ -2693,6 +3394,7 @@ impl App {
                     continue;
                 }
                 self.draw_tile(buf, layout.tiles[i], id, now_ms);
+                self.paint_tile_button(buf, layout.tiles[i], id);
             }
         }
 
@@ -2723,6 +3425,31 @@ impl App {
                 let rows = triage_queue_rows(&self.store.state().sessions);
                 self.triage_rect =
                     Some(render_triage(buf, area, &rows, self.queue_selection, now_ms));
+            }
+            Some(OverlayKind::Palette) => {
+                let items = self.palette_items();
+                let matches = palette::filter(&items, &self.palette_query);
+                palette::render_palette(
+                    buf,
+                    area,
+                    &items,
+                    &matches,
+                    self.palette_sel,
+                    &self.palette_query,
+                );
+            }
+            Some(OverlayKind::QuickSend) => {
+                render_quick_send(buf, area, &self.quick_scope, &self.quick_text);
+            }
+            Some(OverlayKind::Recent) => {
+                render_recent(
+                    buf,
+                    area,
+                    &self.recent,
+                    self.recent_selection,
+                    !self.recent_loaded,
+                    now_ms,
+                );
             }
             Some(OverlayKind::WorkspaceAdd) => {
                 self.ws_add_rect = Some(render_workspace_add(buf, area, &self.ws_form));
@@ -2770,7 +3497,116 @@ impl App {
         } else {
             render_tile(buf, rect, &view, None);
         }
+        self.paint_turn_markers(buf, rect, id);
+        if let Some(sel) = self.selection.as_ref().filter(|s| s.id == id) {
+            sel.paint(buf, rect);
+        }
     }
+
+    /// Mark the current turn down the tile's left border (blue bar) and where
+    /// older turns began (dim ticks), so a long chat reads as separate turns.
+    fn paint_turn_markers(&self, buf: &mut ratatui::buffer::Buffer, rect: Rect, id: &str) {
+        use ratatui::style::Style;
+        let marks = if let Some(frozen) = self.registry.frozen(id) {
+            crate::ui::turns::turn_marks(frozen.parser.screen())
+        } else if let Some(client) = self.registry.client(id) {
+            crate::ui::turns::turn_marks(client.parser().lock().unwrap().screen())
+        } else {
+            return;
+        };
+        let inner_h = rect.height.saturating_sub(2);
+        let mut put = |row: u16, ch: char, color| {
+            if row < inner_h {
+                if let Some(cell) = buf.cell_mut((rect.x, rect.y + 1 + row)) {
+                    cell.set_char(ch).set_style(Style::default().fg(color));
+                }
+            }
+        };
+        let current_start = marks.current.map(|c| c.0);
+        for &row in &marks.starts {
+            if Some(row) != current_start {
+                put(row, '┠', colors::FAINT);
+            }
+        }
+        if let Some((first, last)) = marks.current {
+            for row in first..=last {
+                let ch = if first == last {
+                    '╺'
+                } else if row == first {
+                    '┏'
+                } else if row == last {
+                    '┗'
+                } else {
+                    '┃'
+                };
+                put(row, ch, colors::BLUE);
+            }
+        }
+    }
+}
+
+/// A mouse text selection inside one tile. Cells are tile-local (row, col)
+/// inside the border; selection runs in reading order like a terminal's.
+struct Selection {
+    id: String,
+    anchor: (u16, u16),
+    cursor: (u16, u16),
+    /// Moved off the anchor at least once (a plain click selects nothing).
+    dragged: bool,
+}
+
+impl Selection {
+    /// Reverse-video the selected cells of the tile drawn at `rect`.
+    fn paint(&self, buf: &mut ratatui::buffer::Buffer, rect: Rect) {
+        if !self.dragged {
+            return;
+        }
+        let (start, end) = if self.anchor <= self.cursor {
+            (self.anchor, self.cursor)
+        } else {
+            (self.cursor, self.anchor)
+        };
+        let width = rect.width.saturating_sub(2);
+        for row in start.0..=end.0 {
+            let from = if row == start.0 { start.1 } else { 0 };
+            let to = if row == end.0 { end.1 } else { width.saturating_sub(1) };
+            for col in from..=to {
+                let (x, y) = (rect.x + 1 + col, rect.y + 1 + row);
+                if let Some(cell) = buf.cell_mut((x, y)) {
+                    cell.modifier.insert(ratatui::style::Modifier::REVERSED);
+                }
+            }
+        }
+    }
+}
+
+/// Saved sidebar width and hidden flag (`ui.json` next to `wall.json`).
+fn load_rail_prefs() -> (u16, bool) {
+    let path = persistence::wall_json_path().with_file_name("ui.json");
+    let doc: serde_json::Value = std::fs::read_to_string(path)
+        .ok()
+        .and_then(|t| serde_json::from_str(&t).ok())
+        .unwrap_or_default();
+    let width = doc
+        .get("railWidth")
+        .and_then(serde_json::Value::as_u64)
+        .and_then(|w| u16::try_from(w).ok())
+        .map_or(RAIL_WIDTH, |w| w.clamp(RAIL_MIN, RAIL_MAX));
+    let hidden = doc.get("railHidden").and_then(serde_json::Value::as_bool).unwrap_or(false);
+    (width, hidden)
+}
+
+/// The rail's close/delete button sits three cells in from the rail's right
+/// edge; the hit zone is a little wider than the glyph.
+fn rail_button_hit(rail: Rect, col: u16) -> bool {
+    let button = rail.x + rail.width.saturating_sub(3);
+    col + 1 >= button && col <= button + 1
+}
+
+/// The tile's ✕ sits on its top border, three cells from the right corner.
+fn tile_button_hit(rect: Rect, col: u16) -> bool {
+    let button = rect.x + rect.width.saturating_sub(3);
+    rect.width >= 12 && col + 1 >= button && col <= button + 1
 }
 
 /// Snapshot the two fields `wall.json` persists (spec tui-views "View
@@ -2818,7 +3654,10 @@ async fn state_loop(
         .unwrap_or_default();
     let mut app = App {
         store: WallStore::new(),
-        router: GarageRouter::default(),
+        router: GarageRouter {
+            unselected: std::env::var("GARAGE_FOCUS_WORKSPACE").map_or(true, |s| s.is_empty()),
+            ..GarageRouter::default()
+        },
         registry: TileRegistry::new(tx.clone()),
         escalation: EscalationPolicy::default(),
         keylog: KeyLog::new(),
@@ -2846,6 +3685,22 @@ async fn state_loop(
         last_strip_filler: 0,
         pet_rng: (started_ms as u64) | 1, // xorshift64 needs a non-zero seed
         local_hour_cache: None,
+        selection: None,
+        recent: Vec::new(),
+        recent_selection: 0,
+        recent_fetched: false,
+        recent_loaded: false,
+        rail_width: load_rail_prefs().0,
+        rail_hidden: load_rail_prefs().1,
+        rail_dragging: false,
+        pending_focus: std::env::var("GARAGE_FOCUS_WORKSPACE").ok().filter(|s| !s.is_empty()),
+        resuming: HashSet::new(),
+        palette_query: String::new(),
+        palette_sel: 0,
+        quick_text: String::new(),
+        quick_scope: String::new(),
+        quick_targets: Vec::new(),
+        pending_enters: Vec::new(),
     };
     // View persistence (spec tui-views "View persistence"): load whatever
     // wall.json holds, then debounce a save (≥500ms after the last
@@ -2908,6 +3763,7 @@ async fn state_loop(
         if app.refresh_frozen_counts() {
             dirty = true;
         }
+        app.flush_pending_enters();
         // Pit pet (spec tui-pit-pet): a 300 ms tick while a species is
         // selected, one cheap `if` otherwise (design.md decision 3).
         if app.pet_tick(now) {
@@ -3578,6 +4434,25 @@ mod tests {
     }
 
     #[test]
+    fn n_before_any_project_is_picked_opens_in_the_home_folder() {
+        let mut store = store_with(vec![ws("a")], vec![si("a", "one")]);
+        let mut router = GarageRouter { unselected: true, ..GarageRouter::default() };
+        let effects = key_at(&mut router, &mut store, "n", 1000);
+        assert!(
+            matches!(effects.as_slice(), [Effect::SpawnHome { .. }]),
+            "default focus is not a choice: {effects:?}"
+        );
+    }
+
+    #[test]
+    fn n_after_picking_a_project_opens_inside_it() {
+        let mut store = store_with(vec![ws("a")], vec![si("a", "one")]);
+        let mut router = GarageRouter { unselected: false, ..GarageRouter::default() };
+        let effects = key_at(&mut router, &mut store, "n", 1000);
+        assert!(matches!(effects.as_slice(), [Effect::Spawn { workspace, .. }] if workspace == "a"));
+    }
+
+    #[test]
     fn shift_n_spawns_a_worktree_session() {
         let mut store = store_with(vec![ws("a")], vec![si("a", "one")]);
         let mut router = GarageRouter::default();
@@ -3714,7 +4589,7 @@ mod tests {
         );
     }
 
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", windows))]
     #[test]
     fn t_on_a_live_session_fires_open_window() {
         let mut store = store_with(vec![ws("a")], vec![si("a", "one")]);
@@ -3728,7 +4603,7 @@ mod tests {
         );
     }
 
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(not(any(target_os = "macos", windows)))]
     #[test]
     fn t_off_macos_shows_macos_only_notice_even_for_a_live_session() {
         let mut store = store_with(vec![ws("a")], vec![si("a", "one")]);

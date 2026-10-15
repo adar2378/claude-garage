@@ -10,10 +10,8 @@ use std::time::Duration;
 
 use serde_json::{json, Value};
 
-use super::models::{
-    FinishAction, HooksInstallResult, RestartResponse, SessionInfo, SpawnedSession, UsageInfo,
-    WorkspaceInfo, WorktreeRecord,
-};
+use super::models::{FinishAction, HooksInstallResult, RestartResponse, SessionInfo, SpawnedSession, UsageInfo,
+    WorkspaceInfo, WorktreeRecord, RecentInfo};
 
 /// Pure port-selection logic behind [`garage_daemon_port`], split out so it
 /// unit-tests without touching the process environment.
@@ -107,6 +105,31 @@ impl GarageClient {
     pub fn fetch_sessions(&self) -> Result<Vec<SessionInfo>, ApiError> {
         let body = self.get_json("/api/sessions")?;
         parse_list(body.as_ref(), SessionInfo::from_json, "sessions")
+    }
+
+    /// `GET /api/sessions/recent` — closed conversations, newest first.
+    pub fn fetch_recent(&self) -> Result<Vec<RecentInfo>, ApiError> {
+        let body = self.get_json("/api/sessions/recent")?;
+        parse_list(body.as_ref(), RecentInfo::from_json, "recent sessions")
+    }
+
+    /// `DELETE /api/sessions/recent/<id>` — forget one closed chat.
+    pub fn delete_recent(&self, claude_session_id: &str) -> Result<(), ApiError> {
+        read_json(
+            self.agent
+                .delete(&format!("{}/api/sessions/recent/{}", self.base_url, claude_session_id))
+                .call(),
+        )?;
+        Ok(())
+    }
+
+    /// `POST /api/sessions/recent/resume {claudeSessionId}` — reopen one.
+    pub fn resume_recent(&self, claude_session_id: &str) -> Result<(), ApiError> {
+        self.post_json(
+            "/api/sessions/recent/resume",
+            &json!({ "claudeSessionId": claude_session_id }),
+        )?;
+        Ok(())
     }
 
     pub fn fetch_workspaces(&self) -> Result<Vec<WorkspaceInfo>, ApiError> {

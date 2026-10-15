@@ -44,6 +44,11 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync"
 # 127.0.0.1-only plain HTTP.
 ureq = { version = "2.12.1", default-features = false }
 serde_json = "1.0"
+getrandom = "0.3"
+png = "0.17"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_System_SystemInformation", "Win32_Foundation", "Win32_System_Console", "Win32_System_DataExchange", "Win32_System_Memory"] }
 
 [profile.release]
 debug = false

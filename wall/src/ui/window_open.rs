@@ -103,9 +103,29 @@ pub fn argv_for(session_id: &str, iterm_installed: bool) -> Vec<String> {
 /// the user may leave open indefinitely). `argv[0]` is always `"osascript"`
 /// (from [`argv_for`]), so this never runs on a shell-interpreted string.
 pub fn launch(session_id: &str) -> std::io::Result<()> {
+    if crate::host::use_host_backend() {
+        return launch_host(session_id);
+    }
     let argv = argv_for(session_id, iterm_installed());
     Command::new(&argv[0])
         .args(&argv[1..])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()?;
+    Ok(())
+}
+
+/// Native-host backend (Windows): a new console window running
+/// `garage-wall attach <id>`. `start` hands it to the user's default
+/// terminal (Windows Terminal when it is the default); the first quoted
+/// argument is the window title.
+fn launch_host(session_id: &str) -> std::io::Result<()> {
+    let exe = std::env::current_exe()?;
+    Command::new("cmd")
+        .args(["/c", "start", "garage session"])
+        .arg(exe)
+        .args(["attach", session_id])
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())

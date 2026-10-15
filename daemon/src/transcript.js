@@ -1,3 +1,4 @@
+import { existsSync, readdirSync } from "node:fs";
 import { open } from "node:fs/promises";
 import { join } from "node:path";
 import { claudeHome } from "./claude-home.js";
@@ -6,15 +7,37 @@ const TAIL_BYTES = 256 * 1024;
 const TTL_MS = 15_000;
 const DEFAULT_WINDOW = 1_000_000;
 
-// Claude Code's own project-directory naming: the cwd with every `/`
-// replaced by `-` (leading slash included). Exported — pure — for direct
-// testing.
+// Claude Code's own project-directory naming: the cwd with every character
+// that is not a letter or digit replaced by `-` (`/Users/me/repo` becomes
+// `-Users-me-repo`, `C:\Users\me` becomes `C--Users-me`). Exported — pure —
+// for direct testing.
 export function slugifyCwd(cwd) {
-  return cwd.replaceAll("/", "-");
+  return cwd.replace(/[^a-zA-Z0-9]/g, "-");
 }
 
 export function transcriptPath(dir, claudeSessionId) {
   return join(claudeHome(), "projects", slugifyCwd(dir), `${claudeSessionId}.jsonl`);
+}
+
+// True when Claude Code has saved this conversation, i.e. `claude --resume`
+// can find it. A session that never got a first message has no transcript, and
+// resuming it only prints "No conversation found". On Windows the drive letter
+// of the project folder can be either case (`C--` or `c--`), so the folder name
+// is matched case-insensitively there.
+export function transcriptExists(dir, claudeSessionId) {
+  if (!dir || !claudeSessionId) return false;
+  if (existsSync(transcriptPath(dir, claudeSessionId))) return true;
+  if (process.platform !== "win32") return false;
+  try {
+    const root = join(claudeHome(), "projects");
+    const want = slugifyCwd(dir).toLowerCase();
+    return readdirSync(root).some(
+      (name) =>
+        name.toLowerCase() === want && existsSync(join(root, name, `${claudeSessionId}.jsonl`))
+    );
+  } catch {
+    return false;
+  }
 }
 
 // Model ids known to have a 200k window — Haiku, the 3.x family, and

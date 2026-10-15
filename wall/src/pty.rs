@@ -20,7 +20,9 @@
 //! process, with zero injected bytes).
 
 use std::io::{Read, Write};
+use std::net::{Shutdown, TcpStream};
 use std::process::Command;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -30,6 +32,14 @@ fn other(e: impl std::fmt::Display) -> std::io::Error {
     std::io::Error::other(e.to_string())
 }
 
+/// Native-host attach (Windows): a loopback socket to the session's
+/// `garage-wall host` process instead of a `tmux attach` PTY (see
+/// [`crate::host`]).
+struct HostLink {
+    stream: TcpStream,
+    exited: Arc<AtomicBool>,
+}
+
 pub struct TileClient {
     session: String,
     parser: Arc<Mutex<vt100::Parser>>,
@@ -37,7 +47,9 @@ pub struct TileClient {
     /// outlive the detach.
     master: Option<Box<dyn MasterPty + Send>>,
     writer: Option<Box<dyn Write + Send>>,
-    child: Box<dyn Child + Send + Sync>,
+    /// `None` on the native-host backend.
+    child: Option<Box<dyn Child + Send + Sync>>,
+    host: Option<HostLink>,
     child_pid: Option<u32>,
     /// Last size pushed to the PTY (cols, rows) so we only TIOCSWINSZ on
     /// change.
@@ -57,6 +69,9 @@ impl TileClient {
         scrollback: usize,
         on_output: impl Fn() + Send + 'static,
     ) -> std::io::Result<TileClient> {
+        if crate::host::use_host_backend() {
+            return Self::new_host(session, cols, rows, scrollback, on_output);
+        }
         let pty = native_pty_system();
         let pair = pty
             .openpty(PtySize {
@@ -103,8 +118,54 @@ impl TileClient {
             parser,
             master: Some(pair.master),
             writer: Some(writer),
-            child,
+            child: Some(child),
+            host: None,
             child_pid,
+            pty_size: (cols, rows),
+            detached: false,
+        })
+    }
+
+    /// Attach to a session's native host over loopback.
+    fn new_host(
+        session: &str,
+        cols: u16,
+        rows: u16,
+        scrollback: usize,
+        on_output: impl Fn() + Send + 'static,
+    ) -> std::io::Result<TileClient> {
+        let stream = crate::host::connect_attach(session, cols, rows)?;
+        let mut reader = stream.try_clone()?;
+        let parser = Arc::new(Mutex::new(vt100::Parser::new(rows, cols, scrollback)));
+        let exited = Arc::new(AtomicBool::new(false));
+        {
+            let parser = parser.clone();
+            let exited = exited.clone();
+            std::thread::spawn(move || {
+                let mut buf = [0u8; 65536];
+                loop {
+                    match reader.read(&mut buf) {
+                        Ok(0) | Err(_) => {
+                            exited.store(true, Ordering::SeqCst);
+                            on_output();
+                            break;
+                        }
+                        Ok(n) => {
+                            parser.lock().unwrap().process(&buf[..n]);
+                            on_output();
+                        }
+                    }
+                }
+            });
+        }
+        Ok(TileClient {
+            session: session.to_owned(),
+            parser,
+            master: None,
+            writer: None,
+            child: None,
+            host: Some(HostLink { stream, exited }),
+            child_pid: None,
             pty_size: (cols, rows),
             detached: false,
         })
@@ -130,6 +191,12 @@ impl TileClient {
             return;
         }
         self.pty_size = (cols, rows);
+        if let Some(host) = self.host.as_mut() {
+            let mut p = Vec::with_capacity(4);
+            p.extend_from_slice(&cols.to_le_bytes());
+            p.extend_from_slice(&rows.to_le_bytes());
+            let _ = crate::host::write_frame(&mut host.stream, 1, &p);
+        }
         if let Some(master) = self.master.as_ref() {
             let _ = master.resize(PtySize {
                 rows,
@@ -146,7 +213,13 @@ impl TileClient {
     /// (`None` code unavailable is reported as `Some(1)` — portable-pty's
     /// ExitStatus always carries one). `None` while still running.
     pub fn poll_exited(&mut self) -> Option<u32> {
-        match self.child.try_wait() {
+        if let Some(host) = self.host.as_ref() {
+            return host.exited.load(Ordering::SeqCst).then_some(0);
+        }
+        let Some(child) = self.child.as_mut() else {
+            return Some(1);
+        };
+        match child.try_wait() {
             Ok(Some(status)) => Some(status.exit_code()),
             Ok(None) => None,
             Err(_) => Some(1),
@@ -155,6 +228,9 @@ impl TileClient {
 
     /// Verbatim byte passthrough into the attach client (engaged typing).
     pub fn write_bytes(&mut self, bytes: &[u8]) -> std::io::Result<()> {
+        if let Some(host) = self.host.as_mut() {
+            return crate::host::write_frame(&mut host.stream, 0, bytes);
+        }
         let Some(writer) = self.writer.as_mut() else {
             return Ok(());
         };
@@ -194,6 +270,12 @@ impl TileClient {
             return;
         }
         self.detached = true;
+        if let Some(host) = self.host.as_ref() {
+            // Host backend: closing the socket IS the detach; the host and
+            // its session keep running.
+            let _ = host.stream.shutdown(Shutdown::Both);
+            return;
+        }
         // Per-client detach when our client is identifiable; -s (all clients
         // of the session — safe for our own spawned clients, but it would
         // also detach a co-attached user) only as the fallback.
@@ -217,7 +299,8 @@ impl TileClient {
         // longer race the detach. Bounded: never hang teardown.
         let deadline = Instant::now() + Duration::from_millis(1500);
         while Instant::now() < deadline {
-            match self.child.try_wait() {
+            let Some(child) = self.child.as_mut() else { break };
+            match child.try_wait() {
                 Ok(Some(_)) | Err(_) => break,
                 Ok(None) => std::thread::sleep(Duration::from_millis(20)),
             }

@@ -141,7 +141,7 @@ pub fn build_groups(
 pub fn restorable_session_ids(sessions: &[WallSession], workspace: &str) -> Vec<String> {
     sessions
         .iter()
-        .filter(|s| s.workspace == workspace && !s.live())
+        .filter(|s| s.workspace == workspace && s.status == "restorable")
         .map(|s| s.id.clone())
         .collect()
 }

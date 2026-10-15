@@ -87,6 +87,8 @@ impl UsageWindow {
 pub struct UsageInfo {
     pub five_hour: Option<UsageWindow>,
     pub seven_day: Option<UsageWindow>,
+    /// Epoch ms of the last statusline report the figures come from.
+    pub updated_at: Option<i64>,
 }
 
 impl UsageInfo {
@@ -103,6 +105,7 @@ impl UsageInfo {
                 .get("sevenDay")
                 .filter(|v| !v.is_null())
                 .and_then(UsageWindow::from_json),
+            updated_at: as_epoch_ms(json.get("updatedAt")),
         }
     }
 }
@@ -177,6 +180,34 @@ impl SessionInfo {
                 .filter(|v| !v.is_null())
                 .and_then(ContextInfo::from_json),
         })
+    }
+}
+
+/// One entry of `GET /api/sessions/recent`: a conversation that was closed
+/// and can be reopened with `claude --resume`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RecentInfo {
+    pub claude_session_id: String,
+    pub workspace: String,
+    pub label: String,
+    pub title: Option<String>,
+    pub ended_at: Option<i64>,
+}
+
+impl RecentInfo {
+    pub fn from_json(json: &Value) -> Option<RecentInfo> {
+        Some(RecentInfo {
+            claude_session_id: as_string(json.get("claudeSessionId"))?,
+            workspace: as_string(json.get("workspace"))?,
+            label: as_string(json.get("label"))?,
+            title: as_string(json.get("title")),
+            ended_at: as_epoch_ms(json.get("endedAt")),
+        })
+    }
+
+    /// What to show in the list: the conversation title when it has one.
+    pub fn display_name(&self) -> &str {
+        self.title.as_deref().filter(|t| !t.is_empty()).unwrap_or(&self.label)
     }
 }
 

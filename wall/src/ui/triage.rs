@@ -13,7 +13,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Clear, Paragraph, Widget};
 
 use crate::state::wall_state::WallSession;
-use crate::ui::layout::{centered_rect, modal_width};
+use crate::ui::layout::{centered_rect, fit, modal_width};
 use crate::ui::theme::{colors, format_elapsed};
 
 /// Queue rows: needs-input sessions only, longest-waiting first (smallest
@@ -33,23 +33,6 @@ pub fn wrap_selection(current: usize, delta: i32, length: usize) -> usize {
     }
     let current = current.min(length - 1) as i32;
     (current + delta).rem_euclid(length as i32) as usize
-}
-
-/// Truncate to `width` cells with a trailing ellipsis.
-fn fit(text: &str, width: usize) -> String {
-    if width == 0 {
-        return String::new();
-    }
-    let chars: Vec<char> = text.chars().collect();
-    if chars.len() <= width {
-        return text.to_owned();
-    }
-    if width == 1 {
-        return "…".to_owned();
-    }
-    let mut out: String = chars[..width - 1].iter().collect();
-    out.push('…');
-    out
 }
 
 /// The modal box rect for `n` queue rows (0 renders the one-line empty

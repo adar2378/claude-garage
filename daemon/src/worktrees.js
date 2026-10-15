@@ -1,11 +1,9 @@
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
+import { run } from "./exec.js";
 import { existsSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
 
-const run = promisify(execFile);
 
 // D-wt-location: outside any repo, so a worktree never pollutes `git status`
 // for the repo itself. Keyed by workspace so `~/.garage/worktrees/<ws>/` is

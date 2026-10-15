@@ -17,7 +17,7 @@ use ratatui::widgets::{Block, Borders, Paragraph, Widget};
 
 use crate::state::salience::WorkspaceGroup;
 use crate::state::wall_state::{WallSession, WallState};
-use crate::ui::theme::{colors, elapsed_for, glyph_for, status_color};
+use crate::ui::theme::{colors, elapsed_for, glyph_for, project_color, status_color};
 
 /// One rendered line per rail row: each group's optional family label, its
 /// header, then its sessions — the exact rows `rail_target_at` maps clicks against.
@@ -39,6 +39,7 @@ pub fn rail_lines(state: &WallState, now_ms: i64) -> Vec<Line<'static>> {
         lines.push(workspace_row(group, i, focused_ws));
         for s in &group.sessions {
             lines.push(session_row(
+                &group.name,
                 s,
                 focused_ws && gridded.contains(s.id.as_str()),
                 focused_ws && state.focused_session_id.as_deref() == Some(s.id.as_str()),
@@ -56,12 +57,14 @@ pub fn rail_lines(state: &WallState, now_ms: i64) -> Vec<Line<'static>> {
 }
 
 fn workspace_row(group: &WorkspaceGroup, index: usize, focused: bool) -> Line<'static> {
-    let mut name_style = Style::default().fg(if focused { colors::FG } else { colors::DIM });
+    let color = project_color(&group.name);
+    let mut name_style = Style::default().fg(color);
     if focused {
         name_style = name_style.add_modifier(Modifier::BOLD);
     }
     let mut spans = vec![
         Span::styled(format!(" {} ", index + 1), Style::default().fg(colors::DIM)),
+        Span::styled("■ ", Style::default().fg(color)),
         Span::styled(group.name.clone(), name_style),
     ];
     let blocked = group.sessions.iter().filter(|s| s.needs_input()).count();
@@ -74,24 +77,36 @@ fn workspace_row(group: &WorkspaceGroup, index: usize, focused: bool) -> Line<'s
     Line::from(spans)
 }
 
-fn session_row(s: &WallSession, gridded: bool, focused: bool, now_ms: i64) -> Line<'static> {
+fn session_row(
+    project: &str,
+    s: &WallSession,
+    gridded: bool,
+    focused: bool,
+    now_ms: i64,
+) -> Line<'static> {
     // Amber row exclusively for needs-input; everything else follows the
     // status ladder, dimmed further when the session has no tile. The
     // focused session carries a `▸` marker plus a bright/bold label — never
     // amber (amber stays exclusive to needs-input, whose label keeps its hue
     // and just gains bold). The marker column is always reserved so rows
     // never shift as focus moves.
-    let glyph_color = if gridded {
+    let glyph_color = if s.closed() {
+        colors::FAINT
+    } else if gridded {
         status_color(&s.status, s.since, now_ms)
     } else {
         colors::FAINT
     };
+    // Yellow for live sessions, blue for the focused one, grey for closed
+    // chats (amber stays for needs-input).
     let label_color = if s.needs_input() {
         colors::AMBER
+    } else if s.closed() {
+        colors::FAINT
     } else if focused {
-        colors::FG
+        colors::BLUE
     } else if gridded {
-        colors::DIM
+        colors::YELLOW
     } else {
         colors::FAINT
     };
@@ -100,8 +115,10 @@ fn session_row(s: &WallSession, gridded: bool, focused: bool, now_ms: i64) -> Li
         label_style = label_style.add_modifier(Modifier::BOLD);
     }
     let mut spans = vec![
+        // The project's colour runs down the left edge of all its chats.
+        Span::styled("▎", Style::default().fg(project_color(project))),
         Span::styled(
-            if focused { " ▸ " } else { "   " },
+            if focused { "▸ " } else { "  " },
             Style::default().fg(colors::FG).add_modifier(Modifier::BOLD),
         ),
         Span::styled(
@@ -129,6 +146,9 @@ fn session_row(s: &WallSession, gridded: bool, focused: bool, now_ms: i64) -> Li
 /// rows (only a RIGHT border — no top inset), so the click router can map
 /// `row - rect.y` straight through `rail_target_at`.
 pub fn render_rail(buf: &mut Buffer, rect: Rect, state: &WallState, now_ms: i64) {
+    if rect.width == 0 {
+        return; // sidebar hidden
+    }
     let block = Block::default()
         .borders(Borders::RIGHT)
         .border_style(Style::default().fg(colors::FAINT));
@@ -186,11 +206,11 @@ mod tests {
         ]);
         let rows = texts(&rail_lines(store.state(), 60_000));
         assert_eq!(rows.len(), 5);
-        assert_eq!(rows[0], " 1 alpha");
-        assert_eq!(rows[1], " ▸ ◐ one 1:00", "focused session carries the marker");
-        assert_eq!(rows[2], "   ○ two", "reserved marker column on every row");
-        assert_eq!(rows[3], " 2 beta");
-        assert_eq!(rows[4], "   ○ other");
+        assert_eq!(rows[0], " 1 ■ alpha");
+        assert_eq!(rows[1], "▎▸ ◐ one 1:00", "focused session carries the marker");
+        assert_eq!(rows[2], "▎  ○ two", "reserved marker column on every row");
+        assert_eq!(rows[3], " 2 ■ beta");
+        assert_eq!(rows[4], "▎  ○ other");
     }
 
     #[test]
@@ -203,7 +223,7 @@ mod tests {
             si("a", "w", "working", Some(0)),
         ]);
         let rows = texts(&rail_lines(store.state(), 0));
-        assert_eq!(rows[0], " 1 a  ● 2");
+        assert_eq!(rows[0], " 1 ■ a  ● 2");
     }
 
     #[test]
@@ -212,12 +232,12 @@ mod tests {
         store.workspaces_fetched(vec![ws("a")]);
         store.sessions_fetched(vec![si("a", "blocked", "needs-input", Some(0))]);
         let line = &rail_lines(store.state(), 60_000)[1];
-        assert_eq!(line.to_string(), " ▸ ● blocked 1:00");
-        // marker span is fg, glyph/label/elapsed spans amber.
-        assert_eq!(line.spans[0].style.fg, Some(colors::FG));
-        assert_eq!(line.spans[1].style.fg, Some(colors::AMBER));
+        assert_eq!(line.to_string(), "▎▸ ● blocked 1:00");
+        // span 0 is the project bar; marker span is fg, glyph/label/elapsed amber.
+        assert_eq!(line.spans[1].style.fg, Some(colors::FG));
         assert_eq!(line.spans[2].style.fg, Some(colors::AMBER));
         assert_eq!(line.spans[3].style.fg, Some(colors::AMBER));
+        assert_eq!(line.spans[4].style.fg, Some(colors::AMBER));
     }
 
     #[test]
@@ -228,8 +248,8 @@ mod tests {
         let lines = rail_lines(store.state(), 0);
         let overflow = &lines[7]; // header + 6 gridded rows before it
         assert!(overflow.to_string().contains("s7"));
-        assert_eq!(overflow.spans[1].style.fg, Some(colors::FAINT), "glyph dimmed");
-        assert_eq!(overflow.spans[2].style.fg, Some(colors::FAINT), "label dimmed");
+        assert_eq!(overflow.spans[2].style.fg, Some(colors::FAINT), "glyph dimmed");
+        assert_eq!(overflow.spans[3].style.fg, Some(colors::FAINT), "label dimmed");
     }
 
     #[test]
@@ -243,7 +263,7 @@ mod tests {
         store.workspaces_fetched(vec![sib("et-a"), sib("et-b"), ws("solo")]);
         let lines = rail_lines(store.state(), 0);
         let rows = texts(&lines);
-        assert_eq!(rows, [" elite-traders", " 1 et-a", " 2 et-b", " 3 solo"]);
+        assert_eq!(rows, [" elite-traders", " 1 ■ et-a", " 2 ■ et-b", " 3 ■ solo"]);
         assert_eq!(lines[0].style.fg, Some(colors::FAINT));
     }
 

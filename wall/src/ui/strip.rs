@@ -29,24 +29,87 @@ use crate::ui::theme::colors;
 /// text to pick the dim color instead of an ordinary notice's bright one.
 pub const STATUSLINE_HINT: &str = "press I to install hooks (instant status) + context meter";
 
-/// `5h N% · wk M%`-style account usage chip (spec tui-context-meters "Strip
-/// usage chip"): a null window is omitted, not zero-filled; both null hides
-/// the chip entirely (`None`).
-fn usage_chip_text(usage: &UsageInfo) -> Option<String> {
-    let five_hour = usage
-        .five_hour
-        .as_ref()
-        .map(|w| format!("5h {}%", w.used_percentage));
-    let seven_day = usage
-        .seven_day
-        .as_ref()
-        .map(|w| format!("wk {}%", w.used_percentage));
-    match (five_hour, seven_day) {
-        (None, None) => None,
-        (Some(a), None) => Some(a),
-        (None, Some(b)) => Some(b),
-        (Some(a), Some(b)) => Some(format!("{a} · {b}")),
+const BAR_CELLS: usize = 6;
+
+/// `▰▰▱▱▱▱▱▱` — `pct` of [`BAR_CELLS`] filled (rounded).
+fn usage_bar(pct: u32) -> String {
+    let filled = ((pct.min(100) as usize * BAR_CELLS) + 50) / 100;
+    format!("{}{}", "▰".repeat(filled), "▱".repeat(BAR_CELLS - filled))
+}
+
+/// Green while there is room, yellow getting tight, red nearly out.
+fn usage_color(pct: u32) -> Color {
+    match pct {
+        0..=59 => colors::GREEN,
+        60..=84 => colors::YELLOW,
+        _ => colors::CTX_HOT,
     }
+}
+
+/// `resets_at` as seconds-from-now, when it is an epoch timestamp (seconds
+/// or milliseconds); ISO strings are left alone.
+const STALE_AFTER_MS: i64 = 3 * 60 * 1000;
+
+fn now_epoch_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
+}
+
+fn resets_in_secs(resets_at: &str) -> Option<i64> {
+    let n: i64 = resets_at.parse().ok()?;
+    let at_secs = if n > 100_000_000_000 { n / 1000 } else { n };
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()?
+        .as_secs() as i64;
+    Some(at_secs - now)
+}
+
+fn format_reset(secs: i64) -> String {
+    let secs = secs.max(0);
+    if secs >= 3600 {
+        let mins = (secs + 59) / 60;
+        format!("{}h{:02}m", mins / 60, mins % 60)
+    } else {
+        format!("{}m", ((secs + 59) / 60).max(1))
+    }
+}
+
+/// The strip's account-usage cluster: a 5-hour session bar (always shown —
+/// a placeholder until the statusline feed has reported once) plus the
+/// weekly figure when known.
+fn usage_spans(usage: &UsageInfo) -> Vec<Span<'static>> {
+    let dim = Style::default().fg(colors::DIM);
+    let mut spans = vec![Span::styled(" 5h ", dim)];
+    match usage.five_hour.as_ref() {
+        Some(w) => {
+            let color = Style::default().fg(usage_color(w.used_percentage));
+            spans.push(Span::styled(usage_bar(w.used_percentage), color));
+            // `~` = the last report is a few minutes old (Claude only reports
+            // when a session redraws), so the real figure may be higher.
+            let stale = usage
+                .updated_at
+                .is_some_and(|t| now_epoch_ms() - t > STALE_AFTER_MS);
+            spans.push(Span::styled(
+                format!(" {}{}%", if stale { "~" } else { "" }, w.used_percentage),
+                color,
+            ));
+            if let Some(secs) = w.resets_at.as_deref().and_then(resets_in_secs) {
+                spans.push(Span::styled(format!(" ({})", format_reset(secs)), dim));
+            }
+        }
+        None => {
+            spans.push(Span::styled(usage_bar(0), Style::default().fg(colors::FAINT)));
+            spans.push(Span::styled(" n/a · press I", Style::default().fg(colors::FAINT)));
+        }
+    }
+    if let Some(w) = usage.seven_day.as_ref() {
+        spans.push(Span::styled(format!(" · wk {}%", w.used_percentage), dim));
+    }
+    spans.push(Span::raw(" "));
+    spans
 }
 
 /// The pit pet's current frame, as the render layer needs it (spec
@@ -132,12 +195,7 @@ pub fn strip_line(state: &WallState, notice: Option<&str>, width: u16, pet: Opti
     // Usage chip (spec tui-context-meters "Strip usage chip"): additive only
     // — inserted between the notice and the badge/keys chip so it never
     // displaces either of them.
-    if let Some(chip) = usage_chip_text(&state.usage) {
-        right.push(Span::styled(
-            format!(" {chip} "),
-            Style::default().fg(colors::DIM),
-        ));
-    }
+    right.extend(usage_spans(&state.usage));
     if blocked > 0 {
         let text = format!(" ● {blocked} blocked ");
         let start: usize = right.iter().map(Span::width).sum();
@@ -359,10 +417,11 @@ mod tests {
         let store = store();
         let s = strip_line(store.state(), Some("closed ghost"), 120, None);
         let text = s.line.to_string();
-        assert!(
-            text.ends_with(" closed ghost  ● 1 blocked  keys → garage "),
-            "{text}"
-        );
+        // notice, then the (placeholder) 5h usage bar, then badge and keys chip.
+        let notice_at = text.find(" closed ghost ").expect("notice present");
+        let badge_at = text.find(" ● 1 blocked ").expect("badge present");
+        assert!(notice_at < text.find("5h ").unwrap() && text.find("5h ").unwrap() < badge_at, "{text}");
+        assert!(text.ends_with(" ● 1 blocked  keys → garage "), "{text}");
     }
 
     #[test]
@@ -378,10 +437,10 @@ mod tests {
     // ── p11: usage chip (spec tui-context-meters "Strip usage chip") ───────
 
     #[test]
-    fn usage_chip_hidden_entirely_when_both_windows_are_null() {
+    fn usage_bar_shows_a_placeholder_when_no_data_yet() {
         let store = store(); // fresh: no /api/usage post yet
         let text = strip_line(store.state(), None, 120, None).line.to_string();
-        assert!(!text.contains("5h"));
+        assert!(text.contains("5h ▱▱▱▱▱▱ n/a · press I"), "{text}");
         assert!(!text.contains("wk"));
     }
 
@@ -391,17 +450,13 @@ mod tests {
         store.usage_fetched(UsageInfo {
             five_hour: Some(UsageWindow { used_percentage: 24, resets_at: None }),
             seven_day: Some(UsageWindow { used_percentage: 61, resets_at: None }),
+            updated_at: None,
         });
         let s = strip_line(store.state(), None, 120, None);
         let text = s.line.to_string();
-        assert!(text.contains("5h 24% · wk 61%"), "{text}");
-        let chip_span = s
-            .line
-            .spans
-            .iter()
-            .find(|sp| sp.content.contains("5h 24%"))
-            .unwrap();
-        assert_eq!(chip_span.style.fg, Some(colors::DIM));
+        assert!(text.contains("5h ▰▱▱▱▱▱ 24% · wk 61%"), "{text}");
+        let bar = s.line.spans.iter().find(|sp| sp.content.contains('▰')).unwrap();
+        assert_eq!(bar.style.fg, Some(colors::GREEN), "plenty left");
     }
 
     #[test]
@@ -410,19 +465,21 @@ mod tests {
         five_only.usage_fetched(UsageInfo {
             five_hour: Some(UsageWindow { used_percentage: 24, resets_at: None }),
             seven_day: None,
+            updated_at: None,
         });
         let text = strip_line(five_only.state(), None, 120, None).line.to_string();
-        assert!(text.contains("5h 24%"), "{text}");
+        assert!(text.contains("5h ▰▱▱▱▱▱ 24%"), "{text}");
         assert!(!text.contains("wk"), "{text}");
 
         let mut week_only = store();
         week_only.usage_fetched(UsageInfo {
             five_hour: None,
             seven_day: Some(UsageWindow { used_percentage: 61, resets_at: None }),
+            updated_at: None,
         });
         let text = strip_line(week_only.state(), None, 120, None).line.to_string();
         assert!(text.contains("wk 61%"), "{text}");
-        assert!(!text.contains("5h"), "{text}");
+        assert!(text.contains("5h ▱▱▱▱▱▱"), "no 5h data: placeholder bar, {text}");
     }
 
     #[test]
@@ -431,11 +488,12 @@ mod tests {
         store.usage_fetched(UsageInfo {
             five_hour: Some(UsageWindow { used_percentage: 24, resets_at: None }),
             seven_day: Some(UsageWindow { used_percentage: 61, resets_at: None }),
+            updated_at: None,
         });
         let s = strip_line(store.state(), Some("closed ghost"), 140, None);
         let text = s.line.to_string();
         assert!(text.contains("closed ghost"), "{text}");
-        assert!(text.contains("5h 24% · wk 61%"), "{text}");
+        assert!(text.contains("5h ▰▱▱▱▱▱ 24% · wk 61%"), "{text}");
         assert!(
             text.ends_with(" ● 1 blocked  keys → garage "),
             "badge and keys chip still land at the very end: {text}"

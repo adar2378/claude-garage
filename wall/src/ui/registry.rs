@@ -256,6 +256,49 @@ impl TileRegistry {
         }
     }
 
+    /// Text between two tile-local cells (row, col), inclusive of both, in
+    /// reading order; works on the frozen view when one is showing.
+    pub fn selection_text(&self, id: &str, a: (u16, u16), b: (u16, u16)) -> Option<String> {
+        let (start, end) = if a <= b { (a, b) } else { (b, a) };
+        fn between(screen: &vt100::Screen, start: (u16, u16), end: (u16, u16)) -> String {
+            screen.contents_between(start.0, start.1, end.0, end.1.saturating_add(1))
+        }
+        let entry = self.entries.get(id)?;
+        if let Some(frozen) = &entry.frozen {
+            return Some(between(frozen.parser.screen(), start, end));
+        }
+        match &entry.slot {
+            Slot::Attached(client) => {
+                let parser = client.parser().lock().unwrap();
+                Some(between(parser.screen(), start, end))
+            }
+            _ => None,
+        }
+    }
+
+    /// The prompt box's typed text as a selectable region (start, end, text).
+    pub fn input_selection(&self, id: &str) -> Option<crate::host::DraftSelection> {
+        match self.entries.get(id).map(|e| &e.slot) {
+            Some(Slot::Attached(client)) => {
+                let parser = client.parser().lock().unwrap();
+                crate::host::draft_selection(parser.screen())
+            }
+            _ => None,
+        }
+    }
+
+    /// True when the program in the tile asked for mouse reporting, i.e. a
+    /// forwarded wheel event means something to it.
+    pub fn mouse_reporting(&self, id: &str) -> bool {
+        match self.entries.get(id).map(|e| &e.slot) {
+            Some(Slot::Attached(client)) => {
+                let parser = client.parser().lock().unwrap();
+                parser.screen().mouse_protocol_mode() != vt100::MouseProtocolMode::None
+            }
+            _ => false,
+        }
+    }
+
     pub fn frozen(&self, id: &str) -> Option<&FrozenTile> {
         self.entries.get(id).and_then(|e| e.frozen.as_ref())
     }

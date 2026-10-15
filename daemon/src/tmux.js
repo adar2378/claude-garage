@@ -1,7 +1,40 @@
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
+import { run } from "./exec.js";
+import * as host from "./host-backend.js";
 
-const run = promisify(execFile);
+
+// Windows has no tmux: sessions run in native `garage-wall host` processes
+// (host-backend.js). GARAGE_BACKEND=host forces that path on any platform.
+export const USE_HOST = process.platform === "win32" || process.env.GARAGE_BACKEND === "host";
+
+// `claude` is an npm `.cmd` shim on many Windows installs, which execFile
+// cannot launch without a shell. Arguments are fixed strings, never user
+// input, so shell mode is safe here.
+export function runClaude(args) {
+  return run("claude", args, process.platform === "win32" ? { shell: true } : {});
+}
+
+// id -> { pid, title, path } for every garage session (one backend call).
+export async function listPaneInfo() {
+  if (USE_HOST) return host.listPaneInfo();
+  let stdout;
+  try {
+    ({ stdout } = await run("tmux", [
+      "list-panes",
+      "-a",
+      "-F",
+      "#{session_name}\t#{pane_pid}\t#{pane_current_path}\t#{pane_title}",
+    ]));
+  } catch {
+    return new Map();
+  }
+  const map = new Map();
+  for (const line of stdout.split("\n")) {
+    if (!line.startsWith(GARAGE_PREFIX)) continue;
+    const [name, pid, panePath, ...rest] = line.split("\t");
+    if (!map.has(name)) map.set(name, { pid: Number(pid), path: panePath, title: rest.join("\t") });
+  }
+  return map;
+}
 
 export const GARAGE_PREFIX = "garage/";
 export const NAME_RE = /^[a-z0-9-]+$/;
@@ -14,6 +47,7 @@ export function sessionId(workspace, label) {
 const exact = (id) => `=${id}`;
 
 export async function listSessions() {
+  if (USE_HOST) return host.listSessions();
   let stdout;
   try {
     ({ stdout } = await run("tmux", [
@@ -68,6 +102,7 @@ export function parsePaneLine(line) {
 // kept, there's no principled way to pick "the" cwd/title of a multi-pane
 // session.
 export async function listPanePaths() {
+  if (USE_HOST) return host.listPaneInfo();
   let stdout;
   try {
     ({ stdout } = await run("tmux", [
@@ -115,6 +150,8 @@ export function normalizeTitle(title, hostname) {
 
   const lower = trimmed.toLowerCase();
   if (BARE_PROCESS_NAMES.has(lower)) return null;
+  // Windows: ConPTY seeds the title with the spawned executable's path.
+  if (/\.(exe|cmd|bat)$/.test(lower) || /^[a-z]:\\/.test(lower)) return null;
 
   if (hostname) {
     const hostLower = hostname.toLowerCase();
@@ -150,6 +187,7 @@ export async function resolveBranch(dir) {
 }
 
 export async function hasSession(id) {
+  if (USE_HOST) return host.hasSession(id);
   try {
     await run("tmux", ["has-session", "-t", exact(id)]);
     return true;
@@ -163,6 +201,7 @@ export async function hasSession(id) {
 // sessionId` becomes the pane's `claude --resume <sessionId>`), so callers
 // must not pre-join them into a single string.
 export async function createSession(id, dir, command, extraArgs = []) {
+  if (USE_HOST) return host.createSession(id, dir, command, extraArgs);
   await run("tmux", ["new-session", "-d", "-s", id, "-c", dir, command, ...extraArgs]);
   // The new-session call may have just started the server — (re)apply the
   // extended-keys server config so Shift+Enter works in this pane (p14).
@@ -190,6 +229,7 @@ export async function createSession(id, dir, command, extraArgs = []) {
 // trailing `:` is required to say "this session, exactly; its active
 // window's active pane" (garage sessions only ever have the one pane).
 export async function respawnPane(id, dir, command, extraArgs = []) {
+  if (USE_HOST) return host.respawnPane(id, dir, command, extraArgs);
   await run("tmux", ["respawn-pane", "-k", "-c", dir, "-t", `${exact(id)}:`, command, ...extraArgs]);
 }
 
@@ -202,6 +242,7 @@ export async function respawnPane(id, dir, command, extraArgs = []) {
 // plain `tmux` user). Idempotent: `set -as terminal-features` appends
 // duplicates, so the extkeys feature is only appended when missing.
 export async function ensureExtendedKeys() {
+  if (USE_HOST) return;
   try {
     await run("tmux", ["set-option", "-s", "extended-keys", "on"]);
     // csi-u, not the default xterm `CSI 27;m;k~` form: with extended keys
@@ -224,6 +265,7 @@ export async function ensureExtendedKeys() {
 }
 
 export async function killSession(id) {
+  if (USE_HOST) return host.killSession(id);
   await run("tmux", ["kill-session", "-t", exact(id)]);
 }
 
@@ -231,5 +273,6 @@ export async function killSession(id) {
 // ptys, iTerm) stay attached across a rename — they're bound to the session
 // entity, not its name — so this is safe to call on a live, attached session.
 export async function renameSession(oldId, newId) {
+  if (USE_HOST) return host.renameSession(oldId, newId);
   await run("tmux", ["rename-session", "-t", exact(oldId), newId]);
 }

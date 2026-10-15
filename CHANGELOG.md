@@ -1,5 +1,33 @@
 # Changelog
 
+## Unreleased — Windows
+
+### Added
+
+- **Native Windows support** (no WSL, no tmux). Each session runs in a small
+  detached `garage-wall host` process on a ConPTY; the daemon and TUI attach
+  over a loopback socket. See [docs/WINDOWS.md](docs/WINDOWS.md).
+- **Closed chats stay in the sidebar**, grey, one click from reopening; `H`
+  lists them, `/` is a fuzzy jump palette over sessions, projects and closed
+  chats.
+- **Quick send** (`s` / `S`), **mouse selection with copy**, **close / delete
+  buttons**, **turn markers**, **sidebar hide/resize** (`b`, `<` `>`, drag).
+- **5-hour and weekly usage bar** in the strip, persisted across daemon
+  restarts; `claude-garage install` installs the statusline and hooks.
+- **Draft recovery**: an unsent prompt and pasted screenshots survive a power
+  cut and come back on restore.
+- **`claude-garage <folder>`** opens garage on one folder; a plain
+  `claude-garage` restores every stopped session.
+
+### Changed
+
+- Closing a project's last chat removes the project when nothing is left to
+  reopen (`GARAGE_KEEP_EMPTY_PROJECTS=1` keeps it); `claude-garage prune`
+  clears leftovers. Startup no longer prints daemon notices.
+- The usage chip in the strip is now a bar (`5h ▰▰▰▱▱▱ 47% (1h40m)`).
+- The rail colours live sessions yellow and the focused one blue (needs-input
+  stays amber).
+
 ## 0.6.0 — folder groups in the rail
 
 ### Added

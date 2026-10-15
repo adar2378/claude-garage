@@ -1,12 +1,8 @@
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
-import { listSessions } from "./tmux.js";
-
-const run = promisify(execFile);
+import { listSessions, listPaneInfo, runClaude } from "./tmux.js";
 
 async function getAgents() {
   try {
-    const { stdout } = await run("claude", ["agents", "--json"]);
+    const { stdout } = await runClaude(["agents", "--json"]);
     return JSON.parse(stdout);
   } catch {
     return [];
@@ -15,18 +11,8 @@ async function getAgents() {
 
 async function getPanePids() {
   try {
-    const { stdout } = await run("tmux", [
-      "list-panes",
-      "-a",
-      "-F",
-      "#{session_name}\t#{pane_pid}",
-    ]);
     const map = new Map(); // pid -> session name
-    for (const line of stdout.split("\n")) {
-      if (!line.trim()) continue;
-      const [name, pid] = line.split("\t");
-      map.set(Number(pid), name);
-    }
+    for (const [name, pane] of await listPaneInfo()) map.set(pane.pid, name);
     return map;
   } catch {
     return new Map();

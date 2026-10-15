@@ -90,12 +90,12 @@ test("getRateLimits starts null before any post", () => {
 
 test("setRateLimits stores used_percentage + resets_at for both buckets", () => {
   statusline.setRateLimits({
-    five_hour: { used_percentage: 23.5, resets_at: "2026-08-30T12:00:00Z" },
-    seven_day: { used_percentage: 61, resets_at: "2026-09-01T00:00:00Z" },
+    five_hour: { used_percentage: 23.5, resets_at: "2099-08-30T12:00:00Z" },
+    seven_day: { used_percentage: 61, resets_at: "2099-09-01T00:00:00Z" },
   });
   const limits = statusline.getRateLimits();
-  assert.deepEqual(limits.fiveHour, { usedPercentage: 23.5, resetsAt: "2026-08-30T12:00:00Z" });
-  assert.deepEqual(limits.sevenDay, { usedPercentage: 61, resetsAt: "2026-09-01T00:00:00Z" });
+  assert.deepEqual(limits.fiveHour, { usedPercentage: 23.5, resetsAt: "2099-08-30T12:00:00Z" });
+  assert.deepEqual(limits.sevenDay, { usedPercentage: 61, resetsAt: "2099-09-01T00:00:00Z" });
 });
 
 test("setRateLimits partial update preserves the untouched bucket", () => {

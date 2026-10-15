@@ -55,7 +55,7 @@ pub struct WallFile {
 /// fallback), so a scratch `GARAGE_DIR` used for daemon testing also
 /// isolates the wall's own state file.
 pub fn wall_json_path() -> PathBuf {
-    garage_dir_from(std::env::var("GARAGE_DIR").ok().as_deref(), std::env::var("HOME").ok().as_deref())
+    garage_dir_from(std::env::var("GARAGE_DIR").ok().as_deref(), std::env::var("HOME").or_else(|_| std::env::var("USERPROFILE")).ok().as_deref())
         .join("wall.json")
 }
 

@@ -15,7 +15,7 @@ pub fn expand_tilde(path: &str, home: &str) -> String {
     if trimmed == "~" {
         return home.to_owned();
     }
-    if let Some(rest) = trimmed.strip_prefix("~/") {
+    if let Some(rest) = trimmed.strip_prefix("~/").or_else(|| trimmed.strip_prefix("~\\")) {
         return format!("{home}/{rest}");
     }
     trimmed.to_owned()
@@ -26,7 +26,7 @@ pub fn expand_tilde(path: &str, home: &str) -> String {
 pub fn derive_workspace_name<S: AsRef<str>>(dir: &str, existing: &[S]) -> String {
     let names: HashSet<&str> = existing.iter().map(AsRef::as_ref).collect();
     let base = dir
-        .split('/')
+        .split(['/', '\\'])
         .rfind(|s| !s.is_empty())
         .unwrap_or("workspace");
 
@@ -118,6 +118,12 @@ mod tests {
     #[test]
     fn trailing_slash_still_finds_the_basename() {
         assert_eq!(derive_workspace_name("/a/b/proj/", NONE), "proj");
+        // Windows paths: the last folder, not the whole path.
+        assert_eq!(
+            derive_workspace_name(r"E:\Codes\client\my-site-redesign", NONE),
+            "my-site-redesign"
+        );
+        assert_eq!(derive_workspace_name(r"C:\proj\", NONE), "proj");
     }
 
     #[test]

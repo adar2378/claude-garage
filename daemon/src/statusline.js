@@ -1,4 +1,6 @@
 import { chmod, mkdir, rename, writeFile } from "node:fs/promises";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { getHookToken } from "./registry.js";
 import { tokenMatches } from "./token-auth.js";
@@ -9,7 +11,10 @@ import { recordModelWindow } from "./transcript.js";
 
 const PORT = Number(process.env.GARAGE_PORT ?? 4747);
 const SETTINGS_PATH = join(claudeHome(), "settings.json");
-const WRAPPER_PATH = join(claudeHome(), "garage-statusline.sh");
+// Windows has no POSIX sh/curl guarantee: there the wrapper is a small Node
+// script instead (garage already requires Node), run by this node binary.
+const IS_WIN = process.platform === "win32";
+const WRAPPER_PATH = join(claudeHome(), IS_WIN ? "garage-statusline.mjs" : "garage-statusline.sh");
 
 // ---------------------------------------------------------------------------
 // In-memory store — mirrors status.js's shape (a Map, no persistence, wiped
@@ -20,6 +25,41 @@ const WRAPPER_PATH = join(claudeHome(), "garage-statusline.sh");
 
 const contextStore = new Map(); // garage session id -> { usedPercentage }
 let rateLimits = { fiveHour: null, sevenDay: null };
+let rateLimitsUpdatedAt = null; // epoch ms of the last statusline report
+
+// Account-wide limits survive a daemon restart: the last figures are kept in
+// <garage dir>/usage.json and reloaded at boot (a window past its reset time
+// is dropped on read — see getRateLimits).
+const USAGE_PATH = join(process.env.GARAGE_DIR ?? join(homedir(), ".garage"), "usage.json");
+try {
+  const saved = JSON.parse(readFileSync(USAGE_PATH, "utf8"));
+  rateLimits = { fiveHour: saved.fiveHour ?? null, sevenDay: saved.sevenDay ?? null };
+  rateLimitsUpdatedAt = saved.updatedAt ?? null;
+} catch {
+  // first run or unreadable — start empty
+}
+function persistRateLimits() {
+  try {
+    mkdirSync(dirname(USAGE_PATH), { recursive: true });
+    writeFileSync(USAGE_PATH, JSON.stringify({ ...rateLimits, updatedAt: rateLimitsUpdatedAt }));
+  } catch {
+    // never let a disk hiccup break the feed
+  }
+}
+
+// `resetsAt` as epoch ms when it is an epoch (seconds or ms) or an ISO date.
+function resetMs(resetsAt) {
+  if (resetsAt == null) return null;
+  const n = Number(resetsAt);
+  if (Number.isFinite(n)) return n > 1e11 ? n : n * 1000;
+  const t = Date.parse(resetsAt);
+  return Number.isFinite(t) ? t : null;
+}
+const stillCurrent = (w) => {
+  if (!w) return null;
+  const at = resetMs(w.resetsAt);
+  return at !== null && at <= Date.now() ? null : w;
+};
 
 // Exported so the pure clamp logic is directly unit-testable (mirrors
 // hooks.js's isIdleReminder being exported for the same reason).
@@ -62,10 +102,19 @@ export function setRateLimits(raw) {
   const sevenDay = normalizeLimit(raw.seven_day);
   if (fiveHour) rateLimits = { ...rateLimits, fiveHour };
   if (sevenDay) rateLimits = { ...rateLimits, sevenDay };
+  if (fiveHour || sevenDay) {
+    rateLimitsUpdatedAt = Date.now();
+    persistRateLimits();
+  }
 }
 
 export function getRateLimits() {
-  return { fiveHour: rateLimits.fiveHour, sevenDay: rateLimits.sevenDay };
+  // A window whose reset time has passed describes the previous period.
+  return {
+    fiveHour: stillCurrent(rateLimits.fiveHour),
+    sevenDay: stillCurrent(rateLimits.sevenDay),
+    updatedAt: rateLimitsUpdatedAt,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -100,7 +149,55 @@ export function wrapperScript({ token, port = PORT, originalCommand = null }) {
   );
 }
 
+// Node flavour of the wrapper (Windows): post the payload to the daemon with
+// a short timeout, and chain the previous statusLine command's stdout.
+export function wrapperScriptNode({ token, port = PORT, originalCommand = null }) {
+  const url = `http://127.0.0.1:${port}/api/statusline/claude?token=${token}`;
+  return (
+    `// claude-garage statusline wrapper — auto-generated, do not hand-edit.
+` +
+    `// Reinstall (POST /api/statusline/install) regenerates this file.
+` +
+    `import { spawnSync } from "node:child_process";
+` +
+    `let input = "";
+` +
+    `process.stdin.setEncoding("utf8");
+` +
+    `for await (const chunk of process.stdin) input += chunk;
+` +
+    `const post = fetch(${JSON.stringify(url)}, {
+` +
+    `  method: "POST",
+` +
+    `  headers: { "content-type": "application/json" },
+` +
+    `  body: input,
+` +
+    `  signal: AbortSignal.timeout(1000),
+` +
+    `}).catch(() => {});
+` +
+    (originalCommand
+      ? `const out = spawnSync(${JSON.stringify(originalCommand)}, { shell: true, input, encoding: "utf8" });
+` +
+        `process.stdout.write(out.stdout ?? "");
+`
+      : "") +
+    `await post;
+`
+  );
+}
+
+function buildWrapper(opts) {
+  return IS_WIN ? wrapperScriptNode(opts) : wrapperScript(opts);
+}
+
 function wrapperCommand() {
+  if (IS_WIN) {
+    const fwd = (p) => p.replaceAll("\\", "/");
+    return `"${fwd(process.execPath)}" "${fwd(WRAPPER_PATH)}"`;
+  }
   return `sh ${shSingleQuote(WRAPPER_PATH)}`;
 }
 
@@ -116,7 +213,7 @@ export async function statuslineSnippet() {
   const token = await getHookToken();
   return {
     statusLine: { type: "command", command: wrapperCommand() },
-    script: wrapperScript({ token, originalCommand: null }),
+    script: buildWrapper({ token, originalCommand: null }),
   };
 }
 
@@ -145,7 +242,7 @@ async function installStatusline() {
       ? existing.command
       : null;
 
-  await writeWrapperScript(wrapperScript({ token, originalCommand }));
+  await writeWrapperScript(buildWrapper({ token, originalCommand }));
 
   const merged = { ...settings, statusLine: { type: "command", command } };
   const backup = await writeSettingsAtomic(SETTINGS_PATH, raw, merged);
@@ -170,6 +267,10 @@ export default async function statuslineRoutes(app) {
     }
 
     const payload = req.body ?? {};
+    // Rate limits are account-wide, not per session: record them from ANY
+    // authenticated post (a Claude session outside garage still reports the
+    // same figures), before deciding whether the post maps to a garage session.
+    setRateLimits(payload?.rate_limits);
     const ids = await resolveSessionIds(payload);
     if (ids.length === 0) {
       // Unresolvable session — no error, nothing recorded (context or

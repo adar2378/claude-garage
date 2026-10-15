@@ -78,6 +78,9 @@ fn tmux(args: &[&str]) -> Option<std::process::Output> {
 /// Current tmux history size of a session (absolute line 0 = oldest retained
 /// history line; the visible top row sits at index history_size).
 pub fn tmux_history_size(session: &str) -> Option<i64> {
+    if crate::host::use_host_backend() {
+        return crate::host::history_size(session);
+    }
     let out = tmux(&[
         "display-message",
         "-p",
@@ -96,6 +99,10 @@ pub fn tmux_history_size(session: &str) -> Option<i64> {
 /// re-capture under live load renders identical content.
 pub fn capture_frozen(session: &str, top_abs: i64, cols: u16, rows: u16) -> Option<vt100::Parser> {
     let hist = tmux_history_size(session)?;
+    if crate::host::use_host_backend() {
+        let text = crate::host::capture(session, top_abs, cols, rows)?;
+        return Some(render_capture(&text, cols, rows));
+    }
     let s_rel = top_abs - hist; // <= 0 reaches into history
     let e_rel = s_rel + i64::from(rows) - 1;
     let out = tmux(&[
@@ -112,9 +119,14 @@ pub fn capture_frozen(session: &str, top_abs: i64, cols: u16, rows: u16) -> Opti
     if !out.status.success() {
         return None;
     }
+    Some(render_capture(&out.stdout, cols, rows))
+}
+
+/// Render newline-separated formatted lines into a fresh parser.
+fn render_capture(text: &[u8], cols: u16, rows: u16) -> vt100::Parser {
     let mut parser = vt100::Parser::new(rows, cols, 0);
     let mut first = true;
-    for line in String::from_utf8_lossy(&out.stdout).lines() {
+    for line in String::from_utf8_lossy(text).lines() {
         if !first {
             parser.process(b"\r\n");
         }
@@ -122,7 +134,7 @@ pub fn capture_frozen(session: &str, top_abs: i64, cols: u16, rows: u16) -> Opti
         parser.process(line.as_bytes());
         parser.process(b"\x1b[0m"); // don't bleed styles across lines
     }
-    Some(parser)
+    parser
 }
 
 #[cfg(test)]

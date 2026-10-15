@@ -4,7 +4,7 @@ import { statusEvents } from "./status.js";
 // D-notify: notification on transition INTO needs-input, edge-triggered
 // (the store only emits "transition" on an actual state change, so this
 // handler naturally fires once per transition, not once per poll tick).
-// Darwin only; a no-op elsewhere. Never throws — a notification failure
+// macOS (terminal-notifier / osascript) and Windows (toast); a no-op elsewhere. Never throws — a notification failure
 // must not affect the daemon.
 //
 // terminal-notifier is used when installed (brew install terminal-notifier),
@@ -40,6 +40,36 @@ function notifyDarwin(id) {
   }
 }
 
+// Windows: a toast through the WinRT notification API, sent via the stock
+// PowerShell's own app id (no extra modules). The message is built from a
+// session id, but single quotes are doubled anyway.
+function notifyWindows(id) {
+  const message = `${id} needs input`.replaceAll("'", "''");
+  const script =
+    "[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] > $null; " +
+    "$t = [Windows.UI.Notifications.ToastNotificationManager]::GetTemplateContent([Windows.UI.Notifications.ToastTemplateType]::ToastText02); " +
+    "$n = $t.GetElementsByTagName('text'); " +
+    "$n.Item(0).AppendChild($t.CreateTextNode('claude-garage')) > $null; " +
+    `$n.Item(1).AppendChild($t.CreateTextNode('${message}')) > $null; ` +
+    "$app = '{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\\WindowsPowerShell\\v1.0\\powershell.exe'; " +
+    "[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier($app).Show([Windows.UI.Notifications.ToastNotification]::new($t))";
+  try {
+    execFile(
+      "powershell.exe",
+      ["-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", script],
+      { windowsHide: true },
+      () => {}
+    );
+  } catch {
+    // never throw
+  }
+}
+
+function notify(id) {
+  if (process.platform === "win32") notifyWindows(id);
+  else notifyDarwin(id);
+}
+
 // Visibility contract: the TUI posts here periodically while it is in the
 // foreground. "a visible client exists" = any client entry visible && seen
 // within TTL_MS. Rides the normal Origin allowlist (the TUI sends no
@@ -70,7 +100,7 @@ export default async function notifyRoutes(app) {
   statusEvents.on("transition", ({ id, to }) => {
     if (to === "needs-input" && !anyVisiblePage()) {
       app.log.info({ id }, "needs-input notification fired");
-      notifyDarwin(id);
+      notify(id);
     }
   });
 }

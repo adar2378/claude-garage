@@ -33,14 +33,16 @@ after(async () => {
 test("GET /api/usage returns nulls before any statusline post", async () => {
   const res = await app.inject({ method: "GET", url: "/api/usage" });
   assert.equal(res.statusCode, 200);
-  assert.deepEqual(res.json(), { fiveHour: null, sevenDay: null });
+  const body = res.json();
+  assert.equal(body.fiveHour, null);
+  assert.equal(body.sevenDay, null);
 });
 
 test("GET /api/usage reflects a five_hour-only post, sevenDay stays null", async () => {
-  statusline.setRateLimits({ five_hour: { used_percentage: 23.5, resets_at: "2026-08-30T18:00:00Z" } });
+  statusline.setRateLimits({ five_hour: { used_percentage: 23.5, resets_at: "2099-08-30T18:00:00Z" } });
   const res = await app.inject({ method: "GET", url: "/api/usage" });
   const body = res.json();
-  assert.deepEqual(body.fiveHour, { usedPercentage: 23.5, resetsAt: "2026-08-30T18:00:00Z" });
+  assert.deepEqual(body.fiveHour, { usedPercentage: 23.5, resetsAt: "2099-08-30T18:00:00Z" });
   assert.equal(body.sevenDay, null);
 });
 
@@ -56,4 +58,12 @@ test("GET /api/usage: a later seven_day post merges in without dropping the reta
   const body = res.json();
   assert.equal(body.fiveHour.usedPercentage, 23.5); // retained from the earlier post
   assert.deepEqual(body.sevenDay, { usedPercentage: 61, resetsAt: "next-week" });
+});
+
+test("a window whose reset time has passed is dropped", async () => {
+  statusline.setRateLimits({
+    five_hour: { used_percentage: 40, resets_at: Math.floor(Date.now() / 1000) - 60 },
+  });
+  const res = await app.inject({ method: "GET", url: "/api/usage" });
+  assert.equal(res.json().fiveHour, null);
 });

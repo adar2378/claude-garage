@@ -68,6 +68,7 @@ export default async function daemonRestartRoutes(app) {
     const out = openSync(daemonLogPath(), "a");
     const child = spawn(process.execPath, [daemonEntry], {
       detached: true,
+      windowsHide: true,
       stdio: ["ignore", out, out],
       // GARAGE_PREDECESSOR_PID tells the successor which pid to wait out
       // before it binds the port (see waitForPredecessor / index.js).
