@@ -1,5 +1,4 @@
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
+import { run } from "./exec.js";
 import { readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { getWorkspace, getSessionMeta } from "./registry.js";
@@ -9,10 +8,6 @@ import { listPanePaths, resolveBranch } from "./tmux.js";
 // invocation here is read-only — status/diff/rev-parse only, never `add -N`
 // or anything else that would touch the index. Verified by the gate-1.3
 // "status identical before/after repeated calls" check.
-const execFileP = promisify(execFile);
-// The daemon is detached from any console on Windows: without windowsHide
-// every child process (git, ...) flashes its own console window.
-const run = (cmd, args, opts = {}) => execFileP(cmd, args, { windowsHide: true, ...opts });
 
 // Diffs can legitimately be larger than Node's 1MB default execFile
 // maxBuffer; we apply our own byte budgets below, so let git hand back

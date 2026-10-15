@@ -9,22 +9,8 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Clear, Paragraph, Widget};
 
 use crate::api::models::RecentInfo;
-use crate::ui::layout::{centered_rect, modal_width};
+use crate::ui::layout::{centered_rect, fit, modal_width};
 use crate::ui::theme::{colors, format_elapsed};
-
-/// Truncate to `width` cells with a trailing ellipsis.
-fn fit(text: &str, width: usize) -> String {
-    let chars: Vec<char> = text.chars().collect();
-    if chars.len() <= width {
-        return text.to_owned();
-    }
-    if width == 0 {
-        return String::new();
-    }
-    let mut out: String = chars[..width - 1].iter().collect();
-    out.push('…');
-    out
-}
 
 fn lines(rows: &[RecentInfo], selected: usize, loading: bool, width: usize, now_ms: i64) -> Vec<Line<'static>> {
     let mut out = Vec::new();

@@ -153,6 +153,23 @@ pub fn modal_width(area_width: u16, min: u16, max: u16) -> u16 {
     (area_width.saturating_sub(8)).clamp(min, max).min(area_width)
 }
 
+/// Truncate to `width` cells with a trailing ellipsis.
+pub fn fit(text: &str, width: usize) -> String {
+    if width == 0 {
+        return String::new();
+    }
+    let chars: Vec<char> = text.chars().collect();
+    if chars.len() <= width {
+        return text.to_owned();
+    }
+    if width == 1 {
+        return "…".to_owned();
+    }
+    let mut out: String = chars[..width - 1].iter().collect();
+    out.push('…');
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

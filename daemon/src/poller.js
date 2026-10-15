@@ -1,5 +1,4 @@
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
+import { run } from "./exec.js";
 import { EventEmitter } from "node:events";
 import os from "node:os";
 import { listSessions, listPaneInfo, normalizeTitle, runClaude } from "./tmux.js";
@@ -16,10 +15,6 @@ function dropSession(id) {
   dropStatuslineContext(id);
 }
 
-const execFileP = promisify(execFile);
-// The daemon is detached from any console on Windows: without windowsHide
-// every child process (git, ...) flashes its own console window.
-const run = (cmd, args, opts = {}) => execFileP(cmd, args, { windowsHide: true, ...opts });
 const POLL_MS = 2000;
 
 // Emits "sessions-changed" whenever the poller notices something the wall's

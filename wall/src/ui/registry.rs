@@ -277,7 +277,7 @@ impl TileRegistry {
     }
 
     /// The prompt box's typed text as a selectable region (start, end, text).
-    pub fn input_selection(&self, id: &str) -> Option<((u16, u16), (u16, u16), String)> {
+    pub fn input_selection(&self, id: &str) -> Option<crate::host::DraftSelection> {
         match self.entries.get(id).map(|e| &e.slot) {
             Some(Slot::Attached(client)) => {
                 let parser = client.parser().lock().unwrap();

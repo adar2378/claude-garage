@@ -2108,15 +2108,15 @@ impl App {
                     return false;
                 }
                 if self.store.state().overlay == Some(OverlayKind::Recent) {
-                    self.handle_recent_key(&key);
+                    self.handle_recent_key(key);
                     return false;
                 }
                 if self.store.state().overlay == Some(OverlayKind::QuickSend) {
-                    self.handle_quick_key(&key);
+                    self.handle_quick_key(key);
                     return false;
                 }
                 if self.store.state().overlay == Some(OverlayKind::Palette) {
-                    self.handle_palette_key(&key);
+                    self.handle_palette_key(key);
                     return false;
                 }
                 let home = crate::host::home_dir().to_string_lossy().into_owned();

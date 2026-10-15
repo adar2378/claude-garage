@@ -8,7 +8,7 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Clear, Paragraph, Widget};
 
-use crate::ui::layout::{centered_rect, modal_width};
+use crate::ui::layout::{centered_rect, fit, modal_width};
 use crate::ui::theme::colors;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -78,19 +78,6 @@ pub fn filter(items: &[PaletteItem], query: &str) -> Vec<usize> {
         .collect();
     scored.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
     scored.into_iter().map(|(_, i)| i).collect()
-}
-
-fn fit(text: &str, width: usize) -> String {
-    let chars: Vec<char> = text.chars().collect();
-    if chars.len() <= width {
-        return text.to_owned();
-    }
-    if width == 0 {
-        return String::new();
-    }
-    let mut out: String = chars[..width - 1].iter().collect();
-    out.push('…');
-    out
 }
 
 const MAX_ROWS: usize = 10;

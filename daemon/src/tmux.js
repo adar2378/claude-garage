@@ -1,11 +1,6 @@
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
+import { run } from "./exec.js";
 import * as host from "./host-backend.js";
 
-const execFileP = promisify(execFile);
-// The daemon is detached from any console on Windows: without windowsHide
-// every child process (git, ...) flashes its own console window.
-const run = (cmd, args, opts = {}) => execFileP(cmd, args, { windowsHide: true, ...opts });
 
 // Windows has no tmux: sessions run in native `garage-wall host` processes
 // (host-backend.js). GARAGE_BACKEND=host forces that path on any platform.

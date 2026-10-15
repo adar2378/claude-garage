@@ -586,12 +586,11 @@ pub fn extract_draft(screen: &vt100::Screen) -> Option<String> {
         .collect();
     let (a, b) = seps.windows(2).rev().map(|w| (w[0], w[1])).find(|(a, b)| b - a >= 2)?;
     let mut out: Vec<String> = Vec::new();
-    for r in (a + 1)..b {
+    for (r, line) in lines.iter().enumerate().take(b).skip(a + 1) {
         let row = u16::try_from(r).ok()?;
         if row >= rows {
             break;
         }
-        let line = &lines[r];
         let body: &str = if r == a + 1 {
             line.strip_prefix('❯').or_else(|| line.strip_prefix('>'))?.trim_start_matches(' ')
         } else {
@@ -620,9 +619,12 @@ pub fn extract_draft(screen: &vt100::Screen) -> Option<String> {
     (!text.is_empty()).then_some(text)
 }
 
-/// The prompt box's typed text as a selectable region: `(start, end, text)`
-/// in screen (row, col) cells — what "select all" highlights and copies.
-pub fn draft_selection(screen: &vt100::Screen) -> Option<((u16, u16), (u16, u16), String)> {
+/// `(start, end, text)` of the prompt box's typed text, in screen (row, col) cells.
+pub type DraftSelection = ((u16, u16), (u16, u16), String);
+
+/// The prompt box's typed text as a selectable region — what "select all"
+/// highlights and copies.
+pub fn draft_selection(screen: &vt100::Screen) -> Option<DraftSelection> {
     let text = extract_draft(screen)?;
     let (_, cols) = screen.size();
     let lines: Vec<String> = screen.rows(0, cols).collect();
