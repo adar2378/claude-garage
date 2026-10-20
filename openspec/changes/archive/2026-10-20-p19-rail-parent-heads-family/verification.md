@@ -13,4 +13,4 @@ New tests in `wall/src/state/salience.rs`:
 - `a_head_with_a_trailing_slash_still_merges`
 - `nesting_does_not_chain_a_middle_head_owns_its_family`
 
-**Live:** pending. The user relaunches the wall on the p19 binary and checks that `elite-traders` heads its `et-*` family.
+**Live:** not run before release (v0.6.1). The user checks the rail after relaunching on the new version; task 2.2 stays open until then.
