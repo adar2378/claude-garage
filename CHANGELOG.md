@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.6.1 — parent folders lead their group
+
+### Fixed
+
+- **A workspace at its repos' parent folder now leads their group.** If
+  you register a folder (for example `elite-traders`) and also the repos
+  inside it (`et-backend`, `et-admin`), the folder's workspace now sits at
+  the top of that group instead of with its own neighbours. The label row
+  shows the folder's name. Folder case is still ignored.
+- A workspace with a session waiting on you still comes first inside its
+  group, above the folder's workspace.
+
 ## 0.6.0 — folder groups in the rail
 
 ### Added

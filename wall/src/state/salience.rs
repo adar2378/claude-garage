@@ -7,7 +7,9 @@
 //!    otherwise;
 //!  - workspaces sharing a parent directory form a family: members stay
 //!    contiguous, a family floats if any member is blocked, blocked members
-//!    lead within it (spec tui-triage "Salience-first ordering");
+//!    lead within it (spec tui-triage "Salience-first ordering"); a workspace
+//!    whose own dir is another's parent is the family's head and leads it
+//!    (after any blocked members), labelled by its own name;
 //!  - sessions whose workspace isn't registered still get a synthesized
 //!    group (registered: false) so nothing is invisible.
 //!
@@ -27,9 +29,9 @@ pub struct WorkspaceGroup {
     pub branch: Option<String>,
     pub registered: bool,
     pub sessions: Vec<WallSession>,
-    /// Parent folder's basename, set on the first member of a family of >=2
-    /// workspaces sharing a parent directory; the rail draws it as a faint
-    /// row above that member's header.
+    /// The family's head workspace basename (else the shared parent
+    /// folder's), set on the first member of a family of >=2 workspaces; the
+    /// rail draws it as a faint row above that member's header.
     pub family_label: Option<String>,
 }
 
@@ -56,6 +58,13 @@ fn family_key(dir: Option<&str>) -> Option<String> {
     (!parent.is_empty()).then(|| parent.to_lowercase())
 }
 
+/// The dir itself, normalised like `family_key`: trailing slash stripped,
+/// lowercased. `None` for a missing or empty dir.
+fn own_key(dir: Option<&str>) -> Option<String> {
+    let dir = dir?.trim_end_matches('/');
+    (!dir.is_empty()).then(|| dir.to_lowercase())
+}
+
 /// Basename of the dir's parent, original case.
 fn parent_basename(dir: Option<&str>) -> Option<String> {
     let (parent, _) = dir?.trim_end_matches('/').rsplit_once('/')?;
@@ -63,32 +72,61 @@ fn parent_basename(dir: Option<&str>) -> Option<String> {
     (!base.is_empty()).then(|| base.to_owned())
 }
 
+/// Basename of the dir itself, original case.
+fn own_basename(dir: Option<&str>) -> Option<String> {
+    let base = dir?.trim_end_matches('/').rsplit('/').next()?;
+    (!base.is_empty()).then(|| base.to_owned())
+}
+
+/// A family under construction: its key, members flagged `is_head`.
+type Family = (Option<String>, Vec<(bool, WorkspaceGroup)>);
+
 /// Reorder `groups` (insertion order) so family members are contiguous:
 /// families ordered by their first member, members in insertion order.
-/// Blocked families float, blocked members lead within a family, and the
-/// first member of each family of >=2 gets `family_label`.
+/// A group whose own dir is another group's parent is a head: it joins its
+/// children's family instead of its parent's (no chaining: a head that is
+/// also a child stays the head of its own family). Blocked families float,
+/// blocked members lead within a family, then the head, and the first member
+/// of each family of >=2 gets `family_label` (the head's name, else the
+/// shared parent's).
 fn arrange_families(groups: Vec<WorkspaceGroup>) -> Vec<WorkspaceGroup> {
-    let mut families: Vec<(Option<String>, Vec<WorkspaceGroup>)> = Vec::new();
-    for group in groups {
-        let key = family_key(group.dir.as_deref());
+    let child_keys: Vec<Option<String>> = groups
+        .iter()
+        .map(|g| family_key(g.dir.as_deref()))
+        .collect();
+    let mut families: Vec<Family> = Vec::new();
+    for (i, group) in groups.into_iter().enumerate() {
+        let own = own_key(group.dir.as_deref());
+        let is_head = own.as_ref().is_some_and(|o| {
+            child_keys
+                .iter()
+                .enumerate()
+                .any(|(j, k)| j != i && k.as_ref() == Some(o))
+        });
+        let key = if is_head { own } else { child_keys[i].clone() };
         match key
             .as_ref()
             .and_then(|k| families.iter().position(|(fk, _)| fk.as_ref() == Some(k)))
         {
-            Some(i) => families[i].1.push(group),
-            None => families.push((key, vec![group])),
+            Some(i) => families[i].1.push((is_head, group)),
+            None => families.push((key, vec![(is_head, group)])),
         }
     }
     let families = stable_partition(families, |(_, members)| {
-        members.iter().any(WorkspaceGroup::has_needs_input)
+        members.iter().any(|(_, g)| g.has_needs_input())
     });
     let mut out = Vec::new();
-    for (_, members) in families {
-        let mut members = stable_partition(members, WorkspaceGroup::has_needs_input);
+    for (_, mut members) in families {
+        // stable: ties keep insertion order
+        members.sort_by_key(|(is_head, g)| (!g.has_needs_input(), !*is_head));
         if members.len() >= 2 {
-            members[0].family_label = parent_basename(members[0].dir.as_deref());
+            let label = match members.iter().find(|(h, _)| *h) {
+                Some((_, head)) => own_basename(head.dir.as_deref()),
+                None => parent_basename(members[0].1.dir.as_deref()),
+            };
+            members[0].1.family_label = label;
         }
-        out.extend(members);
+        out.extend(members.into_iter().map(|(_, g)| g));
     }
     out
 }
@@ -354,6 +392,88 @@ mod tests {
             labels(&groups),
             [None, Some("elite-traders"), None, None, Some("personal"), None]
         );
+    }
+
+    fn elite_registry() -> Vec<WorkspaceInfo> {
+        let b = "/Users/saifulislam";
+        vec![
+            wsd("cto-playground", Some(&format!("{b}/development/devmonks/cto-playground"))),
+            wsd("icon-monks", Some(&format!("{b}/development/devmonks/icon-monks"))),
+            wsd("et-backend", Some(&format!("{b}/Development/devmonks/elite-traders/et-backend"))),
+            wsd("kowoby-statistics", Some(&format!("{b}/development/devmonks/kowoby-statistics"))),
+            wsd("et-mobile-app", Some(&format!("{b}/Development/devmonks/elite-traders/et-mobile-app"))),
+            wsd("elite-traders", Some(&format!("{b}/development/devmonks/elite-traders"))),
+            wsd("et-admin", Some(&format!("{b}/Development/devmonks/elite-traders/et-admin"))),
+        ]
+    }
+
+    #[test]
+    fn a_head_joins_its_children_family_and_leads_it() {
+        let groups = build_groups(&elite_registry(), &[]);
+        assert_eq!(
+            names(&groups),
+            [
+                "cto-playground", "icon-monks", "kowoby-statistics",
+                "elite-traders", "et-backend", "et-mobile-app", "et-admin",
+            ]
+        );
+        assert_eq!(
+            labels(&groups),
+            [Some("devmonks"), None, None, Some("elite-traders"), None, None, None]
+        );
+    }
+
+    #[test]
+    fn a_blocked_child_leads_an_unblocked_head_and_takes_the_label() {
+        let groups = build_groups(
+            &[
+                wsd("elite-traders", Some("/d/elite-traders")),
+                wsd("et-a", Some("/d/elite-traders/et-a")),
+                wsd("et-b", Some("/d/elite-traders/et-b")),
+            ],
+            &[session_with("et-b", "s", "needs-input", None)],
+        );
+        assert_eq!(names(&groups), ["et-b", "elite-traders", "et-a"]);
+        assert_eq!(labels(&groups), [Some("elite-traders"), None, None]);
+    }
+
+    #[test]
+    fn a_blocked_head_leads_among_blocked_members() {
+        let groups = build_groups(
+            &[
+                wsd("et-a", Some("/d/elite-traders/et-a")),
+                wsd("elite-traders", Some("/d/elite-traders")),
+                wsd("et-b", Some("/d/elite-traders/et-b")),
+            ],
+            &[
+                session_with("et-a", "s", "needs-input", None),
+                session_with("elite-traders", "s", "needs-input", None),
+            ],
+        );
+        assert_eq!(names(&groups), ["elite-traders", "et-a", "et-b"]);
+        assert_eq!(labels(&groups), [Some("elite-traders"), None, None]);
+    }
+
+    #[test]
+    fn a_head_with_a_trailing_slash_still_merges() {
+        let groups = build_groups(
+            &[wsd("kid", Some("/d/Head/kid")), wsd("Head", Some("/D/Head/"))],
+            &[],
+        );
+        assert_eq!(names(&groups), ["Head", "kid"]);
+        assert_eq!(labels(&groups), [Some("Head"), None]);
+    }
+
+    #[test]
+    fn nesting_does_not_chain_a_middle_head_owns_its_family() {
+        let groups = build_groups(
+            &[wsd("a", Some("/a")), wsd("b", Some("/a/b")), wsd("c", Some("/a/b/c"))],
+            &[],
+        );
+        // b heads {b, c}; a is a head too, but its only child (b) left for
+        // b's own family, so family "/a" holds a alone and gets no label.
+        assert_eq!(names(&groups), ["a", "b", "c"]);
+        assert_eq!(labels(&groups), [None, Some("b"), None]);
     }
 
     #[test]
