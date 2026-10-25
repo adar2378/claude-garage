@@ -13,4 +13,4 @@ New tests in `wall/src/state/salience.rs`:
 - `a_head_with_a_trailing_slash_still_merges`
 - `nesting_does_not_chain_a_middle_head_owns_its_family`
 
-**Live:** not run before release (v0.6.1). The user checks the rail after relaunching on the new version; task 2.2 stays open until then.
+**Live:** 2026-10-26, the user relaunched the wall on v0.6.2 (daemon restarted by the version gate, tmux sessions intact) and confirmed the rail: `elite-traders` heads its `et-*` family under the `elite-traders` label.

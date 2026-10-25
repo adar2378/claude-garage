@@ -10,5 +10,5 @@
 ## 2. Verification
 
 - [x] 2.1 `cd wall && cargo test --lib --bins` and `cargo clippy --all-targets` green; `openspec validate p19-rail-parent-heads-family --strict`
-- [ ] 2.2 Check the rail with the real registry (user relaunches the wall on the new binary)
+- [x] 2.2 Check the rail with the real registry (user relaunches the wall on the new binary)
 - [x] 2.3 Record results in `verification.md`
