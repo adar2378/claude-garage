@@ -1,6 +1,8 @@
 # Changelog
 
-## 0.6.1 — parent folders lead their group
+## 0.6.2 — parent folders lead their group
+
+0.6.1 was tagged but never published; this is the same change.
 
 ### Fixed
 
