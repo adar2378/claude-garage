@@ -30,7 +30,9 @@ jobs:
       # trusted publishing needs npm >= 11.5.1
       - run: npm install -g npm@latest
 
-      - uses: dtolnay/rust-toolchain@stable
+      # rustup ships on GitHub's macOS runners; no third-party action in a
+      # job that can publish
+      - run: rustup toolchain install stable --profile minimal && rustup default stable
 
       - name: Tag matches package.json version
         run: |
