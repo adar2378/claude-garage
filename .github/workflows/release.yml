@@ -42,6 +42,9 @@ jobs:
 
       - run: npm ci
 
+      # some daemon tests start and kill their own scratch tmux sessions
+      - run: brew install tmux
+
       - name: Daemon tests
         run: npm test
 
