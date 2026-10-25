@@ -1,0 +1,71 @@
+# Publish to npm when a version tag (v*) is pushed.
+#
+# Based on GitHub's "Publish Node.js Package" template, with the changes
+# this package needs:
+#  - macOS arm64 runner, because the package ships the prebuilt TUI binary
+#    wall/dist/garage-wall-darwin-arm64 (gitignored, not built on publish);
+#  - npm trusted publishing (OIDC): no NPM_TOKEN and no 2FA prompt. The
+#    trusted publisher is set up on npmjs.com for this repo and this file.
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write # gh release create
+  id-token: write # npm trusted publishing + provenance
+
+jobs:
+  publish:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+
+      # trusted publishing needs npm >= 11.5.1
+      - run: npm install -g npm@latest
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Tag matches package.json version
+        run: |
+          version=$(node -p "require('./package.json').version")
+          if [ "${GITHUB_REF_NAME}" != "v${version}" ]; then
+            echo "tag ${GITHUB_REF_NAME} does not match package.json version ${version}"
+            exit 1
+          fi
+
+      - run: npm ci
+
+      - name: Daemon tests
+        run: npm test
+
+      # --lib --bins: tests/injection.rs needs a tmux server
+      - name: TUI tests
+        working-directory: wall
+        run: cargo test --lib --bins
+
+      - name: Build the TUI binary
+        run: npm run build:tui
+
+      - name: Package contains the TUI binary
+        run: npm pack --dry-run 2>&1 | grep -q "wall/dist/garage-wall-darwin-arm64"
+
+      - run: npm publish
+
+      - name: GitHub release from CHANGELOG
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          awk -v v="$version" '
+            /^## / { if (found) exit; if (index($0, "## " v) == 1) { found = 1; next } }
+            found { print }
+          ' CHANGELOG.md > notes.md
+          title=$(grep -m1 "^## ${version}" CHANGELOG.md | sed 's/^## //')
+          gh release create "$GITHUB_REF_NAME" --title "v${title:-$version}" --notes-file notes.md
