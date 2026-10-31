@@ -17,6 +17,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Paragraph, Widget};
 
 use crate::api::models::UsageInfo;
+use crate::slots::{self, SlotCtx, SlotId, SlotItem, SlotRegistry};
 use crate::state::wall_state::{KeyLayer, WallState};
 use crate::ui::theme::colors;
 
@@ -47,6 +48,20 @@ fn usage_chip_text(usage: &UsageInfo) -> Option<String> {
         (None, Some(b)) => Some(b),
         (Some(a), Some(b)) => Some(format!("{a} · {b}")),
     }
+}
+
+/// The `strip.right` core provider: the account usage chip.
+pub fn usage_chip_provider(ctx: &SlotCtx) -> Vec<SlotItem> {
+    let Some(chip) = ctx.state.and_then(|st| usage_chip_text(&st.usage)) else {
+        return Vec::new();
+    };
+    vec![SlotItem::new(
+        vec![Span::styled(
+            format!(" {chip} "),
+            Style::default().fg(colors::DIM),
+        )],
+        50,
+    )]
 }
 
 /// The pit pet's current frame, as the render layer needs it (spec
@@ -132,12 +147,14 @@ pub fn strip_line(state: &WallState, notice: Option<&str>, width: u16, pet: Opti
     // Usage chip (spec tui-context-meters "Strip usage chip"): additive only
     // — inserted between the notice and the badge/keys chip so it never
     // displaces either of them.
-    if let Some(chip) = usage_chip_text(&state.usage) {
-        right.push(Span::styled(
-            format!(" {chip} "),
-            Style::default().fg(colors::DIM),
-        ));
-    }
+    let slot_ctx = SlotCtx {
+        state: Some(state),
+        ..SlotCtx::default()
+    };
+    right.extend(slots::layout(
+        SlotRegistry::core().items(SlotId::StripRight, &slot_ctx),
+        None,
+    ));
     if blocked > 0 {
         let text = format!(" ● {blocked} blocked ");
         let start: usize = right.iter().map(Span::width).sum();

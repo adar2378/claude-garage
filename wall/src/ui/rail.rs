@@ -15,6 +15,7 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph, Widget};
 
+use crate::slots::{SlotCtx, SlotId, SlotItem, SlotRegistry};
 use crate::state::salience::WorkspaceGroup;
 use crate::state::wall_state::{WallSession, WallState};
 use crate::ui::theme::{colors, elapsed_for, glyph_for, status_color};
@@ -30,11 +31,16 @@ pub fn rail_lines(state: &WallState, now_ms: i64) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
     for (i, group) in state.groups.iter().enumerate() {
         let focused_ws = state.focused_workspace.as_deref() == Some(group.name.as_str());
-        if let Some(label) = &group.family_label {
-            lines.push(Line::styled(
-                format!(" {label}"),
-                Style::default().fg(colors::FAINT),
-            ));
+        // The family label row comes from the `rail.header` slot;
+        // `rail_target_at` counts it by `family_label.is_some()`, which is
+        // exactly when the core provider emits it.
+        let header_ctx = SlotCtx {
+            state: Some(state),
+            group: Some(group),
+            ..SlotCtx::default()
+        };
+        for item in SlotRegistry::core().items(SlotId::RailHeader, &header_ctx) {
+            lines.push(Line::from(item.text));
         }
         lines.push(workspace_row(group, i, focused_ws));
         for s in &group.sessions {
@@ -53,6 +59,21 @@ pub fn rail_lines(state: &WallState, now_ms: i64) -> Vec<Line<'static>> {
         ));
     }
     lines
+}
+
+/// The `rail.header` core provider: the p18 family label row above the first
+/// member of a worktree family.
+pub fn family_label_provider(ctx: &SlotCtx) -> Vec<SlotItem> {
+    let Some(label) = ctx.group.and_then(|g| g.family_label.as_ref()) else {
+        return Vec::new();
+    };
+    vec![SlotItem::new(
+        vec![Span::styled(
+            format!(" {label}"),
+            Style::default().fg(colors::FAINT),
+        )],
+        0,
+    )]
 }
 
 fn workspace_row(group: &WorkspaceGroup, index: usize, focused: bool) -> Line<'static> {
@@ -244,7 +265,7 @@ mod tests {
         let lines = rail_lines(store.state(), 0);
         let rows = texts(&lines);
         assert_eq!(rows, [" elite-traders", " 1 et-a", " 2 et-b", " 3 solo"]);
-        assert_eq!(lines[0].style.fg, Some(colors::FAINT));
+        assert_eq!(lines[0].spans[0].style.fg, Some(colors::FAINT));
     }
 
     #[test]

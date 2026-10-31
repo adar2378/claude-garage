@@ -33,10 +33,10 @@
 
 ## 4. Slot registry
 
-- [ ] 4.1 `slots/` module: `SlotId`, `SlotItem`, provider registration, priority layout with truncation
-- [ ] 4.2 Core providers: tile context meter → `tile.title.right`; usage chip and pet → `strip.right`; family label → `rail.header`
-- [ ] 4.3 `overlay` and `context.menu` slots defined, empty
-- [ ] 4.4 Snapshots unchanged byte-for-byte
+- [x] 4.1 (layout drops by priority only when given a width budget; the core surfaces pass none, to keep their output byte-identical) `slots/` module: `SlotId`, `SlotItem`, provider registration, priority layout with truncation
+- [x] 4.2 Core providers: tile context meter → `tile.title.right`; usage chip → `strip.right`; family label → `rail.header` (the pet joins `strip.right` in section 5)
+- [x] 4.3 `overlay` and `context.menu` slots defined, empty
+- [x] 4.4 Snapshots unchanged byte-for-byte
 
 ## 5. Pit pet boundary
 
