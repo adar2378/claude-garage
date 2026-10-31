@@ -87,6 +87,21 @@ fn clean(s: &str, max: usize) -> String {
     }
 }
 
+/// `^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$`
+fn valid_full_name(s: &str) -> bool {
+    let Some((owner, name)) = s.split_once('/') else {
+        return false;
+    };
+    !owner.is_empty()
+        && !name.is_empty()
+        && owner
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-')
+        && name
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
+}
+
 pub fn parse_results(body: &str) -> Result<Found, String> {
     let v: Value =
         serde_json::from_str(body).map_err(|e| format!("GitHub sent something unexpected: {e}"))?;
@@ -96,12 +111,13 @@ pub fn parse_results(body: &str) -> Result<Found, String> {
     let repos = items
         .iter()
         .filter_map(|i| {
-            let full_name = clean(i["full_name"].as_str()?, 100);
-            // Only owner/name is a valid install argument; anything else is dropped.
-            let (owner, name) = full_name.split_once('/')?;
-            if owner.is_empty() || name.is_empty() || full_name.contains(' ') {
+            // Only `owner/name` in GitHub's own alphabet is a valid install
+            // argument; anything else is dropped, not cleaned.
+            let full_name = i["full_name"].as_str()?;
+            if !valid_full_name(full_name) {
                 return None;
             }
+            let full_name = full_name.to_owned();
             Some(Repo {
                 url: format!("https://github.com/{full_name}"),
                 description: clean(i["description"].as_str().unwrap_or(""), 100),
@@ -204,7 +220,7 @@ pub fn render_text(found: &Found, words: &[String], now: i64) -> String {
             o.push_str(&format!("  {}\n", r.description));
         }
         o.push_str(&format!(
-            "  claude-garage plugin install {}\n\n",
+            "  claude-garage plugin install '{}'\n\n",
             r.full_name
         ));
     }
@@ -248,7 +264,12 @@ mod tests {
         {"full_name": "alice/usage-bar", "description": "5h and weekly usage", "stargazers_count": 42, "pushed_at": "2026-10-30T10:00:00Z"},
         {"full_name": "bob/quiet", "description": null, "stargazers_count": 0, "pushed_at": "2025-01-01T00:00:00Z"},
         {"full_name": "eve/evil", "description": "hi\u001b[2J\u001b]0;pwned\u0007 there\nnext line", "stargazers_count": 7, "pushed_at": "2026-10-01T00:00:00Z"},
-        {"full_name": "not a repo", "stargazers_count": 9}
+        {"full_name": "not a repo", "stargazers_count": 9},
+        {"full_name": "x/y;rm -rf ~", "stargazers_count": 9},
+        {"full_name": "x/$(id)", "stargazers_count": 9},
+        {"full_name": "a/b/c", "stargazers_count": 9},
+        {"full_name": "-/\u001b[2Jx", "stargazers_count": 9},
+        {"full_name": "own_er/x", "stargazers_count": 9}
     ]}"#;
 
     #[test]
@@ -274,7 +295,7 @@ mod tests {
         assert_eq!(
             names,
             ["alice/usage-bar", "bob/quiet", "eve/evil"],
-            "the malformed entry is dropped"
+            "entries outside owner/name are dropped, not cleaned"
         );
         assert_eq!(f.repos[0].stars, 42);
         assert_eq!(f.repos[1].description, "");
@@ -323,7 +344,7 @@ mod tests {
             "{t}"
         );
         assert!(t.contains("  5h and weekly usage"));
-        assert!(t.contains("claude-garage plugin install alice/usage-bar"));
+        assert!(t.contains("claude-garage plugin install 'alice/usage-bar'"));
         assert!(t.contains("3 of 3 results"), "{t}");
         let none = render_text(
             &Found {
