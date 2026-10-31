@@ -16,3 +16,8 @@
 - Which plugins are enabled by default.
 - Whether turn markers need a new scrollback slot or can use widgets.
 - Source of truth for the usage figures (statusline only, or transcript fallback).
+
+## Resolved (2026-10-31, user: all defaults)
+
+- On by default: usage bar, closed chats, quick send, close/delete buttons, pet. Off by default: jump palette, turn markers.
+- Two plugins in one slot: both render, in install order; a config setting can reorder them.

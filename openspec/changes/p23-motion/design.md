@@ -16,3 +16,7 @@ The render loop redraws on events (input, PTY output, daemon events). The pit pe
 
 - Slow terminals over SSH: the off switch covers it.
 - Crate churn: all three crates are small and pinned; effects sit behind the motion module, so swapping one is local.
+
+## Resolved (2026-10-31, user: all defaults)
+
+- Off switches: `animations = false`, `GARAGE_NO_MOTION`, `NO_MOTION`, `REDUCE_MOTION` (all honoured).

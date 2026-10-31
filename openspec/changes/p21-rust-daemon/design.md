@@ -110,3 +110,10 @@ If any check fails, the JS daemon stays the shipped one, and the Rust daemon sta
 
 - Should `npx claude-garage` keep working through the npm per-OS packages, or should Homebrew become the main install path? The design keeps npm.
 - Should the Rust daemon keep reading `~/.garage` on Linux, or move to the XDG directories from `directories`? The design keeps `~/.garage` everywhere for now.
+
+## Resolved (2026-10-31, user: all defaults)
+
+- `npx claude-garage` stays the main install path; Homebrew is added via cargo-dist.
+- `~/.garage` stays the data folder on every OS; `GARAGE_DIR` overrides it.
+- The diff route is removed (404); the TUI has not used it since 0.5.0.
+- A fourth crate, `crates/cli`, holds the single `claude-garage` binary.

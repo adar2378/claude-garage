@@ -27,3 +27,9 @@ The daemon calls tmux in three places: `daemon/src/tmux.js`, plus direct calls i
 - macOS runners are slower to start. Accepted: macOS is the main user platform.
 - `apt install tmux` gives an older tmux on Ubuntu. Tests use only basic commands, so this is acceptable; a failure there is a real Linux bug.
 - Snapshot tests can become noise if updated without looking. Mitigation: CI fails on pending snapshots, and reviewers check the `.snap` diff.
+
+## Resolved (2026-10-31, user: all defaults)
+
+- Clippy runs with `-D warnings`: a new warning fails CI.
+- The contract suite is written in Rust (HTTP only, its own crate), not Node, so it tests both daemons and survives the Node removal.
+- Insta snapshot tests for the TUI move to p22 task 0.1 (same files as the carve-out).

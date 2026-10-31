@@ -20,3 +20,9 @@
 
 - Windows on ARM: ship `aarch64-pc-windows-msvc` too, or rely on x64 emulation?
 - Should the host backend become the default on macOS/Linux one day, removing the tmux dependency? Not in this phase.
+
+## Resolved (2026-10-31, user: all defaults)
+
+- No Windows ARM binary yet; x64 runs under emulation.
+- The host backend is Windows-only; tmux stays the backend on macOS and Linux.
+- Windows is verified by hand by the contributor (Sabbir) on a branch the user names, plus CI. No local Windows VM.
