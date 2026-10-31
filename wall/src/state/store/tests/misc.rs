@@ -64,7 +64,7 @@ fn the_r_prefix_routes_all_three_chords_and_cancels_on_anything_else() {
     assert_eq!(restart_command_for("q"), None);
     assert_eq!(restart_command_for(""), None);
     // `r` alone is a prefix, never a command of its own.
-    assert_eq!(garage_command_for(RESTART_PREFIX), None);
+    assert_eq!(garage_command_for("r"), None);
 }
 
 #[test]

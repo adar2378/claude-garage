@@ -163,8 +163,7 @@ impl ActionCtx {
 /// Garage-layer commands (spec tui-key-routing: "Garage-layer bindings" +
 /// "p8.1 session lifecycle bindings" + "p8.3 workspace removal",
 /// `1-9 [ ] a A n N m R x X w Enter ? q`, plus the p16-restart `r` prefix's
-/// `r r` / `r a` / `r d`, which come from [`restart_command_for`] rather
-/// than [`garage_command_for`]).
+/// `r r` / `r a` / `r d`, which resolve in the keymap's restart-chord layer).
 /// State-affecting commands are applied by [`WallStore::dispatch`];
 /// [`GarageCommand::Spawn`], [`GarageCommand::RestoreAll`],
 /// [`GarageCommand::Close`], [`GarageCommand::WorkspaceRemove`] and
@@ -203,7 +202,7 @@ pub enum GarageCommand {
     /// — if it's already alone in its view — rejoin it to the default view.
     DetachFocused,
     /// `Tab` (spec tui-views "View strip and group frame"; reduced to
-    /// `"\t"` by `garage_key_string` — see `garage_command_for`'s doc note):
+    /// `"\t"` by `garage_key_string`):
     /// cycle the focused workspace's views.
     CycleView,
     /// `D` (shift+d, spec tui-views "Move to a group"): open the view-picker
@@ -234,37 +233,6 @@ pub enum GarageCommand {
     /// carries the wall across the handoff. An effect, always declined.
     RestartDaemon,
     Quit,
-}
-
-/// The action id (and `workspace.focus` index) a [`GarageCommand`] maps to.
-pub fn action_for_command(command: GarageCommand) -> (ActionId, Option<usize>) {
-    use GarageCommand as C;
-    let id = match command {
-        C::FocusWorkspace(n) => return (ids::WORKSPACE_FOCUS, Some(n)),
-        C::CycleFocus(delta) if delta < 0 => ids::FOCUS_CYCLE_PREV,
-        C::CycleFocus(_) => ids::FOCUS_CYCLE_NEXT,
-        C::Jump => ids::JUMP_BLOCKED,
-        C::OpenQueue => ids::OVERLAY_OPEN_QUEUE,
-        C::Spawn { worktree: false } => ids::SESSION_SPAWN,
-        C::Spawn { worktree: true } => ids::SESSION_SPAWN_WORKTREE,
-        C::Engage => ids::SESSION_ENGAGE,
-        C::Maximize => ids::SESSION_MAXIMIZE,
-        C::RestoreAll => ids::SESSION_RESTORE_ALL,
-        C::Close => ids::SESSION_CLOSE,
-        C::WorkspaceAdd => ids::OVERLAY_OPEN_WORKSPACE_ADD,
-        C::WorkspaceRemove => ids::WORKSPACE_REMOVE,
-        C::DetachFocused => ids::SESSION_DETACH,
-        C::CycleView => ids::VIEW_CYCLE,
-        C::OpenViewPicker => ids::OVERLAY_OPEN_VIEW_PICKER,
-        C::ToggleHelp => ids::OVERLAY_OPEN_HELP,
-        C::InstallStatusline => ids::HOOKS_INSTALL,
-        C::OpenWindow => ids::SESSION_OPEN_WINDOW,
-        C::RestartFocused => ids::SESSION_RESTART,
-        C::RestartWorkspace => ids::WORKSPACE_RESTART,
-        C::RestartDaemon => ids::DAEMON_RESTART,
-        C::Quit => ids::APP_QUIT,
-    };
-    (id, None)
 }
 
 /// The [`GarageCommand`] an action id runs through the store/router, or
@@ -317,37 +285,32 @@ mod tests {
     }
 
     #[test]
-    fn every_garage_command_round_trips_through_its_id() {
-        use GarageCommand as C;
-        let commands = [
-            C::FocusWorkspace(0),
-            C::FocusWorkspace(8),
-            C::CycleFocus(-1),
-            C::CycleFocus(1),
-            C::Jump,
-            C::OpenQueue,
-            C::Spawn { worktree: false },
-            C::Spawn { worktree: true },
-            C::Engage,
-            C::Maximize,
-            C::RestoreAll,
-            C::Close,
-            C::WorkspaceAdd,
-            C::WorkspaceRemove,
-            C::DetachFocused,
-            C::CycleView,
-            C::OpenViewPicker,
-            C::ToggleHelp,
-            C::InstallStatusline,
-            C::OpenWindow,
-            C::RestartFocused,
-            C::RestartWorkspace,
-            C::RestartDaemon,
-            C::Quit,
+    fn the_ids_without_a_command_are_exactly_the_ones_handled_beside_the_store() {
+        // Everything else runs through `WallStore::dispatch` or the router's
+        // effects; these have their own handling (see `App::dispatch_action`
+        // and `GarageRouter::run_action`).
+        let handled_elsewhere = [
+            ids::SESSION_FOCUS,
+            ids::SESSION_RESTORE,
+            ids::PET_PET,
+            ids::PET_CYCLE_SPECIES,
+            ids::OVERLAY_CLOSE,
+            ids::OVERLAY_SELECT_NEXT,
+            ids::OVERLAY_SELECT_PREV,
+            ids::OVERLAY_VIEW_PICKER_PICK,
+            ids::VIEW_FOCUS,
+            ids::CHORD_RESTART,
+            ids::WORKSPACE_REMOVE_KILL,
         ];
-        for command in commands {
-            let (id, index) = action_for_command(command);
-            assert_eq!(command_for_action(id, index), Some(command), "{id:?}");
+        for id in ids::ALL {
+            let has_command = command_for_action(*id, Some(0)).is_some();
+            assert_eq!(
+                has_command,
+                !handled_elsewhere.contains(id),
+                "{} is {} a command",
+                id.as_str(),
+                if has_command { "mapped to" } else { "missing from" }
+            );
         }
     }
 

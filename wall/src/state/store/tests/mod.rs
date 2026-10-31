@@ -3,8 +3,24 @@
 //! and SSE-event application. Specs: tui-key-routing (layers, garage
 //! bindings), tui-wall (grid cap), tui-triage (a jump).
 use super::*;
-use crate::keymap::{garage_command_for, restart_command_for, RESTART_PREFIX};
+use crate::actions::command_for_action;
+use crate::keymap::{Keymap, Layer};
 use crate::state::salience::restorable_session_ids;
+
+/// The command a key runs in the default keymap (key → action id →
+/// command); `None` for an unbound key or an id with no command.
+fn command_in(layer: Layer, key: &str) -> Option<GarageCommand> {
+    let resolved = Keymap::defaults().resolve(layer, key)?;
+    command_for_action(resolved.action, resolved.index)
+}
+
+fn garage_command_for(key: &str) -> Option<GarageCommand> {
+    command_in(Layer::Garage, key)
+}
+
+fn restart_command_for(key: &str) -> Option<GarageCommand> {
+    command_in(Layer::RestartChord, key)
+}
 
 fn ws(name: &str) -> WorkspaceInfo {
     WorkspaceInfo {

@@ -883,8 +883,10 @@ fn garage_key_string_maps_tab_to_cycle_view_the_wave_1b_follow_up() {
         garage_key_string(&KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE)).as_deref(),
         Some("\t")
     );
+    let tab = garage_key_string(&KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE)).unwrap();
+    let resolved = Keymap::defaults().resolve(Layer::Garage, &tab).unwrap();
     assert_eq!(
-        garage_command_for(&garage_key_string(&KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE)).unwrap()),
+        command_for_action(resolved.action, resolved.index),
         Some(GarageCommand::CycleView)
     );
 }

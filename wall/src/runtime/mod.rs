@@ -199,7 +199,7 @@ pub fn garage_key_string(key: &KeyEvent) -> Option<String> {
         KeyCode::Enter => Some("\r".to_owned()),
         // p10 (spec tui-views "View strip and group frame"): Tab cycles the
         // focused workspace's views — the wave-1b reservation this fills in
-        // (`garage_command_for` already maps `"\t"` to `CycleView`).
+        // (the keymap binds `"\t"` to `view.cycle`).
         KeyCode::Tab => Some("\t".to_owned()),
         KeyCode::Char(c)
             if !key
