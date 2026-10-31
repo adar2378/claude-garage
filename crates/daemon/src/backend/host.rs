@@ -268,11 +268,10 @@ impl SessionBackend for HostBackend {
         blocking(move || proto::capture_text(&entry.addr(), &entry.token, n).map_err(|e| anyhow!("capture failed: {e}"))).await?
     }
 
-    /// An empty `addr` means "no host for this id" (the route answers 404).
+    /// Only the id: the token stays on disk (see [`AttachSpec::Host`]). An
+    /// empty id means "no host for this session" (the route answers 404).
     fn attach_spec(&self, id: &str) -> AttachSpec {
-        match registry::read(&self.hosts_dir, id) {
-            Some(e) => AttachSpec::Socket { addr: e.addr(), token: e.token },
-            None => AttachSpec::Socket { addr: String::new(), token: String::new() },
-        }
+        let known = registry::read(&self.hosts_dir, id).is_some();
+        AttachSpec::Host { id: if known { id.to_owned() } else { String::new() } }
     }
 }

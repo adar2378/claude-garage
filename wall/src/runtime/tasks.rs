@@ -176,11 +176,23 @@ pub(super) fn spawn_sse_task(
 /// and tiles detach before masters close).
 pub(super) fn spawn_signal_task(rt: &tokio::runtime::Runtime, tx: EventSender) {
     rt.spawn(async move {
-        if let Ok(mut sigterm) =
-            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+        #[cfg(unix)]
         {
-            sigterm.recv().await;
-            let _ = tx.send(AppEvent::Quit);
+            if let Ok(mut sigterm) =
+                tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+            {
+                sigterm.recv().await;
+                let _ = tx.send(AppEvent::Quit);
+            }
+        }
+        // Windows has no SIGTERM; the console's close/break event is the
+        // nearest thing.
+        #[cfg(windows)]
+        {
+            if let Ok(mut close) = tokio::signal::windows::ctrl_close() {
+                close.recv().await;
+                let _ = tx.send(AppEvent::Quit);
+            }
         }
     });
 }

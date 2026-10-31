@@ -114,13 +114,24 @@ pub fn hello(token: &str, mode: u8, cols: u16, rows: u16) -> Vec<u8> {
     h
 }
 
-/// Connect to `addr` (`127.0.0.1:<port>`) and complete the hello. A wrong
-/// token is only noticed by the host closing the connection.
+/// `addr` as a loopback socket address, else an error. Hosts only ever listen
+/// on loopback, so anything else is a bad or hostile registry/spec value and
+/// must never be dialed (the hello carries the token).
+pub fn parse_loopback(addr: &str) -> std::io::Result<SocketAddr> {
+    let parsed: SocketAddr = addr.parse().map_err(|_| io_err(format!("bad host address {addr:?}")))?;
+    if !parsed.ip().is_loopback() {
+        return Err(io_err(format!("refusing non-loopback host address {addr:?}")));
+    }
+    Ok(parsed)
+}
+
+/// Connect to `addr` (a loopback address, `127.0.0.1:<port>`) and complete the
+/// hello. A wrong token is only noticed by the host closing the connection.
 pub fn connect(addr: &str, token: &str, mode: u8, cols: u16, rows: u16) -> std::io::Result<TcpStream> {
     if token.len() != TOKEN_LEN {
         return Err(io_err("bad host token"));
     }
-    let addr: SocketAddr = addr.parse().map_err(|_| io_err(format!("bad host address {addr:?}")))?;
+    let addr = parse_loopback(addr)?;
     let mut stream = TcpStream::connect_timeout(&addr, CONNECT_TIMEOUT)?;
     stream.set_nodelay(true).ok();
     stream.write_all(&hello(token, mode, cols, rows))?;
@@ -217,5 +228,18 @@ mod tests {
         assert!(connect("127.0.0.1:1", "short", MODE_CONTROL, 0, 0).is_err());
         assert!(connect("not an address", &"a".repeat(TOKEN_LEN), MODE_CONTROL, 0, 0).is_err());
         assert!(connect("", &"a".repeat(TOKEN_LEN), MODE_CONTROL, 0, 0).is_err());
+    }
+
+    #[test]
+    fn only_loopback_addresses_are_ever_dialed() {
+        for ok in ["127.0.0.1:4000", "[::1]:4000", "127.5.5.5:1"] {
+            assert!(parse_loopback(ok).is_ok(), "{ok}");
+        }
+        for bad in ["10.0.0.1:80", "8.8.8.8:53", "0.0.0.0:80", "[::2]:1", "evil.example:80", "localhost:80", "127.0.0.1", "[fe80::1]:1"] {
+            assert!(parse_loopback(bad).is_err(), "{bad}");
+        }
+        // The check happens before any dial: a public address fails at once.
+        let e = connect("8.8.8.8:53", &"a".repeat(TOKEN_LEN), MODE_CONTROL, 0, 0).unwrap_err();
+        assert!(e.to_string().contains("non-loopback"), "{e}");
     }
 }

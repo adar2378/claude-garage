@@ -28,7 +28,7 @@ use std::time::{Duration, Instant};
 
 use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize};
 
-use crate::attach::{tmux_base, AttachSpec};
+use crate::attach::Target;
 
 fn other(e: impl std::fmt::Display) -> std::io::Error {
     std::io::Error::other(e.to_string())
@@ -45,8 +45,8 @@ struct HostLink {
 pub struct TileClient {
     session: String,
     /// What this client attached with; tmux calls made on its behalf
-    /// (list-clients, detach) use the spec's tmux flags.
-    spec: AttachSpec,
+    /// (list-clients, detach) use the target's tmux flags.
+    target: Target,
     parser: Arc<Mutex<vt100::Parser>>,
     /// `Some` until teardown; dropping the master closes the PTY, so it must
     /// outlive the detach. `None` for a host link.
@@ -63,25 +63,29 @@ pub struct TileClient {
 }
 
 impl TileClient {
-    /// Attach to `session` the way `spec` says. A tmux spec spawns its argv
+    /// Attach to `session`. A tmux target spawns the fixed argv
     /// (`tmux [-L sock] attach -t =<session>`) on a fresh PTY; `TMUX` is
     /// stripped (nested-client refusal) and `TERM` forced to xterm-256color,
-    /// per the spike. A socket spec connects to the session host. `on_output`
+    /// per the spike. A socket target connects to the session host. `on_output`
     /// fires after each chunk is parsed — wire it to the app event channel (a
     /// "dirty" ping).
     pub fn new(
         session: &str,
-        spec: &AttachSpec,
+        target: &Target,
         cols: u16,
         rows: u16,
         scrollback: usize,
         on_output: impl Fn() + Send + 'static,
     ) -> std::io::Result<TileClient> {
-        let argv = match spec {
-            AttachSpec::Tmux { argv, .. } if !argv.is_empty() => argv,
-            AttachSpec::Tmux { .. } => return Err(other("attach spec has an empty argv")),
-            AttachSpec::Socket { addr, token } => {
-                return Self::new_host(session, spec, addr, token, cols, rows, scrollback, on_output);
+        let argv = match target {
+            Target::Tmux { socket } => {
+                if socket.as_deref().is_some_and(|s| !garage_protocol::is_valid_tmux_socket(s)) {
+                    return Err(other("refusing an invalid tmux socket name"));
+                }
+                target.attach_argv(session)
+            }
+            Target::Socket { addr, token } => {
+                return Self::new_host(session, target, addr, token, cols, rows, scrollback, on_output);
             }
         };
         let pty = native_pty_system();
@@ -127,7 +131,7 @@ impl TileClient {
         }
         Ok(TileClient {
             session: session.to_owned(),
-            spec: spec.clone(),
+            target: target.clone(),
             parser,
             master: Some(pair.master),
             writer: Some(writer),
@@ -143,7 +147,7 @@ impl TileClient {
     #[allow(clippy::too_many_arguments)]
     fn new_host(
         session: &str,
-        spec: &AttachSpec,
+        target: &Target,
         addr: &str,
         token: &str,
         cols: u16,
@@ -177,7 +181,7 @@ impl TileClient {
         }
         Ok(TileClient {
             session: session.to_owned(),
-            spec: spec.clone(),
+            target: target.clone(),
             parser,
             master: None,
             writer: None,
@@ -258,7 +262,7 @@ impl TileClient {
     /// against the spawned `tmux attach` pid.
     fn own_client_tty(&self) -> Option<String> {
         let pid = self.child_pid?;
-        let base = tmux_base(&self.spec);
+        let base = self.target.tmux_base();
         let out = Command::new(&base[0])
             .args(&base[1..])
             .args([
@@ -293,7 +297,7 @@ impl TileClient {
             let _ = host.stream.shutdown(Shutdown::Both);
             return;
         }
-        let base = tmux_base(&self.spec);
+        let base = self.target.tmux_base();
         // Per-client detach when our client is identifiable; -s (all clients
         // of the session — safe for our own spawned clients, but it would
         // also detach a co-attached user) only as the fallback.
@@ -382,7 +386,7 @@ mod host_tests {
             entry.is_some()
         });
         let e = entry.unwrap();
-        let spec = AttachSpec::Socket { addr: e.addr(), token: e.token.clone() };
+        let spec = Target::Socket { addr: e.addr(), token: e.token.clone() };
 
         let mut tile = TileClient::new("garage/ws/t", &spec, 60, 6, 0, || {}).unwrap();
         eventually("the snapshot", || screen_text(&tile).contains("hello-tile"));
@@ -410,9 +414,12 @@ mod host_tests {
 
     #[test]
     fn a_dead_socket_or_an_empty_argv_is_an_error_not_a_panic() {
-        let gone = AttachSpec::Socket { addr: "127.0.0.1:1".into(), token: "t".repeat(32) };
+        let gone = Target::Socket { addr: "127.0.0.1:1".into(), token: "t".repeat(32) };
         assert!(TileClient::new("s", &gone, 80, 24, 0, || {}).is_err());
-        let empty = AttachSpec::Tmux { argv: vec![], detach_argv: vec![] };
-        assert!(TileClient::new("s", &empty, 80, 24, 0, || {}).is_err());
+        let off_loopback = Target::Socket { addr: "203.0.113.9:80".into(), token: "t".repeat(32) };
+        let e = TileClient::new("s", &off_loopback, 80, 24, 0, || {}).err().unwrap();
+        assert!(e.to_string().contains("non-loopback"), "{e}");
+        let bad_socket = Target::Tmux { socket: Some("x -f /evil".into()) };
+        assert!(TileClient::new("s", &bad_socket, 80, 24, 0, || {}).is_err());
     }
 }

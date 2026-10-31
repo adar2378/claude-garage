@@ -13,7 +13,7 @@
 
 use std::process::Command;
 
-use crate::attach::{tmux_base, AttachSpec};
+use crate::attach::Target;
 
 /// Lines scrolled per mouse-wheel notch (the Dart `ScrollAnchor.wheelLines`).
 pub const WHEEL_LINES: i64 = 3;
@@ -73,16 +73,16 @@ impl ScrollModel {
     }
 }
 
-fn tmux(spec: &AttachSpec, args: &[&str]) -> Option<std::process::Output> {
-    let base = tmux_base(spec);
+fn tmux(spec: &Target, args: &[&str]) -> Option<std::process::Output> {
+    let base = spec.tmux_base();
     Command::new(&base[0]).args(&base[1..]).args(args).env_remove("TMUX").output().ok()
 }
 
 /// Current history size of a session (absolute line 0 = oldest retained
 /// history line; the visible top row sits at index history_size). Asks tmux,
 /// or the session host when the spec is a socket.
-pub fn history_size(spec: &AttachSpec, session: &str) -> Option<i64> {
-    if let AttachSpec::Socket { addr, token } = spec {
+pub fn history_size(spec: &Target, session: &str) -> Option<i64> {
+    if let Target::Socket { addr, token } = spec {
         return garage_host::proto::history_size(addr, token);
     }
     let out = tmux(
@@ -98,13 +98,13 @@ pub fn history_size(spec: &AttachSpec, session: &str) -> Option<i64> {
 /// history size, recomputed per call — the absolute window stays fixed, so a
 /// re-capture under live load renders identical content. A host serves
 /// absolute coordinates directly.
-pub fn capture_frozen(spec: &AttachSpec, session: &str, top_abs: i64, cols: u16, rows: u16) -> Option<vt100::Parser> {
+pub fn capture_frozen(spec: &Target, session: &str, top_abs: i64, cols: u16, rows: u16) -> Option<vt100::Parser> {
     let text = match spec {
-        AttachSpec::Socket { addr, token } => {
+        Target::Socket { addr, token } => {
             String::from_utf8_lossy(&garage_host::proto::capture_formatted(addr, token, top_abs, cols, rows)?)
                 .into_owned()
         }
-        AttachSpec::Tmux { .. } => {
+        Target::Tmux { .. } => {
             let hist = history_size(spec, session)?;
             let s_rel = top_abs - hist; // <= 0 reaches into history
             let e_rel = s_rel + i64::from(rows) - 1;

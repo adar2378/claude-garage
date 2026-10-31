@@ -18,7 +18,7 @@
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
-use crate::attach::{AttachResolver, AttachSpec, TmuxOnly};
+use crate::attach::{AttachResolver, Target, TmuxOnly};
 use crate::pty::TileClient;
 use crate::runtime::{AppEvent, EventSender};
 use crate::ui::scroll::ScrollModel;
@@ -102,7 +102,7 @@ struct Entry {
     frozen: Option<FrozenTile>,
     /// What the last (re)attach used; scrollback and the `+N lines` counter
     /// query the same backend through it.
-    spec: Option<AttachSpec>,
+    spec: Option<Target>,
 }
 
 pub struct TileRegistry {
@@ -277,7 +277,7 @@ impl TileRegistry {
     }
 
     /// The spec the tile's current attach used (for scrollback queries).
-    pub fn spec(&self, id: &str) -> Option<&AttachSpec> {
+    pub fn spec(&self, id: &str) -> Option<&Target> {
         self.entries.get(id).and_then(|e| e.spec.as_ref())
     }
 

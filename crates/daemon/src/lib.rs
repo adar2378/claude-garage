@@ -36,6 +36,7 @@ pub use state::AppState;
 pub fn app(state: AppState) -> axum::Router {
     api::routes()
         .layer(middleware::from_fn_with_state(state.clone(), security::origin_guard))
+        .layer(middleware::from_fn_with_state(state.clone(), security::host_guard))
         .with_state(state)
 }
 
@@ -159,7 +160,7 @@ mod tests {
         }));
 
         let mut conn = tokio::net::TcpStream::connect(addr).await.unwrap();
-        conn.write_all(b"GET /api/events HTTP/1.1\r\nhost: x\r\nconnection: close\r\n\r\n").await.unwrap();
+        conn.write_all(b"GET /api/events HTTP/1.1\r\nhost: 127.0.0.1\r\nconnection: close\r\n\r\n").await.unwrap();
         let mut seen = String::new();
         let mut buf = [0u8; 1024];
         while !seen.contains(": connected") {
@@ -198,6 +199,29 @@ mod tests {
         // GET is never guarded; a header-less write reaches the (stub) route.
         assert_eq!(call(&c, "GET", "/api/health", Some("https://evil.example")).await.0, StatusCode::OK);
         assert_eq!(call(&c, "POST", "/api/sessions", None).await.0, StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn a_foreign_host_header_is_refused_on_every_route_and_loopback_passes() {
+        let mut c = config(&[]);
+        c.port = 4747;
+        for (m, u) in [("GET", "/api/health"), ("GET", "/api/attach?id=garage/a/b"), ("POST", "/api/sessions"), ("GET", "/nope")] {
+            let req = |host: Option<&str>| {
+                let mut r = Request::builder().method(m).uri(u);
+                if let Some(h) = host {
+                    r = r.header("host", h);
+                }
+                r.body(Body::empty()).unwrap()
+            };
+            let res = app(state(c.clone())).oneshot(req(Some("evil.example:4747"))).await.unwrap();
+            assert_eq!(res.status(), StatusCode::FORBIDDEN, "{m} {u}");
+            let bytes = res.into_body().collect().await.unwrap().to_bytes();
+            assert_eq!(serde_json::from_slice::<Value>(&bytes).unwrap(), json!({"error": "host not allowed"}));
+            let ok = app(state(c.clone())).oneshot(req(Some("127.0.0.1:4747"))).await.unwrap();
+            assert_ne!(ok.status(), StatusCode::FORBIDDEN, "{m} {u}");
+            let none = app(state(c.clone())).oneshot(req(None)).await.unwrap();
+            assert_ne!(none.status(), StatusCode::FORBIDDEN, "{m} {u} without a Host header");
+        }
     }
 
     #[tokio::test]

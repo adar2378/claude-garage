@@ -625,9 +625,11 @@ async fn default_probe_sees_a_listening_health_endpoint_and_a_free_port() {
 #[tokio::test]
 async fn default_probe_against_the_real_app_health_route() {
     let garage = tempfile::tempdir().unwrap();
-    let (st, _) = fake_state(garage.path());
+    let (mut st, _) = fake_state(garage.path());
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
     let port = listener.local_addr().unwrap().port();
+    // The Host guard compares against the port the daemon really serves on.
+    st.config = Arc::new(Config { port, ..(*st.config).clone() });
     let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
     let server = tokio::spawn(crate::serve(listener, st, async {
         let _ = stopped.await;

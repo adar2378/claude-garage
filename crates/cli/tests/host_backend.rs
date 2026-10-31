@@ -73,7 +73,8 @@ async fn lifecycle_create_list_has_rename_capture_kill() {
     b.rename("garage/ws/a", "garage/ws/b").await.unwrap();
     assert!(!b.has("garage/ws/a").await.unwrap());
     assert!(b.has("garage/ws/b").await.unwrap());
-    assert!(matches!(b.attach_spec("garage/ws/b"), AttachSpec::Socket { ref addr, .. } if addr.starts_with("127.0.0.1:")));
+    assert_eq!(b.attach_spec("garage/ws/b"), AttachSpec::Host { id: "garage/ws/b".into() });
+    assert_eq!(b.attach_spec("garage/ws/a"), AttachSpec::Host { id: String::new() }, "the old name is gone");
 
     b.kill("garage/ws/b").await.unwrap();
     assert!(b.list().await.unwrap().is_empty());
@@ -136,8 +137,8 @@ async fn attached_reflects_a_connected_client() {
     let b = backend(g.path());
     let _cleanup = Cleanup(b.clone());
     b.create("garage/ws/at", g.path(), "sleep", &["60".into()], &[]).await.unwrap();
-    let AttachSpec::Socket { addr, token } = b.attach_spec("garage/ws/at") else { panic!() };
-    let _client = garage_host::proto::connect_attach(&addr, &token, 80, 24).unwrap();
+    let e = garage_host::registry::read(&g.path().join("hosts"), "garage/ws/at").unwrap();
+    let _client = garage_host::proto::connect_attach(&e.addr(), &e.token, 80, 24).unwrap();
     eventually("attached=true", || async { b.list().await.unwrap()[0].attached }).await;
     drop(_client);
     eventually("attached=false", || async { !b.list().await.unwrap()[0].attached }).await;
