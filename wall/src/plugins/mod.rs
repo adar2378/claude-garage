@@ -302,3 +302,57 @@ pub fn register(registry: &mut crate::slots::SlotRegistry, store: &Rc<RefCell<Pl
         registry.register(slot, PluginSlotProvider::new(slot, store.clone()));
     }
 }
+
+/// Seed a registry the way the daemon would after a plugin pushed `put`: the
+/// plugin listing declares `actions` (full ids), the widget content goes
+/// through the real wire-to-item path. For render and click tests of what a
+/// first-party plugin draws, with the plugin's golden JSON as the input.
+#[cfg(test)]
+pub mod test_support {
+    use super::*;
+    use garage_protocol::plugins::{PluginList, PluginWidgets, WidgetContent, WidgetsSnapshot};
+    use garage_protocol::widgets::WidgetPut;
+
+    pub fn registry_with(
+        plugin: &str,
+        actions: &[&str],
+        slot: WidgetSlot,
+        put_json: &str,
+    ) -> crate::slots::SlotRegistry {
+        let put: WidgetPut = serde_json::from_str(put_json).expect("golden widget body");
+        let list: PluginList = serde_json::from_value(serde_json::json!({"plugins": [{
+            "id": plugin, "name": plugin, "enabled": true, "active": true,
+            "actions": actions.iter().map(|a| serde_json::json!({
+                "id": a, "title": a, "contexts": ["global"]
+            })).collect::<Vec<_>>(),
+            "widgets": [{"id": "w", "slot": slot}],
+        }]}))
+        .unwrap();
+        let mut store = PluginStore::default();
+        store.apply_listing(list);
+        store.apply_widgets(
+            WidgetsSnapshot {
+                plugins: [(
+                    plugin.to_owned(),
+                    PluginWidgets {
+                        rev: 1,
+                        widgets: [(
+                            "w".to_owned(),
+                            WidgetContent {
+                                slot,
+                                scopes: put.scopes,
+                            },
+                        )]
+                        .into(),
+                    },
+                )]
+                .into(),
+            },
+            true,
+        );
+        let store = Rc::new(RefCell::new(store));
+        let mut registry = crate::slots::SlotRegistry::core();
+        register(&mut registry, &store);
+        registry
+    }
+}

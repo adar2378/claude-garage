@@ -9,6 +9,10 @@
 
 use std::fmt;
 use std::io::Read;
+use std::path::PathBuf;
+
+use serde::Serialize;
+use serde::de::DeserializeOwned;
 
 pub use garage_protocol::widgets::{Segment, Style, WidgetItem, WidgetPut};
 pub use serde_json::{Value, json};
@@ -53,6 +57,44 @@ pub fn read_context() -> Result<Value, Error> {
         s
     };
     serde_json::from_str(&raw).map_err(|e| Error::Context(e.to_string()))
+}
+
+/// The plugin's own storage directory (`GARAGE_PLUGIN_STATE_DIR`): created by
+/// the daemon, kept across updates and restarts.
+pub fn state_dir() -> Result<PathBuf, Error> {
+    std::env::var_os("GARAGE_PLUGIN_STATE_DIR")
+        .map(PathBuf::from)
+        .ok_or(Error::Env("GARAGE_PLUGIN_STATE_DIR"))
+}
+
+/// Read `file` (JSON) from the storage directory. `None` when it is missing
+/// or does not parse: stored state is a cache of what the plugin can work out
+/// again, so a damaged file means "start fresh", never a failed run.
+pub fn read_state<T: DeserializeOwned>(file: &str) -> Option<T> {
+    read_state_in(&state_dir().ok()?, file)
+}
+
+/// Write `file` (JSON) to the storage directory: a temporary file in the same
+/// directory, then a rename, so a reader never sees half a file.
+pub fn write_state<T: Serialize>(file: &str, value: &T) -> Result<(), Error> {
+    write_state_in(&state_dir()?, file, value)
+}
+
+pub fn read_state_in<T: DeserializeOwned>(dir: &std::path::Path, file: &str) -> Option<T> {
+    serde_json::from_slice(&std::fs::read(dir.join(file)).ok()?).ok()
+}
+
+pub fn write_state_in<T: Serialize>(
+    dir: &std::path::Path,
+    file: &str,
+    value: &T,
+) -> Result<(), Error> {
+    let io = |e: std::io::Error| Error::Context(format!("{file}: {e}"));
+    std::fs::create_dir_all(dir).map_err(io)?;
+    let tmp = dir.join(format!("{file}.{}.tmp", std::process::id()));
+    let bytes = serde_json::to_vec(value).map_err(|e| Error::Context(e.to_string()))?;
+    std::fs::write(&tmp, bytes).map_err(io)?;
+    std::fs::rename(&tmp, dir.join(file)).map_err(io)
 }
 
 /// A client for the daemon's plugin routes.
@@ -118,6 +160,11 @@ impl Api {
         }
     }
 
+    /// `GET path` (a core route such as `/api/usage` or `/api/sessions`).
+    pub fn get(&self, path: &str) -> Result<Value, Error> {
+        self.request("GET", path, None)
+    }
+
     /// `PUT /api/plugins/{me}/widgets/{widget}`; returns the new `rev`.
     pub fn put_widget(&self, widget: &str, put: &WidgetPut) -> Result<u64, Error> {
         let body = serde_json::to_value(put).map_err(|e| Error::Context(e.to_string()))?;
@@ -156,6 +203,9 @@ pub fn text_widget(text: &str) -> WidgetPut {
         ttl_secs: None,
     }
 }
+
+#[doc(hidden)]
+pub mod fake;
 
 #[cfg(test)]
 mod tests {

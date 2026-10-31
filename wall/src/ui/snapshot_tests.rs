@@ -7,7 +7,7 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier};
 
-use crate::api::models::{SessionInfo, UsageInfo, UsageWindow, WorkspaceInfo};
+use crate::api::models::{SessionInfo, WorkspaceInfo};
 use crate::slots::SlotRegistry;
 use crate::state::store::WallStore;
 use crate::state::wall_state::WallSession;
@@ -138,20 +138,30 @@ fn strip_tabs_blocked_dots_and_no_chip() {
     insta::assert_snapshot!(strip_dump(&strip_store(), None, 100));
 }
 
+/// The strip as the usage-bar plugin fills it: its golden widget body goes
+/// through the real wire-to-slot path. The snapshot is the one the core chip
+/// produced (text, columns and styles are byte-identical).
+fn plugin_strip_dump(golden: &str, store: &WallStore, notice: Option<&str>, w: u16) -> String {
+    let rect = Rect::new(0, 0, w, 1);
+    let mut buf = Buffer::empty(rect);
+    let slots = crate::plugins::test_support::registry_with(
+        "usage-bar",
+        &[],
+        garage_protocol::widgets::WidgetSlot::StripRight,
+        golden,
+    );
+    render_strip(&mut buf, rect, store.state(), &slots, notice);
+    dump(&buf)
+}
+
 #[test]
 fn strip_with_usage_chip_and_notice() {
-    let mut store = strip_store();
-    store.usage_fetched(UsageInfo {
-        five_hour: Some(UsageWindow {
-            used_percentage: 24,
-            resets_at: None,
-        }),
-        seven_day: Some(UsageWindow {
-            used_percentage: 61,
-            resets_at: None,
-        }),
-    });
-    insta::assert_snapshot!(strip_dump(&store, Some("restarted 2 sessions"), 130));
+    insta::assert_snapshot!(plugin_strip_dump(
+        include_str!("../../../plugins/usage-bar/golden/both.json"),
+        &strip_store(),
+        Some("restarted 2 sessions"),
+        130
+    ));
 }
 
 #[test]
@@ -161,15 +171,12 @@ fn strip_install_hint_is_dim() {
 
 #[test]
 fn strip_narrow_drops_right_side_content() {
-    let mut store = strip_store();
-    store.usage_fetched(UsageInfo {
-        five_hour: Some(UsageWindow {
-            used_percentage: 98,
-            resets_at: None,
-        }),
-        seven_day: None,
-    });
-    insta::assert_snapshot!(strip_dump(&store, Some("a notice"), 60));
+    insta::assert_snapshot!(plugin_strip_dump(
+        include_str!("../../../plugins/usage-bar/golden/five-only.json"),
+        &strip_store(),
+        Some("a notice"),
+        60
+    ));
 }
 
 /// The strip with the pet laid into its filler: a lit bang beside speech,

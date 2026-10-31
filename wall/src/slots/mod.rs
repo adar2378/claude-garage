@@ -425,7 +425,6 @@ impl SlotRegistry {
             SlotId::TileTitleRight,
             crate::ui::tile::context_meter_provider,
         );
-        registry.register(SlotId::StripRight, crate::ui::strip::usage_chip_provider);
         registry.register(SlotId::RailHeader, crate::ui::rail::family_label_provider);
         registry
     }

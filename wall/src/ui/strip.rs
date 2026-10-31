@@ -17,7 +17,6 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Paragraph, Widget};
 
 use crate::actions::ids;
-use crate::api::models::UsageInfo;
 use crate::slots::{self, ClickTarget, Placement, SlotCtx, SlotId, SlotItem, SlotRegistry};
 use crate::state::wall_state::{KeyLayer, WallState};
 use crate::ui::theme::colors;
@@ -30,40 +29,6 @@ use crate::ui::theme::colors;
 /// (see `runtime.rs`'s hint scheduling), so `strip_line` special-cases this
 /// text to pick the dim color instead of an ordinary notice's bright one.
 pub const STATUSLINE_HINT: &str = "press I to install hooks (instant status) + context meter";
-
-/// `5h N% · wk M%`-style account usage chip (spec tui-context-meters "Strip
-/// usage chip"): a null window is omitted, not zero-filled; both null hides
-/// the chip entirely (`None`).
-fn usage_chip_text(usage: &UsageInfo) -> Option<String> {
-    let five_hour = usage
-        .five_hour
-        .as_ref()
-        .map(|w| format!("5h {}%", w.used_percentage));
-    let seven_day = usage
-        .seven_day
-        .as_ref()
-        .map(|w| format!("wk {}%", w.used_percentage));
-    match (five_hour, seven_day) {
-        (None, None) => None,
-        (Some(a), None) => Some(a),
-        (None, Some(b)) => Some(b),
-        (Some(a), Some(b)) => Some(format!("{a} · {b}")),
-    }
-}
-
-/// The `strip.right` core provider: the account usage chip.
-pub fn usage_chip_provider(ctx: &SlotCtx) -> Vec<SlotItem> {
-    let Some(chip) = ctx.state.and_then(|st| usage_chip_text(&st.usage)) else {
-        return Vec::new();
-    };
-    vec![SlotItem::new(
-        vec![Span::styled(
-            format!(" {chip} "),
-            Style::default().fg(colors::DIM),
-        )],
-        50,
-    )]
-}
 
 /// The pit pet's current frame, as the render layer needs it (spec
 /// tui-pit-pet "One-row sprites and derived mood" / "Species-true one-row
@@ -374,7 +339,7 @@ mod tests {
     //! variants, the notice slot.
     use super::*;
     use crate::actions::ActionId;
-    use crate::api::models::{SessionInfo, UsageWindow, WorkspaceInfo};
+    use crate::api::models::{SessionInfo, WorkspaceInfo};
     use crate::state::store::WallStore;
 
     fn ws(name: &str) -> WorkspaceInfo {
@@ -491,11 +456,24 @@ mod tests {
         }
     }
 
-    // ── p11: usage chip (spec tui-context-meters "Strip usage chip") ───────
+    // ── p25: the usage chip is the usage-bar plugin's flow item ─────────────
+
+    /// The usage-bar plugin's golden widget body (also asserted by the plugin
+    /// crate, so the two cannot drift).
+    const USAGE_BOTH: &str = include_str!("../../../plugins/usage-bar/golden/both.json");
+
+    fn usage_registry() -> SlotRegistry {
+        crate::plugins::test_support::registry_with(
+            "usage-bar",
+            &[],
+            garage_protocol::widgets::WidgetSlot::StripRight,
+            USAGE_BOTH,
+        )
+    }
 
     #[test]
-    fn usage_chip_hidden_entirely_when_both_windows_are_null() {
-        let store = store(); // fresh: no /api/usage post yet
+    fn no_plugin_no_chip_and_the_core_registry_has_none() {
+        let store = store();
         let text = strip_line(store.state(), &SlotRegistry::core(), None, 120)
             .line
             .to_string();
@@ -504,83 +482,19 @@ mod tests {
     }
 
     #[test]
-    fn usage_chip_shows_both_windows_dim() {
-        let mut store = store();
-        store.usage_fetched(UsageInfo {
-            five_hour: Some(UsageWindow {
-                used_percentage: 24,
-                resets_at: None,
-            }),
-            seven_day: Some(UsageWindow {
-                used_percentage: 61,
-                resets_at: None,
-            }),
-        });
-        let s = strip_line(store.state(), &SlotRegistry::core(), None, 120);
+    fn usage_chip_from_the_plugin_is_dim_and_never_displaces_the_notice_badge_or_keys_chip() {
+        let store = store(); // one blocked session (beta/blocked) baked in
+        let s = strip_line(store.state(), &usage_registry(), Some("closed ghost"), 140);
         let text = s.line.to_string();
+        assert!(text.contains("closed ghost"), "{text}");
         assert!(text.contains("5h 24% · wk 61%"), "{text}");
-        let chip_span = s
+        let chip = s
             .line
             .spans
             .iter()
             .find(|sp| sp.content.contains("5h 24%"))
             .unwrap();
-        assert_eq!(chip_span.style.fg, Some(colors::DIM));
-    }
-
-    #[test]
-    fn usage_chip_omits_a_null_window() {
-        let mut five_only = store();
-        five_only.usage_fetched(UsageInfo {
-            five_hour: Some(UsageWindow {
-                used_percentage: 24,
-                resets_at: None,
-            }),
-            seven_day: None,
-        });
-        let text = strip_line(five_only.state(), &SlotRegistry::core(), None, 120)
-            .line
-            .to_string();
-        assert!(text.contains("5h 24%"), "{text}");
-        assert!(!text.contains("wk"), "{text}");
-
-        let mut week_only = store();
-        week_only.usage_fetched(UsageInfo {
-            five_hour: None,
-            seven_day: Some(UsageWindow {
-                used_percentage: 61,
-                resets_at: None,
-            }),
-        });
-        let text = strip_line(week_only.state(), &SlotRegistry::core(), None, 120)
-            .line
-            .to_string();
-        assert!(text.contains("wk 61%"), "{text}");
-        assert!(!text.contains("5h"), "{text}");
-    }
-
-    #[test]
-    fn usage_chip_never_displaces_the_notice_badge_or_keys_chip() {
-        let mut store = store(); // one blocked session (beta/blocked) baked in
-        store.usage_fetched(UsageInfo {
-            five_hour: Some(UsageWindow {
-                used_percentage: 24,
-                resets_at: None,
-            }),
-            seven_day: Some(UsageWindow {
-                used_percentage: 61,
-                resets_at: None,
-            }),
-        });
-        let s = strip_line(
-            store.state(),
-            &SlotRegistry::core(),
-            Some("closed ghost"),
-            140,
-        );
-        let text = s.line.to_string();
-        assert!(text.contains("closed ghost"), "{text}");
-        assert!(text.contains("5h 24% · wk 61%"), "{text}");
+        assert_eq!(chip.style.fg, Some(colors::DIM));
         assert!(
             text.ends_with(" ● 1 blocked  keys → garage "),
             "badge and keys chip still land at the very end: {text}"
