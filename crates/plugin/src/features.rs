@@ -40,6 +40,46 @@ pub const PERMISSIONS: &[&str] = &[
     "network",
 ];
 
+/// One HTTP route of plugin API v1: method, path (with `{param}` holes) and
+/// what it needs. `needs` is `none`, a permission name, `ui-token` or
+/// `permission-or-ui-token`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Route {
+    pub method: &'static str,
+    pub path: &'static str,
+    pub needs: &'static str,
+}
+
+const fn route(method: &'static str, path: &'static str, needs: &'static str) -> Route {
+    Route {
+        method,
+        path,
+        needs,
+    }
+}
+
+/// The HTTP routes a plugin may rely on in API v1 (frozen: see
+/// `api-v1.golden.json`). The daemon has more routes; those are not promised.
+pub const ROUTES_V1: &[Route] = &[
+    route("GET", "/api/health", "none"),
+    route("GET", "/api/events", "none"),
+    route("GET", "/api/sessions", "none"),
+    route("GET", "/api/workspaces", "none"),
+    route("GET", "/api/usage", "none"),
+    route("GET", "/api/workspaces/{name}/closed", "sessions.read"),
+    route("GET", "/api/plugin/features", "none"),
+    route("GET", "/api/plugins", "none"),
+    route("GET", "/api/plugins/widgets", "none"),
+    route("GET", "/api/plugins/panes", "none"),
+    route("PUT", "/api/plugins/{id}/widgets/{widget}", "ui.widgets"),
+    route("DELETE", "/api/plugins/{id}/widgets/{widget}", "ui.widgets"),
+    route("POST", "/api/plugins/{id}/notice", "ui.notice"),
+    route("POST", "/api/plugins/ui/action", "ui.invoke"),
+    route("POST", "/api/plugins/{id}/panes/{pane}/open", "ui.panes"),
+    route("DELETE", "/api/plugins/{id}/panes/{pane}", "ui.panes"),
+    route("POST", "/api/sessions/input", "sessions.input"),
+];
+
 /// Permissions the install prompt flags.
 pub const DANGEROUS_PERMISSIONS: &[&str] = &["sessions.input", "core.actions"];
 
@@ -50,7 +90,15 @@ pub fn is_dangerous(permission: &str) -> bool {
 /// The `features` object of `/api/plugin/features`.
 pub fn features() -> Value {
     json!({
+        "api.v1.frozen": true,
         "events": EVENTS,
+        "permissions": PERMISSIONS,
+        "dangerous_permissions": DANGEROUS_PERMISSIONS,
+        "theme_tokens": garage_protocol::widgets::THEME_TOKENS,
+        "routes": ROUTES_V1
+            .iter()
+            .map(|r| json!({"method": r.method, "path": r.path, "needs": r.needs}))
+            .collect::<Vec<_>>(),
         "slots": WidgetSlot::ALL.iter().map(|s| s.as_str()).collect::<Vec<_>>(),
         "widgets.click_args": true,
         "widgets.filler": true,
