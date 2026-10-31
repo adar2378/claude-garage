@@ -55,6 +55,11 @@ jobs:
         working-directory: wall
         run: cargo test --lib --bins
 
+      # The pit pet is a default-on cargo feature; keep the pet-less build working.
+      - name: TUI tests without the pit pet
+        working-directory: wall
+        run: cargo test --lib --bins --no-default-features
+
       - name: Build the TUI binary
         run: npm run build:tui
 

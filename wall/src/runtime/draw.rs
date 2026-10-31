@@ -108,14 +108,9 @@ impl App {
             layout.strip,
             self.store.state(),
             self.router.notices.current_of(NoticeKind::User, now_ms),
-            self.pet_render.clone().map(|mut p| {
-                p.say = self
-                    .router
-                    .notices
-                    .current_of(NoticeKind::Pet, now_ms)
-                    .map(str::to_owned);
-                p
-            }),
+            self.pet
+                .as_ref()
+                .and_then(|pet| pet.strip_render(&self.router.notices, now_ms)),
         );
         self.badge_cols = strip_cols.badge;
         self.pet_cols = strip_cols.pet;

@@ -2,6 +2,7 @@
 //! strip notices (moved out of `runtime/mod.rs`, p22 task 1.3).
 
 use super::*;
+use crate::ui::pet::PetHost;
 
 /// The garage-layer typing hint (post-review Dart wording, verbatim — the
 /// click-smoke harness greps it).
@@ -419,17 +420,11 @@ impl GarageRouter {
     /// the sprite promptly is the caller's job (`App::handle_key` — it owns
     /// the sim, the router doesn't).
     fn cycle_pet_pressed(&mut self, store: &mut WallStore, now_ms: i64) {
-        let current = store
-            .state()
-            .pet
-            .as_deref()
-            .and_then(pet::Species::from_str);
-        let next = pet::Species::cycle(current);
-        store.set_pet(next.map(|s| s.as_str().to_owned()));
-        let text = match next {
-            Some(species) => format!("{} is on the wall", species.label()),
-            None => "the strip is quiet again".to_owned(),
+        let Some((next, text)) = PetHost::cycle_choice(store.state().pet.as_deref()) else {
+            self.notices.show("the pit pet is not in this build", 3000, now_ms);
+            return;
         };
+        store.set_pet(next);
         self.notices.show(text, 3000, now_ms);
     }
 

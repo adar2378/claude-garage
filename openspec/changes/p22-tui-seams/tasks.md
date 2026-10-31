@@ -40,9 +40,9 @@
 
 ## 5. Pit pet boundary
 
-- [ ] 5.1 `ui/pet/` with `PetHost` (sim, chatter, mood, PRNG); `App` holds `Option<PetHost>`
-- [ ] 5.2 `pet` cargo feature, default on; `cargo build --no-default-features` and its tests pass
-- [ ] 5.3 Add the no-default-features build to CI
+- [x] 5.1 `ui/pet/` with `PetHost` (sim, chatter, mood, PRNG); `App` holds `Option<PetHost>` (the pet's strip frame still reaches `strip_line` as `PetRender` data, not a `strip.right` slot item: it is placed inside the filler with its own click range)
+- [x] 5.2 `pet` cargo feature, default on; `cargo build --no-default-features` and its tests pass
+- [x] 5.3 Add the no-default-features test run to the release workflow's test job
 
 ## 6. Verification
 
