@@ -50,6 +50,11 @@ pub struct WallFile {
     pub pet: Option<String>,
 }
 
+/// `$GARAGE_DIR`, else `~/.garage` (shared by `wall.json` and `config.toml`).
+pub fn garage_dir() -> PathBuf {
+    garage_dir_from(std::env::var("GARAGE_DIR").ok().as_deref(), std::env::var("HOME").ok().as_deref())
+}
+
 /// `$GARAGE_DIR/wall.json`, else `~/.garage/wall.json` — mirrors the
 /// daemon's `registry.js` GARAGE_DIR convention (same override, same
 /// fallback), so a scratch `GARAGE_DIR` used for daemon testing also

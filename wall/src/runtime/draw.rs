@@ -10,7 +10,7 @@ use crate::state::views::ViewSummary;
 use crate::state::wall_state::{KeyLayer, OverlayKind};
 use crate::ui::help::render_help;
 use crate::ui::layout::{tile_inner, wall_layout};
-use crate::ui::rail::render_rail;
+use crate::ui::rail::render_rail_fading;
 use crate::ui::strip::render_strip;
 use crate::ui::theme::colors;
 use crate::ui::tile::{TileView, render_centered_lines, render_tile};
@@ -25,6 +25,13 @@ use super::{App, NoticeKind};
 impl App {
     pub(super) fn draw_frame(&mut self, frame: &mut ratatui::Frame, now_ms: i64) {
         let area = frame.area();
+        // Motion (p23): advance the clock, then start the dissolve of any
+        // tile whose session just left the daemon's list.
+        self.motion.begin_frame(now_ms);
+        {
+            let state = self.store.state();
+            self.motion.closed(|id| state.session_by_id(Some(id)).is_some());
+        }
         let (ids, maximized_index) = {
             let state = self.store.state();
             let ids = state.gridded_session_ids.clone();
@@ -63,7 +70,14 @@ impl App {
         }
 
         let buf = frame.buffer_mut();
-        render_rail(buf, layout.rail, self.store.state(), &self.slots, now_ms);
+        render_rail_fading(
+            buf,
+            layout.rail,
+            self.store.state(),
+            &self.slots,
+            now_ms,
+            self.motion.enabled(),
+        );
 
         if show_view_strip {
             let ranges = render_view_strip(buf, layout.view_strip, &views, &focused_view_name);
@@ -118,8 +132,18 @@ impl App {
                 if maximized_index.is_some() && maximized_index != Some(i) {
                     continue;
                 }
-                self.draw_tile(buf, layout.tiles[i], id, now_ms);
+                let (attached, blocked, spinning) = self.tile_motion_flags(id);
+                self.motion.tile_drawn(id, layout.tiles[i], attached, blocked);
+                if spinning {
+                    self.motion.spinner_shown();
+                }
+                self.draw_tile(buf, layout.tiles[i], id, now_ms, spinning);
             }
+        }
+        // Effects run over the finished tiles, under the strip and overlays.
+        self.motion.apply(buf);
+        if self.motion.strip_spinner_active(self.store.state().daemon_live, now_ms) {
+            self.motion.spinner_shown();
         }
 
         if let Some(pet) = &self.pet {
@@ -168,7 +192,29 @@ impl App {
         self.layout = Some(layout);
     }
 
-    pub(super) fn draw_tile(&self, buf: &mut ratatui::buffer::Buffer, rect: Rect, id: &str, now_ms: i64) {
+    /// `(attached, needs-input, spinner showing)` for one tile — what the
+    /// motion layer keys its edges and its redraw clock on.
+    fn tile_motion_flags(&self, id: &str) -> (bool, bool, bool) {
+        let state = self.store.state();
+        let Some(session) = state.session_by_id(Some(id)) else {
+            return (false, false, false);
+        };
+        let has_screen = self.registry.frozen(id).is_some() || self.registry.client(id).is_some();
+        let dead = self.registry.dead_reason(id).is_some();
+        let attached = session.live() && !dead && has_screen;
+        let attaching = session.live() && !dead && !has_screen;
+        let restoring = !session.live() && self.router.restoring().contains(id);
+        (attached, session.needs_input(), attaching || restoring)
+    }
+
+    pub(super) fn draw_tile(
+        &self,
+        buf: &mut ratatui::buffer::Buffer,
+        rect: Rect,
+        id: &str,
+        now_ms: i64,
+        spinning: bool,
+    ) {
         let state = self.store.state();
         let Some(session) = state.session_by_id(Some(id)) else {
             return; // refetch race; the next frame fixes it
@@ -183,6 +229,8 @@ impl App {
             dead_reason: self.registry.dead_reason(id),
             frozen_new_lines: frozen.map(|f| f.new_lines),
             now_ms,
+            fade_done: self.motion.enabled(),
+            spinner: if spinning { self.motion.tile_spinner(now_ms) } else { None },
             slots: &self.slots,
         };
         if let Some(frozen) = frozen {

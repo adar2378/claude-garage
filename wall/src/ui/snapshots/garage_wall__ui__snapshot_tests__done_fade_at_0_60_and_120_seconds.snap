@@ -1,0 +1,50 @@
+---
+source: src/ui/snapshot_tests.rs
+expression: out
+---
+## done +0s
+|╭ ✓ lbl ───────────────────────────────╮|
+|│                                      │|
+|│                                      │|
+|╰──────────────────────────────────────╯|
+--- styles ---
+r0 c0..1 fg=DarkGray bg=Reset mod=NONE
+r0 c1..4 fg=Green bg=Reset mod=NONE
+r0 c4..7 fg=Gray bg=Reset mod=NONE
+r0 c7..40 fg=DarkGray bg=Reset mod=NONE
+r1 c0..1 fg=DarkGray bg=Reset mod=NONE
+r1 c39..40 fg=DarkGray bg=Reset mod=NONE
+r2 c0..1 fg=DarkGray bg=Reset mod=NONE
+r2 c39..40 fg=DarkGray bg=Reset mod=NONE
+r3 c0..40 fg=DarkGray bg=Reset mod=NONE
+
+## done +60s
+|╭ ✓ lbl ───────────────────────────────╮|
+|│                                      │|
+|│                                      │|
+|╰──────────────────────────────────────╯|
+--- styles ---
+r0 c0..1 fg=DarkGray bg=Reset mod=NONE
+r0 c1..4 fg=Rgb(50, 145, 50) bg=Reset mod=NONE
+r0 c4..7 fg=Gray bg=Reset mod=NONE
+r0 c7..40 fg=DarkGray bg=Reset mod=NONE
+r1 c0..1 fg=DarkGray bg=Reset mod=NONE
+r1 c39..40 fg=DarkGray bg=Reset mod=NONE
+r2 c0..1 fg=DarkGray bg=Reset mod=NONE
+r2 c39..40 fg=DarkGray bg=Reset mod=NONE
+r3 c0..40 fg=DarkGray bg=Reset mod=NONE
+
+## done +120s
+|╭ ✓ lbl ───────────────────────────────╮|
+|│                                      │|
+|│                                      │|
+|╰──────────────────────────────────────╯|
+--- styles ---
+r0 c0..4 fg=DarkGray bg=Reset mod=NONE
+r0 c4..7 fg=Gray bg=Reset mod=NONE
+r0 c7..40 fg=DarkGray bg=Reset mod=NONE
+r1 c0..1 fg=DarkGray bg=Reset mod=NONE
+r1 c39..40 fg=DarkGray bg=Reset mod=NONE
+r2 c0..1 fg=DarkGray bg=Reset mod=NONE
+r2 c39..40 fg=DarkGray bg=Reset mod=NONE
+r3 c0..40 fg=DarkGray bg=Reset mod=NONE
