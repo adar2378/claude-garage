@@ -235,6 +235,10 @@ pub struct SlotItem {
     /// `tile.gutter` only: the absolute scrollback row (counted from the
     /// first line of the session's scrollback) this marker is drawn beside.
     pub gutter_row: Option<u64>,
+    /// `tile.gutter` only: the turn this marker stands for (the `at` of a
+    /// `session.turn` event) when its row is not known to the plugin; the
+    /// wall places it (`ui::turn_rows`).
+    pub gutter_turn: Option<u64>,
     /// Set for an animated item: `text` then holds frame 0 and the registry
     /// swaps in the frame for the current draw.
     pub animated: Option<Animated>,
@@ -249,6 +253,7 @@ impl SlotItem {
             placement: Placement::Flow,
             row_style: None,
             gutter_row: None,
+            gutter_turn: None,
             animated: None,
         }
     }

@@ -127,6 +127,7 @@ pub fn items(plugin: &str, slot: SlotId, item: &WidgetItem) -> Vec<SlotItem> {
         it.placement = placement(&item.placement);
         it.row_style = item.row_style.as_ref().map(|s| style(Some(s)));
         it.gutter_row = item.row;
+        it.gutter_turn = item.turn;
         it.on_click = click.map(|c| match session {
             Some(s) => c.about_session(s),
             None => c,
@@ -390,7 +391,21 @@ mod tests {
             &wire(json!({"row": 42, "segments": [{"text": "|", "click": {"action": "bt:go"}}]})),
         )[0];
         assert_eq!(g.gutter_row, Some(42));
+        assert_eq!(g.gutter_turn, None);
         assert!(g.on_click.is_some());
+
+        // A turn-addressed marker carries the turn and no row: the wall places it.
+        let t = &items(
+            "bt",
+            SlotId::TileGutter,
+            &wire(
+                json!({"turn": 1_800_000_000_123_u64, "kind": "marker", "segments": [{"text": "x"}]}),
+            ),
+        )[0];
+        assert_eq!(
+            (t.gutter_row, t.gutter_turn),
+            (None, Some(1_800_000_000_123))
+        );
 
         let f = &items(
             "bt",

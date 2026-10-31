@@ -75,6 +75,11 @@ impl App {
         }
 
         self.gutter_sessions.clear(); // refilled by the tiles drawn below
+        {
+            let state = self.store.state();
+            self.turn_rows
+                .retain_sessions(|id| state.session_by_id(Some(id)).is_some());
+        }
         let buf = frame.buffer_mut();
         let mut slot_clicks = render_rail_fading(
             buf,
@@ -357,7 +362,7 @@ impl App {
         // `tile.gutter` markers and the scrollback row the body's top sits on:
         // a frozen view knows it, a live tail view needs the polled tmux
         // history size (and draws no gutter until the first poll lands).
-        let gutter_items = self.slots.items(
+        let mut gutter_items = self.slots.items(
             SlotId::TileGutter,
             &SlotCtx {
                 session: Some(session),
@@ -366,6 +371,22 @@ impl App {
         );
         if !gutter_items.is_empty() {
             self.gutter_sessions.insert(id.to_owned());
+        }
+        // Turn-addressed markers (turn-markers): the wall places a new turn at
+        // the bottom of the live tile, once (see `ui::turn_rows`).
+        if gutter_items
+            .iter()
+            .any(|i| i.gutter_turn.is_some() && i.gutter_row.is_none())
+        {
+            let live_row = match (frozen, self.registry.history(id), self.registry.client(id)) {
+                (None, Some(history), Some(client)) => {
+                    let cursor = client.parser().lock().unwrap().screen().cursor_position().0;
+                    u64::try_from(history).ok().map(|h| h + u64::from(cursor))
+                }
+                _ => None,
+            };
+            self.turn_rows
+                .resolve(id, &mut gutter_items, now_ms, live_row);
         }
         let top_abs = frozen
             .map(|f| f.model.top_abs())

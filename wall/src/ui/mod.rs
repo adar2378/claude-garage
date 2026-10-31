@@ -24,6 +24,7 @@ pub mod strip;
 pub mod theme;
 pub mod tile;
 pub mod triage;
+pub mod turn_rows;
 pub mod view_picker;
 pub mod view_strip;
 pub mod window_open;

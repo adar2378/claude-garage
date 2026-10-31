@@ -204,6 +204,9 @@ pub struct WidgetItem {
     pub frame_x: Option<Vec<u16>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub row: Option<u64>,
+    /// `tile.gutter`: the turn this marker stands for instead of a `row`, as
+    /// the `at` (epoch ms) of the `session.turn` event. The TUI knows the
+    /// scrollback, so it places the marker on the row where the turn ended.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub turn: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

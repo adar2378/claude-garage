@@ -436,6 +436,32 @@ mod tests {
         assert!(!is_trusted("hello", &sha256_hex(&hello)));
     }
 
+    /// Every first-party plugin in the checkout is on the compiled allowlist
+    /// with the hash of the manifest as it is now, so a bundled plugin is
+    /// granted automatically, and the three widget plugins have the defaults
+    /// the proposal names (usage bar and pit pet on, turn markers off).
+    #[test]
+    fn every_first_party_manifest_in_the_checkout_is_trusted_as_it_is() {
+        let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../plugins");
+        let mut ids = Vec::new();
+        for (id, dir) in plugin_dirs(&repo)
+            .into_iter()
+            .filter(|(id, _)| id != "hello")
+        {
+            let bytes = std::fs::read(dir.join(MANIFEST_FILE)).unwrap();
+            assert!(
+                is_trusted(&id, &sha256_hex(&bytes)),
+                "{id} is not on the allowlist as written"
+            );
+            ids.push(id);
+        }
+        for id in ["usage-bar", "pit-pet", "turn-markers"] {
+            assert!(ids.iter().any(|i| i == id), "{id} is missing from plugins/");
+        }
+        assert!(DEFAULT_ON.contains(&"usage-bar") && DEFAULT_ON.contains(&"pit-pet"));
+        assert!(!DEFAULT_ON.contains(&"turn-markers"));
+    }
+
     #[test]
     fn a_release_build_looks_only_next_to_the_binary() {
         let exe = Some(PathBuf::from("/opt/garage/bin/claude-garage"));

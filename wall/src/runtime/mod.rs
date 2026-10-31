@@ -388,6 +388,8 @@ struct App {
     /// Sessions whose last-drawn tile had `tile.gutter` markers: the only ones
     /// whose tmux history size is polled.
     gutter_sessions: std::collections::HashSet<String>,
+    /// Scrollback rows of the turns turn-addressed gutter markers stand for.
+    turn_rows: crate::ui::turn_rows::TurnRows,
     /// Strip badge columns from the last frame (absolute), when rendered.
     badge_cols: Option<Range<u16>>,
     /// Clickable slot items painted by the last frame (absolute rects, each
@@ -463,6 +465,7 @@ impl App {
             badge_cols: None,
             slot_clicks: Vec::new(),
             gutter_sessions: std::collections::HashSet::new(),
+            turn_rows: Default::default(),
             view_strip_targets: Vec::new(),
             triage_rect: None,
             ws_add_rect: None,

@@ -1,0 +1,26 @@
+#:schema https://raw.githubusercontent.com/adar2378/claude-garage/main/schemas/garage-plugin.schema.json
+id = "turn-markers"
+name = "Turn markers"
+version = "0.1.0"
+api_version = 1
+platforms = ["macos", "linux"]
+description = "A marker in the tile gutter where each agent turn ended"
+requires = ["events:session.turn"]
+permissions = ["ui.widgets"]
+
+[[events]]
+on = "session.turn"
+command = ["{plugin_dir}/bin/turn-markers", "turn"]
+
+[[events]]
+on = "session.closed"
+command = ["{plugin_dir}/bin/turn-markers", "closed"]
+
+# The daemon forgets widgets when it restarts: draw them all again.
+[[events]]
+on = "daemon.started"
+command = ["{plugin_dir}/bin/turn-markers", "started"]
+
+[[widgets]]
+id = "markers"
+slot = "tile.gutter"
