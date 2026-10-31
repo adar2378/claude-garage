@@ -19,8 +19,8 @@ pub struct Params {
 }
 
 pub async fn get(State(state): State<AppState>, Query(p): Query<Params>) -> Response {
-    let Some(id) = p.id.filter(|i| i.starts_with(GARAGE_PREFIX)) else {
-        return error_response(StatusCode::BAD_REQUEST, "id must be a garage session id");
+    let Some(id) = p.id.filter(|i| i.starts_with(GARAGE_PREFIX) || i.starts_with(crate::plugins::panes::PANE_PREFIX)) else {
+        return error_response(StatusCode::BAD_REQUEST, "id must be a garage session id or a plugin pane id");
     };
     match state.backend.attach_spec(&id) {
         // A host backend answers with an empty id when it has no such host.

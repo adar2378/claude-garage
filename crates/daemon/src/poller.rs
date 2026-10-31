@@ -426,11 +426,13 @@ pub(crate) mod fakes {
         pub panes: Mutex<HashMap<String, PaneInfo>>,
         /// While set, `list` fails like a backend that cannot be reached.
         pub fail_list: std::sync::atomic::AtomicBool,
+        /// Every `create` call, in order: (id, dir, command, args, env).
+        pub created: Mutex<Vec<(String, std::path::PathBuf, String, Vec<String>, Vec<(String, String)>)>>,
     }
 
     impl FakeBackend {
         pub fn new() -> Self {
-            Self { sessions: Mutex::new(vec![]), panes: Mutex::new(HashMap::new()), fail_list: Default::default() }
+            Self { sessions: Mutex::new(vec![]), panes: Mutex::new(HashMap::new()), fail_list: Default::default(), created: Mutex::default() }
         }
         pub fn set(&self, id: &str, dir: &str, pid: Option<u32>, title: &str) {
             let mut s = self.sessions.lock().unwrap();
@@ -475,13 +477,15 @@ pub(crate) mod fakes {
         }
         async fn create(
             &self,
-            _: &str,
-            _: &std::path::Path,
-            _: &str,
-            _: &[String],
-            _: &[(String, String)],
+            id: &str,
+            dir: &std::path::Path,
+            cmd: &str,
+            args: &[String],
+            env: &[(String, String)],
         ) -> anyhow::Result<()> {
-            unimplemented!()
+            self.created.lock().unwrap().push((id.into(), dir.into(), cmd.into(), args.to_vec(), env.to_vec()));
+            self.set(id, &dir.to_string_lossy(), None, "");
+            Ok(())
         }
         async fn respawn(
             &self,
@@ -493,8 +497,12 @@ pub(crate) mod fakes {
         ) -> anyhow::Result<()> {
             unimplemented!()
         }
-        async fn kill(&self, _: &str) -> anyhow::Result<()> {
-            unimplemented!()
+        async fn kill(&self, id: &str) -> anyhow::Result<()> {
+            self.remove(id);
+            Ok(())
+        }
+        async fn plugin_pane_sessions(&self) -> anyhow::Result<Vec<String>> {
+            Ok(self.sessions.lock().unwrap().iter().filter(|s| s.id.starts_with("plugin/")).map(|s| s.id.clone()).collect())
         }
         async fn rename(&self, _: &str, _: &str) -> anyhow::Result<()> {
             unimplemented!()
@@ -503,7 +511,7 @@ pub(crate) mod fakes {
             unimplemented!()
         }
         fn attach_spec(&self, _: &str) -> garage_protocol::AttachSpec {
-            unimplemented!()
+            garage_protocol::AttachSpec::Tmux { socket: Some("fake".into()) }
         }
     }
 

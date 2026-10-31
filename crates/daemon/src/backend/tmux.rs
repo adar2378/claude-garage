@@ -482,6 +482,15 @@ impl SessionBackend for TmuxBackend {
         self.run_args(&["send-keys", "-t", &target, "Enter"]).await.map(|_| ())
     }
 
+    async fn plugin_pane_sessions(&self) -> Result<Vec<String>> {
+        let out = match self.run_args(&["ls", "-F", "#{session_name}"]).await {
+            Ok(out) => out,
+            Err(e) if is_no_server(&e.to_string()) => return Ok(Vec::new()),
+            Err(e) => return Err(e),
+        };
+        Ok(out.lines().filter(|l| l.starts_with(crate::plugins::panes::PANE_PREFIX)).map(str::to_owned).collect())
+    }
+
     fn attach_spec(&self, _id: &str) -> AttachSpec {
         AttachSpec::Tmux { socket: self.socket.clone() }
     }

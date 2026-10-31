@@ -11,6 +11,7 @@
 pub mod api;
 pub mod context;
 pub mod layout;
+pub mod panes;
 pub mod runner;
 pub mod widgets;
 
@@ -176,6 +177,10 @@ pub struct Inner {
     dispatch_permits: Arc<tokio::sync::Semaphore>,
     link_poller: Mutex<Option<JoinHandle<()>>>,
     run_seq: AtomicU64,
+    /// Open plugin panes (the mark that a backend session is a pane).
+    panes: Mutex<Vec<panes::PaneRec>>,
+    pane_seq: AtomicU64,
+    backend: std::sync::OnceLock<Arc<dyn crate::backend::SessionBackend>>,
     timer_unit: Duration,
     link_poll: Duration,
 }
@@ -212,6 +217,9 @@ impl PluginHost {
             dispatch_permits: Arc::new(tokio::sync::Semaphore::new(DISPATCH_INFLIGHT)),
             link_poller: Mutex::new(None),
             run_seq: AtomicU64::new(1),
+            panes: Mutex::default(),
+            pane_seq: AtomicU64::new(1),
+            backend: std::sync::OnceLock::new(),
             timer_unit: Duration::from_secs(1),
             link_poll: LINK_POLL,
         }))
@@ -909,7 +917,7 @@ impl Inner {
 
     /// The disable/remove sequence (design section 4): refuse new triggers
     /// (the caller already marked it inactive), kill running process groups,
-    /// drop queued runs and timers, clear its widgets.
+    /// drop queued runs and timers, kill its panes, clear its widgets.
     fn teardown(self: &Arc<Self>, plugin: &str) {
         if let Some(handles) = self.timers.lock().unwrap().remove(plugin) {
             handles.into_iter().for_each(|h| h.abort());
@@ -918,7 +926,7 @@ impl Inner {
             q.queue.clear();
         }
         self.running.terminate(plugin);
-        // Panes are killed here once they exist (p24 group 5).
+        self.kill_panes_of(plugin);
         self.widgets.clear_plugin(plugin);
     }
 
@@ -1048,37 +1056,11 @@ impl Inner {
     async fn execute(self: &Arc<Self>, plugin: &str, job: &Job) -> Option<RunOutcome> {
         // A plugin disabled while its run waited never starts.
         let state = self.state.lock().unwrap().plugins.iter().find(|p| p.entry.id == plugin && p.active()).cloned()?;
-        let version = state.manifest().map(|m| m.version.clone()).unwrap_or_default();
-        let data_dir = self.paths.data(plugin);
-        if let Err(e) = std::fs::create_dir_all(&data_dir) {
-            return Some(RunOutcome::SpawnFailed(format!("cannot create {}: {e}", data_dir.display())));
-        }
+        let (env, ctx_file) = match self.run_env(&state, job.trigger, &job.ctx) {
+            Ok(v) => v,
+            Err(e) => return Some(RunOutcome::SpawnFailed(e)),
+        };
         let ctx = serde_json::to_string(&job.ctx).unwrap_or_else(|_| "{}".into());
-        let mut env = vec![
-            ("GARAGE_API".to_owned(), format!("http://127.0.0.1:{}", self.port)),
-            ("GARAGE_API_VERSION".into(), "1".into()),
-            ("GARAGE_PLUGIN_ID".into(), plugin.to_owned()),
-            ("GARAGE_PLUGIN_VERSION".into(), version),
-            ("GARAGE_PLUGIN_DIR".into(), state.dir.to_string_lossy().into_owned()),
-            ("GARAGE_PLUGIN_STATE_DIR".into(), data_dir.to_string_lossy().into_owned()),
-            ("GARAGE_PLUGIN_TOKEN".into(), state.token.clone()),
-            ("GARAGE_TRIGGER".into(), job.trigger.to_owned()),
-        ];
-        let mut ctx_file: Option<PathBuf> = None;
-        if ctx.len() <= CONTEXT_ENV_MAX {
-            env.push(("GARAGE_CONTEXT".into(), ctx.clone()));
-        } else {
-            let dir = self.paths.tmp();
-            let path = dir.join(format!("{plugin}-{}.json", job.run_id));
-            // The context names sessions and directories: owner-only.
-            match create_private_dir(&dir).and_then(|_| write_private(&path, &ctx)) {
-                Ok(()) => {
-                    env.push(("GARAGE_CONTEXT_FILE".into(), path.to_string_lossy().into_owned()));
-                    ctx_file = Some(path);
-                }
-                Err(e) => return Some(RunOutcome::SpawnFailed(format!("cannot write the context file: {e}"))),
-            }
-        }
         let spec = RunSpec {
             plugin: plugin.to_owned(),
             run_id: job.run_id,
@@ -1096,6 +1078,47 @@ impl Inner {
             let _ = std::fs::remove_file(path);
         }
         Some(outcome)
+    }
+
+    /// The environment every plugin process gets (actions, hooks and panes),
+    /// with the context inline or, above [`CONTEXT_ENV_MAX`], as a private
+    /// file whose path is returned for the caller to remove.
+    fn run_env(&self, state: &PluginState, trigger: &str, ctx_value: &Value) -> Result<(Vec<(String, String)>, Option<PathBuf>), String> {
+        let plugin = &state.entry.id;
+        let version = state.manifest().map(|m| m.version.clone()).unwrap_or_default();
+        let data_dir = self.paths.data(plugin);
+        std::fs::create_dir_all(&data_dir).map_err(|e| format!("cannot create {}: {e}", data_dir.display()))?;
+        let ctx = serde_json::to_string(ctx_value).unwrap_or_else(|_| "{}".into());
+        let mut env = vec![
+            ("GARAGE_API".to_owned(), format!("http://127.0.0.1:{}", self.port)),
+            ("GARAGE_API_VERSION".into(), "1".into()),
+            ("GARAGE_PLUGIN_ID".into(), plugin.to_owned()),
+            ("GARAGE_PLUGIN_VERSION".into(), version),
+            ("GARAGE_PLUGIN_DIR".into(), state.dir.to_string_lossy().into_owned()),
+            ("GARAGE_PLUGIN_STATE_DIR".into(), data_dir.to_string_lossy().into_owned()),
+            ("GARAGE_PLUGIN_TOKEN".into(), state.token.clone()),
+            ("GARAGE_TRIGGER".into(), trigger.to_owned()),
+        ];
+        let mut ctx_file: Option<PathBuf> = None;
+        if ctx.len() <= CONTEXT_ENV_MAX {
+            env.push(("GARAGE_CONTEXT".into(), ctx));
+        } else {
+            let dir = self.paths.tmp();
+            let path = dir.join(format!("{plugin}-{}.json", self.run_seq.fetch_add(1, Ordering::Relaxed)));
+            // The context names sessions and directories: owner-only.
+            create_private_dir(&dir).and_then(|_| write_private(&path, &ctx)).map_err(|e| format!("cannot write the context file: {e}"))?;
+            env.push(("GARAGE_CONTEXT_FILE".into(), path.to_string_lossy().into_owned()));
+            ctx_file = Some(path);
+        }
+        Ok((env, ctx_file))
+    }
+
+    /// `command` with the `{plugin_dir}`-style variables substituted.
+    fn argv_for(&self, state: &PluginState, command: &[String]) -> Vec<String> {
+        let state_dir = self.paths.data(&state.entry.id);
+        let platform = argv::platform_id();
+        let vars = Vars { plugin_id: &state.entry.id, plugin_dir: &state.dir, state_dir: &state_dir, platform: &platform };
+        argv::substitute(command, &vars)
     }
 
     fn finish(self: &Arc<Self>, plugin: &str, job: &Job, outcome: Option<RunOutcome>) {

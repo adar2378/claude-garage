@@ -21,6 +21,7 @@ use garage_plugin::manifest::Permission;
 use garage_protocol::widgets::{check_body_len, click_actions, limits, validate_put, validate_slot_geometry, WidgetPut};
 use serde_json::{json, Value};
 
+use super::panes::PaneError;
 use super::{PluginState, RunError};
 use crate::api::hooks::parse_body;
 use crate::backend::tmux::GARAGE_PREFIX;
@@ -33,6 +34,9 @@ pub fn routes() -> Router<AppState> {
         .route("/api/plugins", get(list))
         .route("/api/plugins/widgets", get(widgets_snapshot))
         .route("/api/plugins/ui/action", post(ui_action))
+        .route("/api/plugins/panes", get(panes))
+        .route("/api/plugins/{id}/panes/{pane}/open", post(open_pane))
+        .route("/api/plugins/{id}/panes/{pane}", axum::routing::delete(close_pane))
         .route("/api/plugins/reload", post(reload))
         .route("/api/plugins/ui/slots", put(put_ui_slots))
         .route("/api/plugins/{id}/widgets/{widget}", put(put_widget).delete(delete_widget))
@@ -196,6 +200,38 @@ fn check_action(manifest: &garage_plugin::manifest::Manifest, id: &str, a: &str)
     Ok(())
 }
 
+/// The target of a `ui/action` must name things that exist: a `garage/<ws>/<label>`
+/// session that is live or has a closed record (never a plugin pane or any other
+/// backend id), a registered workspace, and the session inside that workspace
+/// when both are given. Anything else is 422 and nothing reaches the TUI.
+async fn check_target(st: &AppState, target: &garage_protocol::plugins::UiTarget) -> Result<(), Box<Response>> {
+    let refuse = |msg: String| Err(Box::new(error_response(StatusCode::UNPROCESSABLE_ENTITY, msg)));
+    if let Some(ws) = &target.workspace {
+        if st.registry.get_workspace(ws).await.is_none() {
+            return refuse(format!("target.workspace: {ws:?} is not a registered workspace"));
+        }
+    }
+    if let Some(session) = &target.session {
+        let parts: Vec<&str> = session.split('/').collect();
+        let shaped = parts.len() == 3 && parts[0] == "garage" && parts[1..].iter().all(|p| !p.is_empty());
+        if !shaped {
+            return refuse(format!("target.session: {session:?} is not a garage/<workspace>/<label> session id"));
+        }
+        let exists = st.backend.has(session).await.unwrap_or(false)
+            || st.registry.get_closed(session).await.is_some()
+            || st.registry.get_session_meta(session).await.is_some();
+        if !exists {
+            return refuse(format!("target.session: no session {session:?}"));
+        }
+        if let Some(ws) = &target.workspace {
+            if parts[1] != ws {
+                return refuse(format!("target.session {session:?} does not belong to workspace {ws:?}"));
+            }
+        }
+    }
+    Ok(())
+}
+
 async fn list(State(st): State<AppState>) -> Json<garage_protocol::plugins::PluginList> {
     Json(st.plugins.list())
 }
@@ -240,10 +276,64 @@ async fn ui_action(State(st): State<AppState>, headers: HeaderMap, body: Bytes) 
     if let Err(r) = check_action(&manifest, &id, action) {
         return *r;
     }
+    if let Err(r) = check_target(&st, &target).await {
+        return *r;
+    }
     // A bare local id is this plugin's own action; frame it in full.
     let action = if garage_protocol::widgets::is_core_action_id(action) || action.contains(':') { action.to_owned() } else { format!("{id}:{action}") };
     st.bus.publish(crate::bus::DaemonEvent::UiAction { plugin: id, action, args, target });
     (StatusCode::ACCEPTED, Json(json!({"ok": true}))).into_response()
+}
+
+async fn panes(State(st): State<AppState>) -> Json<garage_protocol::plugins::PanesResponse> {
+    Json(garage_protocol::plugins::PanesResponse { panes: st.plugins.live_panes().await })
+}
+
+/// The caller of a pane route: the UI token (the TUI), or the plugin's own
+/// token with `ui.panes`.
+fn authed_pane_caller(st: &AppState, headers: &HeaderMap, id: &str) -> Result<(), Box<Response>> {
+    match bearer(headers) {
+        Some(t) if st.plugins.is_ui_token(t) => Ok(()),
+        Some(_) => authed_for(st, headers, id, Permission::UiPanes).map(|_| ()),
+        None => Err(Box::new(error_response(StatusCode::UNAUTHORIZED, "missing token (the UI token, or this plugin's own token)"))),
+    }
+}
+
+fn pane_error(id: &str, pane: &str, e: PaneError) -> Response {
+    let status = match e {
+        PaneError::UnknownPlugin | PaneError::UnknownPane => StatusCode::NOT_FOUND,
+        PaneError::Disabled => StatusCode::CONFLICT,
+        PaneError::NoBackend | PaneError::Backend(_) => StatusCode::INTERNAL_SERVER_ERROR,
+    };
+    error_response(status, format!("pane {id}:{pane}: {e}"))
+}
+
+async fn open_pane(State(st): State<AppState>, Path((id, pane)): Path<(String, String)>, headers: HeaderMap, body: Bytes) -> Response {
+    if let Err(r) = authed_pane_caller(&st, &headers, &id) {
+        return *r;
+    }
+    let body = if body.is_empty() {
+        json!({})
+    } else {
+        match parse_body(&body) {
+            Ok(b) => b,
+            Err(r) => return *r,
+        }
+    };
+    match st.plugins.open_pane(&id, &pane, &body).await {
+        Ok((rec, reused)) => Json(json!({"ok": true, "session": rec.session, "reused": reused})).into_response(),
+        Err(e) => pane_error(&id, &pane, e),
+    }
+}
+
+async fn close_pane(State(st): State<AppState>, Path((id, pane)): Path<(String, String)>, headers: HeaderMap) -> Response {
+    if let Err(r) = authed_pane_caller(&st, &headers, &id) {
+        return *r;
+    }
+    match st.plugins.close_pane(&id, &pane).await {
+        Ok(closed) => Json(json!({"ok": true, "closed": closed})).into_response(),
+        Err(e) => pane_error(&id, &pane, e),
+    }
 }
 
 async fn delete_widget(State(st): State<AppState>, Path((id, widget)): Path<(String, String)>, headers: HeaderMap) -> Response {
@@ -281,6 +371,13 @@ async fn run_action(State(st): State<AppState>, Path((id, action)): Path<(String
         Ok(b) => b,
         Err(r) => return *r,
     };
+    // An action that opens a pane is the same trigger with a different effect.
+    if let Some(pane) = st.plugins.active(&id).and_then(|p| p.manifest().and_then(|m| m.action(&action).and_then(|a| a.pane.clone()))) {
+        return match st.plugins.open_pane(&id, &pane, &body).await {
+            Ok((rec, _)) => (StatusCode::ACCEPTED, Json(json!({"pane": rec.session}))).into_response(),
+            Err(e) => pane_error(&id, &pane, e),
+        };
+    }
     match st.plugins.run_action(&id, &action, &body).await {
         Ok(run_id) => (StatusCode::ACCEPTED, Json(json!({"run_id": run_id.to_string()}))).into_response(),
         Err(RunError::UnknownPlugin) => error_response(StatusCode::NOT_FOUND, format!("no plugin {id}")),

@@ -333,7 +333,7 @@ async fn failures_and_timeouts_publish_run_failed_and_unusable_targets_are_refus
 
     assert_eq!(r.call_ui("POST", "/api/plugins/pl/actions/nope/run", None).await.0, StatusCode::NOT_FOUND);
     assert_eq!(r.call_ui("POST", "/api/plugins/zz/actions/go/run", None).await.0, StatusCode::NOT_FOUND);
-    assert_eq!(r.call_ui("POST", "/api/plugins/pl/actions/open/run", None).await.0, StatusCode::NOT_IMPLEMENTED);
+    assert_eq!(r.call_ui("POST", "/api/plugins/pl/actions/open/run", None).await.0, StatusCode::ACCEPTED, "a pane action opens its pane");
     r.st.plugins.set_enabled("pl", false).unwrap();
     let (s, _, body) = r.call_ui("POST", "/api/plugins/pl/actions/go/run", None).await;
     assert_eq!((s, body["error"].as_str().unwrap()), (StatusCode::CONFLICT, "plugin pl is disabled"));
@@ -1197,6 +1197,8 @@ async fn a_ui_action_needs_ui_invoke_and_an_allowed_action_and_is_forwarded_with
     r.install("nopermit", &manifest("nopermit", &["core.actions"], ""));
     r.install("nocore", &manifest("nocore", &["ui.invoke"], ""));
     let (ta, tn, tc) = (r.token("asker"), r.token("nopermit"), r.token("nocore"));
+    r.st.registry.upsert_workspace("w", "/w").await.unwrap();
+    r.backend.set("garage/w/a", "/w", None, "");
     r.events();
 
     assert_eq!(ui_post(&r, None, json!({"action": "session.close"})).await.0, StatusCode::UNAUTHORIZED);
@@ -1230,4 +1232,125 @@ async fn a_ui_action_needs_ui_invoke_and_an_allowed_action_and_is_forwarded_with
     ui_post(&r, Some(ta), json!({"action": "go"})).await;
     let ev = r.events();
     assert!(matches!(ev.as_slice(), [DaemonEvent::UiAction { action, .. }] if action == "asker:go"), "{ev:?}");
+}
+
+async fn target_post(r: &Rig, t: &str, target: Value) -> (StatusCode, axum::http::HeaderMap, Value) {
+    ui_post(r, Some(t.to_owned()), json!({"action": "session.focus", "target": target})).await
+}
+
+#[tokio::test]
+async fn a_ui_action_target_must_name_real_things_and_nothing_is_published_otherwise() {
+    let mut r = Rig::new();
+    r.install("asker", &manifest("asker", &["ui.invoke", "core.actions"], ""));
+    let t = r.token("asker");
+    r.st.registry.upsert_workspace("w", "/w").await.unwrap();
+    r.st.registry.upsert_workspace("other", "/o").await.unwrap();
+    r.backend.set("garage/w/live", "/w", None, "");
+    r.backend.set("plugin/asker/pane", "/w", None, "");
+    r.st
+        .registry
+        .record_closed(crate::state::registry::ClosedRecord {
+            id: "garage/w/gone".into(),
+            workspace: "w".into(),
+            dir: "/w".into(),
+            branch: None,
+            closed_at: 1,
+            reason: "user".into(),
+            last_status: None,
+            claude_session_id: None,
+        })
+        .await
+        .unwrap();
+    r.events();
+    for (why, target) in [
+        ("a plugin pane is not a session", json!({"session": "plugin/asker/pane"})),
+        ("a bare backend id", json!({"session": "garage-control"})),
+        ("an unknown session", json!({"session": "garage/w/nope"})),
+        ("a too-short id", json!({"session": "garage/w"})),
+        ("an unregistered workspace", json!({"workspace": "nope"})),
+        ("a session of another workspace", json!({"session": "garage/w/live", "workspace": "other"})),
+    ] {
+        let (s, _, b) = target_post(&r, &t, target).await;
+        assert_eq!(s, StatusCode::UNPROCESSABLE_ENTITY, "{why}: {b}");
+    }
+    assert!(r.events().is_empty(), "nothing refused was published");
+    assert_eq!(target_post(&r, &t, json!({"session": "garage/w/live", "workspace": "w"})).await.0, StatusCode::ACCEPTED, "live");
+    assert_eq!(target_post(&r, &t, json!({"session": "garage/w/gone"})).await.0, StatusCode::ACCEPTED, "a closed record is restorable");
+    assert_eq!(target_post(&r, &t, json!({"workspace": "other"})).await.0, StatusCode::ACCEPTED);
+    assert_eq!(r.events().len(), 3);
+}
+
+const PANE_PLUGIN: &str = "[[panes]]\nid = \"d\"\ntitle = \"Details\"\nplacement = \"overlay\"\ncommand = [\"{plugin_dir}/ui\", \"x\"]\n\
+    [[panes]]\nid = \"multi\"\ntitle = \"M\"\nplacement = \"popup\"\nsingleton = false\ncommand = [\"./m\"]\n";
+
+async fn open_pane_call(r: &Rig, t: Option<&str>, id: &str, pane: &str) -> (StatusCode, axum::http::HeaderMap, Value) {
+    r.call("POST", &format!("/api/plugins/{id}/panes/{pane}/open"), t, Some("{}")).await
+}
+
+#[tokio::test]
+async fn panes_run_as_hidden_backend_sessions_reuse_singletons_and_die_with_the_plugin() {
+    let mut r = Rig::new();
+    r.install("pp", &manifest("pp", &["ui.panes"], PANE_PLUGIN));
+    r.install("noperm", &manifest("noperm", &[], ""));
+    let (tp, tn) = (r.token("pp"), r.token("noperm"));
+    r.events();
+
+    assert_eq!(open_pane_call(&r, None, "pp", "d").await.0, StatusCode::UNAUTHORIZED);
+    assert_eq!(open_pane_call(&r, Some(&tn), "noperm", "d").await.0, StatusCode::FORBIDDEN, "ui.panes is required");
+    assert_eq!(open_pane_call(&r, Some(&tp), "noperm", "d").await.0, StatusCode::FORBIDDEN, "not another plugin's pane");
+    assert_eq!(open_pane_call(&r, Some(&tp), "pp", "nope").await.0, StatusCode::NOT_FOUND);
+
+    let (s, _, b) = open_pane_call(&r, Some(&tp), "pp", "d").await;
+    assert_eq!((s, b["session"].as_str(), b["reused"].clone()), (StatusCode::OK, Some("plugin/pp/d"), json!(false)));
+    {
+        let created = r.backend.created.lock().unwrap();
+        let (id, dir, cmd, args, env) = &created[0];
+        assert_eq!(id, "plugin/pp/d");
+        assert!(dir.ends_with("pp") && cmd.ends_with("/ui") && args == &["x"], "{dir:?} {cmd} {args:?}");
+        let get = |k: &str| env.iter().find(|(n, _)| n == k).map(|(_, v)| v.as_str());
+        assert_eq!(get("GARAGE_TRIGGER"), Some("pane"));
+        assert_eq!(get("GARAGE_PLUGIN_TOKEN"), Some(tp.as_str()));
+        assert!(get("GARAGE_CONTEXT").is_some_and(|c| c.contains("\"api_version\":1")));
+    }
+    assert!(matches!(r.events().as_slice(), [DaemonEvent::PaneChanged { open: true, session, .. }] if session == "plugin/pp/d"));
+    assert_eq!(open_pane_call(&r, Some(&tp), "pp", "d").await.2["reused"], json!(true), "a singleton is reused");
+    assert_eq!(r.backend.created.lock().unwrap().len(), 1);
+    let m1 = open_pane_call(&r, Some(&tp), "pp", "multi").await.2["session"].as_str().unwrap().to_owned();
+    let m2 = open_pane_call(&r, Some(&r.ui_token()), "pp", "multi").await.2["session"].as_str().unwrap().to_owned();
+    assert_ne!(m1, m2, "a non-singleton opens another instance");
+
+    // listed with how to attach; never in the agent session list
+    let (_, _, b) = r.call("GET", "/api/plugins/panes", None, None).await;
+    assert_eq!(b["panes"].as_array().unwrap().len(), 3);
+    assert_eq!(b["panes"][0]["attach"], json!({"kind": "tmux", "socket": "fake"}));
+    assert_eq!(b["panes"][0]["placement"], "overlay");
+
+    // a pane whose process ended drops out of the list and is announced
+    r.backend.remove("plugin/pp/d");
+    r.events();
+    let (_, _, b) = r.call("GET", "/api/plugins/panes", None, None).await;
+    assert_eq!(b["panes"].as_array().unwrap().len(), 2);
+    assert!(r.events().iter().any(|e| matches!(e, DaemonEvent::PaneChanged { open: false, session, .. } if session == "plugin/pp/d")));
+
+    // closing, and disabling the plugin, kill the rest
+    assert_eq!(r.call("DELETE", "/api/plugins/pp/panes/multi", Some(&tp), None).await.2["closed"], 2);
+    open_pane_call(&r, Some(&tp), "pp", "d").await;
+    assert!(r.backend.sessions.lock().unwrap().iter().any(|s| s.id == "plugin/pp/d"));
+    r.st.plugins.set_enabled("pp", false).unwrap();
+    wait_for(|| !r.backend.sessions.lock().unwrap().iter().any(|s| s.id.starts_with("plugin/pp/"))).await;
+}
+
+#[tokio::test]
+async fn panes_that_outlived_the_daemon_are_adopted_or_killed() {
+    let r = Rig::new();
+    r.install("pp", &manifest("pp", &["ui.panes"], PANE_PLUGIN));
+    r.backend.set("plugin/pp/d", "/x", None, "");
+    r.backend.set("plugin/pp/gone-pane", "/x", None, "");
+    r.backend.set("plugin/removed/d", "/x", None, "");
+    r.st.plugins.adopt_panes().await;
+    let live: Vec<String> = r.backend.sessions.lock().unwrap().iter().map(|s| s.id.clone()).collect();
+    assert_eq!(live, ["plugin/pp/d"], "the declared pane is adopted; the undeclared pane and the removed plugin's are killed");
+    let panes = r.st.plugins.live_panes().await;
+    assert_eq!(panes.len(), 1);
+    assert_eq!(panes[0].pane, "d");
 }

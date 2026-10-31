@@ -69,6 +69,12 @@ pub trait SessionBackend: Send + Sync {
     async fn send_text(&self, id: &str, _text: &str) -> Result<()> {
         anyhow::bail!("this session backend cannot send text to {id}")
     }
+    /// Ids of the plugin panes (`plugin/...`) that exist on this backend, for
+    /// the daemon to adopt or clean up after a restart. They are not in
+    /// [`SessionBackend::list`], which only knows `garage/` sessions.
+    async fn plugin_pane_sessions(&self) -> Result<Vec<String>> {
+        Ok(Vec::new())
+    }
 }
 
 /// Which backend a daemon runs, chosen once at start.

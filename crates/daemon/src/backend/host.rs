@@ -294,6 +294,18 @@ impl SessionBackend for HostBackend {
         blocking(move || proto::send_text(&entry.addr(), &entry.token, &text).map_err(|e| anyhow!("send failed: {e}"))).await?
     }
 
+    async fn plugin_pane_sessions(&self) -> Result<Vec<String>> {
+        let dir = self.hosts_dir.clone();
+        blocking(move || {
+            registry::read_all(&dir)
+                .into_iter()
+                .filter(|e| e.id.starts_with(crate::plugins::panes::PANE_PREFIX))
+                .map(|e| e.id)
+                .collect()
+        })
+        .await
+    }
+
     /// Only the id: the token stays on disk (see [`AttachSpec::Host`]). An
     /// empty id means "no host for this session" (the route answers 404).
     fn attach_spec(&self, id: &str) -> AttachSpec {
