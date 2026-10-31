@@ -6,6 +6,7 @@ use ratatui::style::Style;
 use ratatui::text::Line;
 use ratatui::widgets::{Block, BorderType, Widget as _};
 
+use crate::slots::{SlotClickRegion, SlotId};
 use crate::state::views::ViewSummary;
 use crate::state::wall_state::{KeyLayer, OverlayKind};
 use crate::ui::help::render_help;
@@ -63,7 +64,8 @@ impl App {
         }
 
         let buf = frame.buffer_mut();
-        render_rail(buf, layout.rail, self.store.state(), &self.slots, now_ms);
+        let mut slot_clicks =
+            render_rail(buf, layout.rail, self.store.state(), &self.slots, now_ms);
 
         if show_view_strip {
             let ranges = render_view_strip(buf, layout.view_strip, &views, &focused_view_name);
@@ -118,7 +120,7 @@ impl App {
                 if maximized_index.is_some() && maximized_index != Some(i) {
                     continue;
                 }
-                self.draw_tile(buf, layout.tiles[i], id, now_ms);
+                slot_clicks.extend(self.draw_tile(buf, layout.tiles[i], id, now_ms));
             }
         }
 
@@ -133,7 +135,14 @@ impl App {
             self.router.notices.current_of(NoticeKind::User, now_ms),
         );
         self.badge_cols = strip_cols.badge;
-        self.strip_slots = strip_cols.slots;
+        slot_clicks.extend(strip_cols.slots.into_iter().map(|(cols, target)| SlotClickRegion {
+            rect: Rect::new(cols.start, layout.strip.y, cols.end - cols.start, 1),
+            target,
+            slot: SlotId::StripRight,
+            session: None,
+            workspace: None,
+        }));
+        self.slot_clicks = slot_clicks;
         self.last_strip_filler = strip_cols.filler_width;
 
         self.triage_rect = None;
@@ -168,10 +177,16 @@ impl App {
         self.layout = Some(layout);
     }
 
-    pub(super) fn draw_tile(&self, buf: &mut ratatui::buffer::Buffer, rect: Rect, id: &str, now_ms: i64) {
+    pub(super) fn draw_tile(
+        &self,
+        buf: &mut ratatui::buffer::Buffer,
+        rect: Rect,
+        id: &str,
+        now_ms: i64,
+    ) -> Vec<SlotClickRegion> {
         let state = self.store.state();
         let Some(session) = state.session_by_id(Some(id)) else {
-            return; // refetch race; the next frame fixes it
+            return Vec::new(); // refetch race; the next frame fixes it
         };
         let focused = state.focused_session_id.as_deref() == Some(id);
         let frozen = self.registry.frozen(id);
@@ -186,12 +201,12 @@ impl App {
             slots: &self.slots,
         };
         if let Some(frozen) = frozen {
-            render_tile(buf, rect, &view, Some(frozen.parser.screen()));
+            render_tile(buf, rect, &view, Some(frozen.parser.screen()))
         } else if let Some(client) = self.registry.client(id) {
             let parser = client.parser().lock().unwrap();
-            render_tile(buf, rect, &view, Some(parser.screen()));
+            render_tile(buf, rect, &view, Some(parser.screen()))
         } else {
-            render_tile(buf, rect, &view, None);
+            render_tile(buf, rect, &view, None)
         }
     }
 }

@@ -123,6 +123,46 @@ pub fn pet_slot_item(p: &PetRender) -> SlotItem {
     }
 }
 
+/// Where each filler item lands within a filler `filler` columns wide:
+/// `(offset, item)` pairs in column order. An item needs its width plus a
+/// blank column on each side; it is left-anchored at its `x`, clamped so it
+/// still fits. Where two overlap the lower-priority one is dropped (a tie
+/// drops the later), so a filler item never overwrites another or a flow
+/// item.
+fn place_fillers(filler: usize, items: Vec<SlotItem>) -> Vec<(usize, SlotItem)> {
+    let mut candidates: Vec<(usize, SlotItem)> = items
+        .into_iter()
+        .filter(|item| filler >= item.width() + 2)
+        .map(|item| {
+            let Placement::Filler { x, .. } = &item.placement else {
+                unreachable!("only filler items are placed");
+            };
+            let x = 1 + usize::from(*x).min(filler - item.width() - 2);
+            (x, item)
+        })
+        .collect();
+    // Stable: equal columns keep their provider order, so "later" is later.
+    candidates.sort_by_key(|(x, _)| *x);
+    let mut kept: Vec<(usize, SlotItem)> = Vec::new();
+    for (x, item) in candidates {
+        let mut item = Some(item);
+        while let (Some(it), Some((px, prev))) = (item.as_ref(), kept.last()) {
+            if *px + prev.width() <= x {
+                break; // clear of the previous item
+            }
+            if it.priority > prev.priority {
+                kept.pop(); // the newcomer wins; check against the one before
+            } else {
+                item = None; // the earlier one holds (ties drop the later)
+            }
+        }
+        if let Some(item) = item {
+            kept.push((x, item));
+        }
+    }
+    kept
+}
+
 /// Both click-routed column ranges the strip paints, plus the filler width
 /// the pet tick needs for its next `PetSim::step` (spec tui-pit-pet "Narrow
 /// strip hides the pet" — the tick has to know how much room there'll be).
@@ -190,11 +230,10 @@ pub fn strip_line(
         ..SlotCtx::default()
     };
     let notice_w: usize = right.iter().map(Span::width).sum();
-    let (mut floating, flow): (Vec<SlotItem>, Vec<SlotItem>) = slots
+    let (floating, flow): (Vec<SlotItem>, Vec<SlotItem>) = slots
         .items(SlotId::StripRight, &slot_ctx)
         .into_iter()
         .partition(|item| matches!(item.placement, Placement::Filler { .. }));
-    let floating = (!floating.is_empty()).then(|| floating.swap_remove(0));
     let laid = slots::layout(flow, None);
     right.extend(laid.spans.iter().cloned());
     if blocked > 0 {
@@ -219,55 +258,56 @@ pub fn strip_line(
     let filler = usize::from(width).saturating_sub(left_w + right_w);
 
     let mut spans = left;
-    // Pit pet (spec tui-pit-pet "Pet lives in the strip filler"): a
-    // `strip.right` item placed in the filler, left-anchored at its `x`,
-    // sprite then a reserved bang column, then the rest of the filler as
-    // before. Skipped for this frame — falling back to a plain filler span —
-    // when there isn't room (spec "Narrow strip hides the pet").
+    // Filler items (the pit pet, and any a plugin adds): each is left-anchored
+    // at its `x` within the filler, flanked by a blank gutter column, with its
+    // caption beside it where there is room. An item that does not fit, or
+    // that would overlap a higher-priority one, is skipped for this frame —
+    // the filler stays a plain span (spec tui-pit-pet "Narrow strip hides the
+    // pet").
     let mut click_ranges: Vec<(Range<u16>, ClickTarget)> = Vec::new();
-    match floating {
-        Some(item) if filler >= item.width() + 2 => {
-            let Placement::Filler { x, caption } = &item.placement else {
-                unreachable!("only filler items are floated");
-            };
-            let required = item.width();
-            // One blank gutter column on each side so the pet never touches
-            // the tabs or the right-hand cluster.
-            let x = 1 + usize::from(*x).min(filler - required - 2);
-            let after = filler - x - required;
-            // Speech placement: prefer the side with room, left first (the
-            // pet's home is the right end, so text reads toward it).
-            let say = caption.as_deref().filter(|t| !t.is_empty());
-            let say_w = say.map_or(0, |t| t.chars().count() + 2);
-            let (say_left, say_right) = match say {
-                Some(t) if say_w < x => (Some(t), None),
-                Some(t) if say_w <= after.saturating_sub(1) => (None, Some(t)),
-                _ => (None, None),
-            };
-            let say_style = Style::default().fg(colors::FG);
-            if let Some(t) = say_left {
-                spans.push(Span::raw(" ".repeat(x - say_w)));
-                spans.push(Span::styled(t.to_owned(), say_style));
-                spans.push(Span::raw("  "));
-            } else {
-                spans.push(Span::raw(" ".repeat(x)));
-            }
-            if let Some(target) = item.on_click.clone() {
-                let start = (left_w + x).min(usize::from(width)) as u16;
-                let end = (left_w + x + required).min(usize::from(width)) as u16;
-                click_ranges.push((start..end, target));
-            }
-            spans.extend(item.text);
-            if let Some(t) = say_right {
-                spans.push(Span::raw("  "));
-                spans.push(Span::styled(t.to_owned(), say_style));
-                spans.push(Span::raw(" ".repeat(after - say_w)));
-            } else {
-                spans.push(Span::raw(" ".repeat(after)));
-            }
+    let placed = place_fillers(filler, floating);
+    let say_style = Style::default().fg(colors::FG);
+    let mut cursor = 0usize; // filler columns already emitted
+    let mut right_used = 0usize; // columns the previous item's caption took after it
+    for (i, (x, item)) in placed.iter().enumerate() {
+        let Placement::Filler { caption, .. } = &item.placement else {
+            unreachable!("only filler items are placed");
+        };
+        let required = item.width();
+        let next_start = placed.get(i + 1).map_or(filler, |(nx, _)| *nx);
+        let before = x - cursor - right_used;
+        let after = next_start - (x + required);
+        // Speech placement: prefer the side with room, left first (the pet's
+        // home is the right end, so text reads toward it).
+        let say = caption.as_deref().filter(|t| !t.is_empty());
+        let say_w = say.map_or(0, |t| t.chars().count() + 2);
+        let (say_left, say_right) = match say {
+            Some(t) if say_w < before => (Some(t), None),
+            Some(t) if say_w <= after.saturating_sub(1) => (None, Some(t)),
+            _ => (None, None),
+        };
+        if let Some(t) = say_left {
+            spans.push(Span::raw(" ".repeat(before - say_w)));
+            spans.push(Span::styled(t.to_owned(), say_style));
+            spans.push(Span::raw("  "));
+        } else {
+            spans.push(Span::raw(" ".repeat(before)));
         }
-        _ => spans.push(Span::raw(" ".repeat(filler))),
+        if let Some(target) = item.on_click.clone() {
+            let start = (left_w + x).min(usize::from(width)) as u16;
+            let end = (left_w + x + required).min(usize::from(width)) as u16;
+            click_ranges.push((start..end, target));
+        }
+        spans.extend(item.text.iter().cloned());
+        right_used = 0;
+        if let Some(t) = say_right {
+            spans.push(Span::raw("  "));
+            spans.push(Span::styled(t.to_owned(), say_style));
+            right_used = say_w;
+        }
+        cursor = x + required;
     }
+    spans.push(Span::raw(" ".repeat(filler - cursor - right_used)));
     let right_start = left_w + filler;
     spans.extend(right);
 
@@ -316,6 +356,7 @@ mod tests {
     //! text with amber dots, the blocked badge and its click range, chip
     //! variants, the notice slot.
     use super::*;
+    use crate::actions::ActionId;
     use crate::api::models::{SessionInfo, UsageWindow, WorkspaceInfo};
     use crate::state::store::WallStore;
 
@@ -543,6 +584,133 @@ mod tests {
 
     fn pet_render(x: u16) -> PetRender {
         PetRender { text: "=o.o=", bang: false, bang_lit: false, x, dim: false, say: None }
+    }
+
+    // ── p24: more than one filler item ──────────────────────────────────
+
+    fn filler_item(text: &str, x: u16, priority: i16, caption: Option<&str>) -> SlotItem {
+        SlotItem {
+            on_click: Some(ClickTarget::new(ActionId::intern(&format!("t:{text}")))),
+            placement: Placement::Filler { x, caption: caption.map(str::to_owned) },
+            ..SlotItem::new(vec![Span::raw(text.to_owned())], priority)
+        }
+    }
+
+    fn with_fillers(items: Vec<SlotItem>) -> SlotRegistry {
+        let mut registry = SlotRegistry::core();
+        registry.register(SlotId::StripRight, move |_: &SlotCtx| items.clone());
+        registry
+    }
+
+    /// The text under each filler item's click range.
+    fn painted(s: &StripLine) -> Vec<String> {
+        let chars: Vec<char> = s.line.to_string().chars().collect();
+        s.slots
+            .iter()
+            .map(|(r, _)| chars[usize::from(r.start)..usize::from(r.end)].iter().collect())
+            .collect()
+    }
+
+    #[test]
+    fn two_fillers_both_show_in_column_order_each_at_its_own_x() {
+        let store = store();
+        // Provided out of order: the strip sorts by x.
+        let registry = with_fillers(vec![
+            filler_item("RIGHT", 90, 1, None),
+            filler_item("LEFT", 5, 1, None),
+        ]);
+        let s = strip_line(store.state(), &registry, None, 200);
+        assert_eq!(painted(&s), ["LEFT", "RIGHT"]);
+        let (l, r) = (&s.slots[0].0, &s.slots[1].0);
+        assert_eq!(r.start - l.start, 90 - 5, "each lands at its own x");
+    }
+
+    #[test]
+    fn overlapping_fillers_drop_the_lower_priority_one() {
+        let store = store();
+        let high_first = with_fillers(vec![
+            filler_item("KEEPER", 10, 9, None),
+            filler_item("LOSER", 12, 1, None),
+        ]);
+        assert_eq!(painted(&strip_line(store.state(), &high_first, None, 200)), ["KEEPER"]);
+        // Same overlap, the later column is the higher priority: it wins.
+        let high_second = with_fillers(vec![
+            filler_item("LOSER", 10, 1, None),
+            filler_item("KEEPER", 12, 9, None),
+        ]);
+        assert_eq!(painted(&strip_line(store.state(), &high_second, None, 200)), ["KEEPER"]);
+    }
+
+    #[test]
+    fn a_priority_tie_between_overlapping_fillers_keeps_the_earlier() {
+        let store = store();
+        let registry = with_fillers(vec![
+            filler_item("FIRST", 10, 5, None),
+            filler_item("SECOND", 12, 5, None),
+        ]);
+        assert_eq!(painted(&strip_line(store.state(), &registry, None, 200)), ["FIRST"]);
+    }
+
+    #[test]
+    fn adjacent_fillers_that_just_touch_both_survive() {
+        let store = store();
+        let registry = with_fillers(vec![
+            filler_item("AAAAA", 10, 1, None),
+            filler_item("BBBBB", 15, 1, None),
+        ]);
+        assert_eq!(painted(&strip_line(store.state(), &registry, None, 200)), ["AAAAA", "BBBBB"]);
+    }
+
+    #[test]
+    fn a_filler_that_does_not_fit_is_skipped_without_hurting_the_others() {
+        let store = store();
+        let registry = with_fillers(vec![
+            filler_item(&"W".repeat(400), 0, 9, None),
+            filler_item("OK", 20, 1, None),
+        ]);
+        assert_eq!(painted(&strip_line(store.state(), &registry, None, 200)), ["OK"]);
+    }
+
+    #[test]
+    fn captions_stay_in_their_own_gap_between_two_fillers() {
+        let store = store();
+        let registry = with_fillers(vec![
+            filler_item("AA", 2, 1, Some("hello")),
+            filler_item("BB", 60, 1, Some("world")),
+        ]);
+        let s = strip_line(store.state(), &registry, None, 200);
+        let text = s.line.to_string();
+        assert_eq!(text.chars().count(), 200, "the strip keeps its width");
+        let a = usize::from(s.slots[0].0.start);
+        let b = usize::from(s.slots[1].0.start);
+        let hello = text.find("hello").unwrap();
+        let world = text.find("world").unwrap();
+        // No room left of A, so its caption reads to its right; B's caption
+        // sits to B's left, after A's, without touching it.
+        assert!(a < hello && hello + 5 <= world && world + 5 <= b, "{text}");
+        assert!(text.contains("  hello") && text.contains("world  "), "{text}");
+    }
+
+    #[test]
+    fn pet_alone_is_the_same_as_one_generic_filler() {
+        // The single-filler layout the pet snapshots pin must be what the
+        // generalised placement produces for one item with a caption.
+        let store = store();
+        let mut pet = pet_render(30);
+        pet.say = Some("hi there".to_owned());
+        let a = strip_line(store.state(), &with_pet(pet), None, 150);
+        let b = strip_line(
+            store.state(),
+            &with_fillers(vec![SlotItem {
+                on_click: Some(ids::PET_PET.into()),
+                placement: Placement::Filler { x: 30, caption: Some("hi there".into()) },
+                ..SlotItem::new(vec![Span::styled("=o.o=", Style::default().fg(colors::FG))], 100)
+            }]),
+            None,
+            150,
+        );
+        assert_eq!(a.line.to_string(), b.line.to_string());
+        assert_eq!(a.slots, b.slots);
     }
 
     #[test]

@@ -10,7 +10,7 @@ use ratatui::layout::Rect;
 
 use crate::actions::{ids, ActionCtx, ActionId, ActionSource};
 use crate::state::wall_state::{KeyLayer, OverlayKind, WallState};
-use crate::slots::{ClickTarget, SlotId, SlotRegistry};
+use crate::slots::{SlotClickRegion, SlotRegistry};
 use crate::ui::layout::WallLayout;
 use crate::ui::rail::header_items;
 use crate::ui::triage::triage_queue_rows;
@@ -118,8 +118,9 @@ pub struct ClickMap<'a> {
     /// The picker is in its "new group…" text-input sub-mode.
     pub view_picker_typing: bool,
     pub badge_cols: Option<&'a Range<u16>>,
-    /// Clickable `strip.right` slot items from the last frame.
-    pub strip_slots: &'a [(Range<u16>, ClickTarget)],
+    /// Clickable slot items from the last frame, in every slot (the strip,
+    /// tile titles, rail rows and headers).
+    pub slot_clicks: &'a [SlotClickRegion],
     /// The registry the rail was drawn from (its header rows shift clicks).
     pub slots: &'a SlotRegistry,
 }
@@ -128,12 +129,21 @@ pub struct ClickMap<'a> {
 /// region with no scope of its own targets the focused session or
 /// workspace), carrying the item's payload. A plugin's item is a `Widget`
 /// source, a core item a plain `Mouse` one.
-pub fn click_ctx(state: &WallState, target: &ClickTarget, slot: SlotId, col: u16, row: u16) -> ActionCtx {
-    let source = match &target.plugin {
-        Some(plugin) => ActionSource::Widget { plugin: plugin.to_string(), slot },
+pub fn click_ctx(state: &WallState, region: &SlotClickRegion, col: u16, row: u16) -> ActionCtx {
+    let source = match &region.target.plugin {
+        Some(plugin) => ActionSource::Widget { plugin: plugin.to_string(), slot: region.slot },
         None => ActionSource::Mouse { col, row },
     };
-    ActionCtx::from_focus(state, source).with_args(target.args.clone())
+    let mut ctx = ActionCtx::from_focus(state, source).with_args(region.target.args.clone());
+    // The item's own scope beats the focus: the close button on an unfocused
+    // tile closes that tile.
+    if let Some(session) = &region.session {
+        ctx.session = Some(session.clone());
+    }
+    if let Some(workspace) = &region.workspace {
+        ctx.workspace = Some(workspace.clone());
+    }
+    ctx
 }
 
 /// The session id and rect under a grid point, honoring maximize (a
@@ -220,6 +230,13 @@ pub fn action_at(
             .map(|(_, name)| name.clone())?;
         return Some((ids::VIEW_FOCUS, ctx().with_view(name)));
     }
+    // Plugin and core slot items (the pit pet among them) sit on top of the
+    // surface they were painted on, so they are tested before it: a
+    // clickable item near the badge never gets swallowed by it, and a button
+    // in an unfocused tile's title acts on that tile.
+    if let Some(region) = map.slot_clicks.iter().find(|r| r.rect.contains(point)) {
+        return Some((region.target.action, click_ctx(state, region, col, row)));
+    }
     // Grid click: focus AND engage (same landing as focus+Enter); a click on
     // a restorable placeholder restores it; clicking the engaged tile itself
     // does nothing extra.
@@ -243,14 +260,7 @@ pub fn action_at(
             RailTarget::Session(id) => Some((ids::SESSION_FOCUS, ctx().with_session(id))),
         };
     }
-    // Slot items first (the pit pet among them), so a clickable item sitting
-    // near the badge never gets swallowed by it; then the strip badge (the
-    // `A` binding).
-    if row >= layout.strip.y {
-        if let Some((_, target)) = map.strip_slots.iter().find(|(r, _)| r.contains(&col)) {
-            return Some((target.action, click_ctx(state, target, SlotId::StripRight, col, row)));
-        }
-    }
+    // The strip badge (the `A` binding); strip slot items were tested above.
     if row >= layout.strip.y && map.badge_cols.is_some_and(|r| r.contains(&col)) {
         return Some((ids::OVERLAY_OPEN_QUEUE, ctx()));
     }
@@ -507,6 +517,7 @@ mod tests {
         use super::super::*;
         use crate::api::models::{SessionInfo, WorkspaceInfo};
         use crate::keymap::{Keymap, Layer};
+        use crate::slots::{ClickTarget, SlotId};
         use crate::state::store::WallStore;
         use crate::ui::layout::wall_layout;
 
@@ -549,8 +560,10 @@ mod tests {
             layout: WallLayout,
             targets: Vec<(Range<u16>, String)>,
             badge: Range<u16>,
-            /// A clickable `strip.right` item, overlapping the badge's start.
+            /// Clickable `strip.right` items, one overlapping the badge's start.
             slots: Vec<(Range<u16>, ClickTarget)>,
+            /// Clickable items painted in tiles and the rail.
+            regions: Vec<SlotClickRegion>,
             registry: SlotRegistry,
         }
 
@@ -565,11 +578,20 @@ mod tests {
                     (50..60, ids::PET_PET.into()),
                     (78..84, ids::OVERLAY_OPEN_HELP.into()),
                 ],
+                regions: Vec::new(),
                 registry: SlotRegistry::core(),
             }
         }
 
         fn click(store: &WallStore, f: &Fixture, col: u16, row: u16) -> Option<(&'static str, ActionCtx)> {
+            let mut regions = f.regions.clone();
+            regions.extend(f.slots.iter().map(|(cols, target)| SlotClickRegion {
+                rect: Rect::new(cols.start, f.layout.strip.y, cols.end - cols.start, 1),
+                target: target.clone(),
+                slot: SlotId::StripRight,
+                session: None,
+                workspace: None,
+            }));
             let map = ClickMap {
                 layout: &f.layout,
                 view_strip_targets: &f.targets,
@@ -579,7 +601,7 @@ mod tests {
                 view_picker_entries: 3,
                 view_picker_typing: false,
                 badge_cols: Some(&f.badge),
-                strip_slots: &f.slots,
+                slot_clicks: &regions,
                 slots: &f.registry,
             };
             action_at(&map, store.state(), col, row).map(|(id, ctx)| (id.as_str(), ctx))
@@ -688,6 +710,97 @@ mod tests {
             let (_, core) = click(&store, &f, 21, row).unwrap();
             assert!(matches!(core.source, ActionSource::Mouse { col: 21, .. }));
             assert!(core.args.is_none());
+        }
+
+        fn region(rect: Rect, slot: SlotId, target: ClickTarget, session: Option<&str>) -> SlotClickRegion {
+            SlotClickRegion {
+                rect,
+                target,
+                slot,
+                session: session.map(str::to_owned),
+                workspace: session.map(|_| "et-a".to_owned()),
+            }
+        }
+
+        #[test]
+        fn a_button_in_an_unfocused_tiles_title_acts_on_that_tile_not_the_focus() {
+            let store = store();
+            let mut f = fixture(&store);
+            let focused = store.state().focused_session_id.clone().unwrap();
+            let other = store
+                .state()
+                .gridded_session_ids
+                .iter()
+                .find(|id| {
+                    **id != focused
+                        && store.state().session_by_id(Some(id)).is_some_and(|s| s.live())
+                })
+                .unwrap()
+                .clone();
+            let index = store.state().gridded_session_ids.iter().position(|i| *i == other).unwrap();
+            let tile = f.layout.tiles[index];
+            let button = Rect::new(tile.x + 5, tile.y, 3, 1);
+            f.regions.push(region(
+                button,
+                SlotId::TileTitleRight,
+                ClickTarget::new(ids::SESSION_MAXIMIZE).from_plugin("tiles"),
+                Some(&other),
+            ));
+            let (id, ctx) = click(&store, &f, button.x + 1, button.y).unwrap();
+            assert_eq!(id, "session.maximize");
+            assert_eq!(ctx.session.as_deref(), Some(other.as_str()));
+            assert_ne!(ctx.session, store.state().focused_session_id, "not the focused tile");
+            assert_eq!(ctx.workspace.as_deref(), Some("et-a"));
+            assert!(matches!(ctx.source, ActionSource::Widget { slot: SlotId::TileTitleRight, .. }));
+            // Off the button the same tile row still means "engage the tile".
+            let (id, _) = click(&store, &f, tile.x + 12, tile.y + 2).unwrap();
+            assert_eq!(id, "session.engage");
+        }
+
+        #[test]
+        fn rail_row_and_header_items_resolve_with_their_own_session_and_workspace() {
+            let store = store();
+            let mut f = fixture(&store);
+            let rail = f.layout.rail;
+            f.regions.push(region(
+                Rect::new(rail.x + 20, rail.y + 2, 4, 1),
+                SlotId::RailRow,
+                ClickTarget::new(ids::SESSION_RESTORE).from_plugin("p"),
+                Some("garage/et-a/gone"),
+            ));
+            f.regions.push(SlotClickRegion {
+                rect: Rect::new(rail.x + 2, rail.y, 5, 1),
+                target: ClickTarget::new(ids::SESSION_SPAWN).from_plugin("p"),
+                slot: SlotId::RailHeader,
+                session: None,
+                workspace: Some("et-a".into()),
+            });
+            let (id, ctx) = click(&store, &f, rail.x + 21, rail.y + 2).unwrap();
+            assert_eq!((id, ctx.session.as_deref()), ("session.restore", Some("garage/et-a/gone")));
+            // The family label row is inert without an item; with a header
+            // item on it the item wins.
+            let (id, ctx) = click(&store, &f, rail.x + 3, rail.y).unwrap();
+            assert_eq!((id, ctx.workspace.as_deref()), ("session.spawn", Some("et-a")));
+            assert!(click(&store, &f, rail.x + 10, rail.y).is_none(), "beside the item stays inert");
+        }
+
+        #[test]
+        fn an_open_overlay_is_a_barrier_for_slot_regions() {
+            let mut store = store();
+            store.open_overlay(OverlayKind::WorktreeFinish);
+            let mut f = fixture(&store);
+            let tile = f.layout.tiles[0];
+            let button = Rect::new(tile.x + 5, tile.y, 3, 1);
+            f.regions.push(region(
+                button,
+                SlotId::TileTitleRight,
+                ClickTarget::new(ids::SESSION_MAXIMIZE).from_plugin("tiles"),
+                Some("garage/et-a/one"),
+            ));
+            assert!(click(&store, &f, button.x, button.y).is_none(), "the modal swallows it");
+            store.close_overlay();
+            store.open_overlay(OverlayKind::Help);
+            assert_eq!(click(&store, &f, button.x, button.y).unwrap().0, "overlay.close");
         }
 
         #[test]

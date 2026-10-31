@@ -35,7 +35,7 @@ use crossterm::event::{
 use ratatui::layout::Rect;
 use tokio::sync::mpsc;
 
-use crate::slots::ClickTarget;
+use crate::slots::SlotClickRegion;
 use crate::api::client::{ApiError, GarageClient};
 use crate::api::models::{
     FinishAction, HooksInstallResult, SessionInfo, UsageInfo, WorkspaceInfo,
@@ -323,8 +323,9 @@ struct App {
     layout: Option<WallLayout>,
     /// Strip badge columns from the last frame (absolute), when rendered.
     badge_cols: Option<Range<u16>>,
-    /// Clickable `strip.right` slot items from the last frame (absolute).
-    strip_slots: Vec<(Range<u16>, ClickTarget)>,
+    /// Clickable slot items painted by the last frame (absolute rects, each
+    /// with the session/workspace it sits on).
+    slot_clicks: Vec<SlotClickRegion>,
     /// View-strip click targets from the last frame (absolute columns paired
     /// with the view name they focus) — empty when the strip isn't shown.
     view_strip_targets: Vec<(Range<u16>, String)>,
@@ -366,7 +367,7 @@ impl App {
             wt_finish: WorktreeFinishState::default(),
             layout: None,
             badge_cols: None,
-            strip_slots: Vec::new(),
+            slot_clicks: Vec::new(),
             view_strip_targets: Vec::new(),
             triage_rect: None,
             ws_add_rect: None,

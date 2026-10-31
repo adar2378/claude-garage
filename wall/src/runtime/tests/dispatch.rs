@@ -197,7 +197,16 @@ fn app_with_strip_slots(slots: Vec<(std::ops::Range<u16>, crate::slots::ClickTar
     let layout = crate::ui::layout::wall_layout(Rect::new(0, 0, 120, 40), 3, None, false, false);
     let row = layout.strip.y;
     app.layout = Some(layout);
-    app.strip_slots = slots;
+    app.slot_clicks = slots
+        .into_iter()
+        .map(|(cols, target)| crate::slots::SlotClickRegion {
+            rect: Rect::new(cols.start, row, cols.end - cols.start, 1),
+            target,
+            slot: crate::slots::SlotId::StripRight,
+            session: None,
+            workspace: None,
+        })
+        .collect();
     (app, row)
 }
 
