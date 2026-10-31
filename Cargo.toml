@@ -4,5 +4,9 @@
 resolver = "2"
 members = ["wall", "crates/protocol", "crates/daemon", "crates/cli"]
 
+[workspace.package]
+version = "0.6.2" # keep in step with package.json
+edition = "2021"
+
 [profile.release]
 debug = false

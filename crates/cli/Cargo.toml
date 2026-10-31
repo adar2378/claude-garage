@@ -1,6 +1,6 @@
 [package]
 name = "claude-garage"
-version = "0.1.0"
+version.workspace = true
 edition = "2021"
 description = "claude-garage: one binary for the TUI, the daemon and the launcher"
 

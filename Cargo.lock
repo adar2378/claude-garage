@@ -307,7 +307,7 @@ checksum = "1c133bc6a41be0d194c306b5506d15e6feeea7b1d6604bd3f8310dfb2ca96486"
 
 [[package]]
 name = "claude-garage"
-version = "0.1.0"
+version = "0.6.2"
 dependencies = [
  "anyhow",
  "clap",
@@ -621,7 +621,7 @@ dependencies = [
 
 [[package]]
 name = "garage-daemon"
-version = "0.1.0"
+version = "0.6.2"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -636,7 +636,7 @@ dependencies = [
 
 [[package]]
 name = "garage-protocol"
-version = "0.1.0"
+version = "0.6.2"
 dependencies = [
  "serde",
  "serde_json",
@@ -644,7 +644,7 @@ dependencies = [
 
 [[package]]
 name = "garage-wall"
-version = "0.1.0"
+version = "0.6.2"
 dependencies = [
  "crossterm",
  "portable-pty",
