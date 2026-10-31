@@ -46,7 +46,7 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync"
 # Daemon HTTP client (design.md: "std TCP or a small HTTP crate") — ureq,
 # blocking, run inside spawn_blocking tasks. No TLS: the daemon is
 # 127.0.0.1-only plain HTTP.
-ureq = { version = "2.12.1", default-features = false }
+ureq = { version = "3", default-features = false }
 serde_json = "1.0"
 
 # Motion (p23, spec tui-motion). All three sit behind ui/motion.rs.

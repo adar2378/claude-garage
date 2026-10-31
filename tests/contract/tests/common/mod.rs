@@ -120,9 +120,12 @@ impl Daemon {
             .spawn()
             .expect("start daemon (set GARAGE_DAEMON_CMD?)");
 
-        let agent = ureq::AgentBuilder::new()
-            .timeout(Duration::from_secs(30))
-            .build();
+        let agent: ureq::Agent = ureq::Agent::config_builder()
+            .timeout_global(Some(Duration::from_secs(30)))
+            // every status is an answer the tests assert on
+            .http_status_as_error(false)
+            .build()
+            .into();
         let mut d = Daemon {
             port,
             base: format!("http://127.0.0.1:{port}"),
@@ -143,7 +146,7 @@ impl Daemon {
                 panic!("daemon exited early ({status}); log:\n{}", self.log());
             }
             if let Ok(r) = self.agent.get(&format!("{}/api/health", self.base)).call() {
-                if r.status() == 200 {
+                if r.status().as_u16() == 200 {
                     return;
                 }
             }
@@ -160,20 +163,21 @@ impl Daemon {
 
     /// Send a request; returns (status, parsed JSON body or Null for empty / non-JSON).
     pub fn request(&self, method: &str, path: &str, body: Option<Value>) -> (u16, Value) {
-        let req = self.agent.request(method, &format!("{}{}", self.base, path));
-        let res = match body {
-            Some(b) => req
-                .set("Content-Type", "application/json")
-                .send_string(&b.to_string()),
-            None => req.call(),
-        };
-        let resp = match res {
+        let mut builder = ureq::http::Request::builder()
+            .method(method)
+            .uri(format!("{}{}", self.base, path));
+        if body.is_some() {
+            builder = builder.header("Content-Type", "application/json");
+        }
+        let req = builder
+            .body(body.map(|b| b.to_string()).unwrap_or_default())
+            .unwrap();
+        let mut resp = match self.agent.run(req) {
             Ok(r) => r,
-            Err(ureq::Error::Status(_, r)) => r,
             Err(e) => panic!("{method} {path}: transport error: {e}"),
         };
-        let status = resp.status();
-        let text = resp.into_string().unwrap_or_default();
+        let status = resp.status().as_u16();
+        let text = resp.body_mut().read_to_string().unwrap_or_default();
         (status, serde_json::from_str(&text).unwrap_or(Value::Null))
     }
 
@@ -297,7 +301,7 @@ impl Daemon {
         let (tx, rx) = mpsc::channel();
         let url = format!("{}/api/events", self.base);
         // no overall timeout: the stream is meant to stay open
-        let agent = ureq::AgentBuilder::new().build();
+        let agent: ureq::Agent = ureq::Agent::config_builder().build().into();
         let (ready_tx, ready_rx) = mpsc::channel();
         thread::spawn(move || {
             let resp = match agent.get(&url).call() {
@@ -305,7 +309,7 @@ impl Daemon {
                 Err(_) => return,
             };
             let _ = ready_tx.send(());
-            for line in BufReader::new(resp.into_reader()).lines() {
+            for line in BufReader::new(resp.into_body().into_reader()).lines() {
                 match line {
                     Ok(l) => {
                         if tx.send(l).is_err() {

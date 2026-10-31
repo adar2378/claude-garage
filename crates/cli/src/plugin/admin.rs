@@ -57,17 +57,24 @@ fn source_json(s: &Source) -> Value {
 
 impl DaemonAdmin {
     fn call(&self, method: &str, path: &str, body: Option<Value>) -> Result<(), String> {
-        let req = ureq::request(method, &format!("{}{path}", self.base))
-            .timeout(Duration::from_secs(30))
-            .set("Authorization", &format!("Bearer {}", self.token));
-        let res = match body {
-            Some(b) => req.set("Content-Type", "application/json").send_string(&b.to_string()),
-            None => req.call(),
-        };
-        match res {
-            Ok(_) => Ok(()),
-            Err(ureq::Error::Status(code, r)) => {
-                let text = r.into_string().unwrap_or_default();
+        let agent: ureq::Agent = ureq::Agent::config_builder()
+            .timeout_global(Some(Duration::from_secs(30)))
+            .http_status_as_error(false)
+            .build()
+            .into();
+        let mut req = ureq::http::Request::builder()
+            .method(method)
+            .uri(format!("{}{path}", self.base))
+            .header("Authorization", format!("Bearer {}", self.token));
+        if body.is_some() {
+            req = req.header("Content-Type", "application/json");
+        }
+        let req = req.body(body.map(|b| b.to_string()).unwrap_or_default()).map_err(|e| format!("cannot reach the daemon: {e}"))?;
+        match agent.run(req) {
+            Ok(r) if r.status().is_success() => Ok(()),
+            Ok(mut r) => {
+                let code = r.status().as_u16();
+                let text = r.body_mut().read_to_string().unwrap_or_default();
                 let msg = serde_json::from_str::<Value>(&text).ok().and_then(|v| v["error"].as_str().map(str::to_owned)).unwrap_or(text);
                 Err(format!("daemon answered {code}: {msg}"))
             }
@@ -107,10 +114,12 @@ impl Admin for DaemonAdmin {
 /// with an `api_versions` key, not merely text containing the word.
 pub fn daemon_up(port: u16) -> bool {
     ureq::get(&format!("http://127.0.0.1:{port}/api/plugin/features"))
-        .timeout(Duration::from_millis(700))
+        .config()
+        .timeout_global(Some(Duration::from_millis(700)))
+        .build()
         .call()
         .ok()
-        .and_then(|r| r.into_string().ok())
+        .and_then(|mut r| r.body_mut().read_to_string().ok())
         .and_then(|b| serde_json::from_str::<Value>(&b).ok())
         .is_some_and(|v| v.get("api_versions").is_some())
 }
@@ -121,12 +130,14 @@ pub fn daemon_up(port: u16) -> bool {
 pub fn prove_daemon(base: &str, port: u16, token: &str) -> Result<(), String> {
     use garage_protocol::auth::{new_nonce, verify_response, CHALLENGE_PATH};
     let nonce = new_nonce()?;
-    let res = ureq::post(&format!("{base}{CHALLENGE_PATH}"))
-        .timeout(Duration::from_secs(2))
-        .set("Content-Type", "application/json")
-        .send_string(&json!({"nonce": nonce}).to_string())
+    let mut res = ureq::post(&format!("{base}{CHALLENGE_PATH}"))
+        .config()
+        .timeout_global(Some(Duration::from_secs(2)))
+        .build()
+        .header("Content-Type", "application/json")
+        .send(json!({"nonce": nonce}).to_string())
         .map_err(|e| format!("the listener did not answer the identity challenge ({e})"))?;
-    let body = res.into_string().map_err(|e| e.to_string())?;
+    let body = res.body_mut().read_to_string().map_err(|e| e.to_string())?;
     if verify_response(token, port, &nonce, &body) {
         Ok(())
     } else {

@@ -68,28 +68,33 @@ impl Api {
     }
 
     pub fn new(base: &str, plugin: &str, token: &str) -> Self {
-        let agent = ureq::AgentBuilder::new().timeout(std::time::Duration::from_secs(10)).build();
+        let agent: ureq::Agent = ureq::Agent::config_builder()
+            .timeout_global(Some(std::time::Duration::from_secs(10)))
+            .http_status_as_error(false)
+            .build()
+            .into();
         Self { base: base.trim_end_matches('/').to_owned(), plugin: plugin.to_owned(), token: token.to_owned(), agent }
     }
 
     /// One call with the plugin token. A non-2xx answer is [`Error::Http`].
     /// The result is the JSON body, or `Null` for an empty one.
     pub fn request(&self, method: &str, path: &str, body: Option<&Value>) -> Result<Value, Error> {
-        let req = self
-            .agent
-            .request(method, &format!("{}{path}", self.base))
-            .set("authorization", &format!("Bearer {}", self.token))
-            .set("content-type", "application/json");
-        let res = match body {
-            Some(b) => req.send_string(&b.to_string()),
-            None => req.call(),
-        };
-        match res {
-            Ok(r) => {
-                let text = r.into_string().map_err(|e| Error::Transport(e.to_string()))?;
-                Ok(serde_json::from_str(&text).unwrap_or(Value::Null))
+        let builder = ureq::http::Request::builder()
+            .method(method)
+            .uri(format!("{}{path}", self.base))
+            .header("authorization", format!("Bearer {}", self.token))
+            .header("content-type", "application/json");
+        let req = builder.body(body.map(Value::to_string).unwrap_or_default()).map_err(|e| Error::Transport(e.to_string()))?;
+        match self.agent.run(req) {
+            Ok(mut r) => {
+                let status = r.status();
+                let text = r.body_mut().read_to_string().map_err(|e| Error::Transport(e.to_string()))?;
+                if status.is_success() {
+                    Ok(serde_json::from_str(&text).unwrap_or(Value::Null))
+                } else {
+                    Err(Error::Http { status: status.as_u16(), body: text })
+                }
             }
-            Err(ureq::Error::Status(status, r)) => Err(Error::Http { status, body: r.into_string().unwrap_or_default() }),
             Err(e) => Err(Error::Transport(e.to_string())),
         }
     }

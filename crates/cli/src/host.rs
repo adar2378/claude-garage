@@ -157,15 +157,14 @@ fn url(port: u16, path: &str) -> String {
     format!("http://127.0.0.1:{port}{path}")
 }
 
-fn reply_of(res: Result<ureq::Response, ureq::Error>) -> Result<Reply, String> {
-    match res {
-        Ok(r) | Err(ureq::Error::Status(_, r)) => {
-            let status = r.status();
-            let body = r.into_string().ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or(Value::Object(Default::default()));
-            Ok(Reply { status, body })
-        }
-        Err(e) => Err(e.to_string()),
-    }
+/// Any answer is a [`Reply`] (a non-2xx status is the caller's to read);
+/// only a transport failure is an error. Requests are built with
+/// `http_status_as_error(false)`.
+fn reply_of(res: Result<ureq::http::Response<ureq::Body>, ureq::Error>) -> Result<Reply, String> {
+    let mut r = res.map_err(|e| e.to_string())?;
+    let status = r.status().as_u16();
+    let body = r.body_mut().read_to_string().ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or(Value::Object(Default::default()));
+    Ok(Reply { status, body })
 }
 
 impl Out for RealHost {
@@ -185,14 +184,14 @@ impl Host for RealHost {
         env!("CARGO_PKG_VERSION")
     }
     fn fetch_health(&self, timeout_ms: u64) -> Option<Value> {
-        let r = ureq::get(&url(self.port, "/api/health")).timeout(Duration::from_millis(timeout_ms)).call().ok()?;
-        Some(r.into_string().ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or(Value::Object(Default::default())))
+        let mut r = ureq::get(&url(self.port, "/api/health")).config().timeout_global(Some(Duration::from_millis(timeout_ms))).build().call().ok()?;
+        Some(r.body_mut().read_to_string().ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or(Value::Object(Default::default())))
     }
     fn post(&self, path: &str, body: Option<&Value>) -> Result<Reply, String> {
-        let req = ureq::post(&url(self.port, path)).timeout(Duration::from_secs(300));
+        let req = ureq::post(&url(self.port, path)).config().timeout_global(Some(Duration::from_secs(300))).http_status_as_error(false).build();
         reply_of(match body {
-            Some(b) => req.set("content-type", "application/json").send_string(&b.to_string()),
-            None => req.call(),
+            Some(b) => req.header("content-type", "application/json").send(b.to_string()),
+            None => req.send_empty(),
         })
     }
     fn probe(&self, bin: &str, args: &[&str]) -> Probe {

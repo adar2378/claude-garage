@@ -95,11 +95,14 @@ impl GarageClient {
     pub fn new(base_url: Option<String>) -> GarageClient {
         GarageClient {
             base_url: base_url.unwrap_or_else(default_daemon_base_url),
-            agent: ureq::AgentBuilder::new()
-                .timeout_connect(Duration::from_secs(5))
-                .timeout_read(Duration::from_secs(15))
-                .timeout_write(Duration::from_secs(15))
-                .build(),
+            agent: ureq::Agent::config_builder()
+                .timeout_connect(Some(Duration::from_secs(5)))
+                .timeout_per_read(Some(Duration::from_secs(15)))
+                .timeout_per_write(Some(Duration::from_secs(15)))
+                // Non-2xx answers are replies to read (see `read_json`), not errors.
+                .http_status_as_error(false)
+                .build()
+                .into(),
         }
     }
 
@@ -157,10 +160,12 @@ impl GarageClient {
         read_json(
             self.agent
                 .post(&format!("{}/api/worktrees/finish", self.base_url))
-                .timeout(FINISH_WORKTREE_TIMEOUT)
-                .set("Content-Type", "application/json")
-                .send_string(
-                    &json!({ "worktree": record.to_json(), "action": action.as_str() })
+                .config()
+                .timeout_global(Some(FINISH_WORKTREE_TIMEOUT))
+                .build()
+                .header("Content-Type", "application/json")
+                .send(
+                    json!({ "worktree": record.to_json(), "action": action.as_str() })
                         .to_string(),
                 ),
         )?;
@@ -269,8 +274,8 @@ impl GarageClient {
         read_json(
             self.agent
                 .put(&format!("{}/api/workspaces", self.base_url))
-                .set("Content-Type", "application/json")
-                .send_string(&json!({ "name": name, "dir": dir }).to_string()),
+                .header("Content-Type", "application/json")
+                .send(json!({ "name": name, "dir": dir }).to_string()),
         )?;
         Ok(())
     }
@@ -307,9 +312,11 @@ impl GarageClient {
         let body = read_json(
             self.agent
                 .post(&format!("{}/api/pick-directory", self.base_url))
-                .timeout(PICK_DIRECTORY_TIMEOUT)
-                .set("Content-Type", "application/json")
-                .send_string("{}"),
+                .config()
+                .timeout_global(Some(PICK_DIRECTORY_TIMEOUT))
+                .build()
+                .header("Content-Type", "application/json")
+                .send("{}"),
         )?;
         let body = body.ok_or_else(|| ApiError::Transport("empty picker reply".into()))?;
         if let Some(dir) = body.get("dir").and_then(Value::as_str) {
@@ -386,12 +393,14 @@ impl GarageClient {
         let tokens = UiToken::global();
         for attempt in 0..2 {
             let token = tokens.get().map_err(|e| ApiError::Transport(format!("no UI token: {e}")))?;
-            let req = self
-                .agent
-                .request(method, &format!("{}{}", self.base_url, path))
-                .set("Authorization", &format!("Bearer {token}"))
-                .set("Content-Type", "application/json");
-            let result = read_json(req.send_string(&body.map_or_else(|| "{}".to_owned(), Value::to_string)));
+            let request = ureq::http::Request::builder()
+                .method(method)
+                .uri(format!("{}{}", self.base_url, path))
+                .header("Authorization", format!("Bearer {token}"))
+                .header("Content-Type", "application/json")
+                .body(body.map_or_else(|| "{}".to_owned(), Value::to_string))
+                .map_err(|e| ApiError::Transport(e.to_string()))?;
+            let result = read_json(self.agent.run(request));
             if attempt == 0 && matches!(result, Err(ApiError::Status { status: 401, .. })) {
                 tokens.forget();
                 continue;
@@ -409,8 +418,8 @@ impl GarageClient {
         read_json(
             self.agent
                 .post(&format!("{}{}", self.base_url, path))
-                .set("Content-Type", "application/json")
-                .send_string(&body.to_string()),
+                .header("Content-Type", "application/json")
+                .send(body.to_string()),
         )
     }
 }
@@ -471,37 +480,35 @@ fn parse_list<T>(
 /// Shared response handling (port of the Dart `_readJson`): non-2xx becomes
 /// [`ApiError::Status`] carrying the daemon's `error` body when present; an
 /// empty body yields `None`.
-fn read_json(result: Result<ureq::Response, ureq::Error>) -> Result<Option<Value>, ApiError> {
-    match result {
-        Ok(response) => {
-            let text = response
-                .into_string()
-                .map_err(|e| ApiError::Transport(e.to_string()))?;
-            if text.is_empty() {
-                return Ok(None);
-            }
-            serde_json::from_str(&text)
-                .map(Some)
-                .map_err(|e| ApiError::Transport(format!("bad JSON from daemon: {e}")))
+fn read_json(result: Result<ureq::http::Response<ureq::Body>, ureq::Error>) -> Result<Option<Value>, ApiError> {
+    let mut response = result.map_err(|e| ApiError::Transport(e.to_string()))?;
+    let status = response.status();
+    let text = response.body_mut().read_to_string();
+    if status.is_success() {
+        let text = text.map_err(|e| ApiError::Transport(e.to_string()))?;
+        if text.is_empty() {
+            return Ok(None);
         }
-        Err(ureq::Error::Status(status, response)) => {
-            let text = response.into_string().unwrap_or_default();
-            let message = serde_json::from_str::<Value>(&text)
-                .ok()
-                .and_then(|v| v.get("error").and_then(Value::as_str).map(str::to_owned))
-                .unwrap_or(text);
-            Err(ApiError::Status { status, message })
-        }
-        Err(e) => Err(ApiError::Transport(e.to_string())),
+        return serde_json::from_str(&text)
+            .map(Some)
+            .map_err(|e| ApiError::Transport(format!("bad JSON from daemon: {e}")));
     }
+    let text = text.unwrap_or_default();
+    let message = serde_json::from_str::<Value>(&text)
+        .ok()
+        .and_then(|v| v.get("error").and_then(Value::as_str).map(str::to_owned))
+        .unwrap_or(text);
+    Err(ApiError::Status { status: status.as_u16(), message })
 }
 
 /// True when the daemon answers `GET /api/health` with a 2xx.
 pub fn daemon_healthy(base_url: &str, timeout: Duration) -> bool {
-    let agent = ureq::AgentBuilder::new()
-        .timeout_connect(timeout)
-        .timeout_read(timeout)
-        .build();
+    let agent: ureq::Agent = ureq::Agent::config_builder()
+        .timeout_connect(Some(timeout))
+        .timeout_per_read(Some(timeout))
+        .build()
+        .into();
+    // `call` errors on any non-2xx status (the default), so `is_ok` is a 2xx.
     agent.get(&format!("{base_url}/api/health")).call().is_ok()
 }
 

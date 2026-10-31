@@ -205,21 +205,22 @@ impl SseClient {
         mut on_connection: impl FnMut(bool),
     ) {
         self.machine.start();
-        let agent = ureq::AgentBuilder::new()
-            .timeout_connect(Duration::from_secs(5))
-            .timeout_read(Duration::from_secs(30))
-            .build();
+        let agent: ureq::Agent = ureq::Agent::config_builder()
+            .timeout_connect(Some(Duration::from_secs(5)))
+            .timeout_per_read(Some(Duration::from_secs(30)))
+            .build()
+            .into();
         let mut last_poll = Instant::now();
 
         while !stop.load(Ordering::Relaxed) {
             let connected = agent
                 .get(&format!("{}/api/events", self.base_url))
-                .set("Accept", "text/event-stream")
+                .header("Accept", "text/event-stream")
                 .call();
             if let Ok(response) = connected {
                 self.machine.on_connected();
                 on_connection(true);
-                let mut reader = response.into_reader();
+                let mut reader = response.into_body().into_reader();
                 let mut parser = SseParser::new();
                 let mut buf = [0u8; 8192];
                 loop {

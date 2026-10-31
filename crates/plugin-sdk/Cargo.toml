@@ -7,4 +7,4 @@ description = "claude-garage plugin helper: read the run context, call the daemo
 [dependencies]
 garage-protocol = { path = "../protocol" }
 serde_json = "1"
-ureq = { version = "2.12.1", default-features = false }
+ureq = { version = "3", default-features = false }
