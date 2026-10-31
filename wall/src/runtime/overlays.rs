@@ -44,27 +44,10 @@ pub fn handle_overlay_key(
             let action = overlay_key_string(key)
                 .and_then(|k| Keymap::shared_defaults().resolve(Layer::Overlay(kind), &k))
                 .map(|r| r.action);
-            let len = triage_queue_rows(&store.state().sessions).len();
-            match action {
-                Some(ids::OVERLAY_CLOSE) => store.close_overlay(),
-                Some(ids::OVERLAY_SELECT_NEXT) => {
-                    *queue_selection = wrap_selection(*queue_selection, 1, len);
-                }
-                Some(ids::OVERLAY_SELECT_PREV) => {
-                    *queue_selection = wrap_selection(*queue_selection, -1, len);
-                }
-                Some(ids::JUMP_BLOCKED) => {
-                    // Close first, then jump — jump_to_session refuses stale
-                    // rows (gone / no longer blocked), same as the Dart flow.
-                    store.close_overlay();
-                    let target = triage_queue_rows(&store.state().sessions)
-                        .get((*queue_selection).min(len.saturating_sub(1)))
-                        .map(|s| s.id.clone());
-                    if let Some(id) = target {
-                        store.jump_to_session(&id);
-                    }
-                }
-                _ => {}
+            if let Some(id) = action {
+                let ctx = ActionCtx::from_focus(store.state(), ActionSource::Key(String::new()))
+                    .with_selection(*queue_selection);
+                overlay_action(store, id, &ctx, queue_selection, form, view_picker);
             }
         }
         OverlayKind::WorkspaceAdd => match key.code {
@@ -108,6 +91,82 @@ pub fn handle_overlay_key(
         OverlayKind::WorktreeFinish => {}
     }
     (effects, notice)
+}
+
+/// The overlay actions a key or a click can raise, run once for both:
+/// `overlay.close`, the queue's `overlay.select.next` / `.prev`, `jump.blocked`
+/// while the triage queue is open (a click names its row in `ctx.selection`;
+/// the key uses the queue's own selection) and `overlay.view_picker.pick`.
+/// Returns whether the id was an overlay action, plus the strip notice it
+/// produced. Overlay-less `jump.blocked` (the `a` key) is not handled here.
+pub(super) fn overlay_action(
+    store: &mut WallStore,
+    id: ActionId,
+    ctx: &ActionCtx,
+    queue_selection: &mut usize,
+    form: &mut WorkspaceAddForm,
+    view_picker: &mut ViewPickerState,
+) -> (bool, Option<String>) {
+    match id {
+        ids::OVERLAY_CLOSE => {
+            match store.state().overlay {
+                Some(OverlayKind::WorkspaceAdd) => form.reset(),
+                Some(OverlayKind::ViewPicker) => view_picker.reset(),
+                _ => {}
+            }
+            store.close_overlay();
+        }
+        ids::OVERLAY_SELECT_NEXT | ids::OVERLAY_SELECT_PREV => {
+            let delta = if id == ids::OVERLAY_SELECT_NEXT { 1 } else { -1 };
+            let len = triage_queue_rows(&store.state().sessions).len();
+            *queue_selection = wrap_selection(*queue_selection, delta, len);
+        }
+        ids::JUMP_BLOCKED if store.state().overlay == Some(OverlayKind::TriageQueue) => {
+            // Enter's landing: select, close, then jump-engage — closing
+            // first, because jump_to_session refuses stale rows (gone / no
+            // longer blocked), same as the Dart flow.
+            if let Some(i) = ctx.selection {
+                *queue_selection = i;
+            }
+            store.close_overlay();
+            let rows = triage_queue_rows(&store.state().sessions);
+            let target = rows
+                .get((*queue_selection).min(rows.len().saturating_sub(1)))
+                .map(|s| s.id.clone());
+            if let Some(id) = target {
+                store.jump_to_session(&id);
+            }
+        }
+        ids::OVERLAY_VIEW_PICKER_PICK => {
+            let notice = ctx
+                .selection
+                .and_then(|i| pick_view_entry(store, view_picker, i));
+            return (true, notice);
+        }
+        _ => return (false, None),
+    }
+    (true, None)
+}
+
+/// A row click inside the `D` view-picker overlay (task 3.3 "picker overlay
+/// clicks"): the trailing "new group…" row switches to its text-input
+/// sub-mode, any other row moves the focused session there and returns the
+/// "moved" notice.
+pub(super) fn pick_view_entry(
+    store: &mut WallStore,
+    view_picker: &mut ViewPickerState,
+    i: usize,
+) -> Option<String> {
+    let entries = view_picker_entries(store);
+    if i == entries.len() - 1 {
+        view_picker.selected = i;
+        view_picker.new_group_input = Some(String::new());
+        return None;
+    }
+    let name = entries.get(i).cloned()?;
+    let notice = move_to_view_and_notice(store, &name);
+    view_picker.reset();
+    notice
 }
 
 /// The view-picker's selectable rows for the CURRENTLY focused
@@ -290,37 +349,4 @@ pub(super) fn worktree_finish_settled(
         store.close_overlay();
     }
     (!failed).then(|| finish_notice(record, action))
-}
-
-impl App {
-    /// A click inside the `D` view-picker overlay (task 3.3 "picker overlay
-    /// clicks"): outside the modal is Esc; inside, while the "new group…"
-    /// text field owns the keys, clicks do nothing (same as
-    /// `workspace_add`'s field); otherwise a row click selects — the
-    /// trailing "new group…" row switches to that sub-mode, any other row
-    /// moves the focused session there and shows the "moved" notice.
-    pub(super) fn pick_view_entry(&mut self, i: usize) {
-        let entries = view_picker_entries(&self.store);
-        let entries_len = entries.len();
-        if i == entries_len - 1 {
-            self.view_picker.selected = i;
-            self.view_picker.new_group_input = Some(String::new());
-            return;
-        }
-        let Some(name) = entries.get(i).cloned() else {
-            return;
-        };
-        let label = self
-            .store
-            .state()
-            .session_by_id(self.store.state().focused_session_id.as_deref())
-            .map(|s| s.label.clone());
-        self.store.close_overlay();
-        if self.store.move_focused_to_view(&name) {
-            if let Some(label) = label {
-                self.router.notices.show(format!("moved {label} → {name}"), 2000, now_ms());
-            }
-        }
-        self.view_picker.reset();
-    }
 }

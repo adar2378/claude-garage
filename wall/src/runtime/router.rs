@@ -161,6 +161,24 @@ pub(super) fn is_printable(key: &str) -> bool {
         .is_some_and(|c| c as u32 >= 0x20 && c != '\u{7f}')
 }
 
+/// What a garage key resolved to: IO the arming logic already produced
+/// (the `X` `K` confirm), and the action the caller dispatches through its
+/// one dispatcher (`App::dispatch_action`), same as a click does.
+#[derive(Default)]
+pub struct KeyOutcome {
+    pub effects: Vec<Effect>,
+    pub action: Option<(ActionId, ActionCtx)>,
+}
+
+impl KeyOutcome {
+    fn effects(effects: Vec<Effect>) -> Self {
+        KeyOutcome {
+            effects,
+            action: None,
+        }
+    }
+}
+
 /// Garage-layer key routing (spec tui-key-routing: "Garage-layer bindings" +
 /// p8.1–p8.4, plus spec restart "TUI chords"). Pure — state transitions go
 /// through the store, IO becomes returned [`Effect`]s, notices land in
@@ -223,14 +241,17 @@ impl GarageRouter {
         store: &mut WallStore,
         key: &str,
         now_ms: i64,
-    ) -> Vec<Effect> {
+    ) -> KeyOutcome {
         let mut effects = Vec::new();
         // p16-restart (design.md D5): the `r` prefix is one-shot — the very
         // next key is the chord's second half, resolved BEFORE anything else
         // so `r a` / `r d` never reach the plain `a` / `d` bindings.
         if std::mem::take(&mut self.restart_prefix) {
-            self.restart_chord(store, key, now_ms, &mut effects);
-            return effects;
+            let action = self.restart_chord(key).map(|id| {
+                let ctx = ActionCtx::from_focus(store.state(), ActionSource::Key(key.to_owned()));
+                (id, ctx)
+            });
+            return KeyOutcome { effects, action };
         }
         // Resolve the key to its action once; arming below is keyed on the
         // action (so `x`'s double-press is "session.close twice"), which is
@@ -243,7 +264,7 @@ impl GarageRouter {
         // falls through as an ordinary unbound key (typing hint).
         if action == Some(ids::WORKSPACE_REMOVE_KILL) {
             if self.kill_remove_pressed(store, now_ms, &mut effects) {
-                return effects;
+                return KeyOutcome::effects(effects);
             }
             resolved = None;
             action = None;
@@ -273,7 +294,7 @@ impl GarageRouter {
             if self.armed_restart.armed_id().is_none() {
                 self.notices.show(RESTART_PREFIX_HINT, 3000, now_ms);
             }
-            return effects;
+            return KeyOutcome::effects(effects);
         }
         let Some(resolved) = resolved else {
             // Unbound garage keys are consumed (never reach an agent), but
@@ -281,17 +302,23 @@ impl GarageRouter {
             if is_printable(key) {
                 self.notices.show_typing_hint(now_ms);
             }
-            return effects;
+            return KeyOutcome::effects(effects);
         };
         let ctx = ActionCtx::from_focus(store.state(), ActionSource::Key(key.to_owned()))
             .with_index(resolved.index);
-        self.run_action(store, resolved.action, &ctx, now_ms, &mut effects);
-        effects
+        KeyOutcome {
+            effects,
+            action: Some((resolved.action, ctx)),
+        }
     }
 
-    /// Run one action (from a key or a click) against the store. The state
-    /// transitions go through [`WallStore::dispatch`]; commands the store
-    /// declines become [`Effect`]s or notices here.
+    /// Run one action against the store, whether a key or a click raised it
+    /// (the caller's dispatcher, `App::dispatch_action`, adds the state the
+    /// router does not own). The context is honoured: a click lands first
+    /// (an engaged tile disengages), then actions that target a session
+    /// focus `ctx.session` before they act. State transitions go through
+    /// [`WallStore::dispatch`]; commands the store declines become
+    /// [`Effect`]s or notices here.
     pub fn run_action(
         &mut self,
         store: &mut WallStore,
@@ -300,20 +327,54 @@ impl GarageRouter {
         now_ms: i64,
         effects: &mut Vec<Effect>,
     ) {
-        // `P` (spec tui-pit-pet "Opt-in roster cycled by `P`"): not a
-        // `GarageCommand` — `pet.rs` (the render module) has no business
-        // being a store dependency, so this stays here rather than growing
-        // `state::store`'s command enum for one field's cycling.
-        if id == ids::PET_CYCLE_SPECIES {
-            self.cycle_pet_pressed(store, now_ms);
-            return;
+        let from_click = matches!(ctx.source, ActionSource::Mouse { .. });
+        if from_click && store.state().layer == KeyLayer::Engaged {
+            store.disengage();
         }
-        if id == ids::SESSION_RESTORE {
-            if let Some(session) = ctx.session.clone() {
-                self.restore(session, effects);
+        if matches!(id, ids::SESSION_FOCUS | ids::SESSION_ENGAGE | ids::SESSION_RESTORE) {
+            if let Some(session) = &ctx.session {
+                if from_click || store.state().focused_session_id.as_deref() != Some(session) {
+                    store.focus_session(session);
+                }
             }
-            return;
         }
+        match id {
+            // `P` (spec tui-pit-pet "Opt-in roster cycled by `P`"): not a
+            // `GarageCommand` — `pet.rs` (the render module) has no business
+            // being a store dependency, so this stays here rather than
+            // growing `state::store`'s command enum for one field's cycling.
+            ids::PET_CYCLE_SPECIES => self.cycle_pet_pressed(store, now_ms),
+            ids::SESSION_RESTORE => {
+                if let Some(session) = ctx.session.clone() {
+                    self.restore(session, effects);
+                }
+            }
+            ids::SESSION_FOCUS => {} // the landing above did it
+            ids::VIEW_FOCUS => {
+                if let Some(view) = &ctx.view {
+                    store.focus_view(view);
+                }
+            }
+            ids::SESSION_RESTART => self.restart_focused_pressed(store, now_ms, effects),
+            ids::WORKSPACE_RESTART => self.restart_workspace_pressed(store, now_ms, effects),
+            ids::DAEMON_RESTART => {
+                self.notices.show("restarting the daemon…", 5000, now_ms);
+                effects.push(Effect::RestartDaemon);
+            }
+            _ => self.run_command(store, id, ctx, now_ms, effects),
+        }
+    }
+
+    /// The ids that map onto a [`GarageCommand`] (the store's transitions
+    /// plus the effects it declines).
+    fn run_command(
+        &mut self,
+        store: &mut WallStore,
+        id: ActionId,
+        ctx: &ActionCtx,
+        now_ms: i64,
+        effects: &mut Vec<Effect>,
+    ) {
         let Some(command) = command_for_action(id, ctx.index) else {
             return;
         };
@@ -426,14 +487,6 @@ impl GarageRouter {
         };
         store.set_pet(next);
         self.notices.show(text, 3000, now_ms);
-    }
-
-    /// A click on a restorable placeholder restores it (Enter's landing,
-    /// spec p8.1) — same in-flight dedup as the key path.
-    pub fn restore_clicked(&mut self, id: String) -> Vec<Effect> {
-        let mut effects = Vec::new();
-        self.restore(id, &mut effects);
-        effects
     }
 
     /// Restore one session, deduplicated against in-flight restores.
@@ -583,27 +636,16 @@ impl GarageRouter {
     /// consumed, a pending `r r` arm disarms, and the key does NOT fall
     /// through to its own binding — a mistyped chord must never fire an
     /// unrelated command.
-    fn restart_chord(
-        &mut self,
-        store: &WallStore,
-        key: &str,
-        now_ms: i64,
-        effects: &mut Vec<Effect>,
-    ) {
+    fn restart_chord(&mut self, key: &str) -> Option<ActionId> {
         self.notices.clear_prefix(RESTART_PREFIX_HINT);
-        match self
+        let action = self
             .keymap
             .resolve(Layer::RestartChord, key)
-            .map(|r| r.action)
-        {
-            Some(ids::SESSION_RESTART) => self.restart_focused_pressed(store, now_ms, effects),
-            Some(ids::WORKSPACE_RESTART) => self.restart_workspace_pressed(store, now_ms, effects),
-            Some(ids::DAEMON_RESTART) => {
-                self.notices.show("restarting the daemon…", 5000, now_ms);
-                effects.push(Effect::RestartDaemon);
-            }
-            _ => self.disarm_restart(),
+            .map(|r| r.action);
+        if action.is_none() {
+            self.disarm_restart();
         }
+        action
     }
 
     /// `r r`: armed double-press restart of the focused session (spec

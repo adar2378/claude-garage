@@ -79,6 +79,7 @@ use crate::ui::worktree_finish::{
     finish_notice, render_worktree_finish, FinishChoice, WorktreeFinishState,
 };
 
+mod dispatch;
 mod draw;
 mod effects;
 mod mouse;
@@ -361,6 +362,31 @@ struct App {
 }
 
 impl App {
+    fn new(tx: EventSender, base_url: &str, started_ms: i64) -> App {
+        App {
+            store: WallStore::new(),
+            router: GarageRouter::default(),
+            registry: TileRegistry::new(tx.clone()),
+            escalation: EscalationPolicy::default(),
+            keylog: KeyLog::new(),
+            tx,
+            base_url: base_url.to_owned(),
+            queue_selection: 0,
+            ws_form: WorkspaceAddForm::default(),
+            view_picker: ViewPickerState::default(),
+            wt_finish: WorktreeFinishState::default(),
+            layout: None,
+            badge_cols: None,
+            view_strip_targets: Vec::new(),
+            triage_rect: None,
+            ws_add_rect: None,
+            view_picker_rect: None,
+            pet: PetHost::new(started_ms),
+            pet_cols: None,
+            last_strip_filler: 0,
+        }
+    }
+
     /// Apply one event; true = quit.
     fn apply(&mut self, ev: AppEvent) -> bool {
         match ev {
@@ -516,31 +542,12 @@ impl App {
                 let Some(key_str) = garage_key_string(key) else {
                     return false; // consumed: garage typing never reaches an agent
                 };
-                // Fresh overlay state on every open (the Dart `A`/`w`
-                // branches — reset happens even if the dispatch declines).
-                if key_str == "A" {
-                    self.queue_selection = 0;
-                }
-                if key_str == "w" {
-                    self.ws_form.reset();
-                }
-                if key_str == "D" {
-                    self.view_picker.reset();
-                }
-                // `P` (spec tui-pit-pet): a fresh pet starts its motion sim
-                // from scratch and renders on the very next tick, rather
-                // than carrying over the outgoing (or newly-arriving)
-                // species' position/frame counters. `GarageRouter` owns the
-                // choice + persistence + notice; it doesn't own the sim, so
-                // the reset happens here by comparing before/after.
-                let pet_before = self.store.state().pet.clone();
-                let effects = self
+                let outcome = self
                     .router
                     .on_garage_key(&mut self.store, &key_str, now_ms());
-                if self.store.state().pet != pet_before {
-                    if let Some(pet) = &mut self.pet {
-                        pet.reset_sim();
-                    }
+                let mut effects = outcome.effects;
+                if let Some((id, ctx)) = outcome.action {
+                    effects.extend(self.dispatch_action(id, &ctx));
                 }
                 self.run_effects(effects)
             }
@@ -759,28 +766,7 @@ async fn state_loop(
     client_id: &str,
 ) -> std::io::Result<()> {
     let started_ms = now_ms();
-    let mut app = App {
-        store: WallStore::new(),
-        router: GarageRouter::default(),
-        registry: TileRegistry::new(tx.clone()),
-        escalation: EscalationPolicy::default(),
-        keylog: KeyLog::new(),
-        tx,
-        base_url: base_url.to_owned(),
-        queue_selection: 0,
-        ws_form: WorkspaceAddForm::default(),
-        view_picker: ViewPickerState::default(),
-        wt_finish: WorktreeFinishState::default(),
-        layout: None,
-        badge_cols: None,
-        view_strip_targets: Vec::new(),
-        triage_rect: None,
-        ws_add_rect: None,
-        view_picker_rect: None,
-        pet: PetHost::new(started_ms),
-        pet_cols: None,
-        last_strip_filler: 0,
-    };
+    let mut app = App::new(tx, base_url, started_ms);
     // View persistence (spec tui-views "View persistence"): load whatever
     // wall.json holds, then debounce a save (≥500ms after the last
     // views_revision bump) so a burst of `d`/`D`/Tab presses writes once,
