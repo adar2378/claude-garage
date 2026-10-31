@@ -15,7 +15,7 @@
 //! content through the real wire-to-slot path, from the plugins' golden JSON
 //! where they have one. No tmux, no daemon, no PTY.
 //!
-//! `RENDER_OUT` sets the output directory (default `docs/brand/renders`);
+//! `RENDER_OUT` sets the output directory, relative to the repo root (default `docs/brand/renders`);
 //! `RENDER_CHROME=1` adds a window frame.
 use super::svg_render::{Options, to_svg};
 use super::*;
@@ -617,11 +617,10 @@ fn render_brand_frames() {
     if std::env::var_os("RENDER_FRAMES").is_none() {
         return;
     }
-    let out = std::env::var_os("RENDER_OUT")
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|| {
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../docs/brand/renders")
-        });
+    // A relative `RENDER_OUT` is relative to the repo root, wherever cargo runs.
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let out =
+        root.join(std::env::var_os("RENDER_OUT").unwrap_or_else(|| "docs/brand/renders".into()));
     std::fs::create_dir_all(&out).unwrap();
     let opts = Options {
         chrome: std::env::var_os("RENDER_CHROME").is_some(),

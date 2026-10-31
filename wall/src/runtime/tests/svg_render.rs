@@ -163,9 +163,9 @@ pub fn to_svg(buf: &Buffer, o: &Options) -> String {
     let (tw, th) = (w + 2 * pad, h + pad_top + pad);
 
     let mut s = String::new();
-    let _ = write!(
+    let _ = writeln!(
         s,
-        "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{tw}\" height=\"{th}\" viewBox=\"0 0 {tw} {th}\" role=\"img\" aria-label=\"claude-garage wall\">\n"
+        "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{tw}\" height=\"{th}\" viewBox=\"0 0 {tw} {th}\" role=\"img\" aria-label=\"claude-garage wall\">"
     );
     let bg = hex(o.theme.bg);
     if o.chrome {
@@ -174,7 +174,7 @@ pub fn to_svg(buf: &Buffer, o: &Options) -> String {
             "<defs><clipPath id=\"win\"><rect width=\"{tw}\" height=\"{th}\" rx=\"12\"/></clipPath></defs>\n<g clip-path=\"url(#win)\">\n<rect width=\"{tw}\" height=\"{th}\" fill=\"{bg}\"/>\n<rect width=\"{tw}\" height=\"{pad_top}\" fill=\"#23242c\"/>\n<circle cx=\"22\" cy=\"20\" r=\"6\" fill=\"#ff5f57\"/><circle cx=\"42\" cy=\"20\" r=\"6\" fill=\"#febc2e\"/><circle cx=\"62\" cy=\"20\" r=\"6\" fill=\"#28c840\"/>\n<g transform=\"translate({pad} {pad_top})\">\n"
         );
     } else {
-        let _ = write!(s, "<rect width=\"{tw}\" height=\"{th}\" fill=\"{bg}\"/>\n");
+        let _ = writeln!(s, "<rect width=\"{tw}\" height=\"{th}\" fill=\"{bg}\"/>");
     }
 
     // Backgrounds: one rect per run of equal colour in a row.
@@ -266,9 +266,9 @@ pub fn to_svg(buf: &Buffer, o: &Options) -> String {
     }
 
     // Text: words, split at spaces and style changes.
-    let _ = write!(
+    let _ = writeln!(
         s,
-        "<g font-family=\"{FONT}\" font-size=\"{}\" xml:space=\"preserve\">\n",
+        "<g font-family=\"{FONT}\" font-size=\"{}\" xml:space=\"preserve\">",
         o.font_size
     );
     let key_mods = Modifier::BOLD
