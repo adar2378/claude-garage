@@ -16,7 +16,36 @@ impl ActionId {
     pub fn as_str(self) -> &'static str {
         self.0
     }
+
+    /// The id for a runtime string (a plugin's `plugin:action`). Core ids
+    /// resolve to their `&'static` constant; anything else is leaked once
+    /// into a process-wide set, so the same string always yields the same
+    /// pointer and `ActionId` stays `Copy`. The set is bounded by the
+    /// installed plugins' declared action ids, so the leak is a few hundred
+    /// bytes (p24 design.md Gap A).
+    pub fn intern(id: &str) -> ActionId {
+        let mut set = INTERNER.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(existing) = set.get(id) {
+            return ActionId(existing);
+        }
+        let leaked: &'static str = Box::leak(id.to_owned().into_boxed_str());
+        set.insert(leaked);
+        ActionId(leaked)
+    }
+
+    /// True for a plugin id (`plugin:action`). Core ids are dotted and never
+    /// contain a colon.
+    pub fn is_plugin(self) -> bool {
+        self.0.contains(':')
+    }
 }
+
+/// The interner, seeded with every core id so interning a core string hands
+/// back the core constant instead of leaking a duplicate.
+static INTERNER: std::sync::LazyLock<std::sync::Mutex<std::collections::HashSet<&'static str>>> =
+    std::sync::LazyLock::new(|| {
+        std::sync::Mutex::new(ids::ALL.iter().map(|id| id.0).collect())
+    });
 
 /// The action id list. Group order follows design.md decision 1.
 pub mod ids {
@@ -49,6 +78,9 @@ pub mod ids {
     /// Click-reachable (and internal) ids with no key today.
     pub const SESSION_FOCUS: ActionId = ActionId("session.focus");
     pub const SESSION_RESTORE: ActionId = ActionId("session.restore");
+    /// Forget a session (`DELETE /api/sessions/{id}?meta=1`). No key; reached
+    /// by plugin buttons, always through the confirm rule.
+    pub const SESSION_DELETE: ActionId = ActionId("session.delete");
     pub const PET_PET: ActionId = ActionId("pet.pet");
     /// `P`: not a [`super::GarageCommand`] (the store has no pet dependency).
     pub const PET_CYCLE_SPECIES: ActionId = ActionId("pet.cycle_species");
@@ -90,6 +122,7 @@ pub mod ids {
         APP_QUIT,
         SESSION_FOCUS,
         SESSION_RESTORE,
+        SESSION_DELETE,
         PET_PET,
         PET_CYCLE_SPECIES,
         OVERLAY_CLOSE,
@@ -295,6 +328,7 @@ mod tests {
         let handled_elsewhere = [
             ids::SESSION_FOCUS,
             ids::SESSION_RESTORE,
+            ids::SESSION_DELETE,
             ids::PET_PET,
             ids::PET_CYCLE_SPECIES,
             ids::OVERLAY_CLOSE,
@@ -315,6 +349,40 @@ mod tests {
                 if has_command { "mapped to" } else { "missing from" }
             );
         }
+    }
+
+    #[test]
+    fn interning_the_same_string_gives_the_same_pointer() {
+        let a = ActionId::intern("closer:close-all");
+        let b = ActionId::intern(&String::from("closer:close-all"));
+        assert_eq!(a.as_str().as_ptr(), b.as_str().as_ptr());
+        assert_eq!(a, b);
+        assert_ne!(a, ActionId::intern("closer:other"));
+        assert!(a.is_plugin());
+    }
+
+    #[test]
+    fn interning_a_core_id_equals_the_constant_and_leaks_nothing() {
+        let before = INTERNER.lock().unwrap().len();
+        for id in ids::ALL {
+            let first = ActionId::intern(id.as_str());
+            let second = ActionId::intern(id.as_str());
+            assert_eq!(first, *id);
+            assert_eq!(first.as_str().as_ptr(), second.as_str().as_ptr());
+            assert!(!first.is_plugin());
+        }
+        // Other tests intern plugin ids concurrently, so only assert the core
+        // ids did not add entries of their own: the set never shrinks and
+        // every core string was already in it.
+        let set = INTERNER.lock().unwrap();
+        assert!(set.len() >= before);
+        assert!(ids::ALL.iter().all(|id| set.contains(id.as_str())));
+    }
+
+    #[test]
+    fn plugin_ids_never_enter_the_core_list() {
+        ActionId::intern("someplugin:act");
+        assert!(ids::ALL.iter().all(|id| !id.as_str().contains(':')));
     }
 
     #[test]

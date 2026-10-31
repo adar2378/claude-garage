@@ -227,6 +227,9 @@ mod tests {
             ids::PET_PET,
             ids::VIEW_FOCUS,
             ids::OVERLAY_VIEW_PICKER_PICK,
+            // No key by design: only a plugin's click target reaches it
+            // (p24), always through the confirm rule.
+            ids::SESSION_DELETE,
         ];
         let bound: Vec<ActionId> = Keymap::defaults().bound_actions().collect();
         for id in ids::ALL {

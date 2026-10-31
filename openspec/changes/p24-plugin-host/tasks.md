@@ -3,7 +3,7 @@
 Order matters: group 1 changes the existing core seams and must pass the full existing test suite with no plugins present before anything plugin-specific lands. Then the contract and daemon host core, then bundled first-party plugins (the default path), then widgets/panes/actions, CLI, and last GitHub install/update. Verification closes.
 
 ## 1. TUI seam gaps - close the p22 review gaps
-- [ ] 1.1 `ActionId::intern(&str)` with a process-wide interner (stays `Copy`); `plugin:action` id form; unit tests (same string gives the same pointer, core ids unchanged, `ids::ALL` stays core-only)
+- [x] 1.1 `ActionId::intern(&str)` with a process-wide interner (stays `Copy`); `plugin:action` id form; unit tests (same string gives the same pointer, core ids unchanged, `ids::ALL` stays core-only)
 - [ ] 1.2 `ClickTarget { action, args }` replaces `on_click: Option<ActionId>` in `SlotItem` and `Placed`; `Laid::clicks` returns targets; `ActionCtx.args` + `with_args`; `ActionSource::Widget` and `ActionSource::Plugin`; core providers migrate with no output change (existing snapshot tests pass untouched)
 - [ ] 1.3 Click regions for `tile.title.right`, `rail.row`, `rail.header`: renderers push `SlotClickRegion` into `ClickMap.slot_clicks`; `hit_targets::action_at` resolves them (overlay barrier respected) and builds `ActionCtx` from the region's session/workspace; a `strip.right` click on a session-scoped core action targets the focused session; tests incl. clicking an unfocused tile's button
 - [ ] 1.4 Multiple `Placement::Filler` items in `strip.right`: sort by `x`, drop lower priority on overlap; test the pit-pet-alone case is unchanged
