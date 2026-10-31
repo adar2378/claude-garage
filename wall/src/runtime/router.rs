@@ -15,7 +15,7 @@ use crate::ui::pet::PetHost;
 
 use super::Effect;
 
-mod plugin_gate;
+pub(in crate::runtime) mod plugin_gate;
 
 /// The garage-layer typing hint (post-review Dart wording, verbatim — the
 /// click-smoke harness greps it).

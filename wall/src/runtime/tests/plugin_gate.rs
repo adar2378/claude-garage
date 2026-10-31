@@ -6,6 +6,7 @@
 //! its own region), a plugin never replaces a pending arm, and the arm lives
 //! only while its prompt is the notice on screen.
 use super::*;
+use crate::runtime::router::plugin_gate::ClickConfirm;
 use crate::actions::{meta, ActionId, META};
 use crate::slots::{ClickTarget, RegionId, SlotClickRegion, SlotId};
 use ratatui::layout::Rect;
@@ -155,20 +156,64 @@ fn a_widget_arm_is_confirmed_by_a_click_on_its_exact_region_only() {
     // Same action and target, different rect: not the region that armed it.
     let mut moved = region.clone();
     moved.rect.x += 1;
-    assert!(app.router.plugin_confirm_click(Some(&moved), 1100).is_none());
+    assert!(matches!(app.router.plugin_confirm_click(Some(&moved), 1100), ClickConfirm::Cancelled));
     assert!(!app.router.plugin_arm_pending(), "a wrong-region click cancels the arm");
 
     // Same rect and target, different item identity (another plugin's button).
     app.dispatch_action_at(ids::SESSION_CLOSE, &armed, 2000);
     let mut other_item = region.clone();
     other_item.plugin = Some("other".into());
-    assert!(app.router.plugin_confirm_click(Some(&other_item), 2100).is_none());
+    assert!(matches!(app.router.plugin_confirm_click(Some(&other_item), 2100), ClickConfirm::Cancelled));
+
+    // Same everything but the text it shows: a relabelled item is another
+    // region, however alike (a plugin cannot swap the words under the click).
+    app.dispatch_action_at(ids::SESSION_CLOSE, &armed, 2500);
+    let mut relabelled = region.clone();
+    relabelled.label ^= 1;
+    assert!(matches!(app.router.plugin_confirm_click(Some(&relabelled), 2900), ClickConfirm::Cancelled));
 
     // The exact region confirms, and the confirmed run closes THAT session.
     app.dispatch_action_at(ids::SESSION_CLOSE, &armed, 3000);
-    let (id, ctx) = app.router.plugin_confirm_click(Some(&region), 3100).expect("the armed region confirms");
-    let effects = app.dispatch_action_at(id, &ctx, 3100);
+    app.router.mark_prompt_drawn(3050);
+    let ClickConfirm::Run(action) = app.router.plugin_confirm_click(Some(&region), 3400) else {
+        panic!("the armed region confirms");
+    };
+    let (id, ctx) = *action;
+    let effects = app.dispatch_action_at(id, &ctx, 3400);
     assert!(confirmed_effect_ok(ids::SESSION_CLOSE, &effects), "{effects:?}");
+}
+
+#[test]
+fn a_click_on_the_armed_region_confirms_only_after_the_guard_and_a_drawn_prompt() {
+    let mut app = fixture();
+    let armed = widget_click(&app, ids::SESSION_CLOSE, TWO);
+    let region = armed.region.clone().unwrap();
+
+    // Past 300 ms but no frame ever showed the prompt: swallowed, arm kept.
+    app.dispatch_action_at(ids::SESSION_CLOSE, &armed, 1000);
+    assert!(matches!(app.router.plugin_confirm_click(Some(&region), 1500), ClickConfirm::Swallow));
+    assert!(app.router.plugin_arm_pending());
+
+    // Drawn, but a double-click lands inside the guard window: swallowed.
+    app.router.mark_prompt_drawn(1100);
+    assert!(matches!(app.router.plugin_confirm_click(Some(&region), 1200), ClickConfirm::Swallow));
+    assert!(app.router.plugin_arm_pending(), "a swallowed click does not cancel");
+
+    // Drawn and past the window: confirms.
+    assert!(matches!(app.router.plugin_confirm_click(Some(&region), 1300), ClickConfirm::Run(_)));
+}
+
+#[test]
+fn a_prompt_replaced_before_it_was_drawn_is_not_counted_as_drawn() {
+    let mut app = fixture();
+    let armed = widget_click(&app, ids::SESSION_CLOSE, TWO);
+    let region = armed.region.clone().unwrap();
+    app.dispatch_action_at(ids::SESSION_CLOSE, &armed, 1000);
+    // A frame is drawn while another notice covers the prompt: the arm is
+    // gone anyway (its prompt is no longer on screen).
+    app.router.notices.show("something else", 3000, 1050);
+    app.router.mark_prompt_drawn(1060);
+    assert!(matches!(app.router.plugin_confirm_click(Some(&region), 1400), ClickConfirm::Cancelled));
 }
 
 #[test]
@@ -177,7 +222,7 @@ fn an_api_arm_cannot_be_confirmed_by_any_mouse_click() {
     app.dispatch_action_at(ids::SESSION_CLOSE, &plugin(&app, TWO), 1000);
     // Even a click on a region that looks exactly like the button.
     let lookalike = region_of(ids::SESSION_CLOSE, TWO);
-    assert!(app.router.plugin_confirm_click(Some(&lookalike), 1100).is_none());
+    assert!(matches!(app.router.plugin_confirm_click(Some(&lookalike), 1100), ClickConfirm::Cancelled));
     assert!(!app.router.plugin_arm_pending());
     assert!(key_at(&mut app.router, &mut app.store, "y", 1500).is_empty(), "and the click cancelled it");
 }
@@ -501,7 +546,19 @@ async fn two_real_clicks_on_a_plugin_close_button_close_the_tile_it_sits_on() {
     assert_eq!(app.store.state().focused_session_id.as_deref(), Some(ONE));
     assert!(rx.try_recv().is_err(), "no effect ran on the arming click");
 
-    // Second click on the armed region: the close effect runs for THAT tile
+    // A double-click is swallowed: not confirmed, not cancelled.
+    assert!(!app.handle_click(button.x + 1, button.y));
+    assert!(rx.try_recv().is_err(), "a hasty second click does not confirm");
+    assert!(app.router.plugin_arm_pending());
+
+    // The prompt is drawn and the guard window passes ...
+    let regions = app.slot_clicks.clone();
+    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(120, 40)).unwrap();
+    terminal.draw(|f| app.draw_frame(f, now_ms())).unwrap();
+    app.slot_clicks = regions; // the draw rebuilt them without the test's plugin button
+    tokio::time::sleep(Duration::from_millis(350)).await;
+
+    // ... then a click on the armed region: the close effect runs for THAT tile
     // (the daemon is unreachable here, which the failure notice proves).
     assert!(!app.handle_click(button.x + 1, button.y));
     let event = tokio::time::timeout(Duration::from_secs(5), rx.recv()).await.unwrap().unwrap();
@@ -535,4 +592,51 @@ fn a_click_elsewhere_cancels_the_arm_and_the_button_then_only_re_arms() {
     // ... so the next click on the button arms afresh instead of closing.
     assert!(!app.handle_click(button.x, button.y));
     assert!(armed(&app));
+}
+
+#[test]
+fn a_plugin_cannot_move_the_focus_while_the_user_is_engaged() {
+    for id in [
+        ids::SESSION_FOCUS,
+        ids::SESSION_ENGAGE,
+        ids::SESSION_RESTORE,
+        ids::SESSION_MAXIMIZE,
+        ids::WORKSPACE_FOCUS,
+    ] {
+        let mut app = fixture();
+        app.store.engage();
+        assert_eq!(app.store.state().focused_session_id.as_deref(), Some(ONE));
+        let mut ctx = plugin(&app, THREE);
+        ctx.workspace = Some("b".into());
+        let effects = app.dispatch_action_at(id, &ctx, 1000);
+        assert!(effects.is_empty(), "{id:?}: {effects:?}");
+        // Typing still goes to the session the user engaged.
+        let state = app.store.state();
+        assert_eq!(state.layer, KeyLayer::Engaged, "{id:?}");
+        assert_eq!(state.focused_session_id.as_deref(), Some(ONE), "{id:?}");
+        assert_eq!(state.focused_workspace.as_deref(), Some("a"), "{id:?}");
+        let notice = app.router.notices.current(1000).expect("a notice says what was refused");
+        assert!(notice.contains("plugin closer") && notice.contains("Ctrl+G"), "{notice}");
+    }
+}
+
+#[test]
+fn a_plugin_may_still_act_on_the_engaged_session_and_move_focus_when_not_engaged() {
+    let mut app = fixture();
+    app.store.engage();
+    app.dispatch_action_at(ids::SESSION_MAXIMIZE, &plugin(&app, ONE), 1000);
+    assert_eq!(app.store.state().layer, KeyLayer::Engaged, "its own session is not a switch");
+
+    let mut app = fixture();
+    app.dispatch_action_at(ids::SESSION_FOCUS, &plugin(&app, THREE), 1000);
+    assert_eq!(app.store.state().focused_session_id.as_deref(), Some(THREE));
+}
+
+#[test]
+fn a_human_click_on_a_plugin_button_still_leaves_the_engaged_session() {
+    let mut app = fixture();
+    app.store.engage();
+    app.dispatch_action_at(ids::SESSION_MAXIMIZE, &widget(&app, THREE), 1000);
+    assert_eq!(app.store.state().layer, KeyLayer::Garage);
+    assert_eq!(app.store.state().focused_session_id.as_deref(), Some(THREE));
 }

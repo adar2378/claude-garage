@@ -12,8 +12,11 @@
 //! on the exact region (slot, rect, item identity) that armed it. A core
 //! click target never confirms a plugin arm and a click anywhere else
 //! cancels it. A plugin source can never replace or refresh a pending arm.
-//! The arm lives only while its own prompt is the notice on screen, and `y`
-//! is ignored for the first 300 ms after the prompt appears.
+//! The arm lives only while its own prompt is the notice on screen. `y` and
+//! a confirming click are ignored for the first 300 ms after the prompt
+//! appears; a click also needs a frame that showed the prompt, and an early
+//! click on the region is swallowed (neither confirms nor cancels). A plugin
+//! API request may not move the focus while the user is engaged.
 //!
 //! Core actions take their target from the context (`session` / `workspace`,
 //! seeded from the clicked region or the request's `target`), never from
@@ -49,6 +52,9 @@ pub(in crate::runtime) struct PluginArm {
     /// native `r r` (design D2: the armed press IS the force).
     force: bool,
     armed_at: i64,
+    /// A frame with this prompt on screen has been drawn: a click cannot
+    /// confirm what the human has not had a chance to see.
+    drawn: bool,
 }
 
 /// What `y` did while an arm was pending.
@@ -60,7 +66,17 @@ pub(in crate::runtime) enum ConfirmKey {
     Gone,
 }
 
-/// `y` is ignored this long after the prompt first appears, so a keypress
+/// What a click did while an arm was pending.
+pub(in crate::runtime) enum ClickConfirm {
+    Run(Box<(ActionId, ActionCtx)>),
+    /// On the armed region but too early (inside the guard window, or the
+    /// prompt not drawn yet): swallowed, neither confirming nor cancelling.
+    Swallow,
+    /// Anywhere else: the arm was dropped; the click lands as usual.
+    Cancelled,
+}
+
+/// `y` and a confirming click are ignored this long after the prompt first appears, so a keypress
 /// that raced the arming click cannot confirm it.
 pub(in crate::runtime) const Y_GUARD_MS: i64 = 300;
 
@@ -109,6 +125,17 @@ impl GarageRouter {
         }
     }
 
+    /// Called after each frame is drawn: records that the pending arm's
+    /// prompt was on screen in it.
+    pub(in crate::runtime) fn mark_prompt_drawn(&mut self, now_ms: i64) {
+        let current = self.notices.current(now_ms).map(str::to_owned);
+        if let Some(arm) = self.plugin_arm.as_mut() {
+            if current.as_deref() == Some(arm.notice.as_str()) {
+                arm.drawn = true;
+            }
+        }
+    }
+
     pub(in crate::runtime) fn plugin_arm_pending(&self) -> bool {
         self.plugin_arm.is_some()
     }
@@ -135,22 +162,28 @@ impl GarageRouter {
 
     /// A click while an arm is pending. `region` is the slot region the
     /// click landed on (`None` for a core target or empty space). Only a
-    /// click on the region that armed it confirms; anything else cancels.
-    pub(in crate::runtime) fn plugin_confirm_click(
-        &mut self,
-        region: Option<&RegionId>,
-        now_ms: i64,
-    ) -> Option<(ActionId, ActionCtx)> {
+    /// click on the region that armed it confirms, and only once the guard
+    /// window has passed and the prompt has been drawn; anything else
+    /// cancels.
+    pub(in crate::runtime) fn plugin_confirm_click(&mut self, region: Option<&RegionId>, now_ms: i64) -> ClickConfirm {
         self.refresh_plugin_arm(now_ms);
-        let hit = match (&self.plugin_arm.as_ref()?.origin, region) {
+        let Some(arm) = self.plugin_arm.as_ref() else {
+            return ClickConfirm::Cancelled;
+        };
+        let hit = match (&arm.origin, region) {
             (ArmOrigin::Region(armed), Some(clicked)) => armed == clicked,
             _ => false,
         };
-        if hit {
-            self.take_confirmed(now_ms)
-        } else {
+        if !hit {
             self.disarm_plugin();
-            None
+            return ClickConfirm::Cancelled;
+        }
+        if now_ms - arm.armed_at < Y_GUARD_MS || !arm.drawn {
+            return ClickConfirm::Swallow;
+        }
+        match self.take_confirmed(now_ms) {
+            Some(action) => ClickConfirm::Run(Box::new(action)),
+            None => ClickConfirm::Cancelled,
         }
     }
 
@@ -220,6 +253,22 @@ impl GarageRouter {
                 }
                 return true;
             }
+            if matches!(ctx.source, ActionSource::Plugin { .. })
+                && store.state().layer == crate::state::wall_state::KeyLayer::Engaged
+                && moves_focus_away(store, id, ctx)
+            {
+                // Typing never moves to another session behind the human's
+                // back: only a human click or key changes where they type.
+                self.notices.show(
+                    format!(
+                        "plugin {} wanted to switch sessions — press Ctrl+G to leave the session first",
+                        plugin_name(&ctx.source)
+                    ),
+                    4000,
+                    now_ms,
+                );
+                return true;
+            }
             if matches!(ctx.source, ActionSource::Widget { .. }) {
                 // A click on a plugin item lands like any click.
                 if store.state().layer == crate::state::wall_state::KeyLayer::Engaged {
@@ -272,7 +321,7 @@ impl GarageRouter {
         let key = arm_key(id, ctx);
         self.armed_plugin.arm(&key, now_ms);
         self.notices.show(notice.clone(), 3000, now_ms);
-        self.plugin_arm = Some(PluginArm { id, ctx: ctx.clone(), key, notice, origin, force, armed_at: now_ms });
+        self.plugin_arm = Some(PluginArm { id, ctx: ctx.clone(), key, notice, origin, force, armed_at: now_ms, drawn: false });
     }
 
     /// Run a dangerous action a human just confirmed. Targets come from the
@@ -431,6 +480,30 @@ fn arm_prompt(store: &WallStore, id: ActionId, ctx: &ActionCtx) -> Option<(Strin
         _ => return None,
     };
     Some((format!("{subject}{CONFIRM_TAIL}"), false))
+}
+
+/// True when running `id` for `ctx` would move the focus (and so the typing
+/// target) off what is focused now.
+fn moves_focus_away(store: &WallStore, id: ActionId, ctx: &ActionCtx) -> bool {
+    let state = store.state();
+    match id {
+        ids::SESSION_FOCUS
+        | ids::SESSION_ENGAGE
+        | ids::SESSION_RESTORE
+        | ids::SESSION_MAXIMIZE
+        | ids::SESSION_DETACH
+        | ids::SESSION_OPEN_WINDOW
+        | ids::OVERLAY_OPEN_VIEW_PICKER => ctx
+            .session
+            .as_deref()
+            .is_some_and(|s| state.focused_session_id.as_deref() != Some(s)),
+        ids::WORKSPACE_FOCUS | ids::SESSION_SPAWN | ids::SESSION_SPAWN_WORKTREE => ctx
+            .workspace
+            .as_deref()
+            .is_some_and(|w| state.focused_workspace.as_deref() != Some(w)),
+        ids::VIEW_FOCUS => true,
+        _ => false,
+    }
 }
 
 /// Point the focus at the clicked item's scope for the actions that act on

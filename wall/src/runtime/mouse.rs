@@ -10,6 +10,7 @@ use crate::state::wall_state::{KeyLayer, OverlayKind, WallSession};
 use crate::ui::hit_targets::{self, action_at, ClickMap};
 use crate::ui::scroll::WHEEL_LINES;
 
+use super::router::plugin_gate::ClickConfirm;
 use super::{App, now_ms, view_picker_entries};
 
 impl App {
@@ -55,6 +56,11 @@ impl App {
                 if inner.contains((col, row).into()) {
                     if let Some(line) = self.registry.row_text(&id, row - inner.y) {
                         if let Some(url) = url_at(&line, usize::from(col - inner.x)) {
+                            // A click like any other: it cancels a pending
+                            // plugin arm before it does its own thing.
+                            if self.router.plugin_origin_arm_pending() {
+                                self.router.disarm_plugin();
+                            }
                             let _ = std::process::Command::new("open").arg(&url).spawn();
                             self.router.notices.show(format!("opened {url}"), 2000, now_ms());
                             return false;
@@ -89,9 +95,15 @@ impl App {
         self.router.refresh_plugin_arm(now);
         if self.router.plugin_origin_arm_pending() {
             let clicked = resolved.as_ref().and_then(|(_, ctx)| ctx.region.as_ref());
-            if let Some((id, ctx)) = self.router.plugin_confirm_click(clicked, now) {
-                let effects = self.dispatch_action(id, &ctx);
-                return self.run_effects(effects);
+            match self.router.plugin_confirm_click(clicked, now) {
+                ClickConfirm::Run(action) => {
+                    let (id, ctx) = *action;
+                    let effects = self.dispatch_action(id, &ctx);
+                    return self.run_effects(effects);
+                }
+                // A hasty click on the armed region is swallowed whole.
+                ClickConfirm::Swallow => return false,
+                ClickConfirm::Cancelled => {}
             }
         }
         if let Some((id, ctx)) = resolved {

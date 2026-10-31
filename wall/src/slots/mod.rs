@@ -82,11 +82,14 @@ pub struct ClickTarget {
     /// the click region, so a core action such as `session.restore` takes it
     /// as its target; `args` never does.
     pub session: Option<Arc<str>>,
+    /// A hash of the text the item shows, stamped by [`SlotRegistry::items`]
+    /// (0 until then). It makes a relabelled item a different click region.
+    pub label: u64,
 }
 
 impl ClickTarget {
     pub fn new(action: ActionId) -> Self {
-        ClickTarget { action, args: None, plugin: None, session: None }
+        ClickTarget { action, args: None, plugin: None, session: None, label: 0 }
     }
 
     pub fn with_args(mut self, args: Value) -> Self {
@@ -139,6 +142,7 @@ impl SlotClickRegion {
             session: self.session.clone(),
             workspace: self.workspace.clone(),
             args: self.target.args.clone(),
+            label: self.target.label,
         }
     }
 }
@@ -154,6 +158,20 @@ pub struct RegionId {
     pub session: Option<String>,
     pub workspace: Option<String>,
     pub args: Option<Arc<Value>>,
+    /// Hash of the item's text: a relabelled item is a different region.
+    pub label: u64,
+}
+
+/// A stable hash of an item's text segments (content only, so a restyle or
+/// an animation frame change does not count as a relabel).
+fn text_hash(text: &[Span<'static>]) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    for span in text {
+        span.content.hash(&mut h);
+        0u8.hash(&mut h);
+    }
+    h.finish()
 }
 
 /// Where a slot's renderer puts an item.
@@ -370,6 +388,11 @@ impl SlotRegistry {
             .flat_map(|(_, provider)| provider.items(&ctx))
             .collect();
         for item in &mut items {
+            // Stamp before an animation swaps the text: the label is the
+            // item's own (frame 0) text, so a spinner stays one region.
+            if let Some(target) = item.on_click.as_mut() {
+                target.label = text_hash(&item.text);
+            }
             if let Some(anim) = &item.animated {
                 item.text = anim.frame_at(self.clock_ms.get()).to_vec();
                 let current = self.animation_ms.get();
@@ -485,6 +508,26 @@ mod tests {
             on_click: Some(on_click.into()),
             ..item(text, priority)
         }
+    }
+
+    #[test]
+    fn registry_stamps_the_shown_text_into_the_click_identity() {
+        use crate::actions::ids;
+        let region_for = |text: &'static str| {
+            let mut registry = SlotRegistry::default();
+            registry.register(SlotId::StripRight, move |_: &SlotCtx| vec![clickable(text, 1, ids::SESSION_CLOSE)]);
+            let items = registry.items(SlotId::StripRight, &SlotCtx::default());
+            SlotClickRegion {
+                rect: Rect::new(0, 0, 3, 1),
+                target: items[0].on_click.clone().unwrap(),
+                slot: SlotId::StripRight,
+                session: None,
+                workspace: None,
+            }
+            .identity()
+        };
+        assert_eq!(region_for("ok"), region_for("ok"), "the same text is the same region");
+        assert_ne!(region_for("ok"), region_for("OK"), "a relabelled item is another region");
     }
 
     #[test]

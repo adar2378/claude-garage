@@ -182,6 +182,9 @@ impl App {
             None => {}
         }
         self.layout = Some(layout);
+        // The strip (and its notice) is painted: a pending plugin arm's
+        // prompt has now been on screen.
+        self.router.mark_prompt_drawn(now_ms);
     }
 
     pub(super) fn draw_tile(
