@@ -635,6 +635,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "axum",
+ "futures-util",
  "garage-protocol",
  "gethostname",
  "getrandom 0.3.4",
