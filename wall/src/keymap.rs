@@ -212,6 +212,26 @@ mod tests {
     }
 
     #[test]
+    fn every_action_id_is_reachable_from_a_key_or_a_click() {
+        // Ids that only a click produces (see `hit_targets::action_at`).
+        let click_only = [
+            ids::SESSION_FOCUS,
+            ids::SESSION_RESTORE,
+            ids::PET_PET,
+            ids::VIEW_FOCUS,
+            ids::OVERLAY_VIEW_PICKER_PICK,
+        ];
+        let bound: Vec<ActionId> = Keymap::defaults().bound_actions().collect();
+        for id in ids::ALL {
+            assert!(
+                bound.contains(id) || click_only.contains(id),
+                "{} has neither a key nor a click",
+                id.as_str()
+            );
+        }
+    }
+
+    #[test]
     fn unbound_garage_keys_stay_unbound() {
         for key in ["0", "z", " ", "i", "k", "j", "p", "Q"] {
             assert_eq!(garage(key), None, "key {key:?}");

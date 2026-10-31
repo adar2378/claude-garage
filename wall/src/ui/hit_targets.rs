@@ -4,7 +4,15 @@
 //! terminal — the click regions in the render layer are thin adapters over
 //! these.
 
+use std::ops::Range;
+
+use ratatui::layout::Rect;
+
+use crate::actions::{ids, ActionCtx, ActionId, ActionSource};
 use crate::state::salience::WorkspaceGroup;
+use crate::state::wall_state::{KeyLayer, OverlayKind, WallState};
+use crate::ui::layout::WallLayout;
+use crate::ui::triage::triage_queue_rows;
 use crate::ui::grid_layout::grid_cell_rect;
 
 /// Tile slot index containing the grid-local point (`col`,`row`), or `None`
@@ -94,6 +102,140 @@ pub fn view_picker_row_index_at(local_row: i32, entry_count: usize) -> Option<us
         return None;
     }
     Some(i as usize)
+}
+
+/// The rects and columns the last frame painted, as the click resolver
+/// needs them (the runtime fills this from its per-frame bookkeeping).
+pub struct ClickMap<'a> {
+    pub layout: &'a WallLayout,
+    pub view_strip_targets: &'a [(Range<u16>, String)],
+    pub triage_rect: Option<Rect>,
+    pub ws_add_rect: Option<Rect>,
+    pub view_picker_rect: Option<Rect>,
+    /// Entries in the view picker (every other view plus "new group…").
+    pub view_picker_entries: usize,
+    /// The picker is in its "new group…" text-input sub-mode.
+    pub view_picker_typing: bool,
+    pub badge_cols: Option<&'a Range<u16>>,
+    pub pet_cols: Option<&'a Range<u16>>,
+}
+
+/// The session id and rect under a grid point, honoring maximize (a
+/// maximized tile covers the whole grid, so every grid point targets it).
+pub fn tile_at(layout: &WallLayout, state: &WallState, col: u16, row: u16) -> Option<(String, Rect)> {
+    if !layout.grid.contains((col, row).into()) {
+        return None;
+    }
+    let ids = &state.gridded_session_ids;
+    let index = match layout.maximized {
+        Some(i) => i,
+        None => tile_index_at(
+            i32::from(col - layout.grid.x),
+            i32::from(row - layout.grid.y),
+            ids.len(),
+            i32::from(layout.grid.width),
+            i32::from(layout.grid.height),
+        )?,
+    };
+    Some((ids.get(index)?.clone(), *layout.tiles.get(index)?))
+}
+
+/// Resolve a left click to the action it triggers, with its context — the
+/// same ids the keymap resolves keys to (a rail header is `workspace.focus`
+/// like `1`–`9`, a triage row is `jump.blocked` like Enter in the queue, the
+/// strip badge is `overlay.open.queue` like `A`). `None` for inert points:
+/// family label rows, borders, padding, an engaged tile's own area, and
+/// anything under a modal overlay. The tile-text link click is not an
+/// action and is handled by the runtime ahead of this.
+pub fn action_at(
+    map: &ClickMap,
+    state: &WallState,
+    col: u16,
+    row: u16,
+) -> Option<(ActionId, ActionCtx)> {
+    let ctx = || ActionCtx::from_focus(state, ActionSource::Mouse { col, row });
+    let point = (col, row).into();
+    let layout = map.layout;
+    // Overlay layer: the whole screen is the overlay's (a barrier — clicks
+    // never reach the wall underneath).
+    if let Some(kind) = state.overlay {
+        return match kind {
+            // Any click dismisses help.
+            OverlayKind::Help => Some((ids::OVERLAY_CLOSE, ctx())),
+            OverlayKind::TriageQueue => {
+                let rect = map.triage_rect.filter(|r| r.contains(point));
+                let Some(rect) = rect else {
+                    return Some((ids::OVERLAY_CLOSE, ctx())); // outside-modal click = Esc
+                };
+                let rows = triage_queue_rows(&state.sessions);
+                let i = triage_row_index_at(i32::from(row - rect.y), rows.len())?;
+                // A queue row click selects and jump-engages (Enter's landing).
+                Some((
+                    ids::JUMP_BLOCKED,
+                    ctx().with_session(rows[i].id.clone()).with_selection(i),
+                ))
+            }
+            OverlayKind::WorkspaceAdd => {
+                let inside = map.ws_add_rect.is_some_and(|r| r.contains(point));
+                (!inside).then(|| (ids::OVERLAY_CLOSE, ctx()))
+            }
+            OverlayKind::ViewPicker => {
+                let rect = map.view_picker_rect?;
+                if !rect.contains(point) {
+                    return Some((ids::OVERLAY_CLOSE, ctx()));
+                }
+                if map.view_picker_typing {
+                    return None;
+                }
+                let i = view_picker_row_index_at(i32::from(row - rect.y), map.view_picker_entries)?;
+                Some((ids::OVERLAY_VIEW_PICKER_PICK, ctx().with_selection(i)))
+            }
+            // Modal: clicks anywhere are swallowed — an outside click must
+            // not quietly "keep" a worktree the user never saw.
+            OverlayKind::WorktreeFinish => None,
+        };
+    }
+    // View-strip click: focus that view.
+    if layout.view_strip.height > 0 && row == layout.view_strip.y {
+        let name = map
+            .view_strip_targets
+            .iter()
+            .find(|(r, _)| r.contains(&col))
+            .map(|(_, name)| name.clone())?;
+        return Some((ids::VIEW_FOCUS, ctx().with_view(name)));
+    }
+    // Grid click: focus AND engage (same landing as focus+Enter); a click on
+    // a restorable placeholder restores it; clicking the engaged tile itself
+    // does nothing extra.
+    if let Some((id, _)) = tile_at(layout, state, col, row) {
+        let live = state.session_by_id(Some(&id)).is_some_and(|s| s.live());
+        if !live {
+            return Some((ids::SESSION_RESTORE, ctx().with_session(id)));
+        }
+        if state.layer == KeyLayer::Engaged && state.focused_session_id.as_deref() == Some(id.as_str()) {
+            return None;
+        }
+        return Some((ids::SESSION_ENGAGE, ctx().with_session(id)));
+    }
+    // Rail click: header focuses the workspace, session row focuses the
+    // session — never engages.
+    if layout.rail.contains(point) {
+        return match rail_target_at(&state.groups, i32::from(row - layout.rail.y))? {
+            RailTarget::Workspace(index) => {
+                Some((ids::WORKSPACE_FOCUS, ctx().with_index(Some(index))))
+            }
+            RailTarget::Session(id) => Some((ids::SESSION_FOCUS, ctx().with_session(id))),
+        };
+    }
+    // Pet click first, so an alert pet sitting near the badge never gets
+    // swallowed by it; then the strip badge (the `A` binding).
+    if row >= layout.strip.y && map.pet_cols.is_some_and(|r| r.contains(&col)) {
+        return Some((ids::PET_PET, ctx()));
+    }
+    if row >= layout.strip.y && map.badge_cols.is_some_and(|r| r.contains(&col)) {
+        return Some((ids::OVERLAY_OPEN_QUEUE, ctx()));
+    }
+    None
 }
 
 #[cfg(test)]
@@ -298,5 +440,181 @@ mod tests {
         assert_eq!(view_picker_row_index_at(1, 3), None);
         assert_eq!(view_picker_row_index_at(5, 3), None);
         assert_eq!(view_picker_row_index_at(-1, 3), None);
+    }
+
+    // ── action_at: clicks resolve to the same ids as keys ───────────────
+
+    mod actions {
+        use super::super::*;
+        use crate::api::models::{SessionInfo, WorkspaceInfo};
+        use crate::keymap::{Keymap, Layer};
+        use crate::state::store::WallStore;
+        use crate::ui::layout::wall_layout;
+
+        fn ws(name: &str, dir: &str) -> WorkspaceInfo {
+            WorkspaceInfo { name: name.to_owned(), dir: Some(dir.to_owned()), branch: None }
+        }
+        fn si(workspace: &str, label: &str, status: &str) -> SessionInfo {
+            SessionInfo {
+                id: format!("garage/{workspace}/{label}"),
+                workspace: workspace.to_owned(),
+                label: label.to_owned(),
+                dir: None,
+                attached: false,
+                status: status.to_owned(),
+                since: Some(0),
+                message: None,
+                branch: None,
+                restorable: status == "restorable",
+                title: None,
+                context: None,
+            }
+        }
+
+        fn store() -> WallStore {
+            let mut store = WallStore::new();
+            store.workspaces_fetched(vec![
+                ws("et-a", "/w/fam/et-a"),
+                ws("et-b", "/w/fam/et-b"),
+            ]);
+            store.sessions_fetched(vec![
+                si("et-a", "one", "working"),
+                si("et-a", "gone", "restorable"),
+                si("et-b", "stuck", "needs-input"),
+                si("et-a", "calm", "idle"),
+            ]);
+            store
+        }
+
+        struct Fixture {
+            layout: WallLayout,
+            targets: Vec<(Range<u16>, String)>,
+            badge: Range<u16>,
+            pet: Range<u16>,
+        }
+
+        fn fixture(store: &WallStore) -> Fixture {
+            let n = store.state().gridded_session_ids.len();
+            Fixture {
+                layout: wall_layout(Rect::new(0, 0, 120, 40), n, None, false, false),
+                targets: Vec::new(),
+                badge: 80..95,
+                pet: 50..60,
+            }
+        }
+
+        fn click(store: &WallStore, f: &Fixture, col: u16, row: u16) -> Option<(&'static str, ActionCtx)> {
+            let map = ClickMap {
+                layout: &f.layout,
+                view_strip_targets: &f.targets,
+                triage_rect: Some(Rect::new(20, 5, 60, 12)),
+                ws_add_rect: Some(Rect::new(20, 5, 60, 12)),
+                view_picker_rect: Some(Rect::new(20, 5, 60, 12)),
+                view_picker_entries: 3,
+                view_picker_typing: false,
+                badge_cols: Some(&f.badge),
+                pet_cols: Some(&f.pet),
+            };
+            action_at(&map, store.state(), col, row).map(|(id, ctx)| (id.as_str(), ctx))
+        }
+
+        fn key_id(layer: Layer, key: &str) -> &'static str {
+            Keymap::defaults().resolve(layer, key).unwrap().action.as_str()
+        }
+
+        #[test]
+        fn rail_header_is_workspace_focus_like_the_number_keys() {
+            let store = store();
+            let f = fixture(&store);
+            // Row 0 is the family label (inert); row 1 the first header.
+            assert!(click(&store, &f, 2, f.layout.rail.y).is_none(), "label row is inert");
+            let (id, ctx) = click(&store, &f, 2, f.layout.rail.y + 1).unwrap();
+            assert_eq!(id, key_id(Layer::Garage, "1"));
+            assert_eq!(ctx.index, Some(0));
+            assert!(matches!(ctx.source, ActionSource::Mouse { .. }));
+        }
+
+        #[test]
+        fn rail_session_row_is_session_focus_with_the_session() {
+            let store = store();
+            let f = fixture(&store);
+            let (id, ctx) = click(&store, &f, 2, f.layout.rail.y + 2).unwrap();
+            assert_eq!(id, "session.focus");
+            assert!(ctx.session.is_some());
+            assert!(click(&store, &f, 2, f.layout.rail.y + 30).is_none(), "past the last row");
+        }
+
+        #[test]
+        fn live_tile_engages_dead_tile_restores() {
+            let store = store();
+            let f = fixture(&store);
+            for (i, rect) in f.layout.tiles.iter().enumerate() {
+                let id = &store.state().gridded_session_ids[i];
+                let dead = store.state().session_by_id(Some(id)).is_some_and(|s| !s.live());
+                let (action, ctx) = click(&store, &f, rect.x + 2, rect.y + 2).unwrap();
+                assert_eq!(ctx.session.as_deref(), Some(id.as_str()));
+                assert_eq!(action, if dead { "session.restore" } else { key_id(Layer::Garage, "\n") });
+            }
+        }
+
+        #[test]
+        fn engaged_tile_click_is_inert_but_another_tile_migrates() {
+            let mut store = store();
+            store.engage();
+            let f = fixture(&store);
+            let focused = store.state().focused_session_id.clone().unwrap();
+            let own = store.state().gridded_session_ids.iter().position(|i| *i == focused).unwrap();
+            let r = f.layout.tiles[own];
+            assert!(click(&store, &f, r.x + 2, r.y + 2).is_none());
+            let other = (0..f.layout.tiles.len())
+                .find(|i| {
+                    let id = &store.state().gridded_session_ids[*i];
+                    *i != own && store.state().session_by_id(Some(id)).is_some_and(|s| s.live())
+                })
+                .unwrap();
+            let r = f.layout.tiles[other];
+            assert_eq!(click(&store, &f, r.x + 2, r.y + 2).unwrap().0, "session.engage");
+        }
+
+        #[test]
+        fn strip_badge_is_the_a_key_queue_and_pet_wins_overlap() {
+            let store = store();
+            let f = fixture(&store);
+            let row = f.layout.strip.y;
+            assert_eq!(click(&store, &f, 85, row).unwrap().0, key_id(Layer::Garage, "A"));
+            assert_eq!(click(&store, &f, 55, row).unwrap().0, "pet.pet");
+            assert!(click(&store, &f, 70, row).is_none());
+        }
+
+        #[test]
+        fn triage_row_click_is_the_queue_enter_action_with_the_session() {
+            let mut store = store();
+            store.open_overlay(OverlayKind::TriageQueue);
+            let f = fixture(&store);
+            let (id, ctx) = click(&store, &f, 30, 5 + 2).unwrap();
+            assert_eq!(id, key_id(Layer::Overlay(OverlayKind::TriageQueue), "enter"));
+            assert_eq!(ctx.session.as_deref(), Some("garage/et-b/stuck"));
+            assert_eq!(ctx.selection, Some(0));
+            assert!(click(&store, &f, 30, 5).is_none(), "border is inert");
+            assert_eq!(click(&store, &f, 1, 1).unwrap().0, "overlay.close", "outside = Esc");
+        }
+
+        #[test]
+        fn modal_overlays_swallow_or_close() {
+            let mut store = store();
+            store.open_overlay(OverlayKind::Help);
+            let f = fixture(&store);
+            assert_eq!(click(&store, &f, 60, 20).unwrap().0, "overlay.close");
+
+            let mut store = self::store();
+            store.open_overlay(OverlayKind::WorkspaceAdd);
+            assert!(click(&store, &f, 30, 8).is_none(), "inside the form");
+            assert_eq!(click(&store, &f, 1, 1).unwrap().0, "overlay.close");
+
+            let mut store = self::store();
+            store.open_overlay(OverlayKind::ViewPicker);
+            let (id, ctx) = click(&store, &f, 30, 5 + 3).unwrap();
+            assert_eq!((id, ctx.selection), ("overlay.view_picker.pick", Some(1)));
+        }
     }
 }

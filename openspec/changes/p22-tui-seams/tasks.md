@@ -19,17 +19,17 @@
 
 ## 2. Actions and keymap
 
-- [ ] 2.1 `actions/` module: `ActionId`, `ActionCtx`, the id list from design.md decision 1, `GarageCommand` mapped onto ids
-- [ ] 2.2 `keymap.rs`: `Keymap::defaults()` reproducing `garage_command_for`, `restart_command_for` and the overlay key arms exactly
-- [ ] 2.3 `GarageRouter::on_garage_key` resolves through the keymap; arming, disarm and prefix logic unchanged
-- [ ] 2.4 Overlay key handlers resolve through the keymap
-- [ ] 2.5 Unit tests: every default binding resolves to its id; every id in the spec list is reachable from a key or a click; chord prefixes still one-shot
+- [x] 2.1 `actions/` module: `ActionId`, `ActionCtx`, the id list from design.md decision 1, `GarageCommand` mapped onto ids
+- [x] 2.2 `keymap.rs`: `Keymap::defaults()` reproducing `garage_command_for`, `restart_command_for` and the overlay key arms exactly
+- [x] 2.3 `GarageRouter::on_garage_key` resolves through the keymap; arming, disarm and prefix logic unchanged
+- [x] 2.4 Help and triage-queue key handlers resolve through the keymap (text-input overlays keep typing; view picker keys stay as is)
+- [x] 2.5 Unit tests: every default binding resolves to its id; every id in the spec list is reachable from a key or a click; chord prefixes still one-shot
 
 ## 3. Mouse through actions
 
-- [ ] 3.1 `hit_targets::action_at` wrapping the existing hit-target functions
-- [ ] 3.2 `handle_click` dispatches resolved actions; family label rows still inert
-- [ ] 3.3 Tests: each clickable target resolves to the same id as its key
+- [x] 3.1 `hit_targets::action_at` wrapping the existing hit-target functions
+- [x] 3.2 `handle_click` dispatches resolved actions; family label rows still inert
+- [x] 3.3 Tests: each clickable target resolves to the same id as its key
 
 ## 4. Slot registry
 

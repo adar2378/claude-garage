@@ -62,9 +62,7 @@ use crate::state::wall_state::{KeyLayer, OverlayKind, WallSession, WallState};
 use crate::state::workspace_remove::{confirm_kill_target, kill_remove_notice, remove_arm_notice};
 use crate::ui::escalation::{EscalationPolicy, HEARTBEAT_INTERVAL_MS};
 use crate::ui::help::render_help;
-use crate::ui::hit_targets::{
-    rail_target_at, tile_index_at, triage_row_index_at, view_picker_row_index_at, RailTarget,
-};
+use crate::ui::hit_targets::{self, action_at, ClickMap};
 use crate::ui::layout::{tile_inner, wall_layout, WallLayout};
 use crate::ui::pet;
 use crate::ui::rail::render_rail;
@@ -2167,170 +2165,138 @@ impl App {
     /// The session id under a grid point, honoring maximize (a maximized
     /// tile covers the whole grid, so every grid click/wheel targets it).
     fn tile_at(&self, col: u16, row: u16) -> Option<(String, Rect)> {
-        let layout = self.layout.as_ref()?;
-        if !layout.grid.contains((col, row).into()) {
-            return None;
-        }
-        let ids = &self.store.state().gridded_session_ids;
-        let index = match layout.maximized {
-            Some(i) => i,
-            None => tile_index_at(
-                i32::from(col - layout.grid.x),
-                i32::from(row - layout.grid.y),
-                ids.len(),
-                i32::from(layout.grid.width),
-                i32::from(layout.grid.height),
-            )?,
-        };
-        Some((ids.get(index)?.clone(), *layout.tiles.get(index)?))
+        hit_targets::tile_at(self.layout.as_ref()?, self.store.state(), col, row)
     }
 
     fn handle_click(&mut self, col: u16, row: u16) {
         let Some(layout) = self.layout.clone() else {
             return;
         };
-        // Overlay layer: the whole screen is the overlay's (a barrier —
-        // clicks never reach the wall underneath).
-        if let Some(kind) = self.store.state().overlay {
-            match kind {
-                OverlayKind::Help => self.store.close_overlay(), // any click dismisses
-                OverlayKind::TriageQueue => {
-                    let inside = self
-                        .triage_rect
-                        .is_some_and(|r| r.contains((col, row).into()));
-                    if !inside {
-                        self.store.close_overlay(); // outside-modal click = Esc
-                        return;
-                    }
-                    let local = i32::from(row - self.triage_rect.unwrap().y);
-                    let ids: Vec<String> = triage_queue_rows(&self.store.state().sessions)
-                        .iter()
-                        .map(|s| s.id.clone())
-                        .collect();
-                    // A queue row click selects and jump-engages (Enter's
-                    // landing); border/padding/footer clicks do nothing.
-                    if let Some(i) = triage_row_index_at(local, ids.len()) {
-                        self.queue_selection = i;
-                        self.store.close_overlay();
-                        self.store.jump_to_session(&ids[i]);
-                    }
-                }
-                OverlayKind::WorkspaceAdd => {
-                    let inside = self
-                        .ws_add_rect
-                        .is_some_and(|r| r.contains((col, row).into()));
-                    if !inside {
-                        self.ws_form.reset();
-                        self.store.close_overlay();
-                    }
-                }
-                OverlayKind::ViewPicker => self.handle_view_picker_click(col, row),
-                // Modal: clicks anywhere are swallowed — an outside click
-                // must not quietly "keep" a worktree the user never saw.
-                OverlayKind::WorktreeFinish => {}
-            }
-            return;
-        }
-        // View-strip click: focus that view (spec tui-views "View strip and
-        // group frame" — task 3.3 "view-strip click focuses that view").
-        if layout.view_strip.height > 0 && row == layout.view_strip.y {
-            let target = self
-                .view_strip_targets
-                .iter()
-                .find(|(r, _)| r.contains(&col))
-                .map(|(_, name)| name.clone());
-            if let Some(name) = target {
-                if self.store.state().layer == KeyLayer::Engaged {
-                    self.store.disengage();
-                }
-                self.store.focus_view(&name);
-            }
-            return;
-        }
         // Click on a URL in a tile's grid text opens it (spec
         // tui-key-routing "Click opens links") — our mouse capture starves
         // the outer terminal of clicks, so the wall must be the linkifier.
         // Checked before focus/engage: a click ON a link means "open this",
-        // not "type here". Everything else falls through unchanged.
-        if let Some((id, rect)) = self.tile_at(col, row) {
-            let inner = Rect {
-                x: rect.x + 1,
-                y: rect.y + 1,
-                width: rect.width.saturating_sub(2),
-                height: rect.height.saturating_sub(2),
-            };
-            if inner.contains((col, row).into()) {
-                if let Some(line) = self.registry.row_text(&id, row - inner.y) {
-                    if let Some(url) = url_at(&line, usize::from(col - inner.x)) {
-                        let _ = std::process::Command::new("open").arg(&url).spawn();
-                        self.router.notices.show(format!("opened {url}"), 2000, now_ms());
-                        return;
+        // not "type here". Not an action; everything else resolves below.
+        if self.store.state().overlay.is_none()
+            && !(layout.view_strip.height > 0 && row == layout.view_strip.y)
+        {
+            if let Some((id, rect)) = self.tile_at(col, row) {
+                let inner = Rect {
+                    x: rect.x + 1,
+                    y: rect.y + 1,
+                    width: rect.width.saturating_sub(2),
+                    height: rect.height.saturating_sub(2),
+                };
+                if inner.contains((col, row).into()) {
+                    if let Some(line) = self.registry.row_text(&id, row - inner.y) {
+                        if let Some(url) = url_at(&line, usize::from(col - inner.x)) {
+                            let _ = std::process::Command::new("open").arg(&url).spawn();
+                            self.router.notices.show(format!("opened {url}"), 2000, now_ms());
+                            return;
+                        }
                     }
                 }
             }
         }
-        // Grid click: focus AND engage (same landing as focus+Enter); a
-        // click on a restorable placeholder restores it; while engaged a
-        // click on a different tile migrates via explicit disengage → focus
-        // → engage (engagement never transfers silently).
-        if let Some((id, _)) = self.tile_at(col, row) {
-            let live = self
-                .store
-                .state()
-                .session_by_id(Some(&id))
-                .is_some_and(WallSession::live);
-            let engaged = self.store.state().layer == KeyLayer::Engaged;
-            if !live {
-                if engaged {
-                    self.store.disengage();
+        let picker_entries = if self.store.state().overlay == Some(OverlayKind::ViewPicker) {
+            view_picker_entries(&self.store).len()
+        } else {
+            0
+        };
+        let map = ClickMap {
+            layout: &layout,
+            view_strip_targets: &self.view_strip_targets,
+            triage_rect: self.triage_rect,
+            ws_add_rect: self.ws_add_rect,
+            view_picker_rect: self.view_picker_rect,
+            view_picker_entries: picker_entries,
+            view_picker_typing: self.view_picker.new_group_input.is_some(),
+            badge_cols: self.badge_cols.as_ref(),
+            pet_cols: self.pet_cols.as_ref(),
+        };
+        if let Some((id, ctx)) = action_at(&map, self.store.state(), col, row) {
+            self.run_click_action(id, &ctx);
+        }
+    }
+
+    /// Disengage first when a tile is engaged: clicks outside an engaged
+    /// tile drop back to the garage layer before they act.
+    fn disengage_for_click(&mut self) {
+        if self.store.state().layer == KeyLayer::Engaged {
+            self.store.disengage();
+        }
+    }
+
+    /// Run the action a click resolved to (`hit_targets::action_at`).
+    fn run_click_action(&mut self, id: ActionId, ctx: &ActionCtx) {
+        match id {
+            ids::OVERLAY_CLOSE => {
+                match self.store.state().overlay {
+                    Some(OverlayKind::WorkspaceAdd) => self.ws_form.reset(),
+                    Some(OverlayKind::ViewPicker) => self.view_picker.reset(),
+                    _ => {}
                 }
-                self.store.focus_session(&id);
-                let effects = self.router.restore_clicked(id);
+                self.store.close_overlay();
+            }
+            ids::JUMP_BLOCKED => {
+                // A queue row click selects and jump-engages (Enter's landing).
+                if let Some(i) = ctx.selection {
+                    self.queue_selection = i;
+                }
+                self.store.close_overlay();
+                if let Some(session) = &ctx.session {
+                    self.store.jump_to_session(session);
+                }
+            }
+            ids::OVERLAY_VIEW_PICKER_PICK => {
+                if let Some(i) = ctx.selection {
+                    self.pick_view_entry(i);
+                }
+            }
+            ids::VIEW_FOCUS => {
+                self.disengage_for_click();
+                if let Some(view) = &ctx.view {
+                    self.store.focus_view(view);
+                }
+            }
+            ids::SESSION_RESTORE => {
+                // Focus, then restore (Enter's landing on a placeholder).
+                let Some(session) = ctx.session.clone() else { return };
+                self.disengage_for_click();
+                self.store.focus_session(&session);
+                let mut effects = Vec::new();
+                self.router
+                    .run_action(&mut self.store, id, ctx, now_ms(), &mut effects);
                 self.run_effects(effects);
-                return;
             }
-            if engaged {
-                if self.store.state().focused_session_id.as_deref() == Some(id.as_str()) {
-                    return; // click on the engaged tile itself: nothing extra
-                }
-                self.store.disengage();
+            ids::SESSION_ENGAGE => {
+                // While engaged a click on a different tile migrates via
+                // explicit disengage → focus → engage (engagement never
+                // transfers silently).
+                let Some(session) = ctx.session.clone() else { return };
+                self.disengage_for_click();
+                self.store.focus_session(&session);
+                self.store.engage();
             }
-            self.store.focus_session(&id);
-            self.store.engage();
-            return;
-        }
-        // Rail click: header focuses the workspace, session row focuses the
-        // session — never engages; engagement drops back to garage first.
-        if layout.rail.contains((col, row).into()) {
-            let target = rail_target_at(
-                &self.store.state().groups,
-                i32::from(row - layout.rail.y),
-            );
-            if let Some(target) = target {
-                if self.store.state().layer == KeyLayer::Engaged {
-                    self.store.disengage();
-                }
-                match target {
-                    RailTarget::Workspace(index) => self.store.focus_workspace(index),
-                    RailTarget::Session(id) => self.store.focus_session(&id),
+            ids::WORKSPACE_FOCUS => {
+                self.disengage_for_click();
+                if let Some(index) = ctx.index {
+                    self.store.focus_workspace(index);
                 }
             }
-            return;
-        }
-        // Pet click (spec tui-pit-pet "Click routing"): checked BEFORE the
-        // badge so an alert pet sitting near the badge never gets swallowed
-        // by it.
-        if row >= layout.strip.y && self.pet_cols.as_ref().is_some_and(|r| r.contains(&col)) {
-            self.handle_pet_click(now_ms());
-            return;
-        }
-        // Strip badge click: open the triage queue (the `A` binding).
-        if row >= layout.strip.y && self.badge_cols.as_ref().is_some_and(|r| r.contains(&col)) {
-            if self.store.state().layer == KeyLayer::Engaged {
-                self.store.disengage();
+            ids::SESSION_FOCUS => {
+                self.disengage_for_click();
+                if let Some(session) = &ctx.session {
+                    self.store.focus_session(session);
+                }
             }
-            self.queue_selection = 0;
-            self.store.open_overlay(OverlayKind::TriageQueue);
+            ids::PET_PET => self.handle_pet_click(now_ms()),
+            ids::OVERLAY_OPEN_QUEUE => {
+                self.disengage_for_click();
+                self.queue_selection = 0;
+                self.store.open_overlay(OverlayKind::TriageQueue);
+            }
+            _ => {}
         }
     }
 
@@ -2507,22 +2473,9 @@ impl App {
     /// `workspace_add`'s field); otherwise a row click selects — the
     /// trailing "new group…" row switches to that sub-mode, any other row
     /// moves the focused session there and shows the "moved" notice.
-    fn handle_view_picker_click(&mut self, col: u16, row: u16) {
-        let Some(rect) = self.view_picker_rect else { return };
-        if !rect.contains((col, row).into()) {
-            self.view_picker.reset();
-            self.store.close_overlay();
-            return;
-        }
-        if self.view_picker.new_group_input.is_some() {
-            return;
-        }
+    fn pick_view_entry(&mut self, i: usize) {
         let entries = view_picker_entries(&self.store);
         let entries_len = entries.len();
-        let local = i32::from(row - rect.y);
-        let Some(i) = view_picker_row_index_at(local, entries_len) else {
-            return;
-        };
         if i == entries_len - 1 {
             self.view_picker.selected = i;
             self.view_picker.new_group_input = Some(String::new());
