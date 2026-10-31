@@ -69,7 +69,8 @@ fn valid_cli_name(n: &str) -> bool {
 /// found is returned (syntax and type errors are a single problem, since the
 /// parser stops at the first).
 pub fn parse(src: &str) -> Result<Manifest, Vec<Problem>> {
-    let de = toml::Deserializer::new(src);
+    let de = toml::Deserializer::parse(src)
+        .map_err(|e| vec![toml_problem(src, "manifest".into(), e.message().to_owned(), &e)])?;
     let manifest: Manifest = match serde_path_to_error::deserialize(de) {
         Ok(m) => m,
         Err(e) => return Err(vec![deserialize_problem(src, &e)]),
@@ -94,7 +95,12 @@ fn deserialize_problem(src: &str, e: &serde_path_to_error::Error<toml::de::Error
     if path == "." {
         path = "manifest".into();
     }
-    if let Some(span) = inner.span() {
+    toml_problem(src, path, message, inner)
+}
+
+/// A TOML error as a problem: the message plus the line it points at.
+fn toml_problem(src: &str, path: String, mut message: String, e: &toml::de::Error) -> Problem {
+    if let Some(span) = e.span() {
         let line = src[..span.start.min(src.len())].bytes().filter(|b| *b == b'\n').count() + 1;
         message = format!("{message} (line {line})");
     }

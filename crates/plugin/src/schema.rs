@@ -3,7 +3,11 @@
 
 /// Pretty JSON with a trailing newline, exactly what is committed.
 pub fn schema_json() -> String {
-    let schema = schemars::schema_for!(crate::Manifest);
+    // draft-07 keeps the published file in the dialect (and `definitions`
+    // layout) editors' TOML language servers already read.
+    let schema = schemars::generate::SchemaSettings::draft07()
+        .into_generator()
+        .into_root_schema_for::<crate::Manifest>();
     let mut out = serde_json::to_string_pretty(&schema).expect("schema serialises");
     out.push('\n');
     out

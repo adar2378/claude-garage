@@ -20,7 +20,7 @@ futures-util = { version = "0.3", default-features = false, features = ["std", "
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "sync", "signal", "process", "time", "fs", "io-util"] }
 
 [build-dependencies]
-sha2 = "0.10"
+sha2 = "0.11"
 
 [features]
 # Exposes `test_support` (TestTmux) to other crates' tests.
