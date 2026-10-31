@@ -9,6 +9,7 @@
 
 use std::path::{Path, PathBuf};
 
+/// Why a typed word is not a usable folder.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FolderError {
     /// Not an existing directory (a typo, a file, a dangling link).

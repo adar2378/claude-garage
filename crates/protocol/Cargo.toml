@@ -3,7 +3,12 @@ name = "garage-protocol"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
-description = "Wire types for the claude-garage daemon HTTP API"
+description = "Wire types and JSON schema for the claude-garage daemon and plugin HTTP API"
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords = ["claude", "claude-code", "protocol", "schema"]
+categories = ["development-tools", "api-bindings"]
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }

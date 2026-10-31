@@ -1,11 +1,6 @@
-//! Tiny helper for plugin binaries (p24 group 4; p27 grows it into the public
-//! SDK). It does three things: read the run context, call the daemon with the
-//! plugin's token, and push widgets. Everything else a plugin needs is a
-//! plain HTTP call through [`Api::request`].
-//!
-//! The daemon passes the environment described in the plugin API docs:
-//! `GARAGE_API`, `GARAGE_PLUGIN_ID`, `GARAGE_PLUGIN_TOKEN`, and the context as
-//! `GARAGE_CONTEXT` (or `GARAGE_CONTEXT_FILE` when it is large) and on stdin.
+#![doc = include_str!("../README.md")]
+#![forbid(unsafe_code)]
+#![warn(missing_docs)]
 
 pub mod folder;
 pub mod fuzzy;
@@ -21,11 +16,14 @@ use std::path::{Path, PathBuf};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
+pub use garage_protocol::api::{ClosePaneResponse, OpenPaneResponse};
+pub use garage_protocol::plugins::{PanesResponse, PluginList, WidgetsSnapshot};
 pub use garage_protocol::widgets::{
     Click, Placement, Segment, Style, WidgetItem, WidgetPut, WidgetSlot, validate_put,
 };
 pub use serde_json::{Value, json};
 
+/// Everything that can go wrong in a plugin run.
 #[derive(Debug)]
 pub enum Error {
     /// A needed environment variable is missing: not started by the daemon.
@@ -33,7 +31,12 @@ pub enum Error {
     /// The context could not be read or parsed.
     Context(String),
     /// The daemon answered with a non-2xx status; `body` is its text.
-    Http { status: u16, body: String },
+    Http {
+        /// The HTTP status.
+        status: u16,
+        /// The reply text.
+        body: String,
+    },
     /// The daemon could not be reached.
     Transport(String),
     /// A [`StateLock`] stayed held by another run past the wait. Not a
@@ -75,7 +78,9 @@ pub fn read_context() -> Result<Value, Error> {
 /// What a `ui/action` applies to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Target<'a> {
+    /// A session id, `garage/<workspace>/<label>`.
     Session(&'a str),
+    /// A workspace name.
     Workspace(&'a str),
 }
 
@@ -85,6 +90,7 @@ pub enum Target<'a> {
 pub struct Context(pub Value);
 
 impl Context {
+    /// Read the context of this run ([`read_context`]).
     pub fn read() -> Result<Self, Error> {
         read_context().map(Self)
     }
@@ -104,6 +110,33 @@ impl Context {
     /// The focused session id (`garage/<workspace>/<label>`).
     pub fn session(&self) -> Option<&str> {
         self.text("/focus/session/id")
+    }
+
+    /// Why this run started: `key`, `button`, `widget`, `palette`, `event`,
+    /// `timer`, `pane` or `cli`.
+    pub fn trigger_kind(&self) -> Option<&str> {
+        self.text("/trigger/kind")
+    }
+
+    /// The `args` of the button or widget click that started the run (`{}`
+    /// when there were none).
+    pub fn trigger_args(&self) -> &Value {
+        self.0.pointer("/trigger/args").unwrap_or(&Value::Null)
+    }
+
+    /// The status of the focused session (`idle`, `working`, `needs-input`...).
+    pub fn session_status(&self) -> Option<&str> {
+        self.text("/focus/session/status")
+    }
+
+    /// The git branch of the focused session.
+    pub fn session_branch(&self) -> Option<&str> {
+        self.text("/focus/session/branch")
+    }
+
+    /// The directory of the focused session.
+    pub fn session_dir(&self) -> Option<&str> {
+        self.text("/focus/session/dir")
     }
 
     /// The event name of an event hook run.
@@ -197,10 +230,12 @@ pub fn write_state<T: Serialize>(file: &str, value: &T) -> Result<(), Error> {
     write_state_in(&state_dir()?, file, value)
 }
 
+/// [`read_state`] in a given directory.
 pub fn read_state_in<T: DeserializeOwned>(dir: &std::path::Path, file: &str) -> Option<T> {
     serde_json::from_slice(&std::fs::read(dir.join(file)).ok()?).ok()
 }
 
+/// [`write_state`] in a given directory.
 pub fn write_state_in<T: Serialize>(
     dir: &std::path::Path,
     file: &str,
@@ -223,6 +258,9 @@ pub struct StateLock {
 }
 
 impl StateLock {
+    /// Take the lock `name`, waiting up to `wait`. A hold older than `stale`
+    /// is taken over. [`Error::LockHeld`] when the wait ends first. Dropping
+    /// the returned value releases it.
     pub fn acquire(
         dir: &std::path::Path,
         name: &str,
@@ -275,6 +313,8 @@ pub struct Api {
 }
 
 impl Api {
+    /// A client from the environment garage gives every run:
+    /// `GARAGE_API`, `GARAGE_PLUGIN_ID` and `GARAGE_PLUGIN_TOKEN`.
     pub fn from_env() -> Result<Self, Error> {
         let get = |k: &'static str| std::env::var(k).map_err(|_| Error::Env(k));
         Ok(Self::new(
@@ -284,6 +324,8 @@ impl Api {
         ))
     }
 
+    /// A client for the daemon at `base` (for example
+    /// `http://127.0.0.1:4747`), acting as plugin `plugin` with `token`.
     pub fn new(base: &str, plugin: &str, token: &str) -> Self {
         let agent: ureq::Agent = ureq::Agent::config_builder()
             .timeout_global(Some(std::time::Duration::from_secs(10)))
@@ -349,6 +391,85 @@ impl Api {
         self.request("DELETE", path, None)
     }
 
+    /// `GET /api/plugin/features`: the API versions and optional capabilities
+    /// this garage has. The body is returned as JSON so that features added
+    /// later never break an older plugin.
+    pub fn features(&self) -> Result<Value, Error> {
+        self.get("/api/plugin/features")
+    }
+
+    /// `GET /api/health`.
+    pub fn health(&self) -> Result<Value, Error> {
+        self.get("/api/health")
+    }
+
+    /// `GET /api/sessions`: live sessions, and restorable ones.
+    pub fn sessions(&self) -> Result<Value, Error> {
+        self.get("/api/sessions")
+    }
+
+    /// `GET /api/workspaces`.
+    pub fn workspaces(&self) -> Result<Value, Error> {
+        self.get("/api/workspaces")
+    }
+
+    /// `GET /api/usage`: the 5 hour and weekly rate-limit windows.
+    pub fn usage(&self) -> Result<Value, Error> {
+        self.get("/api/usage")
+    }
+
+    /// `GET /api/workspaces/{name}/closed`: the closed chats kept for a
+    /// workspace. Needs `sessions.read`.
+    pub fn closed_chats(&self, workspace: &str) -> Result<Value, Error> {
+        self.get(&format!("/api/workspaces/{}/closed", encode(workspace)))
+    }
+
+    /// `GET /api/plugins`: the installed plugins with their actions, buttons,
+    /// widgets and panes.
+    pub fn plugins(&self) -> Result<PluginList, Error> {
+        self.get_as("/api/plugins")
+    }
+
+    /// `GET /api/plugins/widgets`: what every plugin currently shows.
+    pub fn widgets(&self) -> Result<WidgetsSnapshot, Error> {
+        self.get_as("/api/plugins/widgets")
+    }
+
+    /// `GET /api/plugins/panes`: the open plugin panes.
+    pub fn panes(&self) -> Result<PanesResponse, Error> {
+        self.get_as("/api/plugins/panes")
+    }
+
+    /// `POST /api/plugins/{me}/panes/{pane}/open`. Needs `ui.panes`. `args`
+    /// is passed to the pane's run context as `trigger.args`.
+    pub fn open_pane(&self, pane: &str, args: Option<&Value>) -> Result<OpenPaneResponse, Error> {
+        let empty = json!({});
+        let res = self.post(
+            &format!(
+                "/api/plugins/{}/panes/{}/open",
+                encode(&self.plugin),
+                encode(pane)
+            ),
+            args.unwrap_or(&empty),
+        )?;
+        serde_json::from_value(res).map_err(|e| Error::Context(e.to_string()))
+    }
+
+    /// `DELETE /api/plugins/{me}/panes/{pane}`. Needs `ui.panes`. `true` when
+    /// a pane was open and is now closed.
+    pub fn close_pane(&self, pane: &str) -> Result<bool, Error> {
+        let res = self.delete(&format!(
+            "/api/plugins/{}/panes/{}",
+            encode(&self.plugin),
+            encode(pane)
+        ))?;
+        Ok(res.get("closed").and_then(Value::as_bool).unwrap_or(false))
+    }
+
+    fn get_as<T: DeserializeOwned>(&self, path: &str) -> Result<T, Error> {
+        serde_json::from_value(self.get(path)?).map_err(|e| Error::Context(format!("{path}: {e}")))
+    }
+
     /// `POST /api/plugins/ui/action`: ask the wall to run `action` (a core id
     /// or one of this plugin's actions) on `target`. Needs `ui.invoke`, and
     /// `core.actions` for a core id.
@@ -387,7 +508,11 @@ impl Api {
         let body = serde_json::to_value(put).map_err(|e| Error::Context(e.to_string()))?;
         let res = self.request(
             "PUT",
-            &format!("/api/plugins/{}/widgets/{widget}", self.plugin),
+            &format!(
+                "/api/plugins/{}/widgets/{}",
+                encode(&self.plugin),
+                encode(widget)
+            ),
             Some(&body),
         )?;
         Ok(res.get("rev").and_then(Value::as_u64).unwrap_or(0))
@@ -402,7 +527,7 @@ impl Api {
         }
         self.request(
             "POST",
-            &format!("/api/plugins/{}/notice", self.plugin),
+            &format!("/api/plugins/{}/notice", encode(&self.plugin)),
             Some(&body),
         )
         .map(|_| ())
@@ -412,11 +537,28 @@ impl Api {
     pub fn clear_widget(&self, widget: &str) -> Result<(), Error> {
         self.request(
             "DELETE",
-            &format!("/api/plugins/{}/widgets/{widget}", self.plugin),
+            &format!(
+                "/api/plugins/{}/widgets/{}",
+                encode(&self.plugin),
+                encode(widget)
+            ),
             None,
         )
         .map(|_| ())
     }
+}
+
+/// Percent-encode one path segment (everything but unreserved characters).
+fn encode(segment: &str) -> String {
+    let mut out = String::with_capacity(segment.len());
+    for b in segment.bytes() {
+        if b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.' | b'~') {
+            out.push(char::from(b));
+        } else {
+            out.push_str(&format!("%{b:02X}"));
+        }
+    }
+    out
 }
 
 /// A widget with one plain-text item for every scope (`*`): the common case
@@ -636,5 +778,74 @@ mod tests {
         assert_eq!(workspace_of("other/app/main"), None);
         assert_eq!(workspace_of("garage//main"), None);
         assert_eq!(workspace_of("garage"), None);
+    }
+
+    #[test]
+    fn the_read_and_pane_calls_use_the_documented_routes_and_encode_ids() {
+        let fake = fake::FakeDaemon::start();
+        fake.route("GET", "/api/sessions", 200, "[]");
+        fake.route("GET", "/api/workspaces/my%20ws/closed", 200, "[]");
+        fake.route(
+            "POST",
+            "/api/plugins/me/panes/details/open",
+            200,
+            r#"{"ok":true,"session":"plugin/me/details","reused":true}"#,
+        );
+        fake.route(
+            "DELETE",
+            "/api/plugins/me/panes/details",
+            200,
+            r#"{"ok":true,"closed":true}"#,
+        );
+        fake.route("GET", "/api/plugins/panes", 200, r#"{"panes":[]}"#);
+        let api = Api::new(&fake.base, "me", "tok");
+        assert_eq!(api.sessions().unwrap(), json!([]));
+        assert_eq!(api.closed_chats("my ws").unwrap(), json!([]));
+        let opened = api.open_pane("details", None).unwrap();
+        assert_eq!(
+            (opened.session.as_str(), opened.reused),
+            ("plugin/me/details", true)
+        );
+        assert!(api.close_pane("details").unwrap());
+        assert!(api.panes().unwrap().panes.is_empty());
+        assert_eq!(
+            fake.bodies("POST", "/api/plugins/me/panes/details/open"),
+            [json!({})]
+        );
+    }
+
+    #[test]
+    fn path_segments_are_percent_encoded_except_unreserved_characters() {
+        assert_eq!(encode("a-b_c.d~e"), "a-b_c.d~e");
+        assert_eq!(encode("a b/c"), "a%20b%2Fc");
+        assert_eq!(encode("\u{e9}"), "%C3%A9");
+    }
+
+    #[test]
+    fn the_context_view_reads_trigger_and_session_details() {
+        let ctx = Context(json!({
+            "trigger": {"kind": "widget", "args": {"n": 1}},
+            "focus": {"session": {"id": "garage/w/a", "status": "needs-input", "branch": "main", "dir": "/d"}}
+        }));
+        assert_eq!(ctx.trigger_kind(), Some("widget"));
+        assert_eq!(ctx.trigger_args(), &json!({"n": 1}));
+        assert_eq!(ctx.session_status(), Some("needs-input"));
+        assert_eq!(ctx.session_branch(), Some("main"));
+        assert_eq!(ctx.session_dir(), Some("/d"));
+        assert_eq!(Context(json!({})).trigger_kind(), None);
+    }
+
+    /// `cargo publish` needs the pinned protocol version to equal this
+    /// crate's own; a release that bumps one must bump the other.
+    #[test]
+    fn the_protocol_pin_matches_the_workspace_version() {
+        let root =
+            std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../../Cargo.toml"))
+                .unwrap();
+        let version = env!("CARGO_PKG_VERSION");
+        assert!(
+            root.contains(&format!("version = \"={version}\"")),
+            "workspace.dependencies garage-protocol must pin =\"{version}\""
+        );
     }
 }

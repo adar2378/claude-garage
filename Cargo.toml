@@ -9,7 +9,15 @@ exclude = ["plugins/tile-buttons"]
 [workspace.package]
 version = "0.6.2" # keep in step with package.json
 edition = "2024"
+license = "MIT"
+repository = "https://github.com/adar2378/claude-garage"
+homepage = "https://github.com/adar2378/claude-garage"
 rust-version = "1.88" # edition 2024 + let chains; ratatui, tachyonfx, time and bon need 1.88
+
+# Published crates (garage-plugin-sdk) need a version on path dependencies;
+# keep it equal to [workspace.package] version.
+[workspace.dependencies]
+garage-protocol = { path = "crates/protocol", version = "=0.6.2" }
 
 [profile.release]
 debug = false
