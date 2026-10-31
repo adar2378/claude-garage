@@ -178,6 +178,26 @@ pub fn capture_text(addr: &str, token: &str, lines: u32) -> std::io::Result<Stri
     Ok(String::from_utf8_lossy(&reply).into_owned())
 }
 
+/// Type `text` into the host's command as keystrokes, then press Enter (what
+/// `tmux send-keys -l` plus `Enter` does). Rides the attach connection's input
+/// frame with a 0x0 hello size, which the host reads as "do not resize". The
+/// connection is closed the orderly way: the write side is shut, then the
+/// host's snapshot is drained until it hangs up, so the input frames are never
+/// discarded by a reset.
+pub fn send_text(addr: &str, token: &str, text: &str) -> std::io::Result<()> {
+    let mut s = connect(addr, token, MODE_ATTACH, 0, 0)?;
+    s.set_read_timeout(Some(REPLY_TIMEOUT))?;
+    s.set_write_timeout(Some(REPLY_TIMEOUT))?;
+    write_frame(&mut s, F_INPUT, text.as_bytes())?;
+    // A separate frame after a beat, so a multi-line paste does not swallow it.
+    std::thread::sleep(Duration::from_millis(50));
+    write_frame(&mut s, F_INPUT, b"\r")?;
+    s.shutdown(std::net::Shutdown::Write)?;
+    let mut sink = [0u8; 4096];
+    while matches!(s.read(&mut sink), Ok(n) if n > 0) {}
+    Ok(())
+}
+
 /// Ask the host to kill its command and exit.
 pub fn shutdown(addr: &str, token: &str) -> std::io::Result<()> {
     control(addr, token, F_SHUTDOWN, &[]).map(|_| ())
@@ -190,6 +210,27 @@ pub fn rename(addr: &str, token: &str, new_id: &str) -> std::io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn send_text_types_the_text_then_enter_without_resizing() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap().to_string();
+        let host = std::thread::spawn(move || {
+            let (mut s, _) = listener.accept().unwrap();
+            let mut hello = [0u8; 40];
+            s.read_exact(&mut hello).unwrap();
+            let mut frames = Vec::new();
+            while let Ok((ty, payload)) = read_frame(&mut s) {
+                frames.push((ty, payload));
+            }
+            (hello, frames)
+        });
+        send_text(&addr, &"t".repeat(TOKEN_LEN), "echo hi").unwrap();
+        let (hello, frames) = host.join().unwrap();
+        assert_eq!(hello[3 + TOKEN_LEN], MODE_ATTACH);
+        assert_eq!(&hello[36..40], &[0, 0, 0, 0], "size 0x0: the host must not resize its PTY");
+        assert_eq!(frames, vec![(F_INPUT, b"echo hi".to_vec()), (F_INPUT, b"\r".to_vec())]);
+    }
 
     #[test]
     fn frames_roundtrip_and_oversize_is_refused() {
