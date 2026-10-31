@@ -47,3 +47,6 @@ serde_json = "1.0"
 
 [profile.release]
 debug = false
+
+[dev-dependencies]
+insta = "1"

@@ -2,8 +2,8 @@
 
 ## 0. Preconditions
 
-- [ ] 0.1 p20-safety-net merged: insta snapshots of rail, strip, a tile title, and each overlay (help, triage queue, view picker, workspace add, worktree finish); CI on macOS, Linux, Windows
-- [ ] 0.2 Baseline recorded: `cd wall && cargo test --lib --bins` pass count (519 at proposal time) and snapshot set green
+- [x] 0.1 insta snapshots of rail, strip and tile titles (moved here from p20; overlay snapshots and three-OS CI stay with p20)
+- [x] 0.2 Baseline recorded: 527 lib tests pass (519 + 8 snapshots)
 
 ## 1. Split without behaviour change (`wall/src/runtime.rs`, `wall/src/state/store.rs`)
 

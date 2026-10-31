@@ -1,0 +1,47 @@
+---
+source: src/ui/snapshot_tests.rs
+expression: "render_rail_dump(&store, 30, 12)"
+---
+| elite-traders               │|
+| 1 et-b  ● 1                 │|
+|   ● stuck 2:00              │|
+|   ◐ busy 1:00               │|
+| 2 et-a                      │|
+| ▸ ○ idle-one                │|
+| 3 solo                      │|
+|   ✓ finished                │|
+|   ⟳ old-run                 │|
+|                             │|
+|                             │|
+|                             │|
+--- styles ---
+r0 c0..14 fg=DarkGray bg=Reset mod=NONE
+r0 c29..30 fg=DarkGray bg=Reset mod=NONE
+r1 c0..7 fg=Gray bg=Reset mod=NONE
+r1 c7..12 fg=Rgb(255, 179, 64) bg=Reset mod=NONE
+r1 c29..30 fg=DarkGray bg=Reset mod=NONE
+r2 c0..3 fg=White bg=Reset mod=BOLD
+r2 c3..5 fg=DarkGray bg=Reset mod=NONE
+r2 c5..15 fg=Rgb(255, 179, 64) bg=Reset mod=NONE
+r2 c29..30 fg=DarkGray bg=Reset mod=NONE
+r3 c0..3 fg=White bg=Reset mod=BOLD
+r3 c3..14 fg=DarkGray bg=Reset mod=NONE
+r3 c29..30 fg=DarkGray bg=Reset mod=NONE
+r4 c0..3 fg=Gray bg=Reset mod=NONE
+r4 c3..7 fg=White bg=Reset mod=BOLD
+r4 c29..30 fg=DarkGray bg=Reset mod=NONE
+r5 c0..3 fg=White bg=Reset mod=BOLD
+r5 c3..5 fg=DarkGray bg=Reset mod=NONE
+r5 c5..13 fg=White bg=Reset mod=BOLD
+r5 c29..30 fg=DarkGray bg=Reset mod=NONE
+r6 c0..7 fg=Gray bg=Reset mod=NONE
+r6 c29..30 fg=DarkGray bg=Reset mod=NONE
+r7 c0..3 fg=White bg=Reset mod=BOLD
+r7 c3..13 fg=DarkGray bg=Reset mod=NONE
+r7 c29..30 fg=DarkGray bg=Reset mod=NONE
+r8 c0..3 fg=White bg=Reset mod=BOLD
+r8 c3..12 fg=DarkGray bg=Reset mod=NONE
+r8 c29..30 fg=DarkGray bg=Reset mod=NONE
+r9 c29..30 fg=DarkGray bg=Reset mod=NONE
+r10 c29..30 fg=DarkGray bg=Reset mod=NONE
+r11 c29..30 fg=DarkGray bg=Reset mod=NONE
