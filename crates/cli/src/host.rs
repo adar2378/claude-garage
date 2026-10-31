@@ -5,10 +5,95 @@ use crate::launcher::{checked_pid, parse_listener_pid, Fail, Host, Out, Probe, R
 use crate::tui_bin::{self, Builder};
 use serde_json::Value;
 use std::io::{BufRead, IsTerminal, Write};
-use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::Duration;
+
+/// Start the child in its own session (Unix) or without a console (Windows),
+/// so the daemon outlives the TUI and the terminal window.
+fn detach(cmd: &mut Command) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        // SAFETY: runs between fork and exec in the child; setsid is
+        // async-signal-safe and touches no Rust state. A new session (not just
+        // a process group, like Node's `detached: true`) drops the controlling
+        // terminal, so the daemon outlives the TUI and the terminal's SIGHUP.
+        unsafe {
+            cmd.pre_exec(|| {
+                libc::setsid();
+                Ok(())
+            });
+        }
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const DETACHED_PROCESS: u32 = 0x0000_0008;
+        const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
+        cmd.creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP);
+    }
+}
+
+/// Never flash a console window for a helper program.
+#[cfg(windows)]
+fn hide_console(cmd: &mut Command) {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    cmd.creation_flags(CREATE_NO_WINDOW);
+}
+
+#[cfg(unix)]
+fn terminate_pid(pid: i32) -> Terminate {
+    if unsafe { libc::kill(pid, libc::SIGTERM) } == 0 {
+        return Terminate::Sent;
+    }
+    let err = std::io::Error::last_os_error();
+    if err.raw_os_error() == Some(libc::ESRCH) {
+        Terminate::Gone
+    } else {
+        Terminate::Error(err.to_string())
+    }
+}
+
+/// `taskkill /F`: a console-less daemon ignores the polite form.
+#[cfg(windows)]
+fn terminate_pid(pid: i32) -> Terminate {
+    let mut cmd = Command::new("taskkill");
+    cmd.args(["/PID", &pid.to_string(), "/F"]).stdin(Stdio::null());
+    hide_console(&mut cmd);
+    match cmd.output() {
+        Ok(o) if o.status.success() => Terminate::Sent,
+        Ok(o) if taskkill_says_gone(&String::from_utf8_lossy(&o.stdout), &String::from_utf8_lossy(&o.stderr)) => {
+            Terminate::Gone
+        }
+        Ok(o) => Terminate::Error(String::from_utf8_lossy(&o.stderr).trim().to_owned()),
+        Err(e) => Terminate::Error(e.to_string()),
+    }
+}
+
+/// taskkill reports a vanished process as "ERROR: The process "N" not found."
+#[cfg_attr(not(windows), allow(dead_code))]
+pub fn taskkill_says_gone(stdout: &str, stderr: &str) -> bool {
+    format!("{stdout}{stderr}").to_lowercase().contains("not found")
+}
+
+/// The pid listening on `port` in `netstat -ano -p TCP` output (rows like
+/// `  TCP    127.0.0.1:4747    0.0.0.0:0    LISTENING    1234`): exactly one
+/// distinct pid above 1, else `None`, like the `lsof` path.
+#[cfg_attr(not(windows), allow(dead_code))]
+pub fn parse_netstat_listener(netstat: &str, port: u16) -> Option<u32> {
+    let suffix = format!(":{port}");
+    let pids: Vec<String> = netstat
+        .lines()
+        .filter_map(|l| {
+            let f: Vec<&str> = l.split_whitespace().collect();
+            (f.len() >= 5 && f[0].eq_ignore_ascii_case("TCP") && f[1].ends_with(&suffix) && f[3].eq_ignore_ascii_case("LISTENING"))
+                .then(|| f[4].to_owned())
+        })
+        .collect();
+    parse_listener_pid(&pids.join("\n"))
+}
 
 pub struct RealHost {
     pub port: u16,
@@ -126,6 +211,19 @@ impl Host for RealHost {
     fn run_inherit(&self, bin: &str, args: &[&str]) -> bool {
         Command::new(bin).args(args).status().is_ok_and(|s| s.success())
     }
+    fn uses_tmux(&self) -> bool {
+        use garage_daemon::backend::Kind;
+        Kind::from_env_value(std::env::var("GARAGE_BACKEND").ok().as_deref()).map_or(true, |k| k == Kind::Tmux)
+    }
+    #[cfg(windows)]
+    fn listener_pid(&self) -> Option<u32> {
+        let mut cmd = Command::new("netstat");
+        cmd.args(["-ano", "-p", "TCP"]).stdin(Stdio::null());
+        hide_console(&mut cmd);
+        let out = cmd.output().ok()?;
+        out.status.success().then(|| parse_netstat_listener(&String::from_utf8_lossy(&out.stdout), self.port)).flatten()
+    }
+    #[cfg(not(windows))]
     fn listener_pid(&self) -> Option<u32> {
         let out = Command::new("lsof")
             .args(["-nP", &format!("-iTCP:{}", self.port), "-sTCP:LISTEN", "-t"])
@@ -139,15 +237,7 @@ impl Host for RealHost {
             Ok(p) => p,
             Err(e) => return Terminate::Error(e),
         };
-        if unsafe { libc::kill(pid, libc::SIGTERM) } == 0 {
-            return Terminate::Sent;
-        }
-        let err = std::io::Error::last_os_error();
-        if err.raw_os_error() == Some(libc::ESRCH) {
-            Terminate::Gone
-        } else {
-            Terminate::Error(err.to_string())
-        }
+        terminate_pid(pid)
     }
     fn spawn_daemon(&self) -> Result<PathBuf, String> {
         let dir = log_dir(|k| std::env::var(k).ok()).ok_or("HOME is not set; set GARAGE_DIR")?;
@@ -164,16 +254,7 @@ impl Host for RealHost {
             .stdin(Stdio::null())
             .stdout(log.try_clone().map_err(|e| e.to_string())?)
             .stderr(log);
-        // SAFETY: runs between fork and exec in the child; setsid is
-        // async-signal-safe and touches no Rust state. A new session (not just
-        // a process group, like Node's `detached: true`) drops the controlling
-        // terminal, so the daemon outlives the TUI and the terminal's SIGHUP.
-        unsafe {
-            cmd.pre_exec(|| {
-                libc::setsid();
-                Ok(())
-            });
-        }
+        detach(&mut cmd);
         cmd.spawn()
             .map_err(|e| format!("failed to start the daemon: {e}"))?;
         Ok(log_path)
@@ -212,6 +293,29 @@ mod tests {
         let _ = std::fs::remove_dir_all(&d);
         std::fs::create_dir_all(&d).unwrap();
         d
+    }
+
+    #[test]
+    fn netstat_rows_give_the_single_listener_of_our_port() {
+        let out = "\
+  Proto  Local Address          Foreign Address        State           PID
+  TCP    0.0.0.0:135            0.0.0.0:0              LISTENING       1000
+  TCP    127.0.0.1:4747         0.0.0.0:0              LISTENING       4242
+  TCP    [::1]:4747             [::]:0                 LISTENING       4242
+  TCP    127.0.0.1:4747         127.0.0.1:50000        ESTABLISHED     5555
+  TCP    127.0.0.1:47470        0.0.0.0:0              LISTENING       7777
+";
+        assert_eq!(parse_netstat_listener(out, 4747), Some(4242));
+        assert_eq!(parse_netstat_listener(out, 4748), None, "nothing listens there");
+        let two = format!("{out}  TCP    0.0.0.0:4747           0.0.0.0:0              LISTENING       9999\n");
+        assert_eq!(parse_netstat_listener(&two, 4747), None, "ambiguous: never guess");
+        assert_eq!(parse_netstat_listener("", 4747), None);
+    }
+
+    #[test]
+    fn taskkill_not_found_means_the_process_is_already_gone() {
+        assert!(taskkill_says_gone("", "ERROR: The process \"4242\" not found."));
+        assert!(!taskkill_says_gone("", "ERROR: Access is denied."));
     }
 
     #[test]

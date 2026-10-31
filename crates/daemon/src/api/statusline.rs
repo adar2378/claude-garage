@@ -317,8 +317,7 @@ mod tests {
         assert!(settings["statusLine"]["command"].as_str().unwrap().contains("garage-statusline.sh"));
         let script = std::fs::read_to_string(&wrapper).unwrap();
         assert!(script.contains("curl") && script.contains("api/statusline/claude?token="));
-        use std::os::unix::fs::PermissionsExt;
-        assert!(std::fs::metadata(&wrapper).unwrap().permissions().mode() & 0o100 != 0, "executable");
+        assert!(crate::test_support::is_executable(&wrapper), "executable");
 
         // second install is idempotent: no backup, nothing rewritten
         let before = std::fs::read_to_string(&settings_path).unwrap();
@@ -337,7 +336,7 @@ mod tests {
         // an existing non-garage statusLine is captured and chained; output byte-identical
         let original = h.claude_home.path().join("fake-original.sh");
         std::fs::write(&original, "#!/bin/sh\necho \"ORIGINAL-OUTPUT-MARKER\"\n").unwrap();
-        std::fs::set_permissions(&original, std::fs::Permissions::from_mode(0o755)).unwrap();
+        crate::test_support::make_executable(&original);
         std::fs::write(
             &settings_path,
             json!({"model": "opus", "statusLine": {"type": "command", "command": original}}).to_string(),
