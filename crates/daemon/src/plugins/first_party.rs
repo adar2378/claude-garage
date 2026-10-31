@@ -112,10 +112,16 @@ fn staged(plugins: &[(&str, &str)]) -> tempfile::TempDir {
 fn every_shipped_action_plugin_is_on_the_compiled_allowlist_and_a_changed_manifest_is_not() {
     for (id, _) in ACTION_PLUGINS {
         let raw = std::fs::read(repo_plugins().join(id).join(MANIFEST_FILE)).unwrap();
-        assert!(is_trusted(id, &sha256_hex(&raw)), "{id} is not on the allowlist");
+        assert!(
+            is_trusted(id, &sha256_hex(&raw)),
+            "{id} is not on the allowlist"
+        );
         let mut edited = raw.clone();
         edited.extend_from_slice(b"\n# edited\n");
-        assert!(!is_trusted(id, &sha256_hex(&edited)), "{id}: an edit stays trusted");
+        assert!(
+            !is_trusted(id, &sha256_hex(&edited)),
+            "{id}: an edit stays trusted"
+        );
     }
 }
 
@@ -162,7 +168,10 @@ async fn closed_chats_shows_a_closed_session_as_a_restorable_row() {
     let root = staged(&[("closed-chats", "garage-plugin-closed-chats")]);
     seed(&r.paths(), root.path()).unwrap();
     let _events = r.st.plugins.start();
-    assert!(r.st.plugins.active("closed-chats").is_some(), "on by default");
+    assert!(
+        r.st.plugins.active("closed-chats").is_some(),
+        "on by default"
+    );
 
     r.st.registry.upsert_workspace("app", "/tmp").await.unwrap();
     r.st.registry
@@ -197,12 +206,23 @@ async fn closed_chats_shows_a_closed_session_as_a_restorable_row() {
     };
     wait_for(|| shown().contains("fix-auth")).await;
     let rows = shown();
-    assert!(rows.contains("session.restore") && rows.contains("session.delete"), "{rows}");
-    assert!(rows.contains(r#""session":"garage/app/fix-auth""#), "{rows}");
+    assert!(
+        rows.contains("session.restore") && rows.contains("session.delete"),
+        "{rows}"
+    );
+    assert!(
+        rows.contains(r#""session":"garage/app/fix-auth""#),
+        "{rows}"
+    );
 
     // forgetting it (what the row's x ends in) empties the rows again, through session.forgotten
     let (status, _, _) = r
-        .call("DELETE", "/api/sessions/garage/app/fix-auth?meta=1", None, None)
+        .call(
+            "DELETE",
+            "/api/sessions/garage/app/fix-auth?meta=1",
+            None,
+            None,
+        )
         .await;
     assert_eq!(status, axum::http::StatusCode::OK);
     wait_for(|| !shown().contains("fix-auth")).await;
@@ -228,7 +248,9 @@ async fn prune_removes_a_project_after_a_user_close_but_never_after_a_crash() {
         r.st.plugins.active("prune-empty-projects").is_none(),
         "off by default"
     );
-    r.st.plugins.set_enabled("prune-empty-projects", true).unwrap();
+    r.st.plugins
+        .set_enabled("prune-empty-projects", true)
+        .unwrap();
     let _events = r.st.plugins.start();
     for ws in ["crashed", "closed"] {
         r.st.registry.upsert_workspace(ws, "/tmp").await.unwrap();
@@ -243,10 +265,16 @@ async fn prune_removes_a_project_after_a_user_close_but_never_after_a_crash() {
     // the user close is acted on after the plugin's settle delay ...
     let end = std::time::Instant::now() + std::time::Duration::from_secs(8);
     while !gone("closed").await {
-        assert!(std::time::Instant::now() < end, "the project was never pruned");
+        assert!(
+            std::time::Instant::now() < end,
+            "the project was never pruned"
+        );
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     }
     // ... and by then the crash event (handled at once) has had its chance
-    assert!(!gone("crashed").await, "a crash must not remove the project");
+    assert!(
+        !gone("crashed").await,
+        "a crash must not remove the project"
+    );
     let _ = json!(null);
 }

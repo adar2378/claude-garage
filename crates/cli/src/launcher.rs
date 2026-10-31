@@ -881,7 +881,11 @@ mod tests {
         let f = Fake::new(None);
         assert_eq!(ensure_daemon(&f), Ok(()));
         assert_eq!(f.called("spawn_daemon"), 1);
-        assert_eq!(f.called("run_tui /fake/garage-wall"), 0, "never starts the TUI");
+        assert_eq!(
+            f.called("run_tui /fake/garage-wall"),
+            0,
+            "never starts the TUI"
+        );
 
         let f = Fake::new(Some(health(Some(V), Some(321))));
         assert_eq!(ensure_daemon(&f), Ok(()));

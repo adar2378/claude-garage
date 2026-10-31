@@ -415,7 +415,10 @@ mod tests {
             {"id": "garage/third/c"},
         ]);
         assert!(workspace_has_sessions(&list, "app"), "restorable counts");
-        assert!(workspace_has_sessions(&list, "third"), "matched by id when no field");
+        assert!(
+            workspace_has_sessions(&list, "third"),
+            "matched by id when no field"
+        );
         assert!(!workspace_has_sessions(&list, "ap"), "no prefix matching");
         assert!(!workspace_has_sessions(&json!([]), "app"));
         assert!(!workspace_has_sessions(&Value::Null, "app"));
