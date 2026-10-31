@@ -5,9 +5,12 @@
 //! disengage, and the overlay placeholder routing. The store transitions
 //! themselves are covered by `state/store.rs`; these tests cover the
 //! caller-side behavior the Dart TUI kept in `bin/garage_tui.dart`.
-use super::*;
 use super::router::next_label;
-use crate::api::models::{SessionInfo, WorkspaceInfo};
+use super::*;
+use crate::actions::{command_for_action, ids, ActionCtx, ActionSource};
+use crate::api::models::{RestartResponse, SessionInfo, WorkspaceInfo};
+use crate::keymap::Layer;
+use crate::state::store::GarageCommand;
 
 fn ws(name: &str) -> WorkspaceInfo {
     WorkspaceInfo {

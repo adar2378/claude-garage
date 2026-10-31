@@ -2,7 +2,16 @@
 //! periodic fetch and usage polls, SSE, and the signal watcher (moved out of
 //! `runtime/mod.rs`, p22 task 1.2).
 
-use super::*;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
+
+use serde_json::Value;
+
+use crate::api::client::GarageClient;
+use crate::api::sse::SseClient;
+
+use super::{AppEvent, EventSender, USAGE_POLL_INTERVAL, send_notice};
 
 /// Refetch both listings and feed them into the channel (the Dart
 /// `_refetchSessions`: workspaces too, so worktree flags never derive from a

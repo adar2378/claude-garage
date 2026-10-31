@@ -2,7 +2,15 @@
 //! wheel events drive the scrollback peek (moved out of `runtime/mod.rs`,
 //! p22 task 1.5).
 
-use super::*;
+use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
+use ratatui::layout::Rect;
+
+use crate::input::links::url_at;
+use crate::state::wall_state::{KeyLayer, OverlayKind, WallSession};
+use crate::ui::hit_targets::{self, action_at, ClickMap};
+use crate::ui::scroll::WHEEL_LINES;
+
+use super::{App, now_ms, view_picker_entries};
 
 impl App {
     pub(super) fn handle_mouse(&mut self, mouse: &MouseEvent) {

@@ -40,13 +40,25 @@
 
 ## 5. Pit pet boundary
 
-- [x] 5.1 `ui/pet/` with `PetHost` (sim, chatter, mood, PRNG); `App` holds `Option<PetHost>` (the pet's strip frame still reaches `strip_line` as `PetRender` data, not a `strip.right` slot item: it is placed inside the filler with its own click range)
+- [x] 5.1 `ui/pet/` with `PetHost` (sim, chatter, mood, PRNG); `App` holds `Option<PetHost>`; the pet is a `strip.right` slot item (floated into the filler, click action `pet.pet`) served by a stateful provider from `PetHost` (section 7)
 - [x] 5.2 `pet` cargo feature, default on; `cargo build --no-default-features` and its tests pass
 - [x] 5.3 Add the no-default-features test run to the release workflow's test job
 
 ## 6. Verification
 
-- [ ] 6.1 `cd wall && cargo test --lib --bins` green, same or higher count; `cargo clippy --all-targets` clean; snapshots unchanged
+- [x] 6.1 `cd wall && cargo test --lib --bins` green, same or higher count (565 default, 531 without the pet feature); `cargo clippy --all-targets -- -D warnings` clean; snapshots unchanged
 - [x] 6.2 No file under `wall/src/runtime/` or `wall/src/state/` over ~1,200 lines
 - [ ] 6.3 Live check on the user's wall (user relaunches with `GARAGE_TUI_BIN` on the branch build; main session only, ask first): keys `1`-`9`, `[` `]`, `a`, `A`, `n`, `x x`, `X X`, `X K`, `r r`, `r a`, `?`, `m`, `d`, `D`, `Tab`; clicks on tiles, rail rows, triage rows; pet clicks
 - [ ] 6.4 Record results in `verification.md`
+
+## 7. Review fixes
+
+- [x] 7.0 Snapshot of the strip with the pet rendered (pet feature on), committed before the pet moved
+- [x] 7.1 One dispatcher: `App::dispatch_action` takes keys and clicks; `GarageRouter::run_action` honours `ActionCtx` (a click disengages, session actions focus `ctx.session` first) and runs `session/workspace/daemon.restart`; `run_click_action` and `restore_clicked` removed; test that key- and click-originated dispatch agree
+- [x] 7.2 Slot click actions: `slots::layout` returns each item's columns, the strip carries clickable `strip.right` ranges, `action_at` consults them
+- [x] 7.3 The pet is a `strip.right` `SlotItem` (`pet.pet`, `Placement::Filler`); `strip_line` no longer takes a `PetRender`; snapshot byte-identical
+- [x] 7.4 `rail_target_at` counts `rail.header` rows through `rail::header_items` (the renderer's own call)
+- [x] 7.5 `App` owns the one `Keymap` and the one `SlotRegistry`; providers are `Box<dyn SlotProvider>`; no process-wide defaults
+- [x] 7.6 Overlay-state resets key on the resolved action id (`overlay.open.queue` / `.workspace_add` / `.view_picker`)
+- [x] 7.7 Test-only shims removed (`garage_command_for`, `restart_command_for`, `RESTART_PREFIX`, `shared_defaults`, `action_for_command`); old tests resolve through the keymap
+- [x] 7.8 `use super::*` replaced by explicit imports in the `runtime/` submodules (the `tests/` modules keep theirs)

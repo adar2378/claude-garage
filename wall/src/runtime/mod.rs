@@ -23,7 +23,6 @@
 //! back through the same event channel. The draw here is still a minimal
 //! placeholder; the real UI surfaces are wave 4's caller of this loop.
 
-use std::collections::HashSet;
 use std::io::Write as _;
 use std::ops::Range;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -31,54 +30,32 @@ use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crossterm::event::{
-    Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+    Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers,
 };
 use ratatui::layout::Rect;
-use ratatui::style::Style;
-use ratatui::text::Line;
-use ratatui::widgets::{Block, BorderType, Widget as _};
-use serde_json::Value;
 use tokio::sync::mpsc;
 
-use crate::actions::{command_for_action, ids, ActionCtx, ActionId, ActionSource};
+use crate::actions::ActionId;
 use crate::api::client::{ApiError, GarageClient};
 use crate::api::models::{
-    FinishAction, HooksInstallResult, RestartResponse, SessionInfo, UsageInfo, WorkspaceInfo,
+    FinishAction, HooksInstallResult, SessionInfo, UsageInfo, WorkspaceInfo,
     WorktreeRecord,
 };
-use crate::api::sse::SseClient;
 use crate::input::encode::encode_key;
-use crate::input::links::url_at;
 use crate::input::paste::wrap_bracketed_paste;
-use crate::keymap::{overlay_key_string, Keymap, Layer};
+use crate::keymap::Keymap;
 use crate::slots::{SlotId, SlotRegistry};
-use crate::state::armed_action::{ArmedAction, ArmedClose};
 use crate::state::persistence::{self, WallFile};
-use crate::state::salience::restorable_session_ids;
-use crate::state::store::{
-    restart_arm_notice, ArmedRestart, GarageCommand, WallStore,
-};
-use crate::state::views::{self, ViewSummary};
-use crate::state::wall_state::{KeyLayer, OverlayKind, WallSession, WallState};
-use crate::state::workspace_remove::{confirm_kill_target, kill_remove_notice, remove_arm_notice};
+use crate::state::store::WallStore;
+use crate::state::wall_state::{KeyLayer, OverlayKind, WallSession};
 use crate::ui::escalation::{EscalationPolicy, HEARTBEAT_INTERVAL_MS};
-use crate::ui::help::render_help;
-use crate::ui::hit_targets::{self, action_at, ClickMap};
-use crate::ui::layout::{tile_inner, wall_layout, WallLayout};
+use crate::ui::layout::WallLayout;
 use crate::ui::pet::{PetClick, PetHost};
-use crate::ui::rail::render_rail;
 use crate::ui::registry::{FrozenTile, TileRegistry};
-use crate::ui::scroll::{capture_frozen, page_lines, tmux_history_size, ScrollModel, WHEEL_LINES};
-use crate::ui::strip::render_strip;
-use crate::ui::theme::colors;
-use crate::ui::tile::{render_centered_lines, render_tile, TileView};
-use crate::ui::triage::{render_triage, triage_queue_rows, wrap_selection};
-use crate::ui::view_picker::{picker_entries, render_view_picker, ViewPickerState};
-use crate::ui::view_strip::render_view_strip;
-use crate::ui::workspace_add::{render_workspace_add, PickOutcome, WorkspaceAddForm};
-use crate::ui::worktree_finish::{
-    finish_notice, render_worktree_finish, FinishChoice, WorktreeFinishState,
-};
+use crate::ui::scroll::{capture_frozen, page_lines, tmux_history_size, ScrollModel};
+use crate::ui::view_picker::ViewPickerState;
+use crate::ui::workspace_add::{PickOutcome, WorkspaceAddForm};
+use crate::ui::worktree_finish::WorktreeFinishState;
 
 mod dispatch;
 mod draw;

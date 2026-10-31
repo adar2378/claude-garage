@@ -1,7 +1,26 @@
 //! Frame drawing: the wall layout, tiles and overlays (moved out of
 //! `runtime/mod.rs`, p22 task 1.6).
 
-use super::*;
+use ratatui::layout::Rect;
+use ratatui::style::Style;
+use ratatui::text::Line;
+use ratatui::widgets::{Block, BorderType, Widget as _};
+
+use crate::state::views::ViewSummary;
+use crate::state::wall_state::{KeyLayer, OverlayKind};
+use crate::ui::help::render_help;
+use crate::ui::layout::{tile_inner, wall_layout};
+use crate::ui::rail::render_rail;
+use crate::ui::strip::render_strip;
+use crate::ui::theme::colors;
+use crate::ui::tile::{TileView, render_centered_lines, render_tile};
+use crate::ui::triage::{render_triage, triage_queue_rows};
+use crate::ui::view_picker::{picker_entries, render_view_picker};
+use crate::ui::view_strip::render_view_strip;
+use crate::ui::workspace_add::render_workspace_add;
+use crate::ui::worktree_finish::render_worktree_finish;
+
+use super::{App, NoticeKind};
 
 impl App {
     pub(super) fn draw_frame(&mut self, frame: &mut ratatui::Frame, now_ms: i64) {

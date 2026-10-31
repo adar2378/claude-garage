@@ -1,7 +1,12 @@
 //! Effects: the IO a store-declined command asks for, and its execution on a
 //! blocking task (moved out of `runtime/mod.rs`, p22 task 1.1).
 
-use super::*;
+use crate::api::client::{ApiError, GarageClient};
+use crate::api::models::{FinishAction, HooksInstallResult, RestartResponse, WorktreeRecord};
+use crate::state::workspace_remove::kill_remove_notice;
+use crate::ui::workspace_add::PickOutcome;
+
+use super::{AppEvent, EventSender, fetch_and_send};
 
 /// The install action's success wording (spec tui-context-meters "Install
 /// affordance": exact strip-notice text, verbatim — harnesses grep it).

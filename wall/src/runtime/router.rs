@@ -1,8 +1,19 @@
 //! The garage-layer router: key actions, arming state, busy guards and the
 //! strip notices (moved out of `runtime/mod.rs`, p22 task 1.3).
 
-use super::*;
+use std::collections::HashSet;
+
+use crate::actions::{ActionCtx, ActionId, ActionSource, command_for_action, ids};
+use crate::keymap::{Keymap, Layer};
+use crate::state::armed_action::{ArmedAction, ArmedClose};
+use crate::state::salience::restorable_session_ids;
+use crate::state::store::{ArmedRestart, GarageCommand, WallStore, restart_arm_notice};
+use crate::state::views;
+use crate::state::wall_state::{KeyLayer, WallState};
+use crate::state::workspace_remove::{confirm_kill_target, remove_arm_notice};
 use crate::ui::pet::PetHost;
+
+use super::Effect;
 
 /// The garage-layer typing hint (post-review Dart wording, verbatim — the
 /// click-smoke harness greps it).

@@ -2,7 +2,19 @@
 //! picker and worktree-finish overlays, plus the view picker and worktree
 //! finish helpers (moved out of `runtime/mod.rs`, p22 task 1.4).
 
-use super::*;
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+use crate::actions::{ActionCtx, ActionId, ActionSource, ids};
+use crate::api::models::{FinishAction, WorktreeRecord};
+use crate::keymap::{Keymap, Layer, overlay_key_string};
+use crate::state::store::WallStore;
+use crate::state::wall_state::{KeyLayer, OverlayKind};
+use crate::ui::triage::{triage_queue_rows, wrap_selection};
+use crate::ui::view_picker::{ViewPickerState, picker_entries};
+use crate::ui::workspace_add::WorkspaceAddForm;
+use crate::ui::worktree_finish::{FinishChoice, WorktreeFinishState, finish_notice};
+
+use super::Effect;
 
 /// The per-overlay UI state the overlay handlers mutate (all owned by the
 /// app): the triage queue's selection, the `w` form and the `D` picker.
