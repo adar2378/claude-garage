@@ -128,7 +128,11 @@ pub const STALE_AFTER: std::time::Duration = std::time::Duration::from_secs(7 * 
 pub fn payload_hash(payload: &[PayloadPlugin]) -> String {
     let mut rows: Vec<String> = payload
         .iter()
-        .flat_map(|p| p.files.iter().map(move |f| format!("{}/{}={}", p.id, f.path, f.sha256)))
+        .flat_map(|p| {
+            p.files
+                .iter()
+                .map(move |f| format!("{}/{}={}", p.id, f.path, f.sha256))
+        })
         .collect();
     rows.sort();
     sha256_hex(rows.join("\n").as_bytes())[..16].to_owned()
@@ -190,7 +194,10 @@ fn is_exec(_: &Path) -> bool {
 #[cfg(unix)]
 fn set_exec(p: &Path, exec: bool) -> std::io::Result<()> {
     use std::os::unix::fs::PermissionsExt;
-    std::fs::set_permissions(p, std::fs::Permissions::from_mode(if exec { 0o755 } else { 0o644 }))
+    std::fs::set_permissions(
+        p,
+        std::fs::Permissions::from_mode(if exec { 0o755 } else { 0o644 }),
+    )
 }
 #[cfg(not(unix))]
 fn set_exec(_: &Path, _: bool) -> std::io::Result<()> {
@@ -733,7 +740,6 @@ mod tests {
         assert!(!DEFAULT_ON.contains(&"turn-markers"));
     }
 
-
     // ---- embedded payload: unpack and verify ----
 
     fn set() -> Vec<PayloadPlugin> {
@@ -809,7 +815,10 @@ mod tests {
         let dir = root.path().join("alpha");
         std::fs::write(dir.join("bin/alpha"), b"#!/bin/sh\nrm -rf ~\n").unwrap();
         let err = verify(&payload, "alpha", &dir).unwrap_err();
-        assert!(err.contains("bin/alpha") && err.contains("refusing"), "{err}");
+        assert!(
+            err.contains("bin/alpha") && err.contains("refusing"),
+            "{err}"
+        );
         // the manifest is covered too, not only the binary
         unpack(&payload, root.path()).unwrap();
         std::fs::write(dir.join("garage-plugin.toml"), "id = \"alpha\"\n# +\n").unwrap();
@@ -852,7 +861,10 @@ mod tests {
     #[test]
     fn a_release_build_embeds_exactly_the_expected_plugins_for_its_target() {
         if !cfg!(feature = "embed-plugins") {
-            assert!(PAYLOAD.is_empty(), "a build without the feature embeds nothing");
+            assert!(
+                PAYLOAD.is_empty(),
+                "a build without the feature embeds nothing"
+            );
             return;
         }
         let mut ids: Vec<&str> = PAYLOAD.iter().map(|p| p.id).collect();
@@ -864,11 +876,28 @@ mod tests {
                 assert_eq!(sha256_hex(f.bytes), f.sha256, "{}/{}", p.id, f.path);
                 assert!(!f.bytes.is_empty(), "{}/{}", p.id, f.path);
             }
-            let m = p.files.iter().find(|f| f.path == MANIFEST_FILE).expect("manifest");
-            assert!(is_trusted(p.id, m.sha256), "{}: embedded manifest is on the allowlist", p.id);
-            let bins = p.files.iter().filter(|f| f.exec && f.path.starts_with("bin/")).count();
+            let m = p
+                .files
+                .iter()
+                .find(|f| f.path == MANIFEST_FILE)
+                .expect("manifest");
+            assert!(
+                is_trusted(p.id, m.sha256),
+                "{}: embedded manifest is on the allowlist",
+                p.id
+            );
+            let bins = p
+                .files
+                .iter()
+                .filter(|f| f.exec && f.path.starts_with("bin/"))
+                .count();
             let has_crate = repo.join(p.id).join("Cargo.toml").is_file();
-            assert_eq!(bins, usize::from(has_crate), "{}: one binary iff it has a crate", p.id);
+            assert_eq!(
+                bins,
+                usize::from(has_crate),
+                "{}: one binary iff it has a crate",
+                p.id
+            );
         }
     }
 
@@ -884,7 +913,11 @@ mod tests {
                 .unwrap_or_else(|| panic!("{id} has no platforms line"));
             for os in ["macos", "linux", "windows"] {
                 let listed = line.contains(&format!("\"{os}\""));
-                assert_eq!(listed, expected_plugins(os).contains(&id.as_str()), "{id} on {os}");
+                assert_eq!(
+                    listed,
+                    expected_plugins(os).contains(&id.as_str()),
+                    "{id} on {os}"
+                );
             }
         }
     }
@@ -893,12 +926,26 @@ mod tests {
     fn the_unpack_directory_is_keyed_by_the_embedded_set_not_just_the_version() {
         let a = set();
         let mut b = set();
-        assert_eq!(payload_hash(&a), payload_hash(&set()), "same bytes, same key");
-        b.push(payload_for_tests("gamma", &[("garage-plugin.toml", b"id = \"gamma\"\n", false)]));
-        assert_ne!(payload_hash(&a), payload_hash(&b), "another set, another key");
+        assert_eq!(
+            payload_hash(&a),
+            payload_hash(&set()),
+            "same bytes, same key"
+        );
+        b.push(payload_for_tests(
+            "gamma",
+            &[("garage-plugin.toml", b"id = \"gamma\"\n", false)],
+        ));
+        assert_ne!(
+            payload_hash(&a),
+            payload_hash(&b),
+            "another set, another key"
+        );
         let changed = vec![payload_for_tests(
             "alpha",
-            &[("garage-plugin.toml", b"id = \"alpha\"\n", false), ("bin/alpha", b"other", true)],
+            &[
+                ("garage-plugin.toml", b"id = \"alpha\"\n", false),
+                ("bin/alpha", b"other", true),
+            ],
         )];
         assert_ne!(payload_hash(&changed), payload_hash(&a[..1]));
         assert!(set_name(&a).starts_with(env!("CARGO_PKG_VERSION")));
@@ -912,7 +959,8 @@ mod tests {
             let d = parent.path().join(name);
             std::fs::create_dir_all(d.join("alpha")).unwrap();
             let f = std::fs::File::create(d.join(MARKER)).unwrap();
-            f.set_modified(std::time::SystemTime::now() - day * days).unwrap();
+            f.set_modified(std::time::SystemTime::now() - day * days)
+                .unwrap();
         };
         aged("current", 30);
         aged("fresh", 1);
@@ -946,7 +994,10 @@ mod tests {
         }
         assert!(root.join(MARKER).is_file(), "a fresh set is marked used");
         // an unblocked name is used as is
-        assert_eq!(unpack_set(&payload, parent.path(), "free").unwrap(), parent.path().join("free"));
+        assert_eq!(
+            unpack_set(&payload, parent.path(), "free").unwrap(),
+            parent.path().join("free")
+        );
     }
 
     #[test]
@@ -955,9 +1006,17 @@ mod tests {
         unpack(&payload, root.path()).unwrap();
         let dir = root.path().join("alpha");
         std::fs::write(dir.join("bin/alpha"), b"x").unwrap();
-        assert!(verify(&payload, "alpha", &dir).unwrap_err().contains("restart the daemon to repair"));
+        assert!(
+            verify(&payload, "alpha", &dir)
+                .unwrap_err()
+                .contains("restart the daemon to repair")
+        );
         std::fs::remove_file(dir.join("bin/alpha")).unwrap();
-        assert!(verify(&payload, "alpha", &dir).unwrap_err().contains("restart the daemon to repair"));
+        assert!(
+            verify(&payload, "alpha", &dir)
+                .unwrap_err()
+                .contains("restart the daemon to repair")
+        );
     }
 
     #[test]

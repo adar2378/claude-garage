@@ -7,8 +7,8 @@ platforms   = ["macos", "linux"]
 description = "A starting point: one action and one status-strip widget"
 permissions = ["ui.widgets"]
 
-# Runs at install and again on every `plugin dev` reload. Needs Node.js 26 (the
-# current LTS) or newer. `npm ci` installs exactly what package-lock.json says
+# Runs at install and again on every `plugin dev` reload. Needs Node.js 24 or
+# newer. `npm ci` installs exactly what package-lock.json says
 # and `--ignore-scripts` stops dependencies from running install scripts.
 [[build]]
 command = ["npm", "ci", "--ignore-scripts", "--no-audit", "--no-fund"]

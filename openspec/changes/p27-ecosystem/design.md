@@ -128,7 +128,7 @@ Decision: the Rust SDK stays hand-written on top of `garage-protocol` (its types
 
 Goal: publishable on crates.io, API matching the docs.
 
-- `Cargo.toml`: `license = "MIT"`, `repository`, `homepage`, `documentation`, `readme`, `keywords`, `categories`, `include`, `rust-version`. `garage-protocol` becomes a versioned path dependency (`version = "=0.6.2"`) so `cargo publish` can resolve it; `garage-protocol` also gets publishable metadata, since it is a dependency (publishing order: protocol, then sdk). The workspace version stays in step with `package.json`.
+- `Cargo.toml`: `license = "MIT"`, `repository`, `homepage`, `documentation`, `readme`, `keywords`, `categories`, `include`, `rust-version`. `garage-protocol` becomes a versioned path dependency (`version = "1"`; protocol and SDK are versioned on their own, 1.x, apart from the app) so `cargo publish` can resolve it; `garage-protocol` also gets publishable metadata, since it is a dependency (publishing order: protocol, then sdk). The workspace (app) version stays in step with `package.json`.
 - Crate docs (`//!`) from `README.md` with `#![doc = include_str!("../README.md")]`, so the README examples are doc-tests.
 - Examples: `examples/widget.rs` (push a widget), `examples/action.rs` (read context, notice), `examples/pane.rs` (feature `tui`), compiled in CI by `cargo test --examples`.
 - API additions to match the docs: `Api::features()`, `Api::open_pane/close_pane`, `Api::sessions()`, `Api::workspaces()`, `Context::trigger_*`, typed `Context` accessors for focus, selection, trigger and worktree. Existing signatures stay.
@@ -136,7 +136,7 @@ Goal: publishable on crates.io, API matching the docs.
 
 ### TypeScript SDK (`sdk/ts`, package `@claude-garage/plugin-sdk`)
 
-Thin typed client for the daemon API; ESM only; **zero runtime dependencies** (uses global `fetch`, Node 20+).
+Thin typed client for the daemon API; ESM only; **zero runtime dependencies** (uses global `fetch`, Node 24+).
 
 - `src/types.gen.ts`: generated from the API schema by `json-schema-to-typescript` (a dev dependency; the output is committed, and `npm run check:gen` fails when it is stale).
 - `src/index.ts`: `Api` (`fromEnv()`, constructor with `{base, plugin, token, fetch?}`), `readContext()`, `Context` accessors, `features()`, `listPlugins()`, `putWidget/clearWidget`, `notice`, `uiAction`, `sessionInput` (with `ifStatus.not`), `openPane/closePane`, `sessions()`, `workspaces()`, `text widget` helper, `GarageError` (status + body), and a generic `request()` escape hatch.

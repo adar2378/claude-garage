@@ -40,7 +40,7 @@ impl Lang {
                 "This one is Rust: `src/main.rs` uses `garage-plugin-sdk`, and `[[build]]` runs `cargo build --release`."
             }
             Lang::Ts => {
-                "This one is TypeScript on Node.js 26+ (the current LTS): `src/` compiles to `dist/` with `npm run build`, which `[[build]]` runs after `npm ci --ignore-scripts`; commit `package-lock.json`, never `dist/`, and run `npm install` yourself when you add a dependency."
+                "This one is TypeScript on Node.js 24+: `src/` compiles to `dist/` with `npm run build`, which `[[build]]` runs after `npm ci --ignore-scripts`; commit `package-lock.json`, never `dist/`, and run `npm install` yourself when you add a dependency."
             }
             Lang::Shell => {
                 "This one is a POSIX shell script that needs only `sh` and `curl`; `test.sh` runs it against a fake `curl`."
@@ -446,9 +446,9 @@ mod tests {
             lock["packages"][""]["devDependencies"], pkg["devDependencies"],
             "`npm ci` refuses a lockfile that disagrees with package.json"
         );
-        assert_eq!(pkg["engines"]["node"], ">=26");
+        assert_eq!(pkg["engines"]["node"], ">=24");
         let notes = Lang::Ts.notes();
-        assert!(notes.contains("Node.js 26+"), "{notes}");
+        assert!(notes.contains("Node.js 24+"), "{notes}");
     }
 
     /// The Rust template compiles against the SDK in this checkout, tests

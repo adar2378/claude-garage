@@ -21,8 +21,8 @@ checkboxes are skipped.
 
 ## Permissions
 
-`ui.widgets` (the rail-header widget), `ui.panes` (the overlay) and `workspaces.read` (to learn each
-workspace's folder). It reads files inside those folders and nothing else. Plugins are not sandboxed;
+`ui.widgets` (the rail-header widget) and `ui.panes` (the overlay). It learns each workspace's folder
+from `GET /api/workspaces`, which needs no permission. It reads files inside those folders and nothing else. Plugins are not sandboxed;
 read the source (about 300 lines in `src/lib.rs`) before you install anything.
 
 ## Try it

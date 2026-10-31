@@ -67,7 +67,7 @@ Nothing else is allowed under this heading. A security fix does not remove or re
 
 These routes work without a token today but **accept one**, and `features.routes` marks them `"tokenless": "deprecated"`:
 
-`GET /api/events`, `GET /api/sessions`, `GET /api/workspaces`, `GET /api/usage`, `GET /api/plugins/widgets`, `GET /api/workspaces/{name}/closed`.
+`GET /api/events`, `GET /api/sessions`, `GET /api/workspaces`, `GET /api/usage`, `GET /api/plugins`, `GET /api/plugins/widgets`, `GET /api/plugins/panes`, `GET /api/workspaces/{name}/closed`.
 
 Tokenless access to them is deprecated and may be removed in any release under the security rule above. Send `Authorization: Bearer $GARAGE_PLUGIN_TOKEN` on every call to them. The Rust and TypeScript SDKs always do. `GET /api/health` and `GET /api/plugins/features` stay open on purpose: a plugin needs them to find out whether the daemon is there and what it supports.
 

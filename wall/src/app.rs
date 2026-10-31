@@ -42,7 +42,10 @@ impl Launch {
 /// Run the wall until the user quits. Never touches the daemon's or the
 /// sessions' lifetime.
 pub fn run(launch: Launch) -> i32 {
-    let base_url = launch.base_url.clone().unwrap_or_else(default_daemon_base_url);
+    let base_url = launch
+        .base_url
+        .clone()
+        .unwrap_or_else(default_daemon_base_url);
     let daemon_pid = launch.daemon_pid;
     let launcher_starting = launch.daemon_starting;
     let log_hint = || launch.daemon_log.clone();

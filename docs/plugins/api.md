@@ -88,9 +88,9 @@ These routes are the API v1 contract. They are listed in `features.routes` of `G
 | `GET /api/workspaces` | token accepted (tokenless deprecated) | Registered workspaces |
 | `GET /api/usage` | token accepted (tokenless deprecated) | 5 hour and weekly rate-limit windows |
 | `GET /api/workspaces/{name}/closed` | `sessions.read` (checked when a token is sent; tokenless deprecated) | Closed chats of a workspace |
-| `GET /api/plugins` | nothing | Installed plugins, their actions, buttons, widgets and panes |
+| `GET /api/plugins` | token accepted (tokenless deprecated) | Installed plugins, their actions, buttons, widgets and panes |
 | `GET /api/plugins/widgets` | token accepted (tokenless deprecated) | Widget content of every plugin |
-| `GET /api/plugins/panes` | nothing | Open plugin panes |
+| `GET /api/plugins/panes` | token accepted (tokenless deprecated) | Open plugin panes |
 | `PUT /api/plugins/{id}/widgets/{widget}` | `ui.widgets` | Set widget content. [Format](widgets.md) |
 | `DELETE /api/plugins/{id}/widgets/{widget}` | `ui.widgets` | Clear a widget |
 | `POST /api/plugins/{id}/notice` | `ui.notice` | Show a toast |

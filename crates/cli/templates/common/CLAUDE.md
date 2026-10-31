@@ -37,9 +37,9 @@ field path. Adding a permission needs the user to approve it again (it asks). Ne
   that draws in a terminal; garage hosts it like a session.
 - `[[cli]]`: `claude-garage <name>` runs a command. `[[build]]`: commands run once at install and again on every `plugin dev` reload that follows a code change (not a manifest-only change), so keep them fast and safe to repeat.
 - `permissions` are declared and shown to the user, not enforced. Ask only for what you use:
-  `ui.widgets`, `ui.panes`, `ui.notice`, `ui.invoke`, `ui.navigate`, `sessions.read`, `workspaces.read`,
-  `workspaces.write`, `sessions.manage`, `network`, and the dangerous ones, `sessions.input` and
-  `core.actions`. Do not add a dangerous permission unless the feature cannot work without it.
+  `ui.widgets`, `ui.panes`, `ui.notice`, `ui.invoke`, `ui.navigate`, `sessions.read`, and the dangerous
+  ones, `sessions.input` and `core.actions`. `sessions.manage`, `workspaces.read`, `workspaces.write`
+  and `network` are withdrawn: garage refuses a manifest that names them. Do not add a dangerous permission unless the feature cannot work without it.
 
 ## What a command receives
 

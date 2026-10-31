@@ -864,7 +864,6 @@ fn a_click_elsewhere_cancels_the_arm_and_the_button_then_only_re_arms() {
 fn a_plugin_cannot_move_the_focus_while_the_user_is_engaged() {
     for id in [
         ids::SESSION_FOCUS,
-        ids::SESSION_ENGAGE,
         ids::SESSION_RESTORE,
         ids::SESSION_MAXIMIZE,
         ids::WORKSPACE_FOCUS,
@@ -919,8 +918,9 @@ fn a_human_click_on_a_plugin_button_still_leaves_the_engaged_session() {
 }
 
 #[test]
-fn a_plugin_may_never_engage_a_session_but_a_click_on_its_button_may() {
-    // From the garage layer, for the focused session and for another one.
+fn a_plugin_may_never_engage_a_session_not_even_from_its_button() {
+    // session.engage is not plugin-invocable (the daemon refuses it too), so
+    // neither an API request nor a click on a plugin button reaches it.
     for session in [ONE, TWO] {
         let mut app = fixture();
         let effects = app.dispatch_action_at(ids::SESSION_ENGAGE, &plugin(&app, session), 1000);
@@ -931,15 +931,11 @@ fn a_plugin_may_never_engage_a_session_but_a_click_on_its_button_may() {
             "{session}: typing never moves on a plugin's say-so"
         );
         let notice = app.router.notices.current(1000).expect("the user is told");
-        assert!(
-            notice.contains("plugin closer") && notice.contains("only you can engage"),
-            "{notice}"
-        );
+        assert_eq!(notice, "that action is not available to plugins");
     }
-    // The same id from a human click on a plugin button lands like any click.
     let mut app = fixture();
     app.dispatch_action_at(ids::SESSION_ENGAGE, &widget(&app, TWO), 1000);
-    assert_eq!(app.store.state().layer, KeyLayer::Engaged);
+    assert_eq!(app.store.state().layer, KeyLayer::Garage);
 }
 
 #[test]

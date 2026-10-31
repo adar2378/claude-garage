@@ -1,7 +1,7 @@
 # @claude-garage/plugin-sdk
 
 A small typed client for the [claude-garage](https://github.com/adar2378/claude-garage) plugin API.
-Zero runtime dependencies. Node 20 or later.
+Zero runtime dependencies. Node 24 or later.
 
 ```ts
 import { Api, readContext, textWidget } from "@claude-garage/plugin-sdk";

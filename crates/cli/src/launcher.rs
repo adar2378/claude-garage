@@ -1055,7 +1055,10 @@ mod tests {
         // a stable release replaces its own candidate, and the reverse
         assert!(daemon_is_stale(&node_era_health("1.0.0-rc.1", 7), "1.0.0"));
         assert!(daemon_is_stale(&node_era_health("1.0.0", 7), "1.0.0-rc.1"));
-        assert!(!daemon_is_stale(&node_era_health("1.0.0-rc.1", 7), "1.0.0-rc.1"));
+        assert!(!daemon_is_stale(
+            &node_era_health("1.0.0-rc.1", 7),
+            "1.0.0-rc.1"
+        ));
     }
 
     #[test]
@@ -1355,11 +1358,23 @@ mod tests {
             std::fs::write(dir.join("bin/disp-swap"), b"tampered").unwrap();
             let f = Fake::new(None);
             let err = go_word(&f, &paths, &["swap"], d.path()).unwrap_err();
-            assert!(err.contains("refusing") && err.contains("restart the daemon"), "{err}");
-            assert!(f.log().is_empty(), "no daemon was started for it: {:?}", f.log());
+            assert!(
+                err.contains("refusing") && err.contains("restart the daemon"),
+                "{err}"
+            );
+            assert!(
+                f.log().is_empty(),
+                "no daemon was started for it: {:?}",
+                f.log()
+            );
         }
 
-        fn go_word(f: &Fake, paths: &Paths, argv: &[&str], cwd: &Path) -> Result<Option<i32>, String> {
+        fn go_word(
+            f: &Fake,
+            paths: &Paths,
+            argv: &[&str],
+            cwd: &Path,
+        ) -> Result<Option<i32>, String> {
             let argv = words(argv);
             let all = load_all(paths).unwrap();
             let r = route(&all, &argv).expect("a route");

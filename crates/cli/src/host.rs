@@ -145,7 +145,9 @@ fn tui_override(var: Option<String>, allowed: bool) -> Option<Result<PathBuf, Fa
     Some(if is_executable(&p) {
         Ok(p)
     } else {
-        Err(Fail(format!("GARAGE_TUI_BIN is set but not an executable file: {o}")))
+        Err(Fail(format!(
+            "GARAGE_TUI_BIN is set but not an executable file: {o}"
+        )))
     })
 }
 
@@ -363,9 +365,18 @@ mod tests {
 
     #[test]
     fn the_wall_override_is_honoured_in_debug_builds_only() {
-        let me = std::env::current_exe().unwrap().to_string_lossy().into_owned();
-        assert_eq!(tui_override(Some(me.clone()), true), Some(Ok(PathBuf::from(&me))));
-        assert!(matches!(tui_override(Some("/no/such/wall".into()), true), Some(Err(_))));
+        let me = std::env::current_exe()
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
+        assert_eq!(
+            tui_override(Some(me.clone()), true),
+            Some(Ok(PathBuf::from(&me)))
+        );
+        assert!(matches!(
+            tui_override(Some("/no/such/wall".into()), true),
+            Some(Err(_))
+        ));
         // a release build never looks at it, even when it names a real program
         assert_eq!(tui_override(Some(me), false), None);
         assert_eq!(tui_override(Some("/no/such/wall".into()), false), None);

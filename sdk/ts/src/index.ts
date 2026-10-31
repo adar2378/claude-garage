@@ -9,7 +9,7 @@
  * await api.putWidget("bar", textWidget(`hello from ${ctx.workspace ?? "nowhere"}`));
  * ```
  *
- * Zero runtime dependencies. Needs Node 20 or later (global `fetch`).
+ * Zero runtime dependencies. Needs Node 24 or later (global `fetch`).
  */
 export { Api, GarageError, textWidget } from "./api.js";
 export type { ApiOptions, Target } from "./api.js";

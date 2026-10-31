@@ -129,16 +129,11 @@ pub fn totals(changes: &[Change]) -> (usize, usize) {
 }
 
 fn segment(text: &str, fg: &str, click: bool) -> Segment {
-    Segment {
-        text: text.to_owned(),
-        style: Some(Style {
-            fg: Some(fg.to_owned()),
-            ..Default::default()
-        }),
-        click: click.then(|| Click {
-            action: OPEN_ACTION.to_owned(),
-            args: None,
-        }),
+    let s = Segment::new(text).style(Style::new().fg(fg));
+    if click {
+        s.click(Click::new(OPEN_ACTION))
+    } else {
+        s
     }
 }
 
@@ -150,24 +145,20 @@ pub fn header_item(changes: &[Change]) -> Option<WidgetItem> {
         return None;
     }
     let colour = if done == total { "ok" } else { "accent" };
-    Some(WidgetItem {
-        segments: Some(vec![
-            segment("spec ", "dim", true),
-            segment(&format!("{done}/{total}"), colour, true),
-        ]),
-        ..Default::default()
-    })
+    Some(WidgetItem::new().segments(vec![
+        segment("spec ", "dim", true),
+        segment(&format!("{done}/{total}"), colour, true),
+    ]))
 }
 
 /// The whole widget: one scope per workspace that has tasks.
 pub fn widget_put(by_workspace: &BTreeMap<String, Vec<Change>>) -> WidgetPut {
-    WidgetPut {
-        scopes: by_workspace
+    WidgetPut::new().scopes(
+        by_workspace
             .iter()
             .filter_map(|(ws, changes)| header_item(changes).map(|i| (ws.clone(), vec![i])))
             .collect(),
-        ttl_secs: None,
-    }
+    )
 }
 
 /// A fixed-width bar: `[#####-----]`.

@@ -203,7 +203,7 @@ pub const META: &[ActionMeta] = &[
     meta_row(ids::OVERLAY_OPEN_WORKSPACE_ADD, false, true),
     meta_row(ids::SESSION_SPAWN, false, true),
     meta_row(ids::SESSION_SPAWN_WORKTREE, false, true),
-    meta_row(ids::SESSION_ENGAGE, false, true),
+    meta_row(ids::SESSION_ENGAGE, false, false),
     meta_row(ids::SESSION_MAXIMIZE, false, true),
     meta_row(ids::SESSION_CLOSE, true, true),
     meta_row(ids::SESSION_RESTORE_ALL, true, true),
@@ -568,6 +568,7 @@ mod tests {
         assert_eq!(
             refused,
             [
+                "session.engage",
                 "app.quit",
                 "rail.toggle",
                 "rail.narrow",

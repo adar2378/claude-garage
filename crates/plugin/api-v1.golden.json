@@ -271,7 +271,8 @@
     {
       "method": "GET",
       "path": "/api/plugins",
-      "needs": "none"
+      "needs": "none",
+      "tokenless": "deprecated"
     },
     {
       "method": "GET",
@@ -282,7 +283,8 @@
     {
       "method": "GET",
       "path": "/api/plugins/panes",
-      "needs": "none"
+      "needs": "none",
+      "tokenless": "deprecated"
     },
     {
       "method": "PUT",

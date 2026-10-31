@@ -28,8 +28,7 @@ Do the work in a new folder; never touch `~/.garage`, tmux, or the user's sessio
 4. **Read the scaffold's `CLAUDE.md`.** It is the authority on the manifest, slots, the widget format,
    permissions and limits. Follow it rather than memory.
 5. **Edit the manifest and the code.** Replace the hello example; keep the file layout. Declare only the
-   permissions the plugin uses (`ui.widgets`, `ui.panes`, `ui.notice`, `sessions.read`,
-   `workspaces.read`, ...). Do not add `sessions.input` or `core.actions` unless the request cannot work
+   permissions the plugin uses (`ui.widgets`, `ui.panes`, `ui.notice`, `sessions.read`, ...). Do not add `sessions.input` or `core.actions` unless the request cannot work
    without them, and say why in your reply.
 6. **Write tests** for the functions that decide something (parsing, counting, formatting). Run them:
    `cargo test`, `npm test` or `sh test.sh`.

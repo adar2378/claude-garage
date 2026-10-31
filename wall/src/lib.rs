@@ -9,8 +9,8 @@
 //! restore plumbing) and `runtime` (tokio event channel + state loop).
 
 pub mod actions;
-pub mod app;
 pub mod api;
+pub mod app;
 pub mod attach;
 pub mod drafts;
 pub mod input;

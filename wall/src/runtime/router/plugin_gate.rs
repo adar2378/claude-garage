@@ -308,19 +308,6 @@ impl GarageRouter {
                 return true;
             }
             if matches!(ctx.source, ActionSource::Plugin { .. }) {
-                // Where the user types is theirs to change: a plugin's request
-                // never engages a session (a click on its button, a human act, may).
-                if id == ids::SESSION_ENGAGE {
-                    self.notices.show(
-                        format!(
-                            "plugin {} asked to type into a session — only you can engage one",
-                            plugin_name(&ctx.source)
-                        ),
-                        3000,
-                        now_ms,
-                    );
-                    return true;
-                }
                 // Focus moves are for a person to make at a person's pace: a
                 // burst from a plugin lands once and the rest is dropped.
                 if moves_focus(id) {
