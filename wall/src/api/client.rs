@@ -323,6 +323,15 @@ impl GarageClient {
         Err(ApiError::Transport("unexpected picker response shape".into()))
     }
 
+    /// `GET /api/attach?id=` — how to attach a tile to this session on the
+    /// daemon's backend.
+    pub fn fetch_attach_spec(&self, id: &str) -> Result<crate::attach::AttachSpec, ApiError> {
+        let body = self
+            .get_json(&format!("/api/attach?id={}", encode_component(id)))?
+            .ok_or_else(|| ApiError::Transport("empty attach reply".into()))?;
+        serde_json::from_value(body).map_err(|e| ApiError::Transport(format!("bad attach spec: {e}")))
+    }
+
     fn get_json(&self, path: &str) -> Result<Option<Value>, ApiError> {
         read_json(self.agent.get(&format!("{}{}", self.base_url, path)).call())
     }

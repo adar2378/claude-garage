@@ -51,8 +51,9 @@ use crate::state::wall_state::{KeyLayer, OverlayKind, WallSession};
 use crate::ui::escalation::{EscalationPolicy, HEARTBEAT_INTERVAL_MS};
 use crate::ui::layout::WallLayout;
 use crate::ui::pet::{PetClick, PetHost};
+use crate::attach::DaemonResolver;
 use crate::ui::registry::{FrozenTile, TileRegistry};
-use crate::ui::scroll::{capture_frozen, page_lines, tmux_history_size, ScrollModel};
+use crate::ui::scroll::{capture_frozen, history_size, page_lines, ScrollModel};
 use crate::ui::view_picker::ViewPickerState;
 use crate::ui::workspace_add::{PickOutcome, WorkspaceAddForm};
 use crate::ui::worktree_finish::WorktreeFinishState;
@@ -354,7 +355,7 @@ impl App {
             store: WallStore::new(),
             router: GarageRouter::default(),
             keymap: Keymap::defaults(),
-            registry: TileRegistry::new(tx.clone()),
+            registry: TileRegistry::with_resolver(tx.clone(), Box::new(DaemonResolver::new(base_url))),
             slots,
             escalation: EscalationPolicy::default(),
             keylog: KeyLog::new(),
@@ -618,7 +619,10 @@ impl App {
         let (cols, rows) = self.registry.size_of(id).unwrap_or((80, 24));
         match self.registry.frozen(id).map(|f| f.model) {
             None if lines > 0 => {
-                let Some(hist) = tmux_history_size(id) else {
+                let Some(spec) = self.registry.spec(id).cloned() else {
+                    return;
+                };
+                let Some(hist) = history_size(&spec, id) else {
                     return;
                 };
                 if let Some(model) = ScrollModel::freeze(hist, lines) {
@@ -637,8 +641,11 @@ impl App {
     }
 
     fn recapture(&mut self, id: &str, model: ScrollModel, cols: u16, rows: u16) {
-        if let Some(parser) = capture_frozen(id, model.top_abs(), cols, rows) {
-            let new_lines = tmux_history_size(id).map_or(0, |h| model.new_lines(h));
+        let Some(spec) = self.registry.spec(id).cloned() else {
+            return;
+        };
+        if let Some(parser) = capture_frozen(&spec, id, model.top_abs(), cols, rows) {
+            let new_lines = history_size(&spec, id).map_or(0, |h| model.new_lines(h));
             self.registry.set_frozen(
                 id,
                 Some(FrozenTile {

@@ -694,10 +694,13 @@ name = "garage-wall"
 version = "0.6.2"
 dependencies = [
  "crossterm",
+ "garage-host",
+ "garage-protocol",
  "insta",
  "portable-pty",
  "ratatui",
  "serde_json",
+ "tempfile",
  "tokio",
  "tui-term",
  "ureq",

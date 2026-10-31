@@ -9,6 +9,7 @@
 use std::io::Write as _;
 use std::time::Duration;
 
+use garage_wall::attach::tmux_default;
 use garage_wall::pty::TileClient;
 
 fn main() {
@@ -22,7 +23,7 @@ fn main() {
 
     let mut clients: Vec<TileClient> = Vec::new();
     for session in &sessions {
-        match TileClient::new(session, 80, 24, 0, || {}) {
+        match TileClient::new(session, &tmux_default(session), 80, 24, 0, || {}) {
             Ok(client) => clients.push(client),
             Err(e) => {
                 eprintln!("pty_hold: attach to {session} failed: {e}");
