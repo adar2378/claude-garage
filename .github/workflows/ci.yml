@@ -70,3 +70,9 @@ jobs:
       - name: Daemon tests
         if: runner.os != 'Windows'
         run: npm test
+
+      # HTTP-only API contract tests (tests/contract): start the daemon on a
+      # private port and tmux socket, no Windows (needs tmux)
+      - name: Contract tests
+        if: runner.os != 'Windows'
+        run: npm run test:contract
