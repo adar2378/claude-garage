@@ -72,22 +72,38 @@ pub trait Host: Out {
     /// Start `claude-garage daemon` detached; returns the log path.
     fn spawn_daemon(&self) -> Result<PathBuf, String>;
     fn sleep_ms(&self, ms: u64);
+    /// Monotonic milliseconds, for measuring real elapsed time.
+    fn now_ms(&self) -> u64;
     fn resolve_tui(&self) -> Result<PathBuf, Fail>;
     /// Run the TUI in the foreground; returns its exit code (1 on a signal).
     fn run_tui(&self, bin: &Path) -> Result<i32, String>;
 }
 
-/// Poll `f` every `interval_ms` for up to `deadline_ms` of (sleep) time.
+/// Poll `f` every `interval_ms` until `deadline_ms` of real elapsed time
+/// (probe time included, not just the sleeps) has passed.
 fn wait_for<T>(host: &dyn Host, deadline_ms: u64, interval_ms: u64, mut f: impl FnMut() -> Option<T>) -> Option<T> {
-    let mut elapsed = 0;
-    while elapsed < deadline_ms {
+    let start = host.now_ms();
+    while host.now_ms().saturating_sub(start) < deadline_ms {
         if let Some(v) = f() {
             return Some(v);
         }
         host.sleep_ms(interval_ms);
-        elapsed += interval_ms;
     }
     None
+}
+
+/// Smallest/largest pid we will ever signal: JS `pid === (pid | 0) && pid > 1`.
+const MIN_PID: u32 = 2;
+const MAX_PID: u32 = i32::MAX as u32;
+
+/// Convert to a signalable `pid_t`, refusing 0/1 (kill(0)/init) and anything
+/// that would wrap negative (kill(-1) signals every process we may signal).
+pub fn checked_pid(pid: u32) -> Result<libc::pid_t, String> {
+    let p = libc::pid_t::try_from(pid).map_err(|_| format!("refusing to signal out-of-range pid {pid}"))?;
+    if p <= 1 {
+        return Err(format!("refusing to signal pid {pid}"));
+    }
+    Ok(p)
 }
 
 fn health_ok(host: &dyn Host, timeout_ms: u64) -> bool {
@@ -102,14 +118,14 @@ fn wait_for_port_free(host: &dyn Host) -> bool {
     wait_for(host, 10_000, 250, || (!health_ok(host, 500)).then_some(())).is_some()
 }
 
-/// `Number(health.pid)`, accepted only as an integer greater than 1.
+/// `Number(health.pid)`, accepted only as an integer in 2..=i32::MAX.
 pub fn health_pid(health: &Value) -> Option<u32> {
     let n = match health.get("pid")? {
         Value::Number(n) => n.as_f64()?,
         Value::String(s) => s.trim().parse::<f64>().ok()?,
         _ => return None,
     };
-    (n.fract() == 0.0 && n > 1.0 && n <= u32::MAX as f64).then_some(n as u32)
+    (n.fract() == 0.0 && n >= f64::from(MIN_PID) && n <= f64::from(MAX_PID)).then_some(n as u32)
 }
 
 /// A missing `version` field (pre-upgrade daemon) counts as stale too.
@@ -125,7 +141,7 @@ pub fn parse_listener_pid(stdout: &str) -> Option<u32> {
     if pids.len() != 1 {
         return None;
     }
-    pids[0].parse::<u32>().ok().filter(|p| *p > 1)
+    pids[0].parse::<u32>().ok().filter(|p| (MIN_PID..=MAX_PID).contains(p))
 }
 
 // ── prerequisites ───────────────────────────────────────────────────────
@@ -358,6 +374,9 @@ mod tests {
         tui: Result<PathBuf, Fail>,
         tui_exit: i32,
         sleeps: RefCell<u64>,
+        /// Fake clock cost of each health fetch (a slow probe).
+        fetch_cost_ms: u64,
+        fetches: RefCell<u64>,
     }
 
     impl Fake {
@@ -381,6 +400,8 @@ mod tests {
                 tui: Ok(PathBuf::from("/fake/garage-wall")),
                 tui_exit: 0,
                 sleeps: Default::default(),
+                fetch_cost_ms: 0,
+                fetches: Default::default(),
             }
         }
         fn called(&self, prefix: &str) -> usize {
@@ -423,6 +444,7 @@ mod tests {
             V
         }
         fn fetch_health(&self, _t: u64) -> Option<Value> {
+            *self.fetches.borrow_mut() += 1;
             self.daemon.borrow().clone()
         }
         fn post(&self, path: &str, body: Option<&Value>) -> Result<Reply, String> {
@@ -476,6 +498,9 @@ mod tests {
         fn sleep_ms(&self, ms: u64) {
             *self.sleeps.borrow_mut() += ms;
         }
+        fn now_ms(&self) -> u64 {
+            *self.sleeps.borrow() + *self.fetches.borrow() * self.fetch_cost_ms
+        }
         fn resolve_tui(&self) -> Result<PathBuf, Fail> {
             self.calls.borrow_mut().push("resolve_tui".into());
             match &self.tui {
@@ -509,6 +534,50 @@ mod tests {
         for bad in [json!({}), json!({"pid": 0}), json!({"pid": 1}), json!({"pid": -5}), json!({"pid": 1.5}), json!({"pid": null}), json!({"pid": "abc"})] {
             assert_eq!(health_pid(&bad), None, "{bad}");
         }
+    }
+
+    #[test]
+    fn pids_outside_2_to_i32_max_are_never_accepted() {
+        let big = [
+            json!({"pid": 2147483648u64}), // 2^31 wraps negative as pid_t
+            json!({"pid": 4294967295u64}), // 2^32-1 == -1 as pid_t: kill(-1)
+            json!({"pid": 4294967296u64}),
+            json!({"pid": 1234.5}),
+            json!({"pid": "-1"}),
+            json!({"pid": "2147483648"}),
+            json!({"pid": 0}),
+            json!({"pid": 1}),
+        ];
+        for bad in big {
+            assert_eq!(health_pid(&bad), None, "{bad}");
+        }
+        assert_eq!(health_pid(&json!({"pid": 2})), Some(2));
+        assert_eq!(health_pid(&json!({"pid": 2147483647u64})), Some(i32::MAX as u32));
+        for bad in ["2147483648\n", "4294967295\n", "0\n", "1\n", "-1\n", "1234.5\n"] {
+            assert_eq!(parse_listener_pid(bad), None, "{bad:?}");
+        }
+        assert_eq!(parse_listener_pid("2147483647\n"), Some(i32::MAX as u32));
+    }
+
+    #[test]
+    fn checked_pid_refuses_everything_that_could_signal_a_group_or_init() {
+        for bad in [0u32, 1, 1 << 31, u32::MAX, u32::MAX - 1] {
+            assert!(checked_pid(bad).is_err(), "{bad}");
+        }
+        assert_eq!(checked_pid(2), Ok(2));
+        assert_eq!(checked_pid(i32::MAX as u32), Ok(i32::MAX));
+    }
+
+    #[test]
+    fn the_deadline_counts_probe_time_not_just_sleeps() {
+        // each health probe costs 1s of real time: a daemon that never comes
+        // up must give up well before 60 sleeps (15s / 250ms) have happened.
+        let mut f = Fake::new(None);
+        f.spawn_brings_up = false;
+        f.fetch_cost_ms = 1_000;
+        assert!(tui_main(&f).is_err());
+        assert!(*f.sleeps.borrow() < 15_000, "slept {}", f.sleeps.borrow());
+        assert!(f.now_ms() >= 15_000 && f.now_ms() < 15_000 + 1_000 + 250 + 1_000, "{}", f.now_ms());
     }
 
     #[test]
