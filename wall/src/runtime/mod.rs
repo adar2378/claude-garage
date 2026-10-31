@@ -35,7 +35,7 @@ use crossterm::event::{
 use ratatui::layout::Rect;
 use tokio::sync::mpsc;
 
-use crate::actions::ActionId;
+use crate::slots::SlotClickRegion;
 use crate::api::client::{ApiError, GarageClient};
 use crate::api::models::{
     FinishAction, HooksInstallResult, SessionInfo, UsageInfo, WorkspaceInfo,
@@ -92,6 +92,37 @@ const USAGE_POLL_INTERVAL: Duration = Duration::from_secs(60);
 /// tui-context-meters "Install affordance": "~30s after startup").
 const INSTALL_HINT_DELAY: Duration = Duration::from_secs(30);
 
+/// How often a live tile's tmux history size is polled while a `tile.gutter`
+/// marker is showing for it.
+const HISTORY_POLL: Duration = Duration::from_secs(1);
+
+/// Whether the gutter's history poll is due: only while a marker is showing,
+/// so a wall with no gutter plugin never spawns a tmux call for it.
+fn history_refresh_due(gutter_showing: bool, since_last: Duration) -> bool {
+    gutter_showing && since_last >= HISTORY_POLL
+}
+
+/// What the loop's animation clock asks for this iteration.
+#[derive(Debug, PartialEq, Eq)]
+struct AnimationWake {
+    /// An animated item's frame is due: mark the frame dirty.
+    redraw: bool,
+    /// Wake no later than this (so the next frame is not a whole idle poll
+    /// late); `None` when nothing animates and the loop adds no wake-up.
+    next: Option<Duration>,
+}
+
+/// The loop's animation decision, given the interval of the animated items
+/// drawn last frame (`None` = none) and the time since the last animation
+/// redraw. Pure, so "no animated item, no extra wake-ups" is a test.
+fn animation_wake(interval: Option<Duration>, since_last: Duration) -> AnimationWake {
+    match interval {
+        None => AnimationWake { redraw: false, next: None },
+        Some(interval) if since_last >= interval => AnimationWake { redraw: true, next: Some(interval) },
+        Some(interval) => AnimationWake { redraw: false, next: Some(interval - since_last) },
+    }
+}
+
 /// How long the install hint stays up if never dismissed by a keypress
 /// (spec: "one-time" — it never reappears after this either).
 const INSTALL_HINT_TTL_MS: i64 = 8000;
@@ -120,6 +151,9 @@ pub enum AppEvent {
     /// Emitted only on transitions by `spawn_sse_task` — `true` on
     /// `on_connected`, `false` the moment it drops into the poll fallback.
     Connection(bool),
+    /// A live tile's tmux history size, polled while a `tile.gutter` marker is
+    /// showing for it.
+    History { id: String, size: i64 },
     /// A transient strip notice (fetch/effect errors, lifecycle results).
     Notice { text: String, ttl_ms: i64 },
     /// A spawn effect settled (success or failure) — clears the busy guard.
@@ -321,10 +355,14 @@ struct App {
     /// Rects of the last drawn frame — the mouse router reads the SAME
     /// geometry the paint used. `None` until the first frame.
     layout: Option<WallLayout>,
+    /// Sessions whose last-drawn tile had `tile.gutter` markers: the only ones
+    /// whose tmux history size is polled.
+    gutter_sessions: std::collections::HashSet<String>,
     /// Strip badge columns from the last frame (absolute), when rendered.
     badge_cols: Option<Range<u16>>,
-    /// Clickable `strip.right` slot items from the last frame (absolute).
-    strip_slots: Vec<(Range<u16>, ActionId)>,
+    /// Clickable slot items painted by the last frame (absolute rects, each
+    /// with the session/workspace it sits on).
+    slot_clicks: Vec<SlotClickRegion>,
     /// View-strip click targets from the last frame (absolute columns paired
     /// with the view name they focus) — empty when the strip isn't shown.
     view_strip_targets: Vec<(Range<u16>, String)>,
@@ -366,7 +404,8 @@ impl App {
             wt_finish: WorktreeFinishState::default(),
             layout: None,
             badge_cols: None,
-            strip_slots: Vec::new(),
+            slot_clicks: Vec::new(),
+            gutter_sessions: std::collections::HashSet::new(),
             view_strip_targets: Vec::new(),
             triage_rect: None,
             ws_add_rect: None,
@@ -391,6 +430,7 @@ impl App {
             AppEvent::Notice { text, ttl_ms } => {
                 self.router.notices.show(text, ttl_ms, now_ms());
             }
+            AppEvent::History { id, size } => self.registry.set_history(&id, size),
             AppEvent::SpawnSettled => self.router.spawn_settled(),
             AppEvent::RestoreSettled(id) => self.router.restore_settled(&id),
             AppEvent::InstallSettled { statusline, hooks } => {
@@ -784,6 +824,8 @@ async fn state_loop(
     let mut last_render = Instant::now() - FRAME_CAP;
     let mut last_elapsed_tick = Instant::now();
     let mut last_heartbeat = Instant::now();
+    let mut last_history_poll = Instant::now();
+    let mut last_animation = Instant::now();
     let startup = Instant::now();
     let mut install_hint_shown = false;
 
@@ -806,6 +848,28 @@ async fn state_loop(
             tokio::task::spawn_blocking(move || {
                 let _ = GarageClient::new(Some(base_url)).post_visibility(&client_id, true);
             });
+        }
+        // Animated slot items (a plugin's frames cycle from this clock): the
+        // loop redraws on the items' own interval, and only while one was
+        // drawn last frame.
+        let animation = animation_wake(app.slots.animation_interval(), last_animation.elapsed());
+        if animation.redraw {
+            last_animation = Instant::now();
+            dirty = true;
+        }
+        // `tile.gutter` markers on a live tail view need tmux's history size
+        // to know which scrollback row the body's top is; poll it only for the
+        // tiles that show a marker.
+        if history_refresh_due(!app.gutter_sessions.is_empty(), last_history_poll.elapsed()) {
+            last_history_poll = Instant::now();
+            for id in app.gutter_sessions.iter().cloned() {
+                let tx = app.tx.clone();
+                tokio::task::spawn_blocking(move || {
+                    if let Some(size) = tmux_history_size(&id) {
+                        let _ = tx.send(AppEvent::History { id, size });
+                    }
+                });
+            }
         }
         // One-time statusline-install hint (spec tui-context-meters
         // "Install affordance"): dim, never repeats after it's shown once —
@@ -852,11 +916,14 @@ async fn state_loop(
             last_render = Instant::now();
             dirty = false;
         }
-        let timeout = if dirty {
+        let mut timeout = if dirty {
             FRAME_CAP.saturating_sub(last_render.elapsed())
         } else {
             Duration::from_millis(250)
         };
+        if let Some(next) = animation.next {
+            timeout = timeout.min(next.max(Duration::from_millis(1)));
+        }
         let first = match tokio::time::timeout(timeout, rx.recv()).await {
             Err(_) => continue, // timeout: loop back to tick + render
             Ok(None) => {

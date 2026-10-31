@@ -21,7 +21,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Paragraph, Widget};
 use tui_term::widget::{Cursor, PseudoTerminal};
 
-use crate::slots::{self, SlotCtx, SlotId, SlotItem, SlotRegistry};
+use crate::slots::{self, ClickTarget, SlotClickRegion, SlotCtx, SlotId, SlotItem, SlotRegistry};
 use crate::state::wall_state::WallSession;
 use crate::ui::theme::{colors, elapsed_for, glyph_for, status_color};
 
@@ -40,6 +40,61 @@ pub struct TileView<'a> {
     pub now_ms: i64,
     /// The slot registry the title bar asks for its right-hand items.
     pub slots: &'a SlotRegistry,
+    /// `tile.gutter` markers for this session and where the view sits in the
+    /// scrollback; `None` when there are none (the tile then draws exactly as
+    /// before).
+    pub gutter: Option<Gutter<'a>>,
+}
+
+/// The gutter markers of one tile plus the scrollback position they map
+/// through.
+pub struct Gutter<'a> {
+    pub items: &'a [SlotItem],
+    /// Absolute scrollback row of the body's top row: the frozen model's
+    /// `top_abs`, or the tmux history size for a live tail view.
+    pub top_abs: i64,
+}
+
+/// The body row (0-based) a marker at absolute scrollback `row` is drawn on,
+/// when it is inside the visible `height` rows.
+pub fn gutter_screen_row(row: u64, top_abs: i64, height: u16) -> Option<u16> {
+    let offset = i64::try_from(row).ok()?.checked_sub(top_abs)?;
+    (0..i64::from(height)).contains(&offset).then_some(offset as u16)
+}
+
+/// Draw the gutter markers into the tile's left border column (no layout
+/// change, so the PTY never resizes as markers come and go) and return their
+/// click regions. A row holds one marker: the first by priority wins.
+fn render_gutter(buf: &mut Buffer, rect: Rect, v: &TileView, gutter: &Gutter) -> Vec<SlotClickRegion> {
+    let height = rect.height.saturating_sub(2);
+    let mut items: Vec<&SlotItem> = gutter.items.iter().filter(|i| i.gutter_row.is_some()).collect();
+    items.sort_by_key(|i| std::cmp::Reverse(i.priority)); // stable: ties keep provider order
+    let mut taken: Vec<u16> = Vec::new();
+    let mut regions = Vec::new();
+    for item in items {
+        let Some(row) = item.gutter_row.and_then(|r| gutter_screen_row(r, gutter.top_abs, height)) else {
+            continue;
+        };
+        if taken.contains(&row) {
+            continue;
+        }
+        taken.push(row);
+        let y = rect.y + 1 + row;
+        // One column: the first character of the item's text, in its style.
+        let Some(span) = item.text.iter().find(|s| !s.content.is_empty()) else { continue };
+        let glyph: String = span.content.chars().take(1).collect();
+        buf.set_string(rect.x, y, glyph, span.style);
+        if let Some(target) = item.on_click.clone() {
+            regions.push(SlotClickRegion {
+                rect: Rect::new(rect.x, y, 1, 1),
+                target,
+                slot: SlotId::TileGutter,
+                session: Some(v.session.id.clone()),
+                workspace: Some(v.session.workspace.clone()),
+            });
+        }
+    }
+    regions
 }
 
 /// Border color + type per the salience ladder.
@@ -129,6 +184,15 @@ fn fit_subtitle(text: &str, width: usize) -> String {
 /// into what's left (falling back to the untruncated label when not even
 /// one character of the title fits); the trailing id drops first.
 pub fn title_line(v: &TileView, width: u16) -> Line<'static> {
+    title_parts(v, width).0
+}
+
+/// [`title_line`] plus the clickable `tile.title.right` items: their column
+/// ranges within the line (the line starts one column inside the border).
+pub fn title_parts(
+    v: &TileView,
+    width: u16,
+) -> (Line<'static>, Vec<(std::ops::Range<u16>, ClickTarget)>) {
     let s = v.session;
     let blocked = s.needs_input();
     let glyph_color = status_color(&s.status, s.since, v.now_ms);
@@ -174,15 +238,12 @@ pub fn title_line(v: &TileView, width: u16) -> Line<'static> {
         session: Some(s),
         ..SlotCtx::default()
     };
-    tail.extend(
-        slots::layout(
-            v.slots.items(SlotId::TileTitleRight, &slot_ctx),
-            None,
-        )
-        .spans,
-    );
+    let tail_before_slots: usize = tail.iter().map(Span::width).sum();
+    let laid = slots::layout(v.slots.items(SlotId::TileTitleRight, &slot_ctx), None);
+    tail.extend(laid.spans.iter().cloned());
 
     let glyph = format!(" {} ", glyph_for(&s.status));
+    let glyph_w = glyph.chars().count();
     let fixed: usize =
         glyph.chars().count() + tail.iter().map(Span::width).sum::<usize>() + 1; // +1 trailing space
     let avail = (width as usize).saturating_sub(fixed);
@@ -213,7 +274,9 @@ pub fn title_line(v: &TileView, width: u16) -> Line<'static> {
         }
     }
     spans.push(Span::raw(" "));
-    Line::from(spans)
+    let slot_offset = glyph_w + Span::width(&spans[1]) + tail_before_slots;
+    let clicks = laid.clicks(slot_offset, usize::from(width.saturating_sub(2)));
+    (Line::from(spans), clicks)
 }
 
 /// The tile's placeholder body, or `None` when a terminal should render.
@@ -263,15 +326,34 @@ pub fn render_centered_lines(buf: &mut Buffer, rect: Rect, lines: Vec<Line<'stat
 /// Render one tile: border + title always; body = placeholder or the
 /// terminal screen (`screen` is the live vt100 screen, or the frozen
 /// capture snapshot while frozen).
-pub fn render_tile(buf: &mut Buffer, rect: Rect, v: &TileView, screen: Option<&vt100::Screen>) {
+///
+/// Returns the click regions of the clickable `tile.title.right` items it
+/// painted (each scoped to this tile's session and workspace).
+pub fn render_tile(
+    buf: &mut Buffer,
+    rect: Rect,
+    v: &TileView,
+    screen: Option<&vt100::Screen>,
+) -> Vec<SlotClickRegion> {
     if rect.width < 2 || rect.height < 2 {
-        return;
+        return Vec::new();
     }
     let (color, border_type) = border_for(v);
+    let (title, title_clicks) = title_parts(v, rect.width);
+    let mut regions: Vec<SlotClickRegion> = title_clicks
+        .into_iter()
+        .map(|(cols, target)| SlotClickRegion {
+            rect: Rect::new(rect.x + 1 + cols.start, rect.y, cols.end - cols.start, 1),
+            target,
+            slot: SlotId::TileTitleRight,
+            session: Some(v.session.id.clone()),
+            workspace: Some(v.session.workspace.clone()),
+        })
+        .collect();
     let block = Block::bordered()
         .border_type(border_type)
         .border_style(Style::default().fg(color))
-        .title(title_line(v, rect.width));
+        .title(title);
 
     if let Some((heading, detail)) = placeholder_for(v, screen.is_some()) {
         let inner = block.inner(rect);
@@ -281,7 +363,7 @@ pub fn render_tile(buf: &mut Buffer, rect: Rect, v: &TileView, screen: Option<&v
             lines.push(Line::styled(detail, Style::default().fg(colors::FAINT)));
         }
         render_centered_lines(buf, inner, lines);
-        return;
+        return regions;
     }
 
     let screen = screen.expect("placeholder_for covers the missing-client case");
@@ -304,6 +386,10 @@ pub fn render_tile(buf: &mut Buffer, rect: Rect, v: &TileView, screen: Option<&v
         .block(block)
         .cursor(cursor)
         .render(rect, buf);
+    if let Some(gutter) = &v.gutter {
+        regions.extend(render_gutter(buf, rect, v, gutter));
+    }
+    regions
 }
 
 #[cfg(test)]
@@ -312,6 +398,7 @@ mod tests {
     //! tile-facing checks in `tui/test/` — the harnesses grep several of
     //! these strings verbatim).
     use super::*;
+    use ratatui::buffer::Buffer;
 
     fn session(status: &str) -> WallSession {
         WallSession {
@@ -344,6 +431,7 @@ mod tests {
             frozen_new_lines: None,
             now_ms: 65_000,
             slots: test_slots(),
+            gutter: None,
         }
     }
 
@@ -458,6 +546,175 @@ mod tests {
         assert!(!text.contains("anything"));
         assert!(text.contains("lbl"), "{text}");
         assert!(text.contains("a-genuinely-quite-long-branch-name-here"), "{text}");
+    }
+
+    // ── p24: clickable tile.title.right items ───────────────────────────
+
+    fn button_slots() -> SlotRegistry {
+        let mut slots = SlotRegistry::core();
+        slots.register(SlotId::TileTitleRight, |_: &slots::SlotCtx| {
+            vec![SlotItem {
+                on_click: Some(ClickTarget::new(crate::actions::ids::SESSION_CLOSE).from_plugin("tiles")),
+                ..SlotItem::new(vec![Span::raw(" [x]")], 5)
+            }]
+        });
+        slots
+    }
+
+    /// The text the buffer shows under `rect`.
+    fn cells(buf: &Buffer, rect: Rect) -> String {
+        (rect.x..rect.x + rect.width).map(|x| buf[(x, rect.y)].symbol()).collect()
+    }
+
+    #[test]
+    fn a_title_button_region_covers_exactly_the_columns_its_text_landed_on() {
+        let slots = button_slots();
+        for (title, width) in [(None, 50u16), (Some("a long title that has to be cut short"), 44)] {
+            let mut s = session("working");
+            s.branch = Some("feat/x".into());
+            s.title = title.map(str::to_owned);
+            let mut v = view(&s);
+            v.slots = &slots;
+            let rect = Rect::new(3, 2, width, 4);
+            let mut buf = Buffer::empty(Rect::new(0, 0, 60, 8));
+            let parser = vt100::Parser::new(2, width - 2, 0);
+            let regions = render_tile(&mut buf, rect, &v, Some(parser.screen()));
+            assert_eq!(regions.len(), 1, "{title:?}");
+            let region = &regions[0];
+            // `title_line` is sized to the full tile width, so a long title's
+            // last column can fall under the border and be clipped; the
+            // region must clip with it and never claim columns the paint did
+            // not reach.
+            let shown = cells(&buf, region.rect);
+            assert!(" [x]".starts_with(&shown) && shown.len() >= 3, "{title:?}: {shown:?}");
+            if title.is_none() {
+                assert_eq!(shown, " [x]");
+            }
+            assert_eq!(region.rect.y, rect.y, "the title row");
+            assert_eq!(region.session.as_deref(), Some("garage/ws/lbl"));
+            assert_eq!(region.workspace.as_deref(), Some("ws"));
+            assert_eq!(region.slot, SlotId::TileTitleRight);
+        }
+    }
+
+    #[test]
+    fn a_title_button_clipped_by_a_narrow_tile_is_clipped_in_the_region_too() {
+        let slots = button_slots();
+        let s = session("working");
+        let mut v = view(&s);
+        v.slots = &slots;
+        let rect = Rect::new(0, 0, 12, 3);
+        let mut buf = Buffer::empty(rect);
+        let parser = vt100::Parser::new(1, 10, 0);
+        let regions = render_tile(&mut buf, rect, &v, Some(parser.screen()));
+        for r in &regions {
+            assert!(r.rect.right() < rect.right(), "never over the right border: {r:?}");
+        }
+    }
+
+    #[test]
+    fn a_tile_with_no_clickable_title_item_has_no_regions() {
+        let s = session("working");
+        let v = view(&s);
+        let mut buf = Buffer::empty(Rect::new(0, 0, 40, 4));
+        let parser = vt100::Parser::new(2, 38, 0);
+        assert!(render_tile(&mut buf, Rect::new(0, 0, 40, 4), &v, Some(parser.screen())).is_empty());
+    }
+
+    // ── p24: tile.gutter ────────────────────────────────────────────────
+
+    #[test]
+    fn gutter_rows_map_through_the_scrollback_offset() {
+        // Body rows 0..10 show absolute rows 100..110.
+        assert_eq!(gutter_screen_row(100, 100, 10), Some(0));
+        assert_eq!(gutter_screen_row(109, 100, 10), Some(9));
+        assert_eq!(gutter_screen_row(99, 100, 10), None, "scrolled out above");
+        assert_eq!(gutter_screen_row(110, 100, 10), None, "below the view");
+        assert_eq!(gutter_screen_row(0, 0, 10), Some(0), "a view at the very top of history");
+        assert_eq!(gutter_screen_row(5, 100, 0), None, "no body rows");
+        assert_eq!(gutter_screen_row(u64::MAX, 0, 10), None, "no overflow");
+    }
+
+    fn marker(row: u64, glyph: &str, priority: i16, clickable: bool) -> SlotItem {
+        SlotItem {
+            gutter_row: Some(row),
+            on_click: clickable
+                .then(|| ClickTarget::new(crate::actions::ids::SESSION_FOCUS).from_plugin("turns")),
+            ..SlotItem::new(vec![Span::styled(glyph.to_owned(), Style::default().fg(colors::AMBER))], priority)
+        }
+    }
+
+    /// Render a 20x8 live tile (body 6 rows) and return the buffer + regions.
+    fn render_with_gutter(items: &[SlotItem], top_abs: i64) -> (Buffer, Vec<SlotClickRegion>) {
+        let s = session("working");
+        let mut v = view(&s);
+        v.gutter = Some(Gutter { items, top_abs });
+        let rect = Rect::new(2, 1, 20, 8);
+        let mut buf = Buffer::empty(Rect::new(0, 0, 30, 10));
+        let parser = vt100::Parser::new(6, 18, 0);
+        let regions = render_tile(&mut buf, rect, &v, Some(parser.screen()));
+        (buf, regions)
+    }
+
+    #[test]
+    fn gutter_markers_land_on_their_rows_in_the_left_border_column() {
+        let items = [marker(102, "▌", 1, true), marker(104, "◆", 1, false), marker(50, "x", 1, true)];
+        let (buf, regions) = render_with_gutter(&items, 100);
+        // Tile at x=2,y=1; body starts at y=2. Row 102 -> body row 2 -> y=4.
+        assert_eq!(buf[(2, 4)].symbol(), "▌");
+        assert_eq!(buf[(2, 4)].fg, colors::AMBER);
+        assert_eq!(buf[(2, 6)].symbol(), "◆");
+        assert_eq!(buf[(2, 3)].symbol(), "│", "other rows keep the border");
+        // Only the clickable, visible marker has a region; the off-screen one has none.
+        assert_eq!(regions.len(), 1);
+        assert_eq!(regions[0].rect, Rect::new(2, 4, 1, 1));
+        assert_eq!(regions[0].slot, SlotId::TileGutter);
+        assert_eq!(regions[0].session.as_deref(), Some("garage/ws/lbl"));
+    }
+
+    #[test]
+    fn markers_follow_the_scrollback_offset_when_the_view_moves() {
+        let items = [marker(102, "▌", 1, true)];
+        let (_, at_100) = render_with_gutter(&items, 100);
+        let (_, at_101) = render_with_gutter(&items, 101);
+        assert_eq!(at_100[0].rect.y, 4);
+        assert_eq!(at_101[0].rect.y, 3, "scrolled one line: the marker moves up one row");
+        let (buf, scrolled_out) = render_with_gutter(&items, 103);
+        assert!(scrolled_out.is_empty());
+        assert!((2..8).all(|y| buf[(2, y)].symbol() == "│"), "no marker drawn");
+    }
+
+    #[test]
+    fn one_marker_per_row_the_higher_priority_wins() {
+        let items = [marker(101, "a", 1, false), marker(101, "B", 9, false), marker(101, "c", 9, false)];
+        let (buf, _) = render_with_gutter(&items, 100);
+        assert_eq!(buf[(2, 3)].symbol(), "B", "highest priority, ties keep the earlier");
+    }
+
+    #[test]
+    fn a_tile_with_no_gutter_items_renders_byte_identical_to_one_without_the_feature() {
+        let (plain, plain_regions) = {
+            let s = session("working");
+            let v = view(&s);
+            let rect = Rect::new(2, 1, 20, 8);
+            let mut buf = Buffer::empty(Rect::new(0, 0, 30, 10));
+            let parser = vt100::Parser::new(6, 18, 0);
+            let regions = render_tile(&mut buf, rect, &v, Some(parser.screen()));
+            (buf, regions)
+        };
+        let (with_empty, regions) = render_with_gutter(&[], 100);
+        assert_eq!(plain, with_empty);
+        assert_eq!(plain_regions, regions);
+    }
+
+    #[test]
+    fn a_placeholder_tile_draws_no_gutter() {
+        let s = session("restorable");
+        let items = [marker(100, "▌", 1, true)];
+        let mut v = view(&s);
+        v.gutter = Some(Gutter { items: &items, top_abs: 100 });
+        let mut buf = Buffer::empty(Rect::new(0, 0, 30, 10));
+        assert!(render_tile(&mut buf, Rect::new(2, 1, 20, 8), &v, None).is_empty());
     }
 
     // ── p11: context meter (spec tui-context-meters "Tile context meter") ──

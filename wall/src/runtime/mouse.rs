@@ -10,6 +10,7 @@ use crate::state::wall_state::{KeyLayer, OverlayKind, WallSession};
 use crate::ui::hit_targets::{self, action_at, ClickMap};
 use crate::ui::scroll::WHEEL_LINES;
 
+use super::router::plugin_gate::ClickConfirm;
 use super::{App, now_ms, view_picker_entries};
 
 impl App {
@@ -55,6 +56,11 @@ impl App {
                 if inner.contains((col, row).into()) {
                     if let Some(line) = self.registry.row_text(&id, row - inner.y) {
                         if let Some(url) = url_at(&line, usize::from(col - inner.x)) {
+                            // A click like any other: it cancels a pending
+                            // plugin arm before it does its own thing.
+                            if self.router.plugin_origin_arm_pending() {
+                                self.router.disarm_plugin();
+                            }
                             let _ = std::process::Command::new("open").arg(&url).spawn();
                             self.router.notices.show(format!("opened {url}"), 2000, now_ms());
                             return false;
@@ -77,10 +83,30 @@ impl App {
             view_picker_entries: picker_entries,
             view_picker_typing: self.view_picker.new_group_input.is_some(),
             badge_cols: self.badge_cols.as_ref(),
-            strip_slots: &self.strip_slots,
+            slot_clicks: &self.slot_clicks,
             slots: &self.slots,
         };
-        if let Some((id, ctx)) = action_at(&map, self.store.state(), col, row) {
+        let resolved = action_at(&map, self.store.state(), col, row);
+        // A pending plugin arm is confirmed only by a click on the very
+        // region that raised it (and never at all for an API request);
+        // every other click, on a core target or empty space, cancels it
+        // and then lands as usual.
+        let now = now_ms();
+        self.router.refresh_plugin_arm(now);
+        if self.router.plugin_origin_arm_pending() {
+            let clicked = resolved.as_ref().and_then(|(_, ctx)| ctx.region.as_ref());
+            match self.router.plugin_confirm_click(clicked, now) {
+                ClickConfirm::Run(action) => {
+                    let (id, ctx) = *action;
+                    let effects = self.dispatch_action(id, &ctx);
+                    return self.run_effects(effects);
+                }
+                // A hasty click on the armed region is swallowed whole.
+                ClickConfirm::Swallow => return false,
+                ClickConfirm::Cancelled => {}
+            }
+        }
+        if let Some((id, ctx)) = resolved {
             let effects = self.dispatch_action(id, &ctx);
             return self.run_effects(effects);
         }

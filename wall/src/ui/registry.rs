@@ -99,6 +99,10 @@ struct Entry {
     /// on attach and on change (TIOCSWINSZ via TileClient::resize).
     size: (u16, u16),
     frozen: Option<FrozenTile>,
+    /// tmux `#{history_size}` at the last refresh — the absolute scrollback
+    /// row of a live tail view's top row. Refreshed only while a
+    /// `tile.gutter` marker is showing for this tile.
+    history: Option<i64>,
 }
 
 pub struct TileRegistry {
@@ -141,6 +145,7 @@ impl TileRegistry {
                     started_at: now,
                     size: (80, 24),
                     frozen: None,
+                    history: None,
                 },
             );
         }
@@ -258,6 +263,17 @@ impl TileRegistry {
 
     pub fn frozen(&self, id: &str) -> Option<&FrozenTile> {
         self.entries.get(id).and_then(|e| e.frozen.as_ref())
+    }
+
+    /// The last known tmux history size of a live tile (see `Entry::history`).
+    pub fn history(&self, id: &str) -> Option<i64> {
+        self.entries.get(id).and_then(|e| e.history)
+    }
+
+    pub fn set_history(&mut self, id: &str, size: i64) {
+        if let Some(entry) = self.entries.get_mut(id) {
+            entry.history = Some(size);
+        }
     }
 
     pub fn frozen_mut(&mut self, id: &str) -> Option<&mut FrozenTile> {

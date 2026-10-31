@@ -356,12 +356,12 @@ mod tests {
         let strip = |slots: &SlotRegistry| crate::ui::strip::strip_line(on.state(), slots, None, 160);
 
         // Nothing published yet: no pet, no click range.
-        assert!(strip(&slots).slots.iter().all(|(_, id)| *id != ids::PET_PET));
+        assert!(strip(&slots).slots.iter().all(|(_, t)| t.action != ids::PET_PET));
 
         host.tick(1_000, on.state(), &mut notices, 100);
         host.publish_frame(&notices, 1_000);
         let line = strip(&slots);
-        let (range, _) = line.slots.iter().find(|(_, id)| *id == ids::PET_PET).expect("pet is clickable");
+        let (range, _) = line.slots.iter().find(|(_, t)| t.action == ids::PET_PET).expect("pet is clickable");
         assert_eq!(
             usize::from(range.end - range.start),
             host.strip_render(&notices, 1_000).map(|p| p.text.chars().count() + if p.bang { 2 } else { 0 }).unwrap(),
@@ -372,7 +372,7 @@ mod tests {
         let off = store_with_blocked(None);
         host.tick(2_000, off.state(), &mut notices, 100);
         host.publish_frame(&notices, 2_000);
-        assert!(strip(&slots).slots.iter().all(|(_, id)| *id != ids::PET_PET));
+        assert!(strip(&slots).slots.iter().all(|(_, t)| t.action != ids::PET_PET));
     }
 
     #[test]

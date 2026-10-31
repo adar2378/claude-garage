@@ -217,6 +217,7 @@ fn tile_dump(s: &WallSession, focused: bool, engaged: bool, w: u16) -> String {
         frozen_new_lines: None,
         now_ms: 125_000,
         slots: &slots,
+        gutter: None,
     };
     let rect = Rect::new(0, 0, w, 4);
     let mut buf = Buffer::empty(rect);

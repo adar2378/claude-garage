@@ -117,22 +117,79 @@ A plugin button, key or UI request that targets a dangerous core action (close, 
 - **THEN** garage asks for confirmation and the session closes only after the confirming click
 
 ### Requirement: Confirm rule for dangerous actions
-Sources `Plugin` and `Widget` SHALL only ARM a dangerous action; only `Key`, `Mouse` or `Chord` sources SHALL CONFIRM it. A plugin that triggers a dangerous action twice SHALL NOT execute it.
+Sources `Plugin` and `Widget` SHALL only ARM a dangerous action; only a human `Key` (`y`) or a click on the arming region SHALL CONFIRM it. A plugin that triggers a dangerous action twice SHALL NOT execute it. Every arm SHALL record its origin, which decides what may confirm it:
+
+- a `Plugin` request (the API) SHALL be confirmable ONLY by the `y` key, never by any mouse click;
+- a `Widget` click SHALL be confirmable by `y` or by a mouse click on the EXACT same region (slot id, rect and item identity, including a hash of the text the item shows) that armed it, so an item relabelled after arming is a different region;
+- a core click target SHALL never confirm a plugin arm, and a click anywhere else (including a click that opens a link in a tile) SHALL cancel it;
+- a confirming click SHALL count only when at least 300 ms have passed since the arm AND a frame showing the prompt has been drawn; an earlier click on the armed region SHALL be swallowed, neither confirming nor cancelling.
+
+While the user is engaged with a session, a `Plugin` (API) request that would move the focus off that session or its workspace (`session.focus`, `session.engage`, `session.restore`, `workspace.focus`, spawns, maximize, detach and the like) SHALL be refused with a notice, and typing SHALL stay with the engaged session. A human click on a plugin button still lands like any click.
+
+A `Plugin` or `Widget` source SHALL NOT replace or refresh a pending arm (a human's or a plugin's); while an arm is pending, further plugin arms are refused. The arm SHALL be valid only while its prompt is the notice showing: any other notice replacing it cancels the arm. `y` SHALL be ignored for 300 ms after the prompt first appears. The prompt SHALL name the target unambiguously as `<action> <workspace>/<label>?` (for example "Close ws/foo? click again or press y"). `/api/plugins/ui/action` SHALL NOT deserialize a `confirmed` field; only the TUI's own confirm path produces a confirmed source.
 
 #### Scenario: Plugin triggers twice
 - **WHEN** a plugin sends `ui/action` for `session.close` twice in a row
-- **THEN** the session is not closed; the action is armed and waits for a human key or click
+- **THEN** the session is not closed; the action is armed and waits for a human `y`
 
-#### Scenario: Human confirms
-- **WHEN** a plugin armed `session.delete` and the user then presses the confirm key or clicks the armed region
-- **THEN** the action runs once
+#### Scenario: Human confirms a widget arm
+- **WHEN** a plugin button armed `session.close` and the user then clicks that same button (same slot, rect and item) or presses `y` after 300 ms
+- **THEN** the action runs once, on the session the arm named
+
+#### Scenario: Different region does not confirm
+- **WHEN** a plugin button armed `session.close` and the user clicks another region that carries the same action and target (a different rect or item)
+- **THEN** nothing runs and the arm is cancelled
+
+#### Scenario: Core click does not confirm
+- **WHEN** a plugin armed `session.close` for a session and the user clicks a core target for the same action and session
+- **THEN** nothing runs for the plugin arm and it is cancelled
+
+#### Scenario: Early click is swallowed
+- **WHEN** a plugin button armed `session.close` and the user clicks the same button again less than 300 ms later (a double-click), or before any frame showed the prompt
+- **THEN** nothing runs and the arm stays pending; the same click after 300 ms with the prompt drawn confirms
+
+#### Scenario: Relabelled item does not confirm
+- **WHEN** a plugin button armed `session.close` and the item's text changes, then the user clicks it
+- **THEN** nothing runs and the arm is cancelled
+
+#### Scenario: Link click cancels the arm
+- **WHEN** a plugin arm is pending and the user clicks a link in a tile
+- **THEN** the link opens and the arm is cancelled
+
+#### Scenario: Plugin cannot steal typing
+- **WHEN** the user is engaged with a session and a plugin request asks to focus, engage or restore another session
+- **THEN** nothing moves, a notice reads "plugin <name> wanted to switch sessions — press Ctrl+G to leave the session first", and keystrokes still go to the engaged session
+
+#### Scenario: API arm needs the key
+- **WHEN** a plugin request armed a dangerous action and the user clicks, even on a region that looks like the plugin's button
+- **THEN** nothing runs and the arm is cancelled; only `y` would have confirmed it
+
+#### Scenario: Plugin cannot re-arm
+- **WHEN** an arm is pending and a plugin triggers the same or another dangerous action
+- **THEN** the trigger is refused, the prompt and its 3 s window stay as they were, and `y` confirms the original target
+
+#### Scenario: Replaced notice cancels the arm
+- **WHEN** any other notice replaces the arm's prompt
+- **THEN** the arm is cancelled and a later `y` does nothing
+
+#### Scenario: Racing key is ignored
+- **WHEN** `y` arrives less than 300 ms after the prompt appeared
+- **THEN** it is swallowed and the arm stays pending
+
+#### Scenario: Restart mirrors the native chord
+- **WHEN** a plugin arms `session.restart` for a session that is working or needs input
+- **THEN** the prompt warns "<workspace>/<label> is working — click again or press y to restart anyway", the confirmed restart forces exactly because of that warning (decided when the prompt was raised), and "restarting <name> — resumes the conversation" shows on confirm
 
 ### Requirement: Core action targets
-Core actions invoked by plugins SHALL take their target only from the request `target` (`{session?, workspace?}`) or the click region, never from `args`. A click on a `strip.right` item that invokes a session-scoped core action SHALL target the focused session. `session.delete` SHALL forget a session (the `DELETE /api/sessions/{*id}?meta=1` semantics), be marked dangerous and be plugin-invocable with confirmation.
+Core actions invoked by plugins SHALL take their target only from the request `target` (`{session?, workspace?}`) or the click region, never from `args`. An item in `rail.extra_rows` without `about_session` SHALL resolve to that row's workspace and never to the focused session. A click on a `strip.right` item that invokes a session-scoped core action SHALL target the focused session. `session.delete` SHALL forget a session (the `DELETE /api/sessions/{*id}?meta=1` semantics), be marked dangerous and be plugin-invocable with confirmation.
 
 #### Scenario: Args cannot redirect
 - **WHEN** a plugin invokes `session.close` with `target.session = "a"` and `args.session = "b"`
 - **THEN** only session `a` is armed for closing
+
+#### Scenario: Extra row without about_session
+- **WHEN** the user clicks a `rail.extra_rows` item that has no `about_session`
+- **THEN** its context carries that row's workspace and no session, session-targeted actions on it are refused, and the focused session is never used
 
 #### Scenario: Strip click targets focus
 - **WHEN** the user clicks a `strip.right` item whose action is `session.close`

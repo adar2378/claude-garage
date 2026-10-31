@@ -5,7 +5,12 @@
 //! behaviour. The ids are the contract later phases (a user keymap, the
 //! plugin host) bind to — rename with care.
 
+use std::sync::Arc;
+
+use serde_json::Value;
+
 use crate::api::models::WorktreeRecord;
+use crate::slots::{RegionId, SlotId};
 use crate::state::wall_state::WallState;
 
 /// A stable, dotted action name (`session.close`, `jump.blocked`, …).
@@ -16,7 +21,64 @@ impl ActionId {
     pub fn as_str(self) -> &'static str {
         self.0
     }
+
+    /// Intern an id a plugin MANIFEST declares (`plugin:action`). This is the
+    /// only way the process-wide set grows: the daemon lane calls it once
+    /// per declared action id while loading a manifest, never for a string
+    /// that arrived later (a widget push, a `ui/action` request, a hook
+    /// payload); those go through [`ActionId::lookup`]. Core ids resolve to
+    /// their `&'static` constant. The id must look like `plugin:action`
+    /// (ASCII, at most [`MAX_ID_LEN`] bytes) and the set holds at most
+    /// [`MAX_DECLARED`] plugin ids, so the leak stays a few KB (p24
+    /// design.md Gap A). `None` when the id is refused.
+    pub fn declare(id: &str) -> Option<ActionId> {
+        let mut set = INTERNER.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(existing) = set.get(id) {
+            return Some(ActionId(existing));
+        }
+        let shaped = id.len() <= MAX_ID_LEN
+            && id.split_once(':').is_some_and(|(p, a)| !p.is_empty() && !a.is_empty())
+            && id.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b':' | b'_' | b'-' | b'.'));
+        if !shaped || set.len() >= ids::ALL.len() + MAX_DECLARED {
+            return None;
+        }
+        let leaked: &'static str = Box::leak(id.to_owned().into_boxed_str());
+        set.insert(leaked);
+        Some(ActionId(leaked))
+    }
+
+    /// The already-interned id for a runtime string, never adding one. A
+    /// widget-pushed action string maps through this: an id no manifest
+    /// declared (and no core id) yields `None` and the item is refused.
+    pub fn lookup(id: &str) -> Option<ActionId> {
+        let set = INTERNER.lock().unwrap_or_else(|e| e.into_inner());
+        set.get(id).map(|existing| ActionId(existing))
+    }
+
+    /// Test shorthand for [`ActionId::declare`].
+    #[cfg(test)]
+    pub fn intern(id: &str) -> ActionId {
+        ActionId::declare(id).expect("a well-formed test id")
+    }
+
+    /// True for a plugin id (`plugin:action`). Core ids are dotted and never
+    /// contain a colon.
+    pub fn is_plugin(self) -> bool {
+        self.0.contains(':')
+    }
 }
+
+/// Longest declared plugin action id, in bytes.
+pub const MAX_ID_LEN: usize = 96;
+/// Most plugin ids the interner will ever hold.
+pub const MAX_DECLARED: usize = 1024;
+
+/// The interner, seeded with every core id so interning a core string hands
+/// back the core constant instead of leaking a duplicate.
+static INTERNER: std::sync::LazyLock<std::sync::Mutex<std::collections::HashSet<&'static str>>> =
+    std::sync::LazyLock::new(|| {
+        std::sync::Mutex::new(ids::ALL.iter().map(|id| id.0).collect())
+    });
 
 /// The action id list. Group order follows design.md decision 1.
 pub mod ids {
@@ -49,6 +111,9 @@ pub mod ids {
     /// Click-reachable (and internal) ids with no key today.
     pub const SESSION_FOCUS: ActionId = ActionId("session.focus");
     pub const SESSION_RESTORE: ActionId = ActionId("session.restore");
+    /// Forget a session (`DELETE /api/sessions/{id}?meta=1`). No key; reached
+    /// by plugin buttons, always through the confirm rule.
+    pub const SESSION_DELETE: ActionId = ActionId("session.delete");
     pub const PET_PET: ActionId = ActionId("pet.pet");
     /// `P`: not a [`super::GarageCommand`] (the store has no pet dependency).
     pub const PET_CYCLE_SPECIES: ActionId = ActionId("pet.cycle_species");
@@ -90,6 +155,7 @@ pub mod ids {
         APP_QUIT,
         SESSION_FOCUS,
         SESSION_RESTORE,
+        SESSION_DELETE,
         PET_PET,
         PET_CYCLE_SPECIES,
         OVERLAY_CLOSE,
@@ -101,6 +167,66 @@ pub mod ids {
     ];
 }
 
+/// What an action id may be asked to do by a plugin (p24 design.md Gap E).
+/// `dangerous` ids are never run by a plugin source: it can only arm them,
+/// and a human key or click confirms. Ids not `plugin_invocable` are refused
+/// outright. The table is an allowlist: an id missing from it is neither.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ActionMeta {
+    pub id: ActionId,
+    pub dangerous: bool,
+    pub plugin_invocable: bool,
+}
+
+const fn meta_row(id: ActionId, dangerous: bool, plugin_invocable: bool) -> ActionMeta {
+    ActionMeta { id, dangerous, plugin_invocable }
+}
+
+/// One row per core id (a test keeps it complete).
+pub const META: &[ActionMeta] = &[
+    meta_row(ids::WORKSPACE_FOCUS, false, true),
+    meta_row(ids::FOCUS_CYCLE_PREV, false, true),
+    meta_row(ids::FOCUS_CYCLE_NEXT, false, true),
+    meta_row(ids::JUMP_BLOCKED, false, true),
+    meta_row(ids::OVERLAY_OPEN_QUEUE, false, true),
+    meta_row(ids::OVERLAY_OPEN_HELP, false, true),
+    meta_row(ids::OVERLAY_OPEN_VIEW_PICKER, false, true),
+    meta_row(ids::OVERLAY_OPEN_WORKSPACE_ADD, false, true),
+    meta_row(ids::SESSION_SPAWN, false, true),
+    meta_row(ids::SESSION_SPAWN_WORKTREE, false, true),
+    meta_row(ids::SESSION_ENGAGE, false, true),
+    meta_row(ids::SESSION_MAXIMIZE, false, true),
+    meta_row(ids::SESSION_CLOSE, true, true),
+    meta_row(ids::SESSION_RESTORE_ALL, true, true),
+    meta_row(ids::SESSION_DETACH, false, true),
+    meta_row(ids::SESSION_OPEN_WINDOW, false, true),
+    meta_row(ids::SESSION_RESTART, true, true),
+    meta_row(ids::WORKSPACE_RESTART, true, true),
+    meta_row(ids::DAEMON_RESTART, true, true),
+    meta_row(ids::VIEW_CYCLE, false, true),
+    meta_row(ids::WORKSPACE_REMOVE, true, true),
+    meta_row(ids::WORKSPACE_REMOVE_KILL, true, true),
+    meta_row(ids::HOOKS_INSTALL, true, true),
+    meta_row(ids::APP_QUIT, false, false),
+    meta_row(ids::SESSION_FOCUS, false, true),
+    meta_row(ids::SESSION_RESTORE, false, true),
+    meta_row(ids::SESSION_DELETE, true, true),
+    meta_row(ids::PET_PET, false, true),
+    meta_row(ids::PET_CYCLE_SPECIES, false, false),
+    meta_row(ids::OVERLAY_CLOSE, false, false),
+    meta_row(ids::OVERLAY_SELECT_NEXT, false, false),
+    meta_row(ids::OVERLAY_SELECT_PREV, false, false),
+    meta_row(ids::OVERLAY_VIEW_PICKER_PICK, false, false),
+    meta_row(ids::VIEW_FOCUS, false, true),
+    meta_row(ids::CHORD_RESTART, false, false),
+];
+
+/// The metadata of a core id; `None` for a plugin id (never dangerous, always
+/// invocable: it is the plugin's own action).
+pub fn meta(id: ActionId) -> Option<&'static ActionMeta> {
+    META.iter().find(|m| m.id.as_str() == id.as_str())
+}
+
 /// What triggered an action.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ActionSource {
@@ -109,6 +235,33 @@ pub enum ActionSource {
     /// source may run the restart actions.
     Chord(String),
     Mouse { col: u16, row: u16 },
+    /// A click on a plugin-provided slot item. Like `Plugin`, it may only
+    /// ARM a dangerous action (p24 design.md Gap E); the confirming click is
+    /// a `Mouse` event.
+    Widget { plugin: String, slot: SlotId },
+    /// A plugin's own request (`POST /api/plugins/ui/action`). `confirmed`
+    /// is set only by the TUI's confirm path after a human key or click
+    /// armed-then-confirmed a dangerous action; a plugin never builds it.
+    /// `/api/plugins/ui/action` (daemon lane) must NEVER deserialize
+    /// `confirmed` from a request body: it builds `ActionSource::plugin(..)`
+    /// and nothing else. The gate also honours `confirmed: true` only with a
+    /// one-shot token its own confirm path issued, so a forged value arms.
+    Plugin { plugin: String, confirmed: bool },
+}
+
+impl ActionSource {
+    /// A plugin's request: never confirmed.
+    pub fn plugin(plugin: &str) -> ActionSource {
+        ActionSource::Plugin { plugin: plugin.to_owned(), confirmed: false }
+    }
+
+    /// True for the sources that may only arm a dangerous action.
+    pub fn is_plugin_origin(&self) -> bool {
+        matches!(
+            self,
+            ActionSource::Widget { .. } | ActionSource::Plugin { confirmed: false, .. }
+        )
+    }
 }
 
 /// The payload an action runs with. `session` is the focused session for a
@@ -125,6 +278,14 @@ pub struct ActionCtx {
     /// The held worktree record, when the action comes from the worktree
     /// finish flow (none of the key/click ids carry one yet).
     pub worktree: Option<WorktreeRecord>,
+    /// The clicked item's JSON payload. Only plugin actions read it: core
+    /// actions take their target from `session`/`workspace`, never from
+    /// here (p24 design.md Gap E).
+    pub args: Option<Arc<Value>>,
+    /// The slot region a click came from (set by `click_ctx`, `None` for
+    /// keys and core click targets). A plugin arm raised by a widget click
+    /// is confirmable only by a click on this exact region.
+    pub region: Option<RegionId>,
     pub source: ActionSource,
 }
 
@@ -138,8 +299,20 @@ impl ActionCtx {
             selection: None,
             view: None,
             worktree: None,
+            args: None,
+            region: None,
             source,
         }
+    }
+
+    pub fn with_args(mut self, args: Option<Arc<Value>>) -> Self {
+        self.args = args;
+        self
+    }
+
+    pub fn with_workspace(mut self, name: String) -> Self {
+        self.workspace = Some(name);
+        self
     }
 
     pub fn with_index(mut self, index: Option<usize>) -> Self {
@@ -295,6 +468,7 @@ mod tests {
         let handled_elsewhere = [
             ids::SESSION_FOCUS,
             ids::SESSION_RESTORE,
+            ids::SESSION_DELETE,
             ids::PET_PET,
             ids::PET_CYCLE_SPECIES,
             ids::OVERLAY_CLOSE,
@@ -315,6 +489,99 @@ mod tests {
                 if has_command { "mapped to" } else { "missing from" }
             );
         }
+    }
+
+    #[test]
+    fn every_core_id_has_exactly_one_meta_row_and_plugin_ids_have_none() {
+        for id in ids::ALL {
+            assert_eq!(META.iter().filter(|m| m.id == *id).count(), 1, "{}", id.as_str());
+            assert!(meta(*id).is_some());
+        }
+        assert_eq!(META.len(), ids::ALL.len(), "no stray rows");
+        assert!(meta(ActionId::intern("p:act")).is_none());
+    }
+
+    #[test]
+    fn the_dangerous_and_invocable_sets_are_exactly_the_designed_ones() {
+        let dangerous: Vec<&str> = META.iter().filter(|m| m.dangerous).map(|m| m.id.as_str()).collect();
+        assert_eq!(
+            dangerous,
+            [
+                "session.close",
+                "session.restore_all",
+                "session.restart",
+                "workspace.restart",
+                "daemon.restart",
+                "workspace.remove",
+                "workspace.remove.kill",
+                "hooks.install",
+                "session.delete",
+            ]
+        );
+        let refused: Vec<&str> = META.iter().filter(|m| !m.plugin_invocable).map(|m| m.id.as_str()).collect();
+        assert_eq!(
+            refused,
+            [
+                "app.quit",
+                "pet.cycle_species",
+                "overlay.close",
+                "overlay.select.next",
+                "overlay.select.prev",
+                "overlay.view_picker.pick",
+                "chord.restart",
+            ]
+        );
+        assert!(META.iter().all(|m| m.plugin_invocable || !m.dangerous), "a refused id is never 'dangerous'");
+    }
+
+    #[test]
+    fn interning_the_same_string_gives_the_same_pointer() {
+        let a = ActionId::intern("closer:close-all");
+        let b = ActionId::intern(&String::from("closer:close-all"));
+        assert_eq!(a.as_str().as_ptr(), b.as_str().as_ptr());
+        assert_eq!(a, b);
+        assert_ne!(a, ActionId::intern("closer:other"));
+        assert!(a.is_plugin());
+    }
+
+    #[test]
+    fn interning_a_core_id_equals_the_constant_and_leaks_nothing() {
+        let before = INTERNER.lock().unwrap().len();
+        for id in ids::ALL {
+            let first = ActionId::intern(id.as_str());
+            let second = ActionId::intern(id.as_str());
+            assert_eq!(first, *id);
+            assert_eq!(first.as_str().as_ptr(), second.as_str().as_ptr());
+            assert!(!first.is_plugin());
+        }
+        // Other tests intern plugin ids concurrently, so only assert the core
+        // ids did not add entries of their own: the set never shrinks and
+        // every core string was already in it.
+        let set = INTERNER.lock().unwrap();
+        assert!(set.len() >= before);
+        assert!(ids::ALL.iter().all(|id| set.contains(id.as_str())));
+    }
+
+    #[test]
+    fn only_declared_ids_are_interned_and_lookup_never_adds() {
+        let before = INTERNER.lock().unwrap().len();
+        assert_eq!(ActionId::lookup("never:declared"), None, "a pushed string is not interned");
+        assert!(!INTERNER.lock().unwrap().contains("never:declared"));
+        let declared = ActionId::declare("declaredplugin:go").unwrap();
+        assert_eq!(ActionId::lookup("declaredplugin:go"), Some(declared));
+        assert_eq!(ActionId::lookup("session.close"), Some(ids::SESSION_CLOSE), "core ids resolve");
+        assert!(INTERNER.lock().unwrap().len() >= before);
+        // Malformed or oversized ids are refused and add nothing.
+        for bad in ["noprefix", ":x", "p:", "p:has space", "p:é", &format!("p:{}", "a".repeat(MAX_ID_LEN))] {
+            assert_eq!(ActionId::declare(bad), None, "{bad:?}");
+            assert_eq!(ActionId::lookup(bad), None, "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn plugin_ids_never_enter_the_core_list() {
+        ActionId::intern("someplugin:act");
+        assert!(ids::ALL.iter().all(|id| !id.as_str().contains(':')));
     }
 
     #[test]

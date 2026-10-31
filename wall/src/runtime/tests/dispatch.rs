@@ -2,6 +2,7 @@
 //! that raise the same action must leave the wall in the same state, and
 //! every action id must act through it, the restart ids included.
 use super::*;
+use crate::actions::ActionId;
 
 fn app(workspaces: Vec<WorkspaceInfo>, sessions: Vec<SessionInfo>) -> App {
     let (tx, _rx) = mpsc::unbounded_channel();
@@ -191,18 +192,27 @@ fn a_key_and_a_click_agree_when_starting_from_the_engaged_layer() {
 
 /// An app with a drawn-looking layout and the given clickable strip slots,
 /// so `handle_click` resolves real coordinates.
-fn app_with_strip_slots(slots: Vec<(std::ops::Range<u16>, ActionId)>) -> (App, u16) {
+fn app_with_strip_slots(slots: Vec<(std::ops::Range<u16>, crate::slots::ClickTarget)>) -> (App, u16) {
     let mut app = two_workspaces();
     let layout = crate::ui::layout::wall_layout(Rect::new(0, 0, 120, 40), 3, None, false, false);
     let row = layout.strip.y;
     app.layout = Some(layout);
-    app.strip_slots = slots;
+    app.slot_clicks = slots
+        .into_iter()
+        .map(|(cols, target)| crate::slots::SlotClickRegion {
+            rect: Rect::new(cols.start, row, cols.end - cols.start, 1),
+            target,
+            slot: crate::slots::SlotId::StripRight,
+            session: None,
+            workspace: None,
+        })
+        .collect();
     (app, row)
 }
 
 #[test]
 fn a_real_click_on_the_pet_slot_reaches_the_dispatcher() {
-    let (mut app, row) = app_with_strip_slots(vec![(50..60, ids::PET_PET)]);
+    let (mut app, row) = app_with_strip_slots(vec![(50..60, ids::PET_PET.into())]);
     app.store.engage();
     assert!(!app.handle_click(55, row));
     assert_eq!(
@@ -214,7 +224,7 @@ fn a_real_click_on_the_pet_slot_reaches_the_dispatcher() {
 
 #[test]
 fn a_click_that_raises_quit_quits_like_the_key() {
-    let (mut app, row) = app_with_strip_slots(vec![(50..60, ids::APP_QUIT)]);
+    let (mut app, row) = app_with_strip_slots(vec![(50..60, ids::APP_QUIT.into())]);
     assert!(app.handle_click(55, row), "click quit");
     assert!(app.handle_key(&plain(KeyCode::Char('q'))), "key quit");
     assert!(!app.handle_click(5, row), "an inert point does not quit");
@@ -234,4 +244,25 @@ fn the_apps_one_keymap_drives_garage_keys_and_overlay_keys_alike() {
     assert_eq!(app.store.state().overlay, Some(OverlayKind::Help));
     app.handle_key(&plain(KeyCode::Char('x')));
     assert_eq!(app.store.state().overlay, None, "an overlay key bound on the same keymap");
+}
+
+#[test]
+fn the_gutter_history_poll_runs_only_while_a_marker_is_showing() {
+    use std::time::Duration;
+    assert!(!history_refresh_due(false, Duration::from_secs(3600)), "no marker, no tmux call, ever");
+    assert!(!history_refresh_due(true, Duration::from_millis(900)));
+    assert!(history_refresh_due(true, Duration::from_secs(1)));
+}
+
+#[test]
+fn the_loop_wakes_for_animation_only_when_an_animated_item_is_visible() {
+    use std::time::Duration;
+    let ms = Duration::from_millis;
+    // Nothing animated: no redraw and no wake-up, however long it has been.
+    assert_eq!(animation_wake(None, ms(0)), AnimationWake { redraw: false, next: None });
+    assert_eq!(animation_wake(None, Duration::from_secs(3600)), AnimationWake { redraw: false, next: None });
+    // Animated: not yet due, then due.
+    assert_eq!(animation_wake(Some(ms(250)), ms(100)), AnimationWake { redraw: false, next: Some(ms(150)) });
+    assert_eq!(animation_wake(Some(ms(250)), ms(250)), AnimationWake { redraw: true, next: Some(ms(250)) });
+    assert_eq!(animation_wake(Some(ms(250)), ms(900)), AnimationWake { redraw: true, next: Some(ms(250)) });
 }

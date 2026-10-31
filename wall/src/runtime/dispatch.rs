@@ -23,6 +23,13 @@ impl App {
         ctx: &ActionCtx,
         now: i64,
     ) -> Vec<Effect> {
+        // The confirm rule for plugin-originated triggers: they may only arm
+        // a dangerous action; a human key or click confirms (and a refused
+        // id never runs). Everything it handles ends here.
+        let mut gated = Vec::new();
+        if self.router.gate(&mut self.store, id, ctx, now, &mut gated) {
+            return gated;
+        }
         // Fresh overlay state on every open (the Dart `A`/`w`/`D`
         // branches) — keyed on the action, so a rebound key or a click
         // resets the same way, and it happens even if the dispatch declines.
