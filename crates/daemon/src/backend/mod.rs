@@ -43,8 +43,22 @@ pub trait SessionBackend: Send + Sync {
     async fn has(&self, id: &str) -> Result<bool>;
     /// `env` is set for the session's process; backends must not bake it into
     /// backend-specific flags the caller could not reproduce elsewhere.
-    async fn create(&self, id: &str, dir: &Path, cmd: &str, args: &[String], env: &[(String, String)]) -> Result<()>;
-    async fn respawn(&self, id: &str, dir: &Path, cmd: &str, args: &[String], env: &[(String, String)]) -> Result<()>;
+    async fn create(
+        &self,
+        id: &str,
+        dir: &Path,
+        cmd: &str,
+        args: &[String],
+        env: &[(String, String)],
+    ) -> Result<()>;
+    async fn respawn(
+        &self,
+        id: &str,
+        dir: &Path,
+        cmd: &str,
+        args: &[String],
+        env: &[(String, String)],
+    ) -> Result<()>;
     async fn kill(&self, id: &str) -> Result<()>;
     async fn rename(&self, from: &str, to: &str) -> Result<()>;
     async fn capture(&self, id: &str, lines: usize) -> Result<String>;

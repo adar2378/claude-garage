@@ -13,18 +13,17 @@ use axum::response::Response;
 use crate::error::error_response;
 use crate::state::AppState;
 
-pub async fn origin_guard(
-    State(state): State<AppState>,
-    req: Request,
-    next: Next,
-) -> Response {
+pub async fn origin_guard(State(state): State<AppState>, req: Request, next: Next) -> Response {
     let state_changing = matches!(
         *req.method(),
         Method::POST | Method::PUT | Method::PATCH | Method::DELETE
     );
     if state_changing {
         if let Some(origin) = req.headers().get("origin") {
-            let ok = origin.to_str().map(|o| state.config.ui_origins.iter().any(|a| a == o)).unwrap_or(false);
+            let ok = origin
+                .to_str()
+                .map(|o| state.config.ui_origins.iter().any(|a| a == o))
+                .unwrap_or(false);
             if !ok {
                 return error_response(axum::http::StatusCode::FORBIDDEN, "origin not allowed");
             }

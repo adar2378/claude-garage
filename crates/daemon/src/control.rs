@@ -70,7 +70,8 @@ impl Notification {
         match name {
             "%sessions-changed" => Self::SessionsChanged,
             "%session-renamed" => Self::SessionRenamed,
-            "%window-renamed" => Self::WindowRenamed,
+            // tmux sends the unlinked form for windows outside the client's session.
+            "%window-renamed" | "%unlinked-window-renamed" => Self::WindowRenamed,
             "%exit" => Self::Exit,
             _ => Self::Other,
         }
@@ -78,6 +79,31 @@ impl Notification {
 
     pub fn wakes_poller(self) -> bool {
         self != Self::Other
+    }
+}
+
+/// Tracks `%begin` .. `%end`/`%error` reply blocks. Their body is command
+/// output, not notifications, so a line in there that merely looks like one
+/// must not wake the poller (or end the client).
+#[derive(Debug, Default)]
+struct Blocks {
+    inside: bool,
+}
+
+impl Blocks {
+    fn classify(&mut self, line: &str) -> Notification {
+        let name = line.split([' ', '\t']).next().unwrap_or("");
+        if self.inside {
+            if matches!(name, "%end" | "%error") {
+                self.inside = false;
+            }
+            return Notification::Other;
+        }
+        if name == "%begin" {
+            self.inside = true;
+            return Notification::Other;
+        }
+        Notification::parse(line)
     }
 }
 
@@ -110,11 +136,12 @@ pub fn spawn(backend: TmuxBackend, link: Arc<ControlLink>) -> JoinHandle<()> {
 /// One connection. Returns when the client cannot start or has ended.
 async fn run_once(backend: &TmuxBackend, link: &ControlLink) {
     // Never start a server just to watch it: with no server the plain tick
-    // covers everything and the next retry looks again.
-    if !backend.server_running().await {
+    // covers everything and the next retry looks again. The session is made
+    // without being able to start a server, and the client only attaches.
+    if !backend.ensure_control_session().await {
         return;
     }
-    let Ok(mut child) = backend.control_command().spawn() else {
+    let Ok(mut child) = backend.control_command().await.spawn() else {
         return;
     };
     // Held open: tmux -C exits when its stdin closes.
@@ -125,6 +152,7 @@ async fn run_once(backend: &TmuxBackend, link: &ControlLink) {
     let mut lines = BufReader::new(stdout);
     let mut buf = Vec::new();
     let mut first = true;
+    let mut blocks = Blocks::default();
     loop {
         buf.clear();
         match lines.read_until(b'\n', &mut buf).await {
@@ -138,7 +166,7 @@ async fn run_once(backend: &TmuxBackend, link: &ControlLink) {
             link.wake();
         }
         let line = String::from_utf8_lossy(&buf);
-        let note = Notification::parse(line.trim_end());
+        let note = blocks.classify(line.trim_end());
         if note.wakes_poller() {
             link.wake();
         }
@@ -156,14 +184,62 @@ mod tests {
 
     #[test]
     fn parses_the_notifications_that_matter_and_ignores_the_rest() {
-        assert_eq!(Notification::parse("%sessions-changed"), Notification::SessionsChanged);
-        assert_eq!(Notification::parse("%session-renamed $3 garage/ws/new"), Notification::SessionRenamed);
-        assert_eq!(Notification::parse("%window-renamed @1 vim"), Notification::WindowRenamed);
+        assert_eq!(
+            Notification::parse("%sessions-changed"),
+            Notification::SessionsChanged
+        );
+        assert_eq!(
+            Notification::parse("%session-renamed $3 garage/ws/new"),
+            Notification::SessionRenamed
+        );
+        assert_eq!(
+            Notification::parse("%window-renamed @1 vim"),
+            Notification::WindowRenamed
+        );
         assert_eq!(Notification::parse("%exit"), Notification::Exit);
-        assert_eq!(Notification::parse("%exit server exited unexpectedly"), Notification::Exit);
-        for other in ["%output %1 hi", "%begin 1 2 0", "%end 1 2 0", "%layout-change @1 x", "", "garbage", "%sessions-changedX"] {
+        assert_eq!(
+            Notification::parse("%exit server exited unexpectedly"),
+            Notification::Exit
+        );
+        for other in [
+            "%output %1 hi",
+            "%begin 1 2 0",
+            "%end 1 2 0",
+            "%layout-change @1 x",
+            "",
+            "garbage",
+            "%sessions-changedX",
+        ] {
             assert_eq!(Notification::parse(other), Notification::Other, "{other:?}");
             assert!(!Notification::Other.wakes_poller());
+        }
+    }
+
+    #[test]
+    fn unlinked_window_rename_wakes_the_poller() {
+        assert_eq!(
+            Notification::parse("%unlinked-window-renamed @7 vim"),
+            Notification::WindowRenamed
+        );
+        assert!(Notification::parse("%unlinked-window-renamed @7 vim").wakes_poller());
+    }
+
+    #[test]
+    fn lines_inside_a_reply_block_are_not_notifications() {
+        let mut b = Blocks::default();
+        let lines = [
+            ("%begin 1 2 0", Notification::Other),
+            ("%sessions-changed", Notification::Other),
+            ("%exit", Notification::Other),
+            ("%end 1 2 0", Notification::Other),
+            ("%sessions-changed", Notification::SessionsChanged),
+            ("%begin 3 4 0", Notification::Other),
+            ("%window-renamed @1 x", Notification::Other),
+            ("%error 3 4 0", Notification::Other),
+            ("%exit", Notification::Exit),
+        ];
+        for (line, want) in lines {
+            assert_eq!(b.classify(line), want, "{line:?}");
         }
     }
 
@@ -198,7 +274,10 @@ mod tests {
         let tmux = TestTmux::new();
         let backend = Arc::new(tmux.backend());
         if with_session {
-            backend.create("garage/ws/seed", tmux.dir(), "sleep", &["60".into()], &[]).await.unwrap();
+            backend
+                .create("garage/ws/seed", tmux.dir(), "sleep", &["60".into()], &[])
+                .await
+                .unwrap();
         }
         let bus = EventBus::default();
         let rx = bus.subscribe();
@@ -210,7 +289,13 @@ mod tests {
         ));
         let link = poller.control_link();
         let tasks = vec![poller.start(), spawn((*backend).clone(), link.clone())];
-        Rig { tmux, backend, link, rx, tasks }
+        Rig {
+            tmux,
+            backend,
+            link,
+            rx,
+            tasks,
+        }
     }
 
     /// Next `SessionsChanged`, or `None` after `within`.
@@ -240,18 +325,30 @@ mod tests {
         settle(&mut r).await;
         let budget = Duration::from_millis(500);
 
-        r.backend.create("garage/ws/new", r.tmux.dir(), "sleep", &["60".into()], &[]).await.unwrap();
-        let create = next_change(&mut r.rx, budget).await.expect("create must wake the poller");
+        r.backend
+            .create("garage/ws/new", r.tmux.dir(), "sleep", &["60".into()], &[])
+            .await
+            .unwrap();
+        let create = next_change(&mut r.rx, budget)
+            .await
+            .expect("create must wake the poller");
         tokio::time::sleep(Duration::from_millis(300)).await;
         while r.rx.try_recv().is_ok() {}
 
-        r.backend.rename("garage/ws/new", "garage/ws/renamed").await.unwrap();
-        let rename = next_change(&mut r.rx, budget).await.expect("rename must wake the poller");
+        r.backend
+            .rename("garage/ws/new", "garage/ws/renamed")
+            .await
+            .unwrap();
+        let rename = next_change(&mut r.rx, budget)
+            .await
+            .expect("rename must wake the poller");
         tokio::time::sleep(Duration::from_millis(300)).await;
         while r.rx.try_recv().is_ok() {}
 
         r.backend.kill("garage/ws/renamed").await.unwrap();
-        let kill = next_change(&mut r.rx, budget).await.expect("kill must wake the poller");
+        let kill = next_change(&mut r.rx, budget)
+            .await
+            .expect("kill must wake the poller");
 
         eprintln!("control-mode latency: create {create:?}, rename {rename:?}, kill {kill:?}");
     }
@@ -260,11 +357,27 @@ mod tests {
     async fn the_control_session_never_appears_as_a_garage_session() {
         let mut r = rig(true).await;
         settle(&mut r).await;
-        let ids: Vec<_> = r.backend.list().await.unwrap().into_iter().map(|s| s.id).collect();
+        let ids: Vec<_> = r
+            .backend
+            .list()
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|s| s.id)
+            .collect();
         assert_eq!(ids, ["garage/ws/seed"]);
-        assert!(!r.backend.panes().await.unwrap().keys().any(|k| k.contains("control")));
+        assert!(!r
+            .backend
+            .panes()
+            .await
+            .unwrap()
+            .keys()
+            .any(|k| k.contains("control")));
         // It is real and attached by exactly the control client...
-        assert!(r.tmux.tmux(&["ls", "-F", "#{session_name} #{session_attached}"]).contains("garage-control 1"));
+        assert!(r
+            .tmux
+            .tmux(&["ls", "-F", "#{session_name} #{session_attached}"])
+            .contains("garage-control 1"));
         // ...and the garage session's own attached count is untouched.
         assert!(!r.backend.list().await.unwrap()[0].attached);
         // Stopping the client leaves nothing behind.
@@ -272,7 +385,90 @@ mod tests {
             t.abort();
         }
         let tmux = &r.tmux;
-        tmux.wait_for(|| !tmux.tmux(&["ls", "-F", "#{session_name}"]).contains("garage-control")).await;
+        tmux.wait_for(|| {
+            !tmux
+                .tmux(&["ls", "-F", "#{session_name}"])
+                .contains("garage-control")
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn the_control_session_is_quiet_and_the_client_flags_are_applied() {
+        let mut r = rig(true).await;
+        settle(&mut r).await;
+        // The options ride in the same command list as the attach; wait for them.
+        let opt = |name: &str| {
+            r.tmux
+                .tmux(&["show-options", "-t", "garage-control", "-v", name])
+                .trim()
+                .to_string()
+        };
+        r.tmux
+            .wait_for(|| opt("status") == "off" && opt("destroy-unattached") == "on")
+            .await;
+        let flags = r.tmux.tmux(&["list-clients", "-F", "#{client_flags}"]);
+        assert!(flags.contains("ignore-size"), "{flags}");
+    }
+
+    #[tokio::test]
+    async fn two_control_clients_both_hear_and_the_session_outlives_the_first_to_leave() {
+        let mut r = rig(true).await;
+        settle(&mut r).await;
+        // A second client, as during a daemon restart overlap, with its own link.
+        let link2 = Arc::new(ControlLink::default());
+        let second = spawn((*r.backend).clone(), link2.clone());
+        let l2 = link2.clone();
+        r.tmux.wait_for(|| l2.is_healthy()).await;
+        r.tmux
+            .wait_for(|| {
+                r.tmux
+                    .tmux(&["ls", "-F", "#{session_name} #{session_attached}"])
+                    .contains("garage-control 2")
+            })
+            .await;
+        link2.drain();
+        r.link.drain();
+
+        r.backend
+            .create("garage/ws/both", r.tmux.dir(), "sleep", &["60".into()], &[])
+            .await
+            .unwrap();
+        let heard = |l: Arc<ControlLink>| async move {
+            tokio::time::timeout(Duration::from_millis(500), l.woken())
+                .await
+                .is_ok()
+        };
+        assert!(heard(link2.clone()).await, "second client must be woken");
+        assert!(
+            heard(r.link.clone()).await,
+            "first client must still be woken"
+        );
+
+        // First leaves (the rig's control task is tasks[1]): session stays for the second.
+        r.tasks[1].abort();
+        r.tmux
+            .wait_for(|| {
+                r.tmux
+                    .tmux(&["ls", "-F", "#{session_name} #{session_attached}"])
+                    .contains("garage-control 1")
+            })
+            .await;
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        assert!(r
+            .tmux
+            .tmux(&["ls", "-F", "#{session_name}"])
+            .contains("garage-control"));
+        assert!(link2.is_healthy());
+
+        second.abort();
+        let tmux = &r.tmux;
+        tmux.wait_for(|| {
+            !tmux
+                .tmux(&["ls", "-F", "#{session_name}"])
+                .contains("garage-control")
+        })
+        .await;
     }
 
     #[tokio::test]
@@ -280,7 +476,11 @@ mod tests {
         let r = rig(false).await;
         tokio::time::sleep(Duration::from_millis(700)).await;
         assert!(!r.link.is_healthy());
-        assert_eq!(r.tmux.tmux(&["ls"]), "", "the control client must not start a server by itself");
+        assert_eq!(
+            r.tmux.tmux(&["ls"]),
+            "",
+            "the control client must not start a server by itself"
+        );
     }
 
     #[tokio::test]
@@ -293,16 +493,44 @@ mod tests {
         let link = r.link.clone();
         r.tmux.wait_for(|| !link.is_healthy()).await;
         // Unhealthy: the 2 s tick alone must still see a new session.
-        r.backend.create("garage/ws/during", r.tmux.dir(), "sleep", &["60".into()], &[]).await.unwrap();
-        assert!(next_change(&mut r.rx, Duration::from_secs(4)).await.is_some(), "tick covers the gap");
+        r.backend
+            .create(
+                "garage/ws/during",
+                r.tmux.dir(),
+                "sleep",
+                &["60".into()],
+                &[],
+            )
+            .await
+            .unwrap();
+        assert!(
+            next_change(&mut r.rx, Duration::from_secs(4))
+                .await
+                .is_some(),
+            "tick covers the gap"
+        );
 
         // Reconnects with backoff and is fast again.
         let t0 = Instant::now();
         r.tmux.wait_for(|| link.is_healthy()).await;
-        eprintln!("control-mode reconnect after client death: {:?}", t0.elapsed());
+        eprintln!(
+            "control-mode reconnect after client death: {:?}",
+            t0.elapsed()
+        );
         settle(&mut r).await;
-        r.backend.create("garage/ws/after", r.tmux.dir(), "sleep", &["60".into()], &[]).await.unwrap();
-        assert!(next_change(&mut r.rx, Duration::from_millis(500)).await.is_some());
+        r.backend
+            .create(
+                "garage/ws/after",
+                r.tmux.dir(),
+                "sleep",
+                &["60".into()],
+                &[],
+            )
+            .await
+            .unwrap();
+        assert!(next_change(&mut r.rx, Duration::from_millis(500))
+            .await
+            .is_some());
     }
 
     #[tokio::test]
@@ -312,13 +540,32 @@ mod tests {
         r.tmux.tmux(&["kill-server"]);
         let link = r.link.clone();
         r.tmux.wait_for(|| !link.is_healthy()).await;
-        assert!(next_change(&mut r.rx, Duration::from_secs(4)).await.is_some(), "all sessions gone is a change");
+        assert!(
+            next_change(&mut r.rx, Duration::from_secs(4))
+                .await
+                .is_some(),
+            "all sessions gone is a change"
+        );
 
         // No busy loop while there is no server: a handful of spawns at most.
-        r.backend.create("garage/ws/back", r.tmux.dir(), "sleep", &["60".into()], &[]).await.unwrap();
+        r.backend
+            .create("garage/ws/back", r.tmux.dir(), "sleep", &["60".into()], &[])
+            .await
+            .unwrap();
         r.tmux.wait_for(|| link.is_healthy()).await;
         settle(&mut r).await;
-        r.backend.create("garage/ws/again", r.tmux.dir(), "sleep", &["60".into()], &[]).await.unwrap();
-        assert!(next_change(&mut r.rx, Duration::from_millis(500)).await.is_some());
+        r.backend
+            .create(
+                "garage/ws/again",
+                r.tmux.dir(),
+                "sleep",
+                &["60".into()],
+                &[],
+            )
+            .await
+            .unwrap();
+        assert!(next_change(&mut r.rx, Duration::from_millis(500))
+            .await
+            .is_some());
     }
 }

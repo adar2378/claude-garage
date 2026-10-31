@@ -40,7 +40,8 @@ impl Agent {
     /// Parse the `claude agents --json` array; anything unparseable (not an
     /// array, entries without a numeric pid) yields no agents / skips the entry.
     pub fn parse_list(json: &str) -> Vec<Agent> {
-        let Ok(serde_json::Value::Array(items)) = serde_json::from_str::<serde_json::Value>(json) else {
+        let Ok(serde_json::Value::Array(items)) = serde_json::from_str::<serde_json::Value>(json)
+        else {
             return Vec::new();
         };
         items
@@ -74,7 +75,11 @@ pub struct CommandAgents {
 
 impl CommandAgents {
     pub fn new(program: impl Into<String>, args: Vec<String>) -> Self {
-        Self { program: program.into(), args, timeout: COMMAND_TIMEOUT }
+        Self {
+            program: program.into(),
+            args,
+            timeout: COMMAND_TIMEOUT,
+        }
     }
 
     /// Override the command timeout (tests).
@@ -94,10 +99,15 @@ impl Default for CommandAgents {
 impl AgentSource for CommandAgents {
     async fn agents(&self) -> Vec<Agent> {
         let mut cmd = Command::new(&self.program);
-        cmd.args(&self.args).stdin(Stdio::null()).stderr(Stdio::null()).kill_on_drop(true);
+        cmd.args(&self.args)
+            .stdin(Stdio::null())
+            .stderr(Stdio::null())
+            .kill_on_drop(true);
         // A timeout drops the future, which kills the child: "no agents".
         match tokio::time::timeout(self.timeout, cmd.output()).await {
-            Ok(Ok(o)) if o.status.success() => Agent::parse_list(&String::from_utf8_lossy(&o.stdout)),
+            Ok(Ok(o)) if o.status.success() => {
+                Agent::parse_list(&String::from_utf8_lossy(&o.stdout))
+            }
             _ => Vec::new(),
         }
     }
@@ -114,7 +124,13 @@ pub trait PollerSink: Send + Sync {
     /// Forget a dead session: status entry and statusline context.
     fn drop_session(&self, id: &str);
     /// Record resume metadata after a trusted pid join.
-    async fn upsert_session_meta(&self, id: &str, claude_session_id: &str, workspace: &str, label: &str);
+    async fn upsert_session_meta(
+        &self,
+        id: &str,
+        claude_session_id: &str,
+        workspace: &str,
+        label: &str,
+    );
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -145,7 +161,11 @@ pub fn diff_session_state(
         }
         titles.insert(s.id.clone(), title);
     }
-    SessionDiff { changed, ids, titles }
+    SessionDiff {
+        changed,
+        ids,
+        titles,
+    }
 }
 
 #[derive(Default)]
@@ -172,7 +192,15 @@ impl Poller {
         bus: EventBus,
     ) -> Self {
         let hostname = gethostname::gethostname().to_str().map(str::to_string);
-        Self { backend, agents, sink, bus, hostname, last: Mutex::new(Last::default()), control: Arc::default() }
+        Self {
+            backend,
+            agents,
+            sink,
+            bus,
+            hostname,
+            last: Mutex::new(Last::default()),
+            control: Arc::default(),
+        }
     }
 
     /// Override the hostname used to filter default pane titles.
@@ -201,10 +229,18 @@ impl Poller {
         }
 
         // One list-panes per tick daemon-wide: pid join and title diff share it.
-        let (agents, panes) = tokio::join!(self.agents.agents(), async { self.backend.panes().await.unwrap_or_default() });
+        let (agents, panes) = tokio::join!(self.agents.agents(), async {
+            self.backend.panes().await.unwrap_or_default()
+        });
         let changed = {
             let mut last = self.last.lock().unwrap();
-            let diff = diff_session_state(&sessions, &panes, self.hostname.as_deref(), &last.ids, &last.titles);
+            let diff = diff_session_state(
+                &sessions,
+                &panes,
+                self.hostname.as_deref(),
+                &last.ids,
+                &last.titles,
+            );
             for id in &last.ids {
                 if !diff.ids.contains(id) {
                     self.sink.drop_session(id);
@@ -225,14 +261,19 @@ impl Poller {
         let by_pid: HashMap<u32, &Agent> = agents.iter().map(|a| (a.pid, a)).collect();
         let mut unmatched = Vec::new();
         for s in &sessions {
-            let agent = panes.get(&s.id).and_then(|p| p.pid).and_then(|pid| by_pid.get(&pid));
+            let agent = panes
+                .get(&s.id)
+                .and_then(|p| p.pid)
+                .and_then(|pid| by_pid.get(&pid));
             match agent {
                 Some(agent) => {
                     self.sink.apply_agent_status(&s.id, &agent.status);
                     // Only a successful pid join yields a trusted sessionId.
                     if let Some(csid) = agent.session_id.as_deref().filter(|c| !c.is_empty()) {
                         let (workspace, label) = split_session_id(&s.id);
-                        self.sink.upsert_session_meta(&s.id, csid, &workspace, &label).await;
+                        self.sink
+                            .upsert_session_meta(&s.id, csid, &workspace, &label)
+                            .await;
                     }
                 }
                 None => unmatched.push(s),
@@ -243,7 +284,10 @@ impl Poller {
         // wrapper), so the first agent in the session's dir applies to ALL
         // sessions there. Over-notify rather than silently drop.
         for s in unmatched {
-            if let Some(a) = agents.iter().find(|a| a.cwd.as_deref() == Some(s.dir.as_str())) {
+            if let Some(a) = agents
+                .iter()
+                .find(|a| a.cwd.as_deref() == Some(s.dir.as_str()))
+            {
                 self.sink.apply_agent_status(&s.id, &a.status);
             }
         }
@@ -293,13 +337,19 @@ pub(crate) mod fakes {
     #[async_trait]
     impl PollerSink for FakeSink {
         fn apply_agent_status(&self, id: &str, agent_status: &str) {
-            self.applied.lock().unwrap().push((id.into(), agent_status.into()));
+            self.applied
+                .lock()
+                .unwrap()
+                .push((id.into(), agent_status.into()));
         }
         fn drop_session(&self, id: &str) {
             self.dropped.lock().unwrap().push(id.into());
         }
         async fn upsert_session_meta(&self, id: &str, c: &str, w: &str, l: &str) {
-            self.metas.lock().unwrap().push((id.into(), c.into(), w.into(), l.into()));
+            self.metas
+                .lock()
+                .unwrap()
+                .push((id.into(), c.into(), w.into(), l.into()));
         }
     }
 
@@ -310,13 +360,28 @@ pub(crate) mod fakes {
 
     impl FakeBackend {
         pub fn new() -> Self {
-            Self { sessions: Mutex::new(vec![]), panes: Mutex::new(HashMap::new()) }
+            Self {
+                sessions: Mutex::new(vec![]),
+                panes: Mutex::new(HashMap::new()),
+            }
         }
         pub fn set(&self, id: &str, dir: &str, pid: Option<u32>, title: &str) {
             let mut s = self.sessions.lock().unwrap();
             s.retain(|x| x.id != id);
-            s.push(BackendSession { id: id.into(), dir: dir.into(), attached: false, created_at: Some(1) });
-            self.panes.lock().unwrap().insert(id.into(), PaneInfo { cwd: dir.into(), title: title.into(), pid });
+            s.push(BackendSession {
+                id: id.into(),
+                dir: dir.into(),
+                attached: false,
+                created_at: Some(1),
+            });
+            self.panes.lock().unwrap().insert(
+                id.into(),
+                PaneInfo {
+                    cwd: dir.into(),
+                    title: title.into(),
+                    pid,
+                },
+            );
         }
         pub fn remove(&self, id: &str) {
             self.sessions.lock().unwrap().retain(|x| x.id != id);
@@ -338,10 +403,24 @@ pub(crate) mod fakes {
         async fn has(&self, id: &str) -> anyhow::Result<bool> {
             Ok(self.sessions.lock().unwrap().iter().any(|s| s.id == id))
         }
-        async fn create(&self, _: &str, _: &std::path::Path, _: &str, _: &[String], _: &[(String, String)]) -> anyhow::Result<()> {
+        async fn create(
+            &self,
+            _: &str,
+            _: &std::path::Path,
+            _: &str,
+            _: &[String],
+            _: &[(String, String)],
+        ) -> anyhow::Result<()> {
             unimplemented!()
         }
-        async fn respawn(&self, _: &str, _: &std::path::Path, _: &str, _: &[String], _: &[(String, String)]) -> anyhow::Result<()> {
+        async fn respawn(
+            &self,
+            _: &str,
+            _: &std::path::Path,
+            _: &str,
+            _: &[String],
+            _: &[(String, String)],
+        ) -> anyhow::Result<()> {
             unimplemented!()
         }
         async fn kill(&self, _: &str) -> anyhow::Result<()> {
@@ -368,7 +447,12 @@ pub(crate) mod fakes {
     }
 
     pub fn agent(pid: u32, status: &str, sid: Option<&str>, cwd: Option<&str>) -> Agent {
-        Agent { pid, status: status.into(), session_id: sid.map(Into::into), cwd: cwd.map(Into::into) }
+        Agent {
+            pid,
+            status: status.into(),
+            session_id: sid.map(Into::into),
+            cwd: cwd.map(Into::into),
+        }
     }
 }
 
@@ -386,16 +470,28 @@ mod tests {
     // ---- poller.test.js: diffSessionState ----
 
     fn session(id: &str) -> BackendSession {
-        BackendSession { id: id.into(), dir: "/d".into(), attached: false, created_at: Some(1) }
+        BackendSession {
+            id: id.into(),
+            dir: "/d".into(),
+            attached: false,
+            created_at: Some(1),
+        }
     }
     fn pane(title: &str) -> PaneInfo {
-        PaneInfo { cwd: "/d".into(), title: title.into(), pid: Some(123) }
+        PaneInfo {
+            cwd: "/d".into(),
+            title: title.into(),
+            pid: Some(123),
+        }
     }
     fn set(ids: &[&str]) -> HashSet<String> {
         ids.iter().map(|s| s.to_string()).collect()
     }
     fn titles(items: &[(&str, Option<&str>)]) -> HashMap<String, Option<String>> {
-        items.iter().map(|(k, v)| (k.to_string(), v.map(str::to_string))).collect()
+        items
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.map(str::to_string)))
+            .collect()
     }
 
     #[test]
@@ -452,7 +548,13 @@ mod tests {
 
     #[test]
     fn diff_session_death_still_reports_changed() {
-        let d = diff_session_state(&[], &HashMap::new(), Some(HOST), &set(&[ID]), &titles(&[(ID, Some("✳ was working"))]));
+        let d = diff_session_state(
+            &[],
+            &HashMap::new(),
+            Some(HOST),
+            &set(&[ID]),
+            &titles(&[(ID, Some("✳ was working"))]),
+        );
         assert!(d.changed);
         assert!(d.ids.is_empty());
         assert!(d.titles.is_empty());
@@ -460,7 +562,13 @@ mod tests {
 
     #[test]
     fn diff_session_with_no_pane_entry_normalizes_to_none_without_panicking() {
-        let d = diff_session_state(&[session(ID)], &HashMap::new(), Some(HOST), &set(&[ID]), &titles(&[(ID, None)]));
+        let d = diff_session_state(
+            &[session(ID)],
+            &HashMap::new(),
+            Some(HOST),
+            &set(&[ID]),
+            &titles(&[(ID, None)]),
+        );
         assert!(!d.changed);
         assert_eq!(d.titles[ID], None);
     }
@@ -481,8 +589,15 @@ mod tests {
         let sink = Arc::new(FakeSink::default());
         let bus = EventBus::default();
         let rx = bus.subscribe();
-        let poller = Poller::new(backend.clone(), agents.clone(), sink.clone(), bus).with_hostname(Some(HOST.into()));
-        Rig { backend, agents, sink, poller, rx }
+        let poller = Poller::new(backend.clone(), agents.clone(), sink.clone(), bus)
+            .with_hostname(Some(HOST.into()));
+        Rig {
+            backend,
+            agents,
+            sink,
+            poller,
+            rx,
+        }
     }
 
     fn drain(rx: &mut tokio::sync::broadcast::Receiver<DaemonEvent>) -> usize {
@@ -499,13 +614,21 @@ mod tests {
         r.backend.set(ID, "/d", Some(100), "");
         *r.agents.0.lock().unwrap() = vec![agent(100, "busy", Some("claude-sid"), Some("/other"))];
         r.poller.poll_once().await;
-        assert_eq!(*r.sink.applied.lock().unwrap(), [(ID.to_string(), "busy".to_string())], "raw status forwarded");
-        assert_eq!(*r.sink.metas.lock().unwrap(), [(ID.into(), "claude-sid".into(), "test".into(), "poll".into())]);
+        assert_eq!(
+            *r.sink.applied.lock().unwrap(),
+            [(ID.to_string(), "busy".to_string())],
+            "raw status forwarded"
+        );
+        assert_eq!(
+            *r.sink.metas.lock().unwrap(),
+            [(ID.into(), "claude-sid".into(), "test".into(), "poll".into())]
+        );
         assert_eq!(drain(&mut r.rx), 1, "a new session is one sessions-changed");
     }
 
     #[tokio::test]
-    async fn cwd_fallback_applies_the_first_matching_agent_to_every_unmatched_session_in_that_dir() {
+    async fn cwd_fallback_applies_the_first_matching_agent_to_every_unmatched_session_in_that_dir()
+    {
         let r = rig();
         r.backend.set("garage/ws/a", "/proj", Some(1), "");
         r.backend.set("garage/ws/b", "/proj", Some(2), "");
@@ -519,10 +642,16 @@ mod tests {
         applied.sort();
         assert_eq!(
             applied,
-            [("garage/ws/a".to_string(), "waiting".to_string()), ("garage/ws/b".to_string(), "waiting".to_string())],
+            [
+                ("garage/ws/a".to_string(), "waiting".to_string()),
+                ("garage/ws/b".to_string(), "waiting".to_string())
+            ],
             "/elsewhere has no agent, so session c is untouched"
         );
-        assert!(r.sink.metas.lock().unwrap().is_empty(), "no trusted sessionId without a pid join");
+        assert!(
+            r.sink.metas.lock().unwrap().is_empty(),
+            "no trusted sessionId without a pid join"
+        );
     }
 
     #[tokio::test]
@@ -570,7 +699,9 @@ mod tests {
 
     #[test]
     fn agents_json_parsing_is_lenient() {
-        let a = Agent::parse_list(r#"[{"pid":5,"status":"busy","sessionId":"x","cwd":"/c"},{"status":"busy"},{"pid":"7"}]"#);
+        let a = Agent::parse_list(
+            r#"[{"pid":5,"status":"busy","sessionId":"x","cwd":"/c"},{"status":"busy"},{"pid":"7"}]"#,
+        );
         assert_eq!(a, [agent(5, "busy", Some("x"), Some("/c"))]);
         assert!(Agent::parse_list("not json").is_empty());
         assert!(Agent::parse_list("{}").is_empty());
@@ -580,21 +711,38 @@ mod tests {
     async fn a_missing_agents_command_is_a_silent_no_op() {
         let src = CommandAgents::new("/nonexistent/claude-for-garage-tests", vec![]);
         assert!(src.agents().await.is_empty());
-        let stub = CommandAgents::new("sh", vec!["-c".into(), "echo '[{\"pid\":9,\"status\":\"idle\"}]'".into()]);
+        let stub = CommandAgents::new(
+            "sh",
+            vec![
+                "-c".into(),
+                "echo '[{\"pid\":9,\"status\":\"idle\"}]'".into(),
+            ],
+        );
         assert_eq!(stub.agents().await.len(), 1);
     }
 
     #[tokio::test]
     async fn a_hung_agents_command_times_out_and_the_tick_still_completes() {
         let mut r = rig();
-        let slow = CommandAgents::new("sleep", vec!["10".into()]).with_timeout(Duration::from_millis(200));
-        let poller = Poller::new(r.backend.clone(), Arc::new(slow), r.sink.clone(), EventBus::default())
-            .with_hostname(Some(HOST.into()));
+        let slow =
+            CommandAgents::new("sleep", vec!["10".into()]).with_timeout(Duration::from_millis(200));
+        let poller = Poller::new(
+            r.backend.clone(),
+            Arc::new(slow),
+            r.sink.clone(),
+            EventBus::default(),
+        )
+        .with_hostname(Some(HOST.into()));
         r.backend.set(ID, "/d", Some(1), "");
         let started = std::time::Instant::now();
-        tokio::time::timeout(Duration::from_secs(3), poller.poll_once()).await.expect("tick must not hang");
+        tokio::time::timeout(Duration::from_secs(3), poller.poll_once())
+            .await
+            .expect("tick must not hang");
         assert!(started.elapsed() < Duration::from_secs(3));
-        assert!(r.sink.applied.lock().unwrap().is_empty(), "timeout means no agents");
+        assert!(
+            r.sink.applied.lock().unwrap().is_empty(),
+            "timeout means no agents"
+        );
         drain(&mut r.rx);
     }
 
@@ -629,11 +777,20 @@ mod tests {
         let backend = Arc::new(FakeBackend::new());
         backend.set(ID, "/d", Some(1), "");
         let agents = Arc::new(CountingAgents(Default::default()));
-        let poller = Arc::new(Poller::new(backend.clone(), agents.clone(), Arc::new(FakeSink::default()), EventBus::default()));
+        let poller = Arc::new(Poller::new(
+            backend.clone(),
+            agents.clone(),
+            Arc::new(FakeSink::default()),
+            EventBus::default(),
+        ));
         let link = poller.control_link();
         let task = poller.start();
         advance(1).await;
-        assert_eq!(agents.polls(), 0, "nothing before the first tick or a wake-up");
+        assert_eq!(
+            agents.polls(),
+            0,
+            "nothing before the first tick or a wake-up"
+        );
 
         for _ in 0..5 {
             link.wake();
@@ -641,7 +798,11 @@ mod tests {
         }
         assert_eq!(agents.polls(), 0, "still inside the debounce window");
         advance(150).await;
-        assert_eq!(agents.polls(), 1, "five wake-ups, one poll, ~100 ms after the first");
+        assert_eq!(
+            agents.polls(),
+            1,
+            "five wake-ups, one poll, ~100 ms after the first"
+        );
         advance(1500).await;
         assert_eq!(agents.polls(), 1, "no stray poll from the stored permit");
 

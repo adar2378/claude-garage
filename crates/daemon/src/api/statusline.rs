@@ -49,7 +49,10 @@ fn wrapper_command(wrapper_path: &Path) -> String {
 }
 
 async fn write_wrapper_script(path: &Path, content: &str) -> Result<(), InstallError> {
-    let io = |e: std::io::Error| InstallError { status: 500, message: e.to_string() };
+    let io = |e: std::io::Error| InstallError {
+        status: 500,
+        message: e.to_string(),
+    };
     if let Some(dir) = path.parent() {
         tokio::fs::create_dir_all(dir).await.map_err(io)?;
     }
@@ -60,7 +63,9 @@ async fn write_wrapper_script(path: &Path, content: &str) -> Result<(), InstallE
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        tokio::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o755)).await.map_err(io)?;
+        tokio::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o755))
+            .await
+            .map_err(io)?;
     }
     tokio::fs::rename(&tmp, path).await.map_err(io)
 }
@@ -83,8 +88,14 @@ pub async fn claude(
         Err(r) => return *r,
     };
 
-    let session_id = payload.get("session_id").and_then(Value::as_str).filter(|s| !s.is_empty());
-    let cwd = payload.get("cwd").and_then(Value::as_str).filter(|s| !s.is_empty());
+    let session_id = payload
+        .get("session_id")
+        .and_then(Value::as_str)
+        .filter(|s| !s.is_empty());
+    let cwd = payload
+        .get("cwd")
+        .and_then(Value::as_str)
+        .filter(|s| !s.is_empty());
     let ids = t.deps.resolve_session_ids(session_id, cwd).await;
     if ids.is_empty() {
         // Unresolvable session: nothing recorded (context or account-wide rate
@@ -93,15 +104,23 @@ pub async fn claude(
     }
 
     let window = payload.get("context_window");
-    if let Some(pct) = window.and_then(|w| w.get("used_percentage")).and_then(clamp_percentage) {
+    if let Some(pct) = window
+        .and_then(|w| w.get("used_percentage"))
+        .and_then(clamp_percentage)
+    {
         for id in &ids {
             t.context.set_context(id, pct);
         }
     }
     // Teach the transcript fallback this model's real window.
     t.transcripts.record_model_window(
-        payload.get("model").and_then(|m| m.get("id")).and_then(Value::as_str),
-        window.and_then(|w| w.get("context_window_size")).and_then(Value::as_f64),
+        payload
+            .get("model")
+            .and_then(|m| m.get("id"))
+            .and_then(Value::as_str),
+        window
+            .and_then(|w| w.get("context_window_size"))
+            .and_then(Value::as_f64),
     );
     if let Some(limits) = payload.get("rate_limits") {
         t.context.set_rate_limits(limits);
@@ -136,12 +155,21 @@ async fn install_statusline(state: &AppState) -> Result<Value, InstallError> {
     let _guard = t.install_lock.lock().await;
     let (settings_path, wrapper_path) = (t.settings_path(), t.wrapper_path());
     let settings = read_settings_or_refuse(&settings_path).await?;
-    let token = t.deps.hook_token().await.map_err(|e| InstallError { status: 500, message: e.to_string() })?;
+    let token = t.deps.hook_token().await.map_err(|e| InstallError {
+        status: 500,
+        message: e.to_string(),
+    })?;
     let command = wrapper_command(&wrapper_path);
 
     let existing = settings.settings.get("statusLine").filter(|v| !v.is_null());
-    if existing.and_then(|e| e.get("command")).and_then(Value::as_str) == Some(command.as_str()) {
-        return Ok(json!({"ok": true, "installed": true, "alreadyInstalled": true, "chained": null, "backup": null}));
+    if existing
+        .and_then(|e| e.get("command"))
+        .and_then(Value::as_str)
+        == Some(command.as_str())
+    {
+        return Ok(
+            json!({"ok": true, "installed": true, "alreadyInstalled": true, "chained": null, "backup": null}),
+        );
     }
 
     // Only a `type: "command"` statusLine has a shell command we can chain;
@@ -152,10 +180,17 @@ async fn install_statusline(state: &AppState) -> Result<Value, InstallError> {
         .and_then(Value::as_str)
         .map(str::to_owned);
 
-    write_wrapper_script(&wrapper_path, &wrapper_script(&token, state.config.port, original.as_deref())).await?;
+    write_wrapper_script(
+        &wrapper_path,
+        &wrapper_script(&token, state.config.port, original.as_deref()),
+    )
+    .await?;
 
     let mut merged = settings.settings.clone();
-    merged.insert("statusLine".into(), json!({"type": "command", "command": command}));
+    merged.insert(
+        "statusLine".into(),
+        json!({"type": "command", "command": command}),
+    );
     let backup = write_settings_atomic(&settings_path, settings.raw.as_deref(), &merged).await?;
 
     Ok(json!({
@@ -188,8 +223,13 @@ mod tests {
     #[tokio::test]
     async fn post_with_a_missing_or_invalid_token_is_401() {
         let h = Harness::new(47391);
-        for u in ["/api/statusline/claude", "/api/statusline/claude?token=totally-wrong"] {
-            let (s, _) = h.call("POST", u, Some(r#"{"session_id":"whatever"}"#)).await;
+        for u in [
+            "/api/statusline/claude",
+            "/api/statusline/claude?token=totally-wrong",
+        ] {
+            let (s, _) = h
+                .call("POST", u, Some(r#"{"session_id":"whatever"}"#))
+                .await;
             assert_eq!(s, StatusCode::UNAUTHORIZED, "{u}");
         }
     }
@@ -201,7 +241,10 @@ mod tests {
         let body = r#"{"session_id":"no-such","cwd":"/no/such","context_window":{"used_percentage":99},
             "rate_limits":{"five_hour":{"used_percentage":5}}}"#;
         let (s, res) = h.call("POST", &url(TOKEN), Some(body)).await;
-        assert_eq!((s, res), (StatusCode::OK, json!({"ok": true, "ignored": true})));
+        assert_eq!(
+            (s, res),
+            (StatusCode::OK, json!({"ok": true, "ignored": true}))
+        );
         assert_eq!(h.state.telemetry.context.rate_limits().five_hour, None);
     }
 
@@ -212,7 +255,11 @@ mod tests {
         let h = Harness::new(47391);
         *h.deps.resolves.lock().unwrap() = vec!["garage/x/one".into()];
         let (s, res) = h
-            .call("POST", &url(TOKEN), Some(r#"{"cwd":"/w","context_window":{"used_percentage":142}}"#))
+            .call(
+                "POST",
+                &url(TOKEN),
+                Some(r#"{"cwd":"/w","context_window":{"used_percentage":142}}"#),
+            )
             .await;
         assert_eq!(s, StatusCode::OK);
         assert_eq!(res, json!({"ok": true, "applied": ["garage/x/one"]}));
@@ -220,7 +267,10 @@ mod tests {
             h.state.telemetry.context.statusline_context("garage/x/one"),
             Some(json!({"usedPercentage": 100, "source": "statusline"}))
         );
-        assert_eq!(*h.deps.last_resolve.lock().unwrap(), Some((None, Some("/w".into()))));
+        assert_eq!(
+            *h.deps.last_resolve.lock().unwrap(),
+            Some((None, Some("/w".into())))
+        );
     }
 
     // JS: "model.id + context_window_size teach the transcript fallback"
@@ -232,7 +282,13 @@ mod tests {
             "context_window":{"used_percentage":12,"context_window_size":400000}}"#;
         let (s, _) = h.call("POST", &url(TOKEN), Some(body)).await;
         assert_eq!(s, StatusCode::OK);
-        assert_eq!(h.state.telemetry.transcripts.window_for_model(Some("claude-window-test")), 400_000);
+        assert_eq!(
+            h.state
+                .telemetry
+                .transcripts
+                .window_for_model(Some("claude-window-test")),
+            400_000
+        );
     }
 
     // JS: "rate_limits update the account-wide store even without context_window"
@@ -243,8 +299,20 @@ mod tests {
         let body = r#"{"cwd":"/w","rate_limits":{"five_hour":{"used_percentage":33,"resets_at":"later"}}}"#;
         let (s, _) = h.call("POST", &url(TOKEN), Some(body)).await;
         assert_eq!(s, StatusCode::OK);
-        assert_eq!(h.state.telemetry.context.statusline_context("garage/x/r"), None);
-        assert_eq!(h.state.telemetry.context.rate_limits().five_hour.unwrap().used_percentage, 33.0);
+        assert_eq!(
+            h.state.telemetry.context.statusline_context("garage/x/r"),
+            None
+        );
+        assert_eq!(
+            h.state
+                .telemetry
+                .context
+                .rate_limits()
+                .five_hour
+                .unwrap()
+                .used_percentage,
+            33.0
+        );
     }
 
     // JS: "GET /api/statusline/snippet returns a wrapper definition without needing settings.json"
@@ -254,7 +322,10 @@ mod tests {
         let (s, body) = h.call("GET", "/api/statusline/snippet", None).await;
         assert_eq!(s, StatusCode::OK);
         assert_eq!(body["statusLine"]["type"], "command");
-        assert!(body["statusLine"]["command"].as_str().unwrap().contains("garage-statusline.sh"));
+        assert!(body["statusLine"]["command"]
+            .as_str()
+            .unwrap()
+            .contains("garage-statusline.sh"));
         let script = body["script"].as_str().unwrap();
         assert!(script.contains("curl"));
         assert!(script.contains(&format!("api/statusline/claude?token={TOKEN}")));
@@ -267,22 +338,33 @@ mod tests {
     async fn usage_is_null_then_reflects_and_merges_posts() {
         let h = Harness::new(47391);
         let (s, body) = h.call("GET", "/api/usage", None).await;
-        assert_eq!((s, body), (StatusCode::OK, json!({"fiveHour": null, "sevenDay": null})));
+        assert_eq!(
+            (s, body),
+            (StatusCode::OK, json!({"fiveHour": null, "sevenDay": null}))
+        );
 
         h.state.telemetry.context.set_rate_limits(
             &json!({"five_hour": {"used_percentage": 23.5, "resets_at": "2026-08-30T18:00:00Z"}}),
         );
         let (_, body) = h.call("GET", "/api/usage", None).await;
-        assert_eq!(body["fiveHour"], json!({"usedPercentage": 23.5, "resetsAt": "2026-08-30T18:00:00Z"}));
+        assert_eq!(
+            body["fiveHour"],
+            json!({"usedPercentage": 23.5, "resetsAt": "2026-08-30T18:00:00Z"})
+        );
         assert_eq!(body["sevenDay"], Value::Null);
 
-        h.state
-            .telemetry
-            .context
-            .set_rate_limits(&json!({"seven_day": {"used_percentage": 61, "resets_at": "next-week"}}));
+        h.state.telemetry.context.set_rate_limits(
+            &json!({"seven_day": {"used_percentage": 61, "resets_at": "next-week"}}),
+        );
         let (_, body) = h.call("GET", "/api/usage", None).await;
-        assert_eq!(body["fiveHour"]["usedPercentage"], 23.5, "retained from the earlier post");
-        assert_eq!(body["sevenDay"], json!({"usedPercentage": 61, "resetsAt": "next-week"}));
+        assert_eq!(
+            body["fiveHour"]["usedPercentage"], 23.5,
+            "retained from the earlier post"
+        );
+        assert_eq!(
+            body["sevenDay"],
+            json!({"usedPercentage": 61, "resetsAt": "next-week"})
+        );
     }
 
     // --- statusline.install.test.js ---
@@ -295,7 +377,12 @@ mod tests {
             .stdout(Stdio::piped())
             .spawn()
             .unwrap();
-        child.stdin.take().unwrap().write_all(input.as_bytes()).unwrap();
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(input.as_bytes())
+            .unwrap();
         String::from_utf8(child.wait_with_output().unwrap().stdout).unwrap()
     }
 
@@ -312,13 +399,20 @@ mod tests {
         assert_eq!(body["alreadyInstalled"], false);
         assert_eq!(body["chained"], false);
         assert_eq!(body["backup"], Value::Null);
-        let settings: Value = serde_json::from_str(&std::fs::read_to_string(&settings_path).unwrap()).unwrap();
+        let settings: Value =
+            serde_json::from_str(&std::fs::read_to_string(&settings_path).unwrap()).unwrap();
         assert_eq!(settings["statusLine"]["type"], "command");
-        assert!(settings["statusLine"]["command"].as_str().unwrap().contains("garage-statusline.sh"));
+        assert!(settings["statusLine"]["command"]
+            .as_str()
+            .unwrap()
+            .contains("garage-statusline.sh"));
         let script = std::fs::read_to_string(&wrapper).unwrap();
         assert!(script.contains("curl") && script.contains("api/statusline/claude?token="));
         use std::os::unix::fs::PermissionsExt;
-        assert!(std::fs::metadata(&wrapper).unwrap().permissions().mode() & 0o100 != 0, "executable");
+        assert!(
+            std::fs::metadata(&wrapper).unwrap().permissions().mode() & 0o100 != 0,
+            "executable"
+        );
 
         // second install is idempotent: no backup, nothing rewritten
         let before = std::fs::read_to_string(&settings_path).unwrap();
@@ -332,7 +426,10 @@ mod tests {
         std::fs::write(&settings_path, "{ not: valid json !!").unwrap();
         let (s, _) = h.call("POST", "/api/statusline/install", None).await;
         assert_eq!(s, StatusCode::UNPROCESSABLE_ENTITY);
-        assert_eq!(std::fs::read_to_string(&settings_path).unwrap(), "{ not: valid json !!");
+        assert_eq!(
+            std::fs::read_to_string(&settings_path).unwrap(),
+            "{ not: valid json !!"
+        );
 
         // an existing non-garage statusLine is captured and chained; output byte-identical
         let original = h.claude_home.path().join("fake-original.sh");
@@ -340,20 +437,33 @@ mod tests {
         std::fs::set_permissions(&original, std::fs::Permissions::from_mode(0o755)).unwrap();
         std::fs::write(
             &settings_path,
-            json!({"model": "opus", "statusLine": {"type": "command", "command": original}}).to_string(),
+            json!({"model": "opus", "statusLine": {"type": "command", "command": original}})
+                .to_string(),
         )
         .unwrap();
         let (s, body) = h.call("POST", "/api/statusline/install", None).await;
         assert_eq!(s, StatusCode::OK);
-        assert_eq!((body["alreadyInstalled"].clone(), body["chained"].clone()), (json!(false), json!(true)));
+        assert_eq!(
+            (body["alreadyInstalled"].clone(), body["chained"].clone()),
+            (json!(false), json!(true))
+        );
         let backup = body["backup"].as_str().expect("a backup must be taken");
-        assert!(std::fs::read_to_string(backup).unwrap().contains("fake-original.sh"));
-        let settings: Value = serde_json::from_str(&std::fs::read_to_string(&settings_path).unwrap()).unwrap();
+        assert!(std::fs::read_to_string(backup)
+            .unwrap()
+            .contains("fake-original.sh"));
+        let settings: Value =
+            serde_json::from_str(&std::fs::read_to_string(&settings_path).unwrap()).unwrap();
         assert_eq!(settings["model"], "opus");
-        assert!(settings["statusLine"]["command"].as_str().unwrap().contains("garage-statusline.sh"));
+        assert!(settings["statusLine"]["command"]
+            .as_str()
+            .unwrap()
+            .contains("garage-statusline.sh"));
         // The background curl targets a port nothing listens on and is silenced.
         let original_alone = run_with_stdin(&original, "");
-        let wrapped = run_with_stdin(&wrapper, r#"{"session_id":"whatever","context_window":{"used_percentage":10}}"#);
+        let wrapped = run_with_stdin(
+            &wrapper,
+            r#"{"session_id":"whatever","context_window":{"used_percentage":10}}"#,
+        );
         assert_eq!(wrapped, original_alone);
         assert_eq!(wrapped, "ORIGINAL-OUTPUT-MARKER\n");
 

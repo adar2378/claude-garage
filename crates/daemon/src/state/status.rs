@@ -32,17 +32,28 @@ pub struct StatusStore {
 }
 
 pub fn now_ms() -> i64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0)
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
 }
 
 impl StatusStore {
     pub fn new(bus: EventBus) -> Self {
-        Self { map: Arc::default(), bus }
+        Self {
+            map: Arc::default(),
+            bus,
+        }
     }
 
     /// Unknown/never-signaled sessions read as idle.
     pub fn get(&self, id: &str) -> SessionStatus {
-        self.map.lock().unwrap().get(id).map(|e| e.state).unwrap_or(SessionStatus::Idle)
+        self.map
+            .lock()
+            .unwrap()
+            .get(id)
+            .map(|e| e.state)
+            .unwrap_or(SessionStatus::Idle)
     }
 
     /// True only when the store holds a real entry (unlike `get`, which reads
@@ -57,7 +68,11 @@ impl StatusStore {
             .unwrap()
             .get(id)
             .cloned()
-            .unwrap_or(StatusEntry { state: SessionStatus::Idle, since: None, message: None })
+            .unwrap_or(StatusEntry {
+                state: SessionStatus::Idle,
+                since: None,
+                message: None,
+            })
     }
 
     pub fn all(&self) -> HashMap<String, StatusEntry> {
@@ -78,7 +93,14 @@ impl StatusStore {
     /// write so a concurrent hook set cannot slip between them. Publishing
     /// happens under the lock too (`broadcast::send` never blocks), so
     /// subscribers see transitions in write order.
-    fn write_at(&self, id: &str, state: SessionStatus, message: Option<&str>, now: i64, no_idle_downgrade: bool) {
+    fn write_at(
+        &self,
+        id: &str,
+        state: SessionStatus,
+        message: Option<&str>,
+        now: i64,
+        no_idle_downgrade: bool,
+    ) {
         {
             let mut map = self.map.lock().unwrap();
             let existing = map.get(id);
@@ -90,7 +112,11 @@ impl StatusStore {
                 return;
             }
             let changed = prev != state;
-            let since = if changed { now } else { existing.and_then(|e| e.since).unwrap_or(now) };
+            let since = if changed {
+                now
+            } else {
+                existing.and_then(|e| e.since).unwrap_or(now)
+            };
             let next_message = if state != SessionStatus::NeedsInput {
                 None
             } else if let Some(m) = message {
@@ -100,9 +126,21 @@ impl StatusStore {
             } else {
                 None
             };
-            map.insert(id.to_owned(), StatusEntry { state, since: Some(since), message: next_message });
+            map.insert(
+                id.to_owned(),
+                StatusEntry {
+                    state,
+                    since: Some(since),
+                    message: next_message,
+                },
+            );
             if changed {
-                self.bus.publish(DaemonEvent::StatusTransition { id: id.to_owned(), from: prev, to: state, since: Some(since) });
+                self.bus.publish(DaemonEvent::StatusTransition {
+                    id: id.to_owned(),
+                    from: prev,
+                    to: state,
+                    since: Some(since),
+                });
             }
         }
     }
@@ -193,7 +231,11 @@ mod tests {
     fn entry_defaults_to_idle_null_for_unknown_ids() {
         assert_eq!(
             store().entry("garage/never/heard-of"),
-            StatusEntry { state: Idle, since: None, message: None }
+            StatusEntry {
+                state: Idle,
+                since: None,
+                message: None
+            }
         );
     }
 
@@ -259,7 +301,12 @@ mod tests {
         s.set_at(ID, Working, None, 42);
         assert_eq!(
             rx.try_recv().unwrap(),
-            DaemonEvent::StatusTransition { id: ID.into(), from: Idle, to: Working, since: Some(42) }
+            DaemonEvent::StatusTransition {
+                id: ID.into(),
+                from: Idle,
+                to: Working,
+                since: Some(42)
+            }
         );
     }
 
@@ -269,7 +316,14 @@ mod tests {
         s.set_at(ID, NeedsInput, Some(MSG), 5);
         let mut rx = s.bus.subscribe();
         s.write_at(ID, Idle, None, 9, true);
-        assert_eq!(s.entry(ID), StatusEntry { state: NeedsInput, since: Some(5), message: Some(MSG.into()) });
+        assert_eq!(
+            s.entry(ID),
+            StatusEntry {
+                state: NeedsInput,
+                since: Some(5),
+                message: Some(MSG.into())
+            }
+        );
         assert!(rx.try_recv().is_err());
         // Unguarded callers (hooks) can still move it.
         s.write_at(ID, Idle, None, 10, false);

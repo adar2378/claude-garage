@@ -23,13 +23,20 @@ pub struct TestTmux {
 impl TestTmux {
     pub fn new() -> Self {
         let n = COUNTER.fetch_add(1, Ordering::SeqCst);
-        let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().subsec_nanos();
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .subsec_nanos();
         let tag = format!("gt{}-{n}-{nanos:x}", std::process::id());
         // Short on purpose: unix socket paths are limited to ~104 bytes.
         let root = PathBuf::from("/tmp").join(&tag);
         let work = root.join("w");
         std::fs::create_dir_all(&work).expect("create test tmux dir");
-        Self { socket: tag, root, work }
+        Self {
+            socket: tag,
+            root,
+            work,
+        }
     }
 
     /// `-L` socket name.
@@ -49,7 +56,8 @@ impl TestTmux {
 
     /// A `TmuxBackend` bound to this server.
     pub fn backend(&self) -> TmuxBackend {
-        TmuxBackend::new(Some(self.socket.clone())).with_child_env("TMUX_TMPDIR", &self.root.to_string_lossy())
+        TmuxBackend::new(Some(self.socket.clone()))
+            .with_child_env("TMUX_TMPDIR", &self.root.to_string_lossy())
     }
 
     fn command(&self) -> Command {

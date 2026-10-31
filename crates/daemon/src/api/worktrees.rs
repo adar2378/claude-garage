@@ -26,11 +26,21 @@ pub async fn finish(State(state): State<AppState>, body: Bytes) -> Response {
         Ok(b) => b,
         Err(r) => return *r,
     };
-    let Some(worktree) = body.get("worktree").filter(|w| w.is_object() || w.is_array()) else {
+    let Some(worktree) = body
+        .get("worktree")
+        .filter(|w| w.is_object() || w.is_array())
+    else {
         return bad("worktree record required");
     };
-    let field = |k: &str| worktree.get(k).and_then(Value::as_str).filter(|s| !s.is_empty());
-    let (Some(path), Some(branch), Some(repo_dir)) = (field("path"), field("branch"), field("repoDir")) else {
+    let field = |k: &str| {
+        worktree
+            .get(k)
+            .and_then(Value::as_str)
+            .filter(|s| !s.is_empty())
+    };
+    let (Some(path), Some(branch), Some(repo_dir)) =
+        (field("path"), field("branch"), field("repoDir"))
+    else {
         return bad("worktree record requires path, branch, and repoDir");
     };
     let action = match body.get("action").and_then(Value::as_str) {
@@ -47,7 +57,11 @@ pub async fn finish(State(state): State<AppState>, body: Bytes) -> Response {
             if let Some(stderr) = e.stderr.filter(|s| !s.is_empty()) {
                 out["stderr"] = json!(stderr);
             }
-            (StatusCode::from_u16(e.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR), Json(out)).into_response()
+            (
+                StatusCode::from_u16(e.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
+                Json(out),
+            )
+                .into_response()
         }
     }
 }

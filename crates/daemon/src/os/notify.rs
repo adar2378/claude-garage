@@ -22,7 +22,12 @@ pub fn message_for(id: &str) -> String {
 
 /// Handle one event; returns whether a notification was attempted.
 pub async fn handle(event: &DaemonEvent, os: &dyn Os, visibility: &Visibility) -> bool {
-    let DaemonEvent::StatusTransition { id, to: SessionStatus::NeedsInput, .. } = event else {
+    let DaemonEvent::StatusTransition {
+        id,
+        to: SessionStatus::NeedsInput,
+        ..
+    } = event
+    else {
         return false;
     };
     if visibility.any_visible() {
@@ -55,22 +60,44 @@ mod tests {
     use crate::os::fake::FakeOs;
 
     fn transition(id: &str, to: SessionStatus) -> DaemonEvent {
-        DaemonEvent::StatusTransition { id: id.into(), from: SessionStatus::Working, to, since: Some(1) }
+        DaemonEvent::StatusTransition {
+            id: id.into(),
+            from: SessionStatus::Working,
+            to,
+            since: Some(1),
+        }
     }
 
     #[tokio::test]
     async fn needs_input_with_no_visible_client_notifies_once_with_the_session_id() {
         let os = FakeOs::default();
         let vis = Visibility::default();
-        assert!(handle(&transition("garage/ws/a", SessionStatus::NeedsInput), &os, &vis).await);
-        assert_eq!(os.notifications(), [("claude-garage".to_string(), "garage/ws/a needs input".to_string())]);
+        assert!(
+            handle(
+                &transition("garage/ws/a", SessionStatus::NeedsInput),
+                &os,
+                &vis
+            )
+            .await
+        );
+        assert_eq!(
+            os.notifications(),
+            [(
+                "claude-garage".to_string(),
+                "garage/ws/a needs input".to_string()
+            )]
+        );
     }
 
     #[tokio::test]
     async fn other_transitions_and_sessions_changed_never_notify() {
         let os = FakeOs::default();
         let vis = Visibility::default();
-        for to in [SessionStatus::Working, SessionStatus::Idle, SessionStatus::Done] {
+        for to in [
+            SessionStatus::Working,
+            SessionStatus::Idle,
+            SessionStatus::Done,
+        ] {
             assert!(!handle(&transition("garage/ws/a", to), &os, &vis).await);
         }
         assert!(!handle(&DaemonEvent::SessionsChanged, &os, &vis).await);
@@ -82,16 +109,37 @@ mod tests {
         let os = FakeOs::default();
         let vis = Visibility::default();
         vis.record("tui", true);
-        assert!(!handle(&transition("garage/ws/a", SessionStatus::NeedsInput), &os, &vis).await);
+        assert!(
+            !handle(
+                &transition("garage/ws/a", SessionStatus::NeedsInput),
+                &os,
+                &vis
+            )
+            .await
+        );
         assert!(os.notifications().is_empty());
         vis.record("tui", false);
-        assert!(handle(&transition("garage/ws/a", SessionStatus::NeedsInput), &os, &vis).await);
+        assert!(
+            handle(
+                &transition("garage/ws/a", SessionStatus::NeedsInput),
+                &os,
+                &vis
+            )
+            .await
+        );
     }
 
     #[tokio::test]
     async fn an_unsupported_os_is_swallowed_silently() {
         let os = FakeOs::unsupported();
-        assert!(handle(&transition("garage/ws/a", SessionStatus::NeedsInput), &os, &Visibility::default()).await);
+        assert!(
+            handle(
+                &transition("garage/ws/a", SessionStatus::NeedsInput),
+                &os,
+                &Visibility::default()
+            )
+            .await
+        );
     }
 
     #[tokio::test]

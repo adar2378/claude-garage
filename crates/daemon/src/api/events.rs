@@ -21,9 +21,9 @@ pub const KEEPALIVE: Duration = Duration::from_secs(15);
 
 fn frame(event: &DaemonEvent) -> Event {
     match event {
-        DaemonEvent::StatusTransition { id, to, since, .. } => {
-            Event::default().event("status").data(json!({"id": id, "status": to, "since": since}).to_string())
-        }
+        DaemonEvent::StatusTransition { id, to, since, .. } => Event::default()
+            .event("status")
+            .data(json!({"id": id, "status": to, "since": since}).to_string()),
         DaemonEvent::SessionsChanged => Event::default().event("sessions").data("{}"),
     }
 }
@@ -59,7 +59,9 @@ fn events(
     })
 }
 
-pub async fn stream(State(state): State<AppState>) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
+pub async fn stream(
+    State(state): State<AppState>,
+) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
     // Subscribe before returning so nothing published after the response
     // starts can be missed.
     Sse::new(events(state.bus.subscribe(), state.shutdown_signal()))
@@ -74,7 +76,9 @@ mod tests {
     use http_body_util::BodyExt;
 
     async fn next_text(body: &mut axum::body::Body) -> String {
-        let frame = tokio::time::timeout(Duration::from_secs(5), body.frame()).await.expect("frame in time");
+        let frame = tokio::time::timeout(Duration::from_secs(5), body.frame())
+            .await
+            .expect("frame in time");
         String::from_utf8(frame.unwrap().unwrap().into_data().unwrap().to_vec()).unwrap()
     }
 
@@ -96,10 +100,14 @@ mod tests {
     async fn the_stream_ends_when_shutdown_is_signalled() {
         let bus = EventBus::default();
         let (tx, sd) = watch::channel(false);
-        let mut body = Sse::new(events(bus.subscribe(), sd)).into_response().into_body();
+        let mut body = Sse::new(events(bus.subscribe(), sd))
+            .into_response()
+            .into_body();
         assert_eq!(next_text(&mut body).await, ": connected\n\n");
         tx.send(true).unwrap();
-        let end = tokio::time::timeout(Duration::from_secs(5), body.frame()).await.expect("ends in time");
+        let end = tokio::time::timeout(Duration::from_secs(5), body.frame())
+            .await
+            .expect("ends in time");
         assert!(end.is_none(), "no more frames after shutdown");
     }
 }

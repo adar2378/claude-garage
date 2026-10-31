@@ -17,13 +17,15 @@ use garage_protocol::{SessionStatus, Worktree};
 use serde_json::{json, Map, Value};
 
 use super::hooks::parse_body;
-use crate::backend::tmux::{is_valid_name, normalize_title, session_id, split_session_id, GARAGE_PREFIX};
+use crate::backend::tmux::{
+    is_valid_name, normalize_title, session_id, split_session_id, GARAGE_PREFIX,
+};
 use crate::backend::{BackendSession, PaneInfo, SessionBackend};
 use crate::error::error_response;
 use crate::git::resolve_branch;
+use crate::git::{create_worktree, current_branch, remove_worktree};
 use crate::state::registry::MetaUpdate;
 use crate::state::AppState;
-use crate::git::{create_worktree, current_branch, remove_worktree};
 
 /// What sessions run (`GARAGE_CLAUDE_CMD`, default `claude`) and how long a
 /// resume gets to prove it did not die (JS: 1.5 s, then 2 s more if still up).
@@ -35,14 +37,18 @@ pub struct ClaudeCmd {
 }
 
 impl ClaudeCmd {
-    pub const SETTLE: (Duration, Duration) = (Duration::from_millis(1500), Duration::from_millis(2000));
+    pub const SETTLE: (Duration, Duration) =
+        (Duration::from_millis(1500), Duration::from_millis(2000));
 
     pub fn from_env() -> Self {
         Self::new(std::env::var("GARAGE_CLAUDE_CMD").unwrap_or_else(|_| "claude".into()))
     }
 
     pub fn new(program: impl Into<String>) -> Self {
-        Self { program: program.into(), settle: Self::SETTLE }
+        Self {
+            program: program.into(),
+            settle: Self::SETTLE,
+        }
     }
 }
 
@@ -78,7 +84,9 @@ impl Spawn for BackendSpawn<'_> {
             // A failed `--resume` can take the one-pane session with it; a
             // respawn would then fail and the session would vanish, so start
             // it again from scratch (same dir/cmd as the original create).
-            Kind::Respawn if !self.has(id).await => self.backend.create(id, dir, cmd, args, &[]).await,
+            Kind::Respawn if !self.has(id).await => {
+                self.backend.create(id, dir, cmd, args, &[]).await
+            }
             Kind::Respawn => self.backend.respawn(id, dir, cmd, args, &[]).await,
         }
     }
@@ -106,7 +114,14 @@ pub async fn spawn_claude_resumed(
         spawner.spawn(id, dir, &claude.program, &[]).await?;
         return Ok(false);
     };
-    spawner.spawn(id, dir, &claude.program, &["--resume".to_owned(), csid.to_owned()]).await?;
+    spawner
+        .spawn(
+            id,
+            dir,
+            &claude.program,
+            &["--resume".to_owned(), csid.to_owned()],
+        )
+        .await?;
     tokio::time::sleep(claude.settle.0).await;
     if spawner.has(id).await {
         tokio::time::sleep(claude.settle.1).await;
@@ -153,7 +168,10 @@ pub fn needs_poll_before_plan(ids: &[String], has_status: impl Fn(&str) -> bool)
 // ---------------------------------------------------------------------
 
 fn status_name(s: SessionStatus) -> String {
-    serde_json::to_value(s).ok().and_then(|v| v.as_str().map(str::to_owned)).unwrap_or_default()
+    serde_json::to_value(s)
+        .ok()
+        .and_then(|v| v.as_str().map(str::to_owned))
+        .unwrap_or_default()
 }
 
 /// JS truthiness for a body field.
@@ -190,7 +208,9 @@ async fn with_target(w: &Worktree) -> Value {
 }
 
 fn worktree_json(w: &Option<Worktree>) -> Value {
-    w.as_ref().map(|w| serde_json::to_value(w).unwrap_or(Value::Null)).unwrap_or(Value::Null)
+    w.as_ref()
+        .map(|w| serde_json::to_value(w).unwrap_or(Value::Null))
+        .unwrap_or(Value::Null)
 }
 
 // ---------------------------------------------------------------------
@@ -203,7 +223,8 @@ pub async fn list(State(st): State<AppState>) -> Response {
     let hostname = gethostname::gethostname().to_str().map(str::to_owned);
     let metas = st.registry.list_session_metas().await;
     let meta_by_id: HashMap<&str, _> = metas.iter().map(|(id, m)| (id.as_str(), m)).collect();
-    let live_ids: std::collections::HashSet<&str> = sessions.iter().map(|s| s.id.as_str()).collect();
+    let live_ids: std::collections::HashSet<&str> =
+        sessions.iter().map(|s| s.id.as_str()).collect();
 
     // Restorable entries resolve `dir` from the registry (not a cached copy)
     // so a workspace re-registered since the crash is reflected.
@@ -220,17 +241,25 @@ pub async fn list(State(st): State<AppState>) -> Response {
     }
 
     // One `git rev-parse` per unique directory per request, run concurrently.
-    let live_dir = |s: &BackendSession| -> String { panes.get(&s.id).map(|p: &PaneInfo| p.cwd.clone()).unwrap_or_else(|| s.dir.clone()) };
+    let live_dir = |s: &BackendSession| -> String {
+        panes
+            .get(&s.id)
+            .map(|p: &PaneInfo| p.cwd.clone())
+            .unwrap_or_else(|| s.dir.clone())
+    };
     let mut dirs: Vec<String> = sessions.iter().map(live_dir).collect();
     dirs.extend(restorable_in.iter().filter_map(|(_, _, d)| d.clone()));
     dirs.retain(|d| !d.is_empty());
     dirs.sort();
     dirs.dedup();
     let branches: HashMap<String, Option<String>> =
-        join_all(dirs.into_iter().map(|d| async move { let b = resolve_branch(&d).await; (d, b) }))
-            .await
-            .into_iter()
-            .collect();
+        join_all(dirs.into_iter().map(|d| async move {
+            let b = resolve_branch(&d).await;
+            (d, b)
+        }))
+        .await
+        .into_iter()
+        .collect();
     let branch_of = |d: &str| branches.get(d).cloned().flatten();
 
     let mut out: Vec<Value> = Vec::new();
@@ -243,8 +272,14 @@ pub async fn list(State(st): State<AppState>) -> Response {
         // path is a cache read plus a background refresh, never file IO here.
         let mut context = st.telemetry.context.statusline_context(&s.id);
         if context.is_none() {
-            context = st.telemetry.transcripts.cached_context(&s.id).map(|c| c.to_json());
-            let csid = meta_by_id.get(s.id.as_str()).and_then(|m| m.claude_session_id.as_deref());
+            context = st
+                .telemetry
+                .transcripts
+                .cached_context(&s.id)
+                .map(|c| c.to_json());
+            let csid = meta_by_id
+                .get(s.id.as_str())
+                .and_then(|m| m.claude_session_id.as_deref());
             if let Some(csid) = csid.filter(|c| !c.is_empty()) {
                 if !dir.is_empty() {
                     st.telemetry.transcripts.refresh_context(&s.id, &dir, csid);
@@ -266,7 +301,13 @@ pub async fn list(State(st): State<AppState>) -> Response {
         // A never-transitioned session falls back to when tmux created it.
         o.insert("since".into(), json!(entry.since.or(s.created_at)));
         o.insert("branch".into(), json!(branch_of(&dir)));
-        o.insert("title".into(), json!(normalize_title(pane.map(|p| p.title.as_str()), hostname.as_deref())));
+        o.insert(
+            "title".into(),
+            json!(normalize_title(
+                pane.map(|p| p.title.as_str()),
+                hostname.as_deref()
+            )),
+        );
         o.insert("context".into(), context.unwrap_or(Value::Null));
         out.push(Value::Object(o));
     }
@@ -306,19 +347,31 @@ pub async fn create(State(st): State<AppState>, body: Bytes) -> Response {
     let workspace = str_of(body.get("workspace")).unwrap_or("");
     let label = str_of(body.get("label")).unwrap_or("");
     if !is_valid_name(workspace) || !is_valid_name(label) {
-        return error_response(StatusCode::BAD_REQUEST, "workspace and label must match [a-z0-9-]+");
+        return error_response(
+            StatusCode::BAD_REQUEST,
+            "workspace and label must match [a-z0-9-]+",
+        );
     }
     let Some(registered) = st.registry.get_workspace(workspace).await else {
-        return error_response(StatusCode::NOT_FOUND, format!("unknown workspace: {workspace}"));
+        return error_response(
+            StatusCode::NOT_FOUND,
+            format!("unknown workspace: {workspace}"),
+        );
     };
     let reg_dir = registered.dir.clone().unwrap_or_default();
     if !is_dir(&reg_dir).await {
         let shown = registered.dir.as_deref().unwrap_or("undefined");
-        return error_response(StatusCode::BAD_REQUEST, format!("registered dir no longer exists: {shown}"));
+        return error_response(
+            StatusCode::BAD_REQUEST,
+            format!("registered dir no longer exists: {shown}"),
+        );
     }
     let id = session_id(workspace, label);
     if st.backend.has(&id).await.unwrap_or(false) {
-        return error_response(StatusCode::CONFLICT, format!("session already exists: {id}"));
+        return error_response(
+            StatusCode::CONFLICT,
+            format!("session already exists: {id}"),
+        );
     }
 
     // Worktree creation happens before any tmux state exists, so a failure
@@ -331,8 +384,15 @@ pub async fn create(State(st): State<AppState>, body: Bytes) -> Response {
         }
     }
 
-    let spawn_dir = worktree.as_ref().map(|(p, _)| p.clone()).unwrap_or_else(|| reg_dir.clone());
-    if let Err(e) = st.backend.create(&id, Path::new(&spawn_dir), &st.claude.program, &[], &[]).await {
+    let spawn_dir = worktree
+        .as_ref()
+        .map(|(p, _)| p.clone())
+        .unwrap_or_else(|| reg_dir.clone());
+    if let Err(e) = st
+        .backend
+        .create(&id, Path::new(&spawn_dir), &st.claude.program, &[], &[])
+        .await
+    {
         // The worktree was made for this session: do not leave it behind.
         if let Some((path, branch)) = &worktree {
             remove_worktree(&reg_dir, path, branch).await;
@@ -359,7 +419,9 @@ pub async fn create(State(st): State<AppState>, body: Bytes) -> Response {
         }
     }
 
-    let wt = worktree.map(|(path, branch)| json!({"path": path, "branch": branch})).unwrap_or(Value::Null);
+    let wt = worktree
+        .map(|(path, branch)| json!({"path": path, "branch": branch}))
+        .unwrap_or(Value::Null);
     (
         StatusCode::CREATED,
         Json(json!({"id": id, "workspace": workspace, "label": label, "dir": spawn_dir, "worktree": wt})),
@@ -389,20 +451,37 @@ pub async fn restore(State(st): State<AppState>, body: Bytes) -> Response {
 
     let metas = st.registry.list_session_metas().await;
     let targets: Vec<_> = if all {
-        let live: std::collections::HashSet<String> =
-            st.backend.list().await.unwrap_or_default().into_iter().map(|s| s.id).collect();
-        metas.into_iter().filter(|(mid, _)| !live.contains(mid)).collect()
+        let live: std::collections::HashSet<String> = st
+            .backend
+            .list()
+            .await
+            .unwrap_or_default()
+            .into_iter()
+            .map(|s| s.id)
+            .collect();
+        metas
+            .into_iter()
+            .filter(|(mid, _)| !live.contains(mid))
+            .collect()
     } else {
         let id = id.unwrap_or_default();
         match metas.into_iter().find(|(mid, _)| mid == id) {
             Some(m) => vec![m],
-            None => return error_response(StatusCode::NOT_FOUND, format!("no resume metadata for: {id}")),
+            None => {
+                return error_response(
+                    StatusCode::NOT_FOUND,
+                    format!("no resume metadata for: {id}"),
+                )
+            }
         }
     };
 
     // Independent targets restore concurrently, so the died-on-resume
     // confirmation waits do not serialise restore-all.
-    let spawner = BackendSpawn { backend: st.backend.as_ref(), kind: Kind::Create };
+    let spawner = BackendSpawn {
+        backend: st.backend.as_ref(),
+        kind: Kind::Create,
+    };
     let results = join_all(targets.into_iter().map(|(mid, meta)| {
         let st = &st;
         let spawner = &spawner;
@@ -412,7 +491,9 @@ pub async fn restore(State(st): State<AppState>, body: Bytes) -> Response {
                 None => None,
             };
             let failed = |reason: &str| Ok(Outcome::Failed(json!({"id": mid, "reason": reason})));
-            let Some(registered) = registered else { return failed("workspace no longer registered") };
+            let Some(registered) = registered else {
+                return failed("workspace no longer registered");
+            };
 
             // A worktree session restores INTO its worktree. Metadata is kept
             // on every failure so a retry (or a manual finish) can recover.
@@ -423,13 +504,23 @@ pub async fn restore(State(st): State<AppState>, body: Bytes) -> Response {
                 .or_else(|| registered.dir.clone())
                 .unwrap_or_default();
             if !is_dir(&spawn_dir).await {
-                return failed(if meta.worktree.is_some() { "worktree missing" } else { "registered dir no longer exists" });
+                return failed(if meta.worktree.is_some() {
+                    "worktree missing"
+                } else {
+                    "registered dir no longer exists"
+                });
             }
             if st.backend.has(&mid).await.unwrap_or(false) {
                 return failed("session already running");
             }
-            let resumed =
-                spawn_claude_resumed(spawner, &st.claude, &mid, Path::new(&spawn_dir), meta.claude_session_id.as_deref()).await?;
+            let resumed = spawn_claude_resumed(
+                spawner,
+                &st.claude,
+                &mid,
+                Path::new(&spawn_dir),
+                meta.claude_session_id.as_deref(),
+            )
+            .await?;
             anyhow::Ok(Outcome::Done(json!({
                 "id": mid,
                 "workspace": meta.workspace,
@@ -501,13 +592,20 @@ pub async fn restart(State(st): State<AppState>, body: Bytes) -> Response {
         .map(|i| Candidate {
             id: i.clone(),
             // Still unobserved after the poll: "unknown", never idle.
-            status: if st.status.has(i) { status_name(st.status.get(i)) } else { "unknown".into() },
+            status: if st.status.has(i) {
+                status_name(st.status.get(i))
+            } else {
+                "unknown".into()
+            },
         })
         .collect();
     let (targets, skipped) = plan_restart_targets(&candidates, force);
 
     let metas: HashMap<String, _> = st.registry.list_session_metas().await.into_iter().collect();
-    let spawner = BackendSpawn { backend: st.backend.as_ref(), kind: Kind::Respawn };
+    let spawner = BackendSpawn {
+        backend: st.backend.as_ref(),
+        kind: Kind::Respawn,
+    };
     let results = join_all(targets.into_iter().map(|target| {
         let st = &st;
         let spawner = &spawner;
@@ -558,7 +656,10 @@ pub async fn restart(State(st): State<AppState>, body: Bytes) -> Response {
     if !restarted.is_empty() {
         st.bus.publish(crate::bus::DaemonEvent::SessionsChanged);
     }
-    let skipped: Vec<Value> = skipped.into_iter().map(|c| json!({"id": c.id, "status": c.status})).collect();
+    let skipped: Vec<Value> = skipped
+        .into_iter()
+        .map(|c| json!({"id": c.id, "status": c.status}))
+        .collect();
     Json(json!({"restarted": restarted, "skipped": skipped, "failed": failed})).into_response()
 }
 
@@ -572,7 +673,10 @@ pub async fn remove(
     Query(q): Query<HashMap<String, String>>,
 ) -> Response {
     if !id.starts_with(GARAGE_PREFIX) {
-        return error_response(StatusCode::FORBIDDEN, "refusing to touch non-garage sessions");
+        return error_response(
+            StatusCode::FORBIDDEN,
+            "refusing to touch non-garage sessions",
+        );
     }
     let live = st.backend.has(&id).await.unwrap_or(false);
 
@@ -581,10 +685,16 @@ pub async fn remove(
     // caller can still surface "worktree kept".
     if q.get("meta").map(String::as_str) == Some("1") {
         if live {
-            return error_response(StatusCode::CONFLICT, format!("session is live — delete it without meta=1: {id}"));
+            return error_response(
+                StatusCode::CONFLICT,
+                format!("session is live — delete it without meta=1: {id}"),
+            );
         }
         let Some(meta) = st.registry.get_session_meta(&id).await else {
-            return error_response(StatusCode::NOT_FOUND, format!("no resume metadata for: {id}"));
+            return error_response(
+                StatusCode::NOT_FOUND,
+                format!("no resume metadata for: {id}"),
+            );
         };
         let _ = st.registry.remove_session_meta(&id).await;
         let worktree = match &meta.worktree {
@@ -634,14 +744,18 @@ mod tests {
     use crate::Config;
 
     fn s(id: &str, status: &str) -> Candidate {
-        Candidate { id: id.into(), status: status.into() }
+        Candidate {
+            id: id.into(),
+            status: status.into(),
+        }
     }
 
     // --- restart.test.js: planRestartTargets ---
 
     #[test]
     fn idle_and_done_sessions_are_targets_by_default() {
-        let (t, sk) = plan_restart_targets(&[s("garage/ws/a", "idle"), s("garage/ws/b", "done")], false);
+        let (t, sk) =
+            plan_restart_targets(&[s("garage/ws/a", "idle"), s("garage/ws/b", "done")], false);
         assert_eq!(t, ["garage/ws/a", "garage/ws/b"]);
         assert!(sk.is_empty());
     }
@@ -649,16 +763,27 @@ mod tests {
     #[test]
     fn working_and_needs_input_are_skipped_without_force() {
         let (t, sk) = plan_restart_targets(
-            &[s("garage/ws/a", "working"), s("garage/ws/b", "needs-input"), s("garage/ws/c", "idle")],
+            &[
+                s("garage/ws/a", "working"),
+                s("garage/ws/b", "needs-input"),
+                s("garage/ws/c", "idle"),
+            ],
             false,
         );
         assert_eq!(t, ["garage/ws/c"]);
-        assert_eq!(sk, [s("garage/ws/a", "working"), s("garage/ws/b", "needs-input")]);
+        assert_eq!(
+            sk,
+            [s("garage/ws/a", "working"), s("garage/ws/b", "needs-input")]
+        );
     }
 
     #[test]
     fn force_includes_working_needs_input_and_unknown() {
-        let all = [s("garage/ws/a", "working"), s("garage/ws/b", "needs-input"), s("garage/ws/c", "unknown")];
+        let all = [
+            s("garage/ws/a", "working"),
+            s("garage/ws/b", "needs-input"),
+            s("garage/ws/c", "unknown"),
+        ];
         let (t, sk) = plan_restart_targets(&all, true);
         assert_eq!(t, ["garage/ws/a", "garage/ws/b", "garage/ws/c"]);
         assert!(sk.is_empty());
@@ -666,7 +791,10 @@ mod tests {
 
     #[test]
     fn unknown_status_is_skipped_without_force_never_planned_as_idle() {
-        let (t, sk) = plan_restart_targets(&[s("garage/ws/a", "unknown"), s("garage/ws/b", "idle")], false);
+        let (t, sk) = plan_restart_targets(
+            &[s("garage/ws/a", "unknown"), s("garage/ws/b", "idle")],
+            false,
+        );
         assert_eq!(t, ["garage/ws/b"]);
         assert_eq!(sk, [s("garage/ws/a", "unknown")]);
     }
@@ -677,9 +805,17 @@ mod tests {
     fn poll_needed_only_when_some_id_has_no_status_entry() {
         let has = |id: &str| id != "garage/ws/missing";
         let ids = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
-        assert!(!needs_poll_before_plan(&ids(&["garage/ws/a", "garage/ws/b"]), has));
-        assert!(needs_poll_before_plan(&ids(&["garage/ws/a", "garage/ws/missing"]), has));
-        assert!(!needs_poll_before_plan(&[], |_| panic!("has_status must not be called for an empty list")));
+        assert!(!needs_poll_before_plan(
+            &ids(&["garage/ws/a", "garage/ws/b"]),
+            has
+        ));
+        assert!(needs_poll_before_plan(
+            &ids(&["garage/ws/a", "garage/ws/missing"]),
+            has
+        ));
+        assert!(!needs_poll_before_plan(&[], |_| panic!(
+            "has_status must not be called for an empty list"
+        )));
     }
 
     // --- restart.test.js: spawnClaudeResumed (no tmux: a fake spawner) ---
@@ -692,7 +828,10 @@ mod tests {
 
     impl FakeSpawn {
         fn new(has: &[bool]) -> Self {
-            Self { calls: Mutex::default(), has: Mutex::new(has.to_vec()) }
+            Self {
+                calls: Mutex::default(),
+                has: Mutex::new(has.to_vec()),
+            }
         }
         fn calls(&self) -> Vec<(String, String, Vec<String>)> {
             self.calls.lock().unwrap().clone()
@@ -703,31 +842,49 @@ mod tests {
     impl Spawn for FakeSpawn {
         async fn spawn(&self, id: &str, dir: &Path, cmd: &str, args: &[String]) -> Result<()> {
             let _ = cmd;
-            self.calls.lock().unwrap().push((id.into(), dir.to_string_lossy().into(), args.to_vec()));
+            self.calls.lock().unwrap().push((
+                id.into(),
+                dir.to_string_lossy().into(),
+                args.to_vec(),
+            ));
             Ok(())
         }
         async fn has(&self, _id: &str) -> bool {
             let mut h = self.has.lock().unwrap();
-            if h.len() > 1 { h.remove(0) } else { h[0] }
+            if h.len() > 1 {
+                h.remove(0)
+            } else {
+                h[0]
+            }
         }
     }
 
     fn fast() -> ClaudeCmd {
-        ClaudeCmd { program: "claude".into(), settle: (Duration::ZERO, Duration::ZERO) }
+        ClaudeCmd {
+            program: "claude".into(),
+            settle: (Duration::ZERO, Duration::ZERO),
+        }
     }
 
     #[tokio::test]
     async fn no_claude_session_id_spawns_plain_claude_without_touching_the_backend() {
         let f = FakeSpawn::new(&[]); // `has` would panic on an empty list: it must not be called
-        let r = spawn_claude_resumed(&f, &fast(), "garage/ws/one", Path::new("/tmp/one"), None).await.unwrap();
+        let r = spawn_claude_resumed(&f, &fast(), "garage/ws/one", Path::new("/tmp/one"), None)
+            .await
+            .unwrap();
         assert!(!r);
-        assert_eq!(f.calls(), [("garage/ws/one".to_string(), "/tmp/one".to_string(), vec![])]);
+        assert_eq!(
+            f.calls(),
+            [("garage/ws/one".to_string(), "/tmp/one".to_string(), vec![])]
+        );
     }
 
     #[tokio::test]
     async fn a_resume_that_survives_both_checks_reports_resumed() {
         let f = FakeSpawn::new(&[true, true]);
-        let r = spawn_claude_resumed(&f, &fast(), "garage/ws/one", Path::new("/d"), Some("abc")).await.unwrap();
+        let r = spawn_claude_resumed(&f, &fast(), "garage/ws/one", Path::new("/d"), Some("abc"))
+            .await
+            .unwrap();
         assert!(r);
         assert_eq!(f.calls().len(), 1);
         assert_eq!(f.calls()[0].2, ["--resume", "abc"]);
@@ -738,11 +895,17 @@ mod tests {
         // Dies before the first check, and dies between the two checks.
         for has in [vec![false], vec![true, false]] {
             let f = FakeSpawn::new(&has);
-            let r = spawn_claude_resumed(&f, &fast(), "garage/ws/one", Path::new("/d"), Some("abc")).await.unwrap();
+            let r =
+                spawn_claude_resumed(&f, &fast(), "garage/ws/one", Path::new("/d"), Some("abc"))
+                    .await
+                    .unwrap();
             assert!(!r, "{has:?}");
             let c = f.calls();
             assert_eq!(c.len(), 2);
-            assert_eq!((c[0].2.clone(), c[1].2.clone()), (vec!["--resume".to_string(), "abc".to_string()], vec![]));
+            assert_eq!(
+                (c[0].2.clone(), c[1].2.clone()),
+                (vec!["--resume".to_string(), "abc".to_string()], vec![])
+            );
         }
     }
 
@@ -775,6 +938,7 @@ mod tests {
             port: 0,
             garage_dir: garage.path().to_path_buf(),
             tmux_socket: Some(tmux.socket().to_owned()),
+            tmux_control: false,
             ui_origins: vec![],
         };
         let mut st = AppState::with_agents(
@@ -786,8 +950,17 @@ mod tests {
         );
         // Never the real `claude`; a plain `sleep` takes no flags, so tests that
         // go through the routes install a script (see `script`).
-        st.claude = ClaudeCmd { program: "sleep".into(), settle: (Duration::from_millis(250), Duration::from_millis(250)) };
-        H { tmux, garage, claude_home, agents, st }
+        st.claude = ClaudeCmd {
+            program: "sleep".into(),
+            settle: (Duration::from_millis(250), Duration::from_millis(250)),
+        };
+        H {
+            tmux,
+            garage,
+            claude_home,
+            agents,
+            st,
+        }
     }
 
     impl H {
@@ -800,18 +973,28 @@ mod tests {
             let res = crate::app(self.st.clone()).oneshot(req).await.unwrap();
             let status = res.status();
             let bytes = res.into_body().collect().await.unwrap().to_bytes();
-            (status, serde_json::from_slice(&bytes).unwrap_or(Value::Null))
+            (
+                status,
+                serde_json::from_slice(&bytes).unwrap_or(Value::Null),
+            )
         }
 
         /// An executable stand-in for `claude`; runs in the session's dir.
         fn script(&mut self, name: &str, body: &str) {
             use std::os::unix::fs::PermissionsExt;
             let path = self.garage.path().join(name);
-            std::fs::write(&path, format!("#!/bin/sh\n[ -n \"$GARAGE_WARM\" ] && exit 0\n{body}\n")).unwrap();
+            std::fs::write(
+                &path,
+                format!("#!/bin/sh\n[ -n \"$GARAGE_WARM\" ] && exit 0\n{body}\n"),
+            )
+            .unwrap();
             std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
             // macOS scans a new executable on its first exec, which can take
             // longer than the resume timing under test: pay that now.
-            let warm = std::process::Command::new(&path).env("GARAGE_WARM", "1").status().unwrap();
+            let warm = std::process::Command::new(&path)
+                .env("GARAGE_WARM", "1")
+                .status()
+                .unwrap();
             assert!(warm.success());
             self.st.claude.program = path.to_string_lossy().into_owned();
         }
@@ -826,13 +1009,22 @@ mod tests {
         }
 
         async fn live(&self, id: &str, dir: &str) {
-            self.st.backend.create(id, Path::new(dir), "sleep", &["60".into()], &[]).await.unwrap();
+            self.st
+                .backend
+                .create(id, Path::new(dir), "sleep", &["60".into()], &[])
+                .await
+                .unwrap();
         }
 
         async fn entry(&self, id: &str) -> Value {
             let (code, body) = self.call("GET", "/api/sessions", None).await;
             assert_eq!(code, StatusCode::OK);
-            body.as_array().unwrap().iter().find(|e| e["id"] == id).cloned().unwrap_or_else(|| panic!("no entry {id}"))
+            body.as_array()
+                .unwrap()
+                .iter()
+                .find(|e| e["id"] == id)
+                .cloned()
+                .unwrap_or_else(|| panic!("no entry {id}"))
         }
     }
 
@@ -850,7 +1042,9 @@ mod tests {
     #[tokio::test]
     async fn meta_delete_without_stored_metadata_is_404() {
         let h = harness();
-        let (c, _) = h.call("DELETE", "/api/sessions/garage%2Fp81%2Fone?meta=1", None).await;
+        let (c, _) = h
+            .call("DELETE", "/api/sessions/garage%2Fp81%2Fone?meta=1", None)
+            .await;
         assert_eq!(c, StatusCode::NOT_FOUND);
     }
 
@@ -858,37 +1052,72 @@ mod tests {
     async fn plain_delete_of_a_non_live_session_is_404_and_keeps_the_meta() {
         let h = harness();
         let id = "garage/p81/one";
-        h.st.registry.upsert_session_meta(id, meta(Some("abc-123"), "p81", "one")).await.unwrap();
-        let (c, _) = h.call("DELETE", "/api/sessions/garage%2Fp81%2Fone", None).await;
+        h.st.registry
+            .upsert_session_meta(id, meta(Some("abc-123"), "p81", "one"))
+            .await
+            .unwrap();
+        let (c, _) = h
+            .call("DELETE", "/api/sessions/garage%2Fp81%2Fone", None)
+            .await;
         assert_eq!(c, StatusCode::NOT_FOUND);
-        assert!(h.st.registry.get_session_meta(id).await.is_some(), "meta must be retained");
+        assert!(
+            h.st.registry.get_session_meta(id).await.is_some(),
+            "meta must be retained"
+        );
     }
 
     #[tokio::test]
     async fn meta_delete_drops_the_metadata_and_echoes_the_worktree_with_a_null_target() {
         let h = harness();
         let id = "garage/p81/one";
-        let wt = Worktree { path: "/tmp/wt/p81/one".into(), branch: "garage/one".into(), repo_dir: "/tmp/not-a-repo".into(), target: None };
+        let wt = Worktree {
+            path: "/tmp/wt/p81/one".into(),
+            branch: "garage/one".into(),
+            repo_dir: "/tmp/not-a-repo".into(),
+            target: None,
+        };
         h.st.registry
-            .upsert_session_meta(id, MetaUpdate { worktree: Some(Some(wt)), ..meta(Some("c"), "p81", "one") })
+            .upsert_session_meta(
+                id,
+                MetaUpdate {
+                    worktree: Some(Some(wt)),
+                    ..meta(Some("c"), "p81", "one")
+                },
+            )
             .await
             .unwrap();
-        let (c, body) = h.call("DELETE", "/api/sessions/garage%2Fp81%2Fone?meta=1", None).await;
+        let (c, body) = h
+            .call("DELETE", "/api/sessions/garage%2Fp81%2Fone?meta=1", None)
+            .await;
         assert_eq!(c, StatusCode::OK);
         assert_eq!(
             body,
             json!({"deleted": true, "meta": true, "worktree": {
                 "path": "/tmp/wt/p81/one", "branch": "garage/one", "repoDir": "/tmp/not-a-repo", "target": null}})
         );
-        assert!(h.st.registry.get_session_meta(id).await.is_none(), "meta must be gone");
+        assert!(
+            h.st.registry.get_session_meta(id).await.is_none(),
+            "meta must be gone"
+        );
     }
 
     #[tokio::test]
     async fn delete_refuses_non_garage_ids_with_and_without_meta() {
         let h = harness();
-        for u in ["/api/sessions/not-garage%2Fx?meta=1", "/api/sessions/work%2Fmain", "/api/sessions/x"] {
+        for u in [
+            "/api/sessions/not-garage%2Fx?meta=1",
+            "/api/sessions/work%2Fmain",
+            "/api/sessions/x",
+        ] {
             let (c, body) = h.call("DELETE", u, None).await;
-            assert_eq!((c, body), (StatusCode::FORBIDDEN, json!({"error": "refusing to touch non-garage sessions"})), "{u}");
+            assert_eq!(
+                (c, body),
+                (
+                    StatusCode::FORBIDDEN,
+                    json!({"error": "refusing to touch non-garage sessions"})
+                ),
+                "{u}"
+            );
         }
     }
 
@@ -897,11 +1126,21 @@ mod tests {
         let h = harness();
         let dir = h.workspace("ws").await;
         h.live("garage/ws/a", &dir).await;
-        h.st.registry.upsert_session_meta("garage/ws/a", meta(Some("c"), "ws", "a")).await.unwrap();
-        let (c, _) = h.call("DELETE", "/api/sessions/garage%2Fws%2Fa?meta=1", None).await;
+        h.st.registry
+            .upsert_session_meta("garage/ws/a", meta(Some("c"), "ws", "a"))
+            .await
+            .unwrap();
+        let (c, _) = h
+            .call("DELETE", "/api/sessions/garage%2Fws%2Fa?meta=1", None)
+            .await;
         assert_eq!(c, StatusCode::CONFLICT);
         assert!(h.st.backend.has("garage/ws/a").await.unwrap());
-        assert!(h.st.registry.get_session_meta("garage/ws/a").await.is_some());
+        assert!(h
+            .st
+            .registry
+            .get_session_meta("garage/ws/a")
+            .await
+            .is_some());
     }
 
     // --- sessions.title.test.js ---
@@ -910,7 +1149,13 @@ mod tests {
     async fn restorable_entries_have_title_null_and_the_documented_shape() {
         let h = harness();
         let dir = h.workspace("p10").await;
-        h.st.registry.upsert_session_meta("garage/p10/restorable", meta(Some("abc"), "p10", "restorable")).await.unwrap();
+        h.st.registry
+            .upsert_session_meta(
+                "garage/p10/restorable",
+                meta(Some("abc"), "p10", "restorable"),
+            )
+            .await
+            .unwrap();
         let e = h.entry("garage/p10/restorable").await;
         assert_eq!(
             e,
@@ -926,11 +1171,20 @@ mod tests {
         let dir = h.workspace("p10").await;
         h.live("garage/p10/live", &dir).await;
         h.live("garage/p10/default-title", &dir).await;
-        h.tmux.tmux(&["select-pane", "-t", "garage/p10/live", "-T", "  ✳ Refactoring the poller  "]);
+        h.tmux.tmux(&[
+            "select-pane",
+            "-t",
+            "garage/p10/live",
+            "-T",
+            "  ✳ Refactoring the poller  ",
+        ]);
         let live = h.entry("garage/p10/live").await;
         assert_eq!(live["title"], "✳ Refactoring the poller");
         assert!(live.get("restorable").is_none());
-        assert_eq!(h.entry("garage/p10/default-title").await["title"], Value::Null);
+        assert_eq!(
+            h.entry("garage/p10/default-title").await["title"],
+            Value::Null
+        );
     }
 
     // --- sessions.context.test.js ---
@@ -959,33 +1213,73 @@ mod tests {
         // statusline-fed
         h.live("garage/p11/sl", &dir).await;
         h.st.telemetry.context.set_context("garage/p11/sl", 42.0);
-        assert_eq!(h.entry("garage/p11/sl").await["context"], json!({"usedPercentage": 42, "source": "statusline"}));
+        assert_eq!(
+            h.entry("garage/p11/sl").await["context"],
+            json!({"usedPercentage": 42, "source": "statusline"})
+        );
 
         // transcript-only: the first fetch serves the empty cache (never blocks
         // on file IO) and kicks a background read; a later fetch shows it.
         h.live("garage/p11/tr", &dir).await;
-        h.st.registry.upsert_session_meta("garage/p11/tr", meta(Some("tr-cs"), "p11", "tr")).await.unwrap();
-        write_transcript(&h, &dir, "tr-cs", &assistant_line(150_000, "claude-haiku-4-5")); // 75% of 200k
+        h.st.registry
+            .upsert_session_meta("garage/p11/tr", meta(Some("tr-cs"), "p11", "tr"))
+            .await
+            .unwrap();
+        write_transcript(
+            &h,
+            &dir,
+            "tr-cs",
+            &assistant_line(150_000, "claude-haiku-4-5"),
+        ); // 75% of 200k
         assert_eq!(h.entry("garage/p11/tr").await["context"], Value::Null);
         h.tmux
-            .wait_for_async(|| async { h.entry("garage/p11/tr").await["context"] == json!({"usedPercentage": 75, "source": "transcript"}) })
+            .wait_for_async(|| async {
+                h.entry("garage/p11/tr").await["context"]
+                    == json!({"usedPercentage": 75, "source": "transcript"})
+            })
             .await;
 
         // both present: the statusline wins over a populated transcript cache
         h.live("garage/p11/both", &dir).await;
-        h.st.registry.upsert_session_meta("garage/p11/both", meta(Some("both-cs"), "p11", "both")).await.unwrap();
-        write_transcript(&h, &dir, "both-cs", &assistant_line(180_000, "claude-haiku-4-5")); // 90%
+        h.st.registry
+            .upsert_session_meta("garage/p11/both", meta(Some("both-cs"), "p11", "both"))
+            .await
+            .unwrap();
+        write_transcript(
+            &h,
+            &dir,
+            "both-cs",
+            &assistant_line(180_000, "claude-haiku-4-5"),
+        ); // 90%
         h.entry("garage/p11/both").await;
-        h.tmux.wait_for(|| h.st.telemetry.transcripts.cached_context("garage/p11/both").is_some()).await;
+        h.tmux
+            .wait_for(|| {
+                h.st.telemetry
+                    .transcripts
+                    .cached_context("garage/p11/both")
+                    .is_some()
+            })
+            .await;
         h.st.telemetry.context.set_context("garage/p11/both", 11.0);
-        assert_eq!(h.entry("garage/p11/both").await["context"], json!({"usedPercentage": 11, "source": "statusline"}));
+        assert_eq!(
+            h.entry("garage/p11/both").await["context"],
+            json!({"usedPercentage": 11, "source": "statusline"})
+        );
     }
 
     #[tokio::test]
     async fn restorable_entries_ignore_a_statusline_post_for_their_id() {
         let h = harness();
-        h.st.registry.upsert_session_meta("garage/p11/restorable", meta(Some("r"), "p11", "restorable")).await.unwrap();
-        h.st.telemetry.context.set_context("garage/p11/restorable", 99.0);
+        h.st.registry
+            .upsert_session_meta(
+                "garage/p11/restorable",
+                meta(Some("r"), "p11", "restorable"),
+            )
+            .await
+            .unwrap();
+        h.st.telemetry
+            .context
+            .set_context("garage/p11/restorable", 99.0);
         let e = h.entry("garage/p11/restorable").await;
         assert_eq!(e["restorable"], true);
         assert_eq!(e["context"], Value::Null);
@@ -999,28 +1293,60 @@ mod tests {
         let dir = h.workspace("ws").await;
         h.live("garage/ws/a", &dir).await;
         let e = h.entry("garage/ws/a").await;
-        let created = e["createdAt"].as_i64().expect("tmux reports a creation time");
-        assert_eq!(e["since"], created, "never transitioned: since is when tmux created it");
+        let created = e["createdAt"]
+            .as_i64()
+            .expect("tmux reports a creation time");
         assert_eq!(
-            (e["workspace"].as_str(), e["label"].as_str(), e["attached"].clone(), e["status"].as_str(), e["message"].clone()),
-            (Some("ws"), Some("a"), json!(false), Some("idle"), Value::Null)
+            e["since"], created,
+            "never transitioned: since is when tmux created it"
         );
-        assert_eq!(Path::new(e["dir"].as_str().unwrap()).canonicalize().unwrap(), Path::new(&dir));
+        assert_eq!(
+            (
+                e["workspace"].as_str(),
+                e["label"].as_str(),
+                e["attached"].clone(),
+                e["status"].as_str(),
+                e["message"].clone()
+            ),
+            (
+                Some("ws"),
+                Some("a"),
+                json!(false),
+                Some("idle"),
+                Value::Null
+            )
+        );
+        assert_eq!(
+            Path::new(e["dir"].as_str().unwrap())
+                .canonicalize()
+                .unwrap(),
+            Path::new(&dir)
+        );
         for k in ["branch", "title", "context"] {
             assert!(e.get(k).is_some(), "{k} must be present (null)");
         }
         // After a real transition `since` is the transition's.
-        h.st.status.set_at("garage/ws/a", SessionStatus::Working, None, 1234);
+        h.st.status
+            .set_at("garage/ws/a", SessionStatus::Working, None, 1234);
         let e = h.entry("garage/ws/a").await;
-        assert_eq!((e["status"].as_str(), e["since"].as_i64()), (Some("working"), Some(1234)));
+        assert_eq!(
+            (e["status"].as_str(), e["since"].as_i64()),
+            (Some("working"), Some(1234))
+        );
     }
 
     #[tokio::test]
     async fn restorable_dir_follows_the_registered_workspace_and_is_null_when_unregistered() {
         let h = harness();
         let dir = h.workspace("moved").await;
-        h.st.registry.upsert_session_meta("garage/moved/a", meta(Some("c"), "moved", "a")).await.unwrap();
-        h.st.registry.upsert_session_meta("garage/gone/a", meta(Some("c"), "gone", "a")).await.unwrap();
+        h.st.registry
+            .upsert_session_meta("garage/moved/a", meta(Some("c"), "moved", "a"))
+            .await
+            .unwrap();
+        h.st.registry
+            .upsert_session_meta("garage/gone/a", meta(Some("c"), "gone", "a"))
+            .await
+            .unwrap();
         assert_eq!(h.entry("garage/moved/a").await["dir"], dir);
         assert_eq!(h.entry("garage/gone/a").await["dir"], Value::Null);
     }
@@ -1034,26 +1360,77 @@ mod tests {
         let dir = h.workspace("ws").await;
 
         for (body, code, msg) in [
-            (r#"{"workspace":"Bad Name","label":"a"}"#, 400, "workspace and label must match [a-z0-9-]+".to_string()),
-            (r#"{"workspace":"ws"}"#, 400, "workspace and label must match [a-z0-9-]+".to_string()),
-            (r#"{"workspace":"nope","label":"a"}"#, 404, "unknown workspace: nope".to_string()),
+            (
+                r#"{"workspace":"Bad Name","label":"a"}"#,
+                400,
+                "workspace and label must match [a-z0-9-]+".to_string(),
+            ),
+            (
+                r#"{"workspace":"ws"}"#,
+                400,
+                "workspace and label must match [a-z0-9-]+".to_string(),
+            ),
+            (
+                r#"{"workspace":"nope","label":"a"}"#,
+                404,
+                "unknown workspace: nope".to_string(),
+            ),
         ] {
             let (c, b) = h.call("POST", "/api/sessions", Some(body)).await;
             assert_eq!((c.as_u16(), b), (code, json!({"error": msg})), "{body}");
         }
 
-        let (c, b) = h.call("POST", "/api/sessions", Some(r#"{"workspace":"ws","label":"a"}"#)).await;
+        let (c, b) = h
+            .call(
+                "POST",
+                "/api/sessions",
+                Some(r#"{"workspace":"ws","label":"a"}"#),
+            )
+            .await;
         assert_eq!(c, StatusCode::CREATED);
-        assert_eq!(b, json!({"id": "garage/ws/a", "workspace": "ws", "label": "a", "dir": dir, "worktree": null}));
+        assert_eq!(
+            b,
+            json!({"id": "garage/ws/a", "workspace": "ws", "label": "a", "dir": dir, "worktree": null})
+        );
         assert!(h.st.backend.has("garage/ws/a").await.unwrap());
-        assert!(h.st.registry.get_session_meta("garage/ws/a").await.is_none(), "meta is the poller's job unless a worktree");
+        assert!(
+            h.st.registry
+                .get_session_meta("garage/ws/a")
+                .await
+                .is_none(),
+            "meta is the poller's job unless a worktree"
+        );
 
-        let (c, b) = h.call("POST", "/api/sessions", Some(r#"{"workspace":"ws","label":"a"}"#)).await;
-        assert_eq!((c, b), (StatusCode::CONFLICT, json!({"error": "session already exists: garage/ws/a"})));
+        let (c, b) = h
+            .call(
+                "POST",
+                "/api/sessions",
+                Some(r#"{"workspace":"ws","label":"a"}"#),
+            )
+            .await;
+        assert_eq!(
+            (c, b),
+            (
+                StatusCode::CONFLICT,
+                json!({"error": "session already exists: garage/ws/a"})
+            )
+        );
 
         std::fs::remove_dir_all(&dir).unwrap();
-        let (c, b) = h.call("POST", "/api/sessions", Some(r#"{"workspace":"ws","label":"b"}"#)).await;
-        assert_eq!((c, b), (StatusCode::BAD_REQUEST, json!({"error": format!("registered dir no longer exists: {dir}")})));
+        let (c, b) = h
+            .call(
+                "POST",
+                "/api/sessions",
+                Some(r#"{"workspace":"ws","label":"b"}"#),
+            )
+            .await;
+        assert_eq!(
+            (c, b),
+            (
+                StatusCode::BAD_REQUEST,
+                json!({"error": format!("registered dir no longer exists: {dir}")})
+            )
+        );
     }
 
     fn git(dir: &Path, args: &[&str]) {
@@ -1080,38 +1457,96 @@ mod tests {
         h.script("claude.sh", "exec sleep 60");
         let repo = h.workspace("ws").await;
         git(Path::new(&repo), &["init", "-q", "-b", "main"]);
-        git(Path::new(&repo), &["commit", "-q", "--allow-empty", "-m", "init"]);
+        git(
+            Path::new(&repo),
+            &["commit", "-q", "--allow-empty", "-m", "init"],
+        );
 
-        let (c, b) = h.call("POST", "/api/sessions", Some(r#"{"workspace":"ws","label":"fix","worktree":true}"#)).await;
+        let (c, b) = h
+            .call(
+                "POST",
+                "/api/sessions",
+                Some(r#"{"workspace":"ws","label":"fix","worktree":true}"#),
+            )
+            .await;
         assert_eq!(c, StatusCode::CREATED);
-        let wt_path = h.garage.path().join("worktrees/ws/fix").to_string_lossy().into_owned();
+        let wt_path = h
+            .garage
+            .path()
+            .join("worktrees/ws/fix")
+            .to_string_lossy()
+            .into_owned();
         assert_eq!(b["dir"], wt_path);
-        assert_eq!(b["worktree"], json!({"path": wt_path, "branch": "garage/fix"}));
+        assert_eq!(
+            b["worktree"],
+            json!({"path": wt_path, "branch": "garage/fix"})
+        );
         // The record is saved at spawn, with the repo it was cut from.
-        let m = h.st.registry.get_session_meta("garage/ws/fix").await.unwrap();
-        assert_eq!(m.worktree, Some(Worktree { path: wt_path.clone(), branch: "garage/fix".into(), repo_dir: repo.clone(), target: None }));
-        assert_eq!((m.workspace.as_deref(), m.label.as_deref()), (Some("ws"), Some("fix")));
+        let m =
+            h.st.registry
+                .get_session_meta("garage/ws/fix")
+                .await
+                .unwrap();
+        assert_eq!(
+            m.worktree,
+            Some(Worktree {
+                path: wt_path.clone(),
+                branch: "garage/fix".into(),
+                repo_dir: repo.clone(),
+                target: None
+            })
+        );
+        assert_eq!(
+            (m.workspace.as_deref(), m.label.as_deref()),
+            (Some("ws"), Some("fix"))
+        );
         // The pane runs in the worktree, so the listed branch is its branch.
-        h.tmux.wait_for_async(|| async { h.entry("garage/ws/fix").await["branch"] == "garage/fix" }).await;
+        h.tmux
+            .wait_for_async(|| async { h.entry("garage/ws/fix").await["branch"] == "garage/fix" })
+            .await;
 
         // Live delete returns the record (with the repo's checked-out branch)
         // and drops the context caches along with the metadata.
         h.st.telemetry.context.set_context("garage/ws/fix", 7.0);
-        let (c, b) = h.call("DELETE", "/api/sessions/garage%2Fws%2Ffix", None).await;
+        let (c, b) = h
+            .call("DELETE", "/api/sessions/garage%2Fws%2Ffix", None)
+            .await;
         assert_eq!(c, StatusCode::OK);
         assert_eq!(
             b,
             json!({"deleted": true, "worktree": {"path": wt_path, "branch": "garage/fix", "repoDir": repo, "target": "main"}})
         );
         assert!(!h.st.backend.has("garage/ws/fix").await.unwrap());
-        assert!(h.st.registry.get_session_meta("garage/ws/fix").await.is_none());
-        assert!(h.st.telemetry.context.statusline_context("garage/ws/fix").is_none());
+        assert!(h
+            .st
+            .registry
+            .get_session_meta("garage/ws/fix")
+            .await
+            .is_none());
+        assert!(h
+            .st
+            .telemetry
+            .context
+            .statusline_context("garage/ws/fix")
+            .is_none());
 
         // A workspace that is not a git repo: 400 with the message, nothing spawned.
         h.workspace("plain").await;
-        let (c, b) = h.call("POST", "/api/sessions", Some(r#"{"workspace":"plain","label":"x","worktree":true}"#)).await;
+        let (c, b) = h
+            .call(
+                "POST",
+                "/api/sessions",
+                Some(r#"{"workspace":"plain","label":"x","worktree":true}"#),
+            )
+            .await;
         assert_eq!(c, StatusCode::BAD_REQUEST);
-        assert!(b["error"].as_str().unwrap().starts_with("not a git repository: "), "{b}");
+        assert!(
+            b["error"]
+                .as_str()
+                .unwrap()
+                .starts_with("not a git repository: "),
+            "{b}"
+        );
         assert!(!h.st.backend.has("garage/plain/x").await.unwrap());
     }
 
@@ -1120,23 +1555,43 @@ mod tests {
         let h = harness();
         let dir = h.workspace("ws").await;
         h.live("garage/ws/a", &dir).await;
-        h.st.registry.upsert_session_meta("garage/ws/a", meta(Some("c"), "ws", "a")).await.unwrap();
+        h.st.registry
+            .upsert_session_meta("garage/ws/a", meta(Some("c"), "ws", "a"))
+            .await
+            .unwrap();
         h.st.status.set("garage/ws/a", SessionStatus::Working, None);
         // The id arrives percent-encoded (%2F) and still resolves.
-        let (c, b) = h.call("DELETE", "/api/sessions/garage%2Fws%2Fa", None).await;
-        assert_eq!((c, b), (StatusCode::OK, json!({"deleted": true, "worktree": null})));
+        let (c, b) = h
+            .call("DELETE", "/api/sessions/garage%2Fws%2Fa", None)
+            .await;
+        assert_eq!(
+            (c, b),
+            (StatusCode::OK, json!({"deleted": true, "worktree": null}))
+        );
         assert!(!h.st.backend.has("garage/ws/a").await.unwrap());
-        assert!(!h.st.status.has("garage/ws/a"), "the status entry goes with the session");
-        assert!(h.st.registry.get_session_meta("garage/ws/a").await.is_none(), "a deliberate kill offers no restore");
+        assert!(
+            !h.st.status.has("garage/ws/a"),
+            "the status entry goes with the session"
+        );
+        assert!(
+            h.st.registry
+                .get_session_meta("garage/ws/a")
+                .await
+                .is_none(),
+            "a deliberate kill offers no restore"
+        );
         // gone now: 404
-        let (c, _) = h.call("DELETE", "/api/sessions/garage%2Fws%2Fa", None).await;
+        let (c, _) = h
+            .call("DELETE", "/api/sessions/garage%2Fws%2Fa", None)
+            .await;
         assert_eq!(c, StatusCode::NOT_FOUND);
     }
 
     // --- POST /api/sessions/restore ---
 
     const RESUMABLE: &str = "echo \"$@\" > args.txt; exec sleep 60";
-    const DIES_ON_RESUME: &str = "if [ \"$1\" = \"--resume\" ]; then exit 1; fi; echo plain > plain.txt; exec sleep 60";
+    const DIES_ON_RESUME: &str =
+        "if [ \"$1\" = \"--resume\" ]; then exit 1; fi; echo plain > plain.txt; exec sleep 60";
 
     async fn read_in(dir: &str, file: &str, tmux: &TestTmux) -> String {
         let p = Path::new(dir).join(file);
@@ -1148,23 +1603,47 @@ mod tests {
     async fn restore_resumes_in_the_registered_dir_and_a_resume_that_dies_falls_back_to_plain() {
         let mut h = harness();
         let dir = h.workspace("ws").await;
-        h.st.registry.upsert_session_meta("garage/ws/a", meta(Some("abc"), "ws", "a")).await.unwrap();
+        h.st.registry
+            .upsert_session_meta("garage/ws/a", meta(Some("abc"), "ws", "a"))
+            .await
+            .unwrap();
 
         h.script("claude.sh", RESUMABLE);
-        let (c, b) = h.call("POST", "/api/sessions/restore", Some(r#"{"id":"garage/ws/a"}"#)).await;
+        let (c, b) = h
+            .call(
+                "POST",
+                "/api/sessions/restore",
+                Some(r#"{"id":"garage/ws/a"}"#),
+            )
+            .await;
         assert_eq!(c, StatusCode::CREATED);
         assert_eq!(
             b,
             json!({"restored": [{"id": "garage/ws/a", "workspace": "ws", "label": "a", "dir": dir, "worktree": null, "resumed": true}],
                    "failed": []})
         );
-        assert_eq!(read_in(&dir, "args.txt", &h.tmux).await.trim(), "--resume abc");
-        assert!(h.st.registry.get_session_meta("garage/ws/a").await.is_some(), "restore keeps the metadata");
+        assert_eq!(
+            read_in(&dir, "args.txt", &h.tmux).await.trim(),
+            "--resume abc"
+        );
+        assert!(
+            h.st.registry
+                .get_session_meta("garage/ws/a")
+                .await
+                .is_some(),
+            "restore keeps the metadata"
+        );
 
         // Resume dies immediately ("No conversation found"): plain claude, resumed:false.
         h.st.backend.kill("garage/ws/a").await.unwrap();
         h.script("dies.sh", DIES_ON_RESUME);
-        let (c, b) = h.call("POST", "/api/sessions/restore", Some(r#"{"id":"garage/ws/a"}"#)).await;
+        let (c, b) = h
+            .call(
+                "POST",
+                "/api/sessions/restore",
+                Some(r#"{"id":"garage/ws/a"}"#),
+            )
+            .await;
         assert_eq!(c, StatusCode::CREATED);
         assert_eq!(b["restored"][0]["resumed"], false);
         assert_eq!(read_in(&dir, "plain.txt", &h.tmux).await.trim(), "plain");
@@ -1172,28 +1651,59 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn restore_without_a_claude_session_id_starts_plain_and_a_worktree_session_restores_into_its_worktree() {
+    async fn restore_without_a_claude_session_id_starts_plain_and_a_worktree_session_restores_into_its_worktree(
+    ) {
         let mut h = harness();
         h.script("claude.sh", RESUMABLE);
         let dir = h.workspace("ws").await;
         let wt = h.garage.path().join("wt");
         std::fs::create_dir_all(&wt).unwrap();
         let wt = wt.canonicalize().unwrap().to_string_lossy().into_owned();
-        h.st.registry.upsert_session_meta("garage/ws/plain", meta(None, "ws", "plain")).await.unwrap();
-        let w = Worktree { path: wt.clone(), branch: "garage/w".into(), repo_dir: dir.clone(), target: None };
         h.st.registry
-            .upsert_session_meta("garage/ws/w", MetaUpdate { worktree: Some(Some(w)), ..meta(Some("wcs"), "ws", "w") })
+            .upsert_session_meta("garage/ws/plain", meta(None, "ws", "plain"))
+            .await
+            .unwrap();
+        let w = Worktree {
+            path: wt.clone(),
+            branch: "garage/w".into(),
+            repo_dir: dir.clone(),
+            target: None,
+        };
+        h.st.registry
+            .upsert_session_meta(
+                "garage/ws/w",
+                MetaUpdate {
+                    worktree: Some(Some(w)),
+                    ..meta(Some("wcs"), "ws", "w")
+                },
+            )
             .await
             .unwrap();
 
-        let (c, b) = h.call("POST", "/api/sessions/restore", Some(r#"{"all":true}"#)).await;
+        let (c, b) = h
+            .call("POST", "/api/sessions/restore", Some(r#"{"all":true}"#))
+            .await;
         assert_eq!(c, StatusCode::OK, "restore-all answers 200");
-        let by_id = |id: &str| b["restored"].as_array().unwrap().iter().find(|r| r["id"] == id).cloned().unwrap();
+        let by_id = |id: &str| {
+            b["restored"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|r| r["id"] == id)
+                .cloned()
+                .unwrap()
+        };
         assert_eq!(by_id("garage/ws/plain")["resumed"], false);
         assert_eq!(by_id("garage/ws/w")["resumed"], true);
         assert_eq!(by_id("garage/ws/w")["dir"], wt);
-        assert_eq!(by_id("garage/ws/w")["worktree"], json!({"path": wt, "branch": "garage/w", "repoDir": dir}));
-        assert_eq!(read_in(&wt, "args.txt", &h.tmux).await.trim(), "--resume wcs");
+        assert_eq!(
+            by_id("garage/ws/w")["worktree"],
+            json!({"path": wt, "branch": "garage/w", "repoDir": dir})
+        );
+        assert_eq!(
+            read_in(&wt, "args.txt", &h.tmux).await.trim(),
+            "--resume wcs"
+        );
         // the plain one ran in the registered dir with no args
         assert_eq!(read_in(&dir, "args.txt", &h.tmux).await.trim(), "");
     }
@@ -1204,21 +1714,52 @@ mod tests {
         h.script("claude.sh", RESUMABLE);
         let dir = h.workspace("ws").await;
         let reg = &h.st.registry;
-        reg.upsert_session_meta("garage/ws/ok", meta(Some("c"), "ws", "ok")).await.unwrap();
-        reg.upsert_session_meta("garage/gone/a", meta(Some("c"), "gone", "a")).await.unwrap();
+        reg.upsert_session_meta("garage/ws/ok", meta(Some("c"), "ws", "ok"))
+            .await
+            .unwrap();
+        reg.upsert_session_meta("garage/gone/a", meta(Some("c"), "gone", "a"))
+            .await
+            .unwrap();
 
         // Spec scenario: one record's workspace was unregistered, the other restores.
-        let (c, b) = h.call("POST", "/api/sessions/restore", Some(r#"{"all":true}"#)).await;
+        let (c, b) = h
+            .call("POST", "/api/sessions/restore", Some(r#"{"all":true}"#))
+            .await;
         assert_eq!(c, StatusCode::OK);
         assert_eq!(b["restored"].as_array().unwrap().len(), 1);
-        assert_eq!(b["failed"], json!([{"id": "garage/gone/a", "reason": "workspace no longer registered"}]));
+        assert_eq!(
+            b["failed"],
+            json!([{"id": "garage/gone/a", "reason": "workspace no longer registered"}])
+        );
 
         // Single-id failures: 409 with the reason each, metadata kept.
-        let wt = h.garage.path().join("missing-wt").to_string_lossy().into_owned();
-        let w = Worktree { path: wt, branch: "garage/x".into(), repo_dir: dir.clone(), target: None };
-        h.st.registry.upsert_session_meta("garage/ws/wtm", MetaUpdate { worktree: Some(Some(w)), ..meta(Some("c"), "ws", "wtm") }).await.unwrap();
+        let wt = h
+            .garage
+            .path()
+            .join("missing-wt")
+            .to_string_lossy()
+            .into_owned();
+        let w = Worktree {
+            path: wt,
+            branch: "garage/x".into(),
+            repo_dir: dir.clone(),
+            target: None,
+        };
+        h.st.registry
+            .upsert_session_meta(
+                "garage/ws/wtm",
+                MetaUpdate {
+                    worktree: Some(Some(w)),
+                    ..meta(Some("c"), "ws", "wtm")
+                },
+            )
+            .await
+            .unwrap();
         h.workspace("nodir").await;
-        h.st.registry.upsert_session_meta("garage/nodir/a", meta(Some("c"), "nodir", "a")).await.unwrap();
+        h.st.registry
+            .upsert_session_meta("garage/nodir/a", meta(Some("c"), "nodir", "a"))
+            .await
+            .unwrap();
         std::fs::remove_dir_all(h.garage.path().join("dir-nodir")).unwrap();
         for (id, reason) in [
             ("garage/gone/a", "workspace no longer registered"),
@@ -1226,15 +1767,43 @@ mod tests {
             ("garage/nodir/a", "registered dir no longer exists"),
             ("garage/ws/ok", "session already running"), // restored above, still live
         ] {
-            let (c, b) = h.call("POST", "/api/sessions/restore", Some(&json!({"id": id}).to_string())).await;
+            let (c, b) = h
+                .call(
+                    "POST",
+                    "/api/sessions/restore",
+                    Some(&json!({"id": id}).to_string()),
+                )
+                .await;
             assert_eq!(c, StatusCode::CONFLICT, "{id}");
-            assert_eq!(b, json!({"restored": [], "failed": [{"id": id, "reason": reason}]}), "{id}");
-            assert!(h.st.registry.get_session_meta(id).await.is_some(), "{id} keeps its metadata");
+            assert_eq!(
+                b,
+                json!({"restored": [], "failed": [{"id": id, "reason": reason}]}),
+                "{id}"
+            );
+            assert!(
+                h.st.registry.get_session_meta(id).await.is_some(),
+                "{id} keeps its metadata"
+            );
         }
 
-        assert_eq!(h.call("POST", "/api/sessions/restore", Some("{}")).await.0, StatusCode::BAD_REQUEST);
-        let (c, b) = h.call("POST", "/api/sessions/restore", Some(r#"{"id":"garage/ws/none"}"#)).await;
-        assert_eq!((c, b), (StatusCode::NOT_FOUND, json!({"error": "no resume metadata for: garage/ws/none"})));
+        assert_eq!(
+            h.call("POST", "/api/sessions/restore", Some("{}")).await.0,
+            StatusCode::BAD_REQUEST
+        );
+        let (c, b) = h
+            .call(
+                "POST",
+                "/api/sessions/restore",
+                Some(r#"{"id":"garage/ws/none"}"#),
+            )
+            .await;
+        assert_eq!(
+            (c, b),
+            (
+                StatusCode::NOT_FOUND,
+                json!({"error": "no resume metadata for: garage/ws/none"})
+            )
+        );
     }
 
     // --- POST /api/sessions/restart ---
@@ -1245,35 +1814,83 @@ mod tests {
         h.script("claude.sh", RESUMABLE);
         let dir = h.workspace("ws").await;
         h.live("garage/ws/a", &dir).await;
-        h.st.registry.upsert_session_meta("garage/ws/a", meta(Some("abc"), "ws", "a")).await.unwrap();
-        let pane_pid = |h: &H| h.tmux.tmux(&["list-panes", "-t", "garage/ws/a", "-F", "#{pane_pid}"]);
+        h.st.registry
+            .upsert_session_meta("garage/ws/a", meta(Some("abc"), "ws", "a"))
+            .await
+            .unwrap();
+        let pane_pid = |h: &H| {
+            h.tmux
+                .tmux(&["list-panes", "-t", "garage/ws/a", "-F", "#{pane_pid}"])
+        };
         let before = pane_pid(&h);
 
         // Never observed: one poll runs, still unknown, so it is skipped.
         assert_eq!(h.agents.0.load(Ordering::SeqCst), 0);
-        let (c, b) = h.call("POST", "/api/sessions/restart", Some(r#"{"all":true}"#)).await;
+        let (c, b) = h
+            .call("POST", "/api/sessions/restart", Some(r#"{"all":true}"#))
+            .await;
         assert_eq!(c, StatusCode::OK);
-        assert_eq!(b, json!({"restarted": [], "skipped": [{"id": "garage/ws/a", "status": "unknown"}], "failed": []}));
-        assert_eq!(h.agents.0.load(Ordering::SeqCst), 1, "one poll before planning");
+        assert_eq!(
+            b,
+            json!({"restarted": [], "skipped": [{"id": "garage/ws/a", "status": "unknown"}], "failed": []})
+        );
+        assert_eq!(
+            h.agents.0.load(Ordering::SeqCst),
+            1,
+            "one poll before planning"
+        );
 
         // Observed but busy: no further poll, skipped with its real status.
         h.st.status.set("garage/ws/a", SessionStatus::Working, None);
-        let (_, b) = h.call("POST", "/api/sessions/restart", Some(r#"{"id":"garage/ws/a"}"#)).await;
-        assert_eq!(b["skipped"], json!([{"id": "garage/ws/a", "status": "working"}]));
+        let (_, b) = h
+            .call(
+                "POST",
+                "/api/sessions/restart",
+                Some(r#"{"id":"garage/ws/a"}"#),
+            )
+            .await;
+        assert_eq!(
+            b["skipped"],
+            json!([{"id": "garage/ws/a", "status": "working"}])
+        );
         assert_eq!(h.agents.0.load(Ordering::SeqCst), 1);
-        assert_eq!(pane_pid(&h), before, "a skipped session keeps running untouched");
+        assert_eq!(
+            pane_pid(&h),
+            before,
+            "a skipped session keeps running untouched"
+        );
 
         // force: respawned in place with --resume; status and context cleared; sessions event pushed.
         h.st.telemetry.context.set_context("garage/ws/a", 50.0);
         let mut events = h.st.bus.subscribe();
-        let (c, b) = h.call("POST", "/api/sessions/restart", Some(r#"{"id":"garage/ws/a","force":true}"#)).await;
+        let (c, b) = h
+            .call(
+                "POST",
+                "/api/sessions/restart",
+                Some(r#"{"id":"garage/ws/a","force":true}"#),
+            )
+            .await;
         assert_eq!(c, StatusCode::OK);
-        assert_eq!(b, json!({"restarted": [{"id": "garage/ws/a", "resumed": true}], "skipped": [], "failed": []}));
-        assert_eq!(read_in(&dir, "args.txt", &h.tmux).await.trim(), "--resume abc");
+        assert_eq!(
+            b,
+            json!({"restarted": [{"id": "garage/ws/a", "resumed": true}], "skipped": [], "failed": []})
+        );
+        assert_eq!(
+            read_in(&dir, "args.txt", &h.tmux).await.trim(),
+            "--resume abc"
+        );
         assert_ne!(pane_pid(&h), before, "a new process");
-        assert!(h.st.backend.has("garage/ws/a").await.unwrap(), "same tmux session");
+        assert!(
+            h.st.backend.has("garage/ws/a").await.unwrap(),
+            "same tmux session"
+        );
         assert!(!h.st.status.has("garage/ws/a"));
-        assert!(h.st.telemetry.context.statusline_context("garage/ws/a").is_none());
+        assert!(h
+            .st
+            .telemetry
+            .context
+            .statusline_context("garage/ws/a")
+            .is_none());
         assert_eq!(events.try_recv().unwrap(), DaemonEvent::SessionsChanged);
     }
 
@@ -1282,21 +1899,51 @@ mod tests {
         let mut h = harness();
         let dir = h.workspace("ws").await;
         h.live("garage/ws/a", &dir).await;
-        assert_eq!(h.call("POST", "/api/sessions/restart", Some("{}")).await.0, StatusCode::BAD_REQUEST);
-        let (c, b) = h.call("POST", "/api/sessions/restart", Some(r#"{"id":"garage/ws/none"}"#)).await;
-        assert_eq!((c, b), (StatusCode::NOT_FOUND, json!({"error": "no live session: garage/ws/none"})));
+        assert_eq!(
+            h.call("POST", "/api/sessions/restart", Some("{}")).await.0,
+            StatusCode::BAD_REQUEST
+        );
+        let (c, b) = h
+            .call(
+                "POST",
+                "/api/sessions/restart",
+                Some(r#"{"id":"garage/ws/none"}"#),
+            )
+            .await;
+        assert_eq!(
+            (c, b),
+            (
+                StatusCode::NOT_FOUND,
+                json!({"error": "no live session: garage/ws/none"})
+            )
+        );
 
         // A resume that dies takes the one-pane session with it: the plain
         // fallback recreates it, so the session survives instead of vanishing.
         h.script("dies.sh", DIES_ON_RESUME);
-        h.st.registry.upsert_session_meta("garage/ws/a", meta(Some("abc"), "ws", "a")).await.unwrap();
+        h.st.registry
+            .upsert_session_meta("garage/ws/a", meta(Some("abc"), "ws", "a"))
+            .await
+            .unwrap();
         h.st.status.set("garage/ws/a", SessionStatus::Idle, None);
         let mut events = h.st.bus.subscribe();
-        let (c, b) = h.call("POST", "/api/sessions/restart", Some(r#"{"id":"garage/ws/a"}"#)).await;
+        let (c, b) = h
+            .call(
+                "POST",
+                "/api/sessions/restart",
+                Some(r#"{"id":"garage/ws/a"}"#),
+            )
+            .await;
         assert_eq!(c, StatusCode::OK);
-        assert_eq!(b["restarted"], json!([{"id": "garage/ws/a", "resumed": false}]));
+        assert_eq!(
+            b["restarted"],
+            json!([{"id": "garage/ws/a", "resumed": false}])
+        );
         assert_eq!(b["failed"], json!([]));
-        assert!(h.st.backend.has("garage/ws/a").await.unwrap(), "the session survives");
+        assert!(
+            h.st.backend.has("garage/ws/a").await.unwrap(),
+            "the session survives"
+        );
         assert_eq!(read_in(&dir, "plain.txt", &h.tmux).await.trim(), "plain");
         assert_eq!(events.try_recv().unwrap(), DaemonEvent::SessionsChanged);
     }
@@ -1308,20 +1955,50 @@ mod tests {
 
     #[async_trait]
     impl SessionBackend for FailCreate {
-        async fn init(&self) -> Result<()> { self.0.init().await }
-        async fn list(&self) -> Result<Vec<BackendSession>> { self.0.list().await }
-        async fn panes(&self) -> Result<HashMap<String, PaneInfo>> { self.0.panes().await }
-        async fn has(&self, id: &str) -> Result<bool> { self.0.has(id).await }
-        async fn create(&self, _: &str, _: &Path, _: &str, _: &[String], _: &[(String, String)]) -> Result<()> {
+        async fn init(&self) -> Result<()> {
+            self.0.init().await
+        }
+        async fn list(&self) -> Result<Vec<BackendSession>> {
+            self.0.list().await
+        }
+        async fn panes(&self) -> Result<HashMap<String, PaneInfo>> {
+            self.0.panes().await
+        }
+        async fn has(&self, id: &str) -> Result<bool> {
+            self.0.has(id).await
+        }
+        async fn create(
+            &self,
+            _: &str,
+            _: &Path,
+            _: &str,
+            _: &[String],
+            _: &[(String, String)],
+        ) -> Result<()> {
             anyhow::bail!("tmux exploded")
         }
-        async fn respawn(&self, id: &str, d: &Path, c: &str, a: &[String], e: &[(String, String)]) -> Result<()> {
+        async fn respawn(
+            &self,
+            id: &str,
+            d: &Path,
+            c: &str,
+            a: &[String],
+            e: &[(String, String)],
+        ) -> Result<()> {
             self.0.respawn(id, d, c, a, e).await
         }
-        async fn kill(&self, id: &str) -> Result<()> { self.0.kill(id).await }
-        async fn rename(&self, from: &str, to: &str) -> Result<()> { self.0.rename(from, to).await }
-        async fn capture(&self, id: &str, lines: usize) -> Result<String> { self.0.capture(id, lines).await }
-        fn attach_spec(&self, id: &str) -> garage_protocol::AttachSpec { self.0.attach_spec(id) }
+        async fn kill(&self, id: &str) -> Result<()> {
+            self.0.kill(id).await
+        }
+        async fn rename(&self, from: &str, to: &str) -> Result<()> {
+            self.0.rename(from, to).await
+        }
+        async fn capture(&self, id: &str, lines: usize) -> Result<String> {
+            self.0.capture(id, lines).await
+        }
+        fn attach_spec(&self, id: &str) -> garage_protocol::AttachSpec {
+            self.0.attach_spec(id)
+        }
     }
 
     #[tokio::test]
@@ -1329,15 +2006,40 @@ mod tests {
         let mut h = harness();
         let repo = h.workspace("ws").await;
         git(Path::new(&repo), &["init", "-q", "-b", "main"]);
-        git(Path::new(&repo), &["commit", "-q", "--allow-empty", "-m", "init"]);
+        git(
+            Path::new(&repo),
+            &["commit", "-q", "--allow-empty", "-m", "init"],
+        );
         h.st.backend = Arc::new(FailCreate(h.tmux.backend()));
 
-        let (c, _) = h.call("POST", "/api/sessions", Some(r#"{"workspace":"ws","label":"fix","worktree":true}"#)).await;
+        let (c, _) = h
+            .call(
+                "POST",
+                "/api/sessions",
+                Some(r#"{"workspace":"ws","label":"fix","worktree":true}"#),
+            )
+            .await;
         assert_eq!(c, StatusCode::INTERNAL_SERVER_ERROR);
-        assert!(!h.garage.path().join("worktrees/ws/fix").exists(), "worktree dir removed");
-        let branches = std::process::Command::new("git").arg("-C").arg(&repo).args(["branch", "--list", "garage/*"]).output().unwrap();
-        assert!(String::from_utf8_lossy(&branches.stdout).trim().is_empty(), "branch deleted");
-        assert!(h.st.registry.get_session_meta("garage/ws/fix").await.is_none());
+        assert!(
+            !h.garage.path().join("worktrees/ws/fix").exists(),
+            "worktree dir removed"
+        );
+        let branches = std::process::Command::new("git")
+            .arg("-C")
+            .arg(&repo)
+            .args(["branch", "--list", "garage/*"])
+            .output()
+            .unwrap();
+        assert!(
+            String::from_utf8_lossy(&branches.stdout).trim().is_empty(),
+            "branch deleted"
+        );
+        assert!(h
+            .st
+            .registry
+            .get_session_meta("garage/ws/fix")
+            .await
+            .is_none());
     }
 
     // --- GET /api/events ---
@@ -1346,7 +2048,12 @@ mod tests {
     async fn event_stream_greets_then_relays_status_and_sessions_events() {
         let h = harness();
         let res = crate::app(h.st.clone())
-            .oneshot(Request::builder().uri("/api/events").body(Body::empty()).unwrap())
+            .oneshot(
+                Request::builder()
+                    .uri("/api/events")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
             .await
             .unwrap();
         assert_eq!(res.status(), StatusCode::OK);
@@ -1354,20 +2061,26 @@ mod tests {
         let mut body = res.into_body();
 
         async fn next_text(body: &mut Body) -> String {
-            let frame = tokio::time::timeout(Duration::from_secs(5), body.frame()).await.expect("frame in time");
+            let frame = tokio::time::timeout(Duration::from_secs(5), body.frame())
+                .await
+                .expect("frame in time");
             String::from_utf8(frame.unwrap().unwrap().into_data().unwrap().to_vec()).unwrap()
         }
 
         assert_eq!(next_text(&mut body).await, ": connected\n\n");
         // Published after the response started: still delivered.
-        h.st.status.set_at("garage/ws/a", SessionStatus::Working, None, 4242);
+        h.st.status
+            .set_at("garage/ws/a", SessionStatus::Working, None, 4242);
         assert_eq!(
             next_text(&mut body).await,
             "event: status\ndata: {\"id\":\"garage/ws/a\",\"status\":\"working\",\"since\":4242}\n\n"
         );
         h.st.bus.publish(DaemonEvent::SessionsChanged);
         assert_eq!(next_text(&mut body).await, "event: sessions\ndata: {}\n\n");
-        h.st.status.set_at("garage/ws/a", SessionStatus::NeedsInput, Some("ok?"), 4300);
-        assert!(next_text(&mut body).await.contains("\"status\":\"needs-input\""));
+        h.st.status
+            .set_at("garage/ws/a", SessionStatus::NeedsInput, Some("ok?"), 4300);
+        assert!(next_text(&mut body)
+            .await
+            .contains("\"status\":\"needs-input\""));
     }
 }

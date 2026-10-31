@@ -40,20 +40,37 @@ fn group_has_any_url(group: &Value, urls: &[&str]) -> bool {
     group
         .get("hooks")
         .and_then(Value::as_array)
-        .is_some_and(|hs| hs.iter().any(|h| h.get("url").and_then(Value::as_str).is_some_and(|u| urls.contains(&u))))
+        .is_some_and(|hs| {
+            hs.iter().any(|h| {
+                h.get("url")
+                    .and_then(Value::as_str)
+                    .is_some_and(|u| urls.contains(&u))
+            })
+        })
 }
 
 /// Merges the snippet into `settings`: a hook group is appended only when no
 /// existing group for that event already carries one of its URLs (the URL
 /// embeds the stable per-install token), so a second application is a no-op.
-pub fn merge_hook_snippet(settings: &Map<String, Value>, snippet: &Value) -> (Map<String, Value>, bool) {
+pub fn merge_hook_snippet(
+    settings: &Map<String, Value>,
+    snippet: &Value,
+) -> (Map<String, Value>, bool) {
     let mut merged = settings.clone();
     let mut changed = false;
 
-    let mut hooks = merged.get("hooks").and_then(Value::as_object).cloned().unwrap_or_default();
+    let mut hooks = merged
+        .get("hooks")
+        .and_then(Value::as_object)
+        .cloned()
+        .unwrap_or_default();
     if let Some(events) = snippet.get("hooks").and_then(Value::as_object) {
         for (event, groups) in events {
-            let mut existing = hooks.get(event).and_then(Value::as_array).cloned().unwrap_or_default();
+            let mut existing = hooks
+                .get(event)
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default();
             for group in groups.as_array().into_iter().flatten() {
                 let urls: Vec<&str> = group
                     .get("hooks")
@@ -74,12 +91,22 @@ pub fn merge_hook_snippet(settings: &Map<String, Value>, snippet: &Value) -> (Ma
 
     // A JS Set: existing duplicates collapse too.
     let mut allowed: Vec<Value> = Vec::new();
-    for v in merged.get("allowedHttpHookUrls").and_then(Value::as_array).into_iter().flatten() {
+    for v in merged
+        .get("allowedHttpHookUrls")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
         if !allowed.contains(v) {
             allowed.push(v.clone());
         }
     }
-    for url in snippet.get("allowedHttpHookUrls").and_then(Value::as_array).into_iter().flatten() {
+    for url in snippet
+        .get("allowedHttpHookUrls")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
         if !allowed.contains(url) {
             allowed.push(url.clone());
             changed = true;
@@ -106,13 +133,20 @@ pub(crate) fn parse_body(body: &Bytes) -> Result<Value, Box<Response>> {
     match serde_json::from_slice::<Value>(body) {
         Ok(Value::Null) => Ok(json!({})),
         Ok(v) => Ok(v),
-        Err(e) => Err(Box::new(error_response(StatusCode::BAD_REQUEST, format!("invalid JSON body: {e}")))),
+        Err(e) => Err(Box::new(error_response(
+            StatusCode::BAD_REQUEST,
+            format!("invalid JSON body: {e}"),
+        ))),
     }
 }
 
 pub(crate) fn install_error(err: InstallError, fallback: &str) -> Response {
     let status = StatusCode::from_u16(err.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
-    let message = if err.message.is_empty() { fallback.to_owned() } else { err.message };
+    let message = if err.message.is_empty() {
+        fallback.to_owned()
+    } else {
+        err.message
+    };
     error_response(status, message)
 }
 
@@ -152,9 +186,19 @@ pub async fn claude(
         return Json(json!({"ok": true, "ignored": "idle-reminder"})).into_response();
     }
 
-    let session_id = payload.get("session_id").and_then(Value::as_str).filter(|s| !s.is_empty());
-    let cwd = payload.get("cwd").and_then(Value::as_str).filter(|s| !s.is_empty());
-    let ids = state.telemetry.deps.resolve_session_ids(session_id, cwd).await;
+    let session_id = payload
+        .get("session_id")
+        .and_then(Value::as_str)
+        .filter(|s| !s.is_empty());
+    let cwd = payload
+        .get("cwd")
+        .and_then(Value::as_str)
+        .filter(|s| !s.is_empty());
+    let ids = state
+        .telemetry
+        .deps
+        .resolve_session_ids(session_id, cwd)
+        .await;
     // A Notification's text rides into the status store alongside needs-input;
     // other events pass no message (cleared on any transition away).
     let message = (status == SessionStatus::NeedsInput).then(|| message.map(str::to_owned));
@@ -190,14 +234,19 @@ fn validate_hook_shapes(settings: &Map<String, Value>) -> Result<(), InstallErro
         })
     };
     if let Some(hooks) = settings.get("hooks") {
-        let Some(hooks) = hooks.as_object() else { return refuse("hooks", "an object") };
+        let Some(hooks) = hooks.as_object() else {
+            return refuse("hooks", "an object");
+        };
         for event in ["Stop", "Notification"] {
             if hooks.get(event).is_some_and(|v| !v.is_array()) {
                 return refuse(&format!("hooks.{event}"), "an array");
             }
         }
     }
-    if settings.get("allowedHttpHookUrls").is_some_and(|v| !v.is_array()) {
+    if settings
+        .get("allowedHttpHookUrls")
+        .is_some_and(|v| !v.is_array())
+    {
         return refuse("allowedHttpHookUrls", "an array");
     }
     Ok(())
@@ -208,10 +257,15 @@ async fn install_hooks(state: &AppState) -> Result<Value, InstallError> {
     let path = state.telemetry.settings_path();
     let settings = read_settings_or_refuse(&path).await?;
     validate_hook_shapes(&settings.settings)?;
-    let snippet = hook_snippet(state).await.map_err(|e| InstallError { status: 500, message: e.to_string() })?;
+    let snippet = hook_snippet(state).await.map_err(|e| InstallError {
+        status: 500,
+        message: e.to_string(),
+    })?;
     let (merged, changed) = merge_hook_snippet(&settings.settings, &snippet);
     if !changed {
-        return Ok(json!({"ok": true, "installed": true, "alreadyInstalled": true, "backup": null}));
+        return Ok(
+            json!({"ok": true, "installed": true, "alreadyInstalled": true, "backup": null}),
+        );
     }
     let backup = write_settings_atomic(&path, settings.raw.as_deref(), &merged).await?;
     Ok(json!({"ok": true, "installed": true, "alreadyInstalled": false, "backup": backup}))
@@ -253,10 +307,18 @@ pub(crate) mod test_support {
             Ok(TOKEN.into())
         }
         fn set_status(&self, id: &str, state: SessionStatus, message: Option<Option<String>>) {
-            self.statuses.lock().unwrap().push((id.into(), state, message));
+            self.statuses
+                .lock()
+                .unwrap()
+                .push((id.into(), state, message));
         }
-        async fn resolve_session_ids(&self, session_id: Option<&str>, cwd: Option<&str>) -> Vec<String> {
-            *self.last_resolve.lock().unwrap() = Some((session_id.map(Into::into), cwd.map(Into::into)));
+        async fn resolve_session_ids(
+            &self,
+            session_id: Option<&str>,
+            cwd: Option<&str>,
+        ) -> Vec<String> {
+            *self.last_resolve.lock().unwrap() =
+                Some((session_id.map(Into::into), cwd.map(Into::into)));
             self.resolves.lock().unwrap().clone()
         }
     }
@@ -275,14 +337,28 @@ pub(crate) mod test_support {
                 port,
                 garage_dir: "/nonexistent".into(),
                 tmux_socket: None,
+                tmux_control: false,
                 ui_origins: vec![],
             };
-            let mut state = AppState::new(config, Arc::new(TmuxBackend::new(None)), Arc::new(UnsupportedOs));
+            let mut state = AppState::new(
+                config,
+                Arc::new(TmuxBackend::new(None)),
+                Arc::new(UnsupportedOs),
+            );
             state.telemetry = Telemetry::new(claude_home.path().to_path_buf(), deps.clone());
-            Self { state, deps, claude_home }
+            Self {
+                state,
+                deps,
+                claude_home,
+            }
         }
 
-        pub async fn call(&self, method: &str, uri: &str, body: Option<&str>) -> (StatusCode, Value) {
+        pub async fn call(
+            &self,
+            method: &str,
+            uri: &str,
+            body: Option<&str>,
+        ) -> (StatusCode, Value) {
             let mut req = Request::builder().method(method).uri(uri);
             if body.is_some() {
                 req = req.header("content-type", "application/json");
@@ -291,7 +367,10 @@ pub(crate) mod test_support {
             let res = crate::app(self.state.clone()).oneshot(req).await.unwrap();
             let status = res.status();
             let bytes = res.into_body().collect().await.unwrap().to_bytes();
-            (status, serde_json::from_slice(&bytes).unwrap_or(Value::Null))
+            (
+                status,
+                serde_json::from_slice(&bytes).unwrap_or(Value::Null),
+            )
         }
     }
 }
@@ -334,7 +413,10 @@ mod tests {
             .collect();
         assert!(stop.contains(&"echo mine"));
         assert_eq!(merged["hooks"]["Notification"].as_array().unwrap().len(), 1);
-        assert_eq!(merged["allowedHttpHookUrls"], json!(["http://127.0.0.1:4747/*"]));
+        assert_eq!(
+            merged["allowedHttpHookUrls"],
+            json!(["http://127.0.0.1:4747/*"])
+        );
     }
 
     // JS: "merge is idempotent — second application changes nothing"
@@ -351,7 +433,10 @@ mod tests {
     fn merge_keeps_existing_key_order() {
         let settings = obj(json!({"zeta": 1, "alpha": 2}));
         let (merged, _) = merge_hook_snippet(&settings, &snippet_fixture());
-        assert_eq!(merged.keys().collect::<Vec<_>>(), ["zeta", "alpha", "hooks", "allowedHttpHookUrls"]);
+        assert_eq!(
+            merged.keys().collect::<Vec<_>>(),
+            ["zeta", "alpha", "hooks", "allowedHttpHookUrls"]
+        );
     }
 
     // JS: "idle reminder is classified as noise; blockers and unknowns are not"
@@ -359,7 +444,9 @@ mod tests {
     fn idle_reminder_is_noise_blockers_and_unknowns_are_not() {
         assert!(is_idle_reminder(Some("Claude is waiting for your input")));
         assert!(is_idle_reminder(Some("CLAUDE IS WAITING FOR YOUR INPUT")));
-        assert!(!is_idle_reminder(Some("Claude needs your permission to use Bash")));
+        assert!(!is_idle_reminder(Some(
+            "Claude needs your permission to use Bash"
+        )));
         assert!(!is_idle_reminder(None));
         assert!(!is_idle_reminder(Some("")));
     }
@@ -373,20 +460,43 @@ mod tests {
     #[tokio::test]
     async fn hook_post_without_or_with_a_wrong_token_is_401() {
         let h = Harness::new(4747);
-        for u in ["/api/hooks/claude", "/api/hooks/claude?token=wrong", "/api/hooks/claude?token=a&token=b"] {
+        for u in [
+            "/api/hooks/claude",
+            "/api/hooks/claude?token=wrong",
+            "/api/hooks/claude?token=a&token=b",
+        ] {
             let (s, body) = h.call("POST", u, Some("{}")).await;
-            assert_eq!((s, body), (StatusCode::UNAUTHORIZED, json!({"error": "missing or invalid hook token"})), "{u}");
+            assert_eq!(
+                (s, body),
+                (
+                    StatusCode::UNAUTHORIZED,
+                    json!({"error": "missing or invalid hook token"})
+                ),
+                "{u}"
+            );
         }
     }
 
     #[tokio::test]
     async fn hook_post_ignores_other_events() {
         let h = Harness::new(4747);
-        let (s, body) = h.call("POST", &url(TOKEN), Some(r#"{"hook_event_name":"PreToolUse"}"#)).await;
-        assert_eq!((s, body), (StatusCode::OK, json!({"ok": true, "ignored": true})));
+        let (s, body) = h
+            .call(
+                "POST",
+                &url(TOKEN),
+                Some(r#"{"hook_event_name":"PreToolUse"}"#),
+            )
+            .await;
+        assert_eq!(
+            (s, body),
+            (StatusCode::OK, json!({"ok": true, "ignored": true}))
+        );
         // no body at all is {} -> ignored
         let (s, body) = h.call("POST", &url(TOKEN), None).await;
-        assert_eq!((s, body), (StatusCode::OK, json!({"ok": true, "ignored": true})));
+        assert_eq!(
+            (s, body),
+            (StatusCode::OK, json!({"ok": true, "ignored": true}))
+        );
         assert!(h.deps.statuses.lock().unwrap().is_empty());
     }
 
@@ -397,7 +507,13 @@ mod tests {
         let (s, body) = h
             .call("POST", &url(TOKEN), Some(r#"{"hook_event_name":"Notification","message":"Claude is waiting for your input"}"#))
             .await;
-        assert_eq!((s, body), (StatusCode::OK, json!({"ok": true, "ignored": "idle-reminder"})));
+        assert_eq!(
+            (s, body),
+            (
+                StatusCode::OK,
+                json!({"ok": true, "ignored": "idle-reminder"})
+            )
+        );
         assert!(h.deps.statuses.lock().unwrap().is_empty());
     }
 
@@ -408,14 +524,39 @@ mod tests {
         let (s, body) = h
             .call("POST", &url(TOKEN), Some(r#"{"hook_event_name":"Notification","message":"needs perm","session_id":"s1","cwd":"/w"}"#))
             .await;
-        assert_eq!((s, body), (StatusCode::OK, json!({"ok": true, "applied": ["garage/a", "garage/b"]})));
-        assert_eq!(*h.deps.last_resolve.lock().unwrap(), Some((Some("s1".into()), Some("/w".into()))));
+        assert_eq!(
+            (s, body),
+            (
+                StatusCode::OK,
+                json!({"ok": true, "applied": ["garage/a", "garage/b"]})
+            )
+        );
+        assert_eq!(
+            *h.deps.last_resolve.lock().unwrap(),
+            Some((Some("s1".into()), Some("/w".into())))
+        );
         // Notification without a message passes null (Some(None)), not undefined.
-        h.call("POST", &url(TOKEN), Some(r#"{"hook_event_name":"Notification"}"#)).await;
-        h.call("POST", &url(TOKEN), Some(r#"{"hook_event_name":"Stop"}"#)).await;
+        h.call(
+            "POST",
+            &url(TOKEN),
+            Some(r#"{"hook_event_name":"Notification"}"#),
+        )
+        .await;
+        h.call("POST", &url(TOKEN), Some(r#"{"hook_event_name":"Stop"}"#))
+            .await;
         let got = h.deps.statuses.lock().unwrap().clone();
-        assert_eq!(got[0], ("garage/a".into(), SessionStatus::NeedsInput, Some(Some("needs perm".into()))));
-        assert_eq!(got[2], ("garage/a".into(), SessionStatus::NeedsInput, Some(None)));
+        assert_eq!(
+            got[0],
+            (
+                "garage/a".into(),
+                SessionStatus::NeedsInput,
+                Some(Some("needs perm".into()))
+            )
+        );
+        assert_eq!(
+            got[2],
+            ("garage/a".into(), SessionStatus::NeedsInput, Some(None))
+        );
         assert_eq!(got[4], ("garage/a".into(), SessionStatus::Done, None));
     }
 
@@ -432,9 +573,15 @@ mod tests {
         let (s, body) = h.call("GET", "/api/hooks/snippet", None).await;
         assert_eq!(s, StatusCode::OK);
         let u = format!("http://127.0.0.1:47390/api/hooks/claude?token={TOKEN}");
-        assert_eq!(body["hooks"]["Notification"][0]["hooks"][0], json!({"type": "http", "url": u}));
+        assert_eq!(
+            body["hooks"]["Notification"][0]["hooks"][0],
+            json!({"type": "http", "url": u})
+        );
         assert_eq!(body["hooks"]["Stop"][0]["hooks"][0]["url"], u);
-        assert_eq!(body["allowedHttpHookUrls"], json!(["http://127.0.0.1:47390/*"]));
+        assert_eq!(
+            body["allowedHttpHookUrls"],
+            json!(["http://127.0.0.1:47390/*"])
+        );
     }
 
     #[tokio::test]
@@ -444,13 +591,20 @@ mod tests {
 
         let (s, body) = h.call("POST", "/api/hooks/install", None).await;
         assert_eq!(s, StatusCode::OK);
-        assert_eq!(body, json!({"ok": true, "installed": true, "alreadyInstalled": false, "backup": null}));
-        let written: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(
+            body,
+            json!({"ok": true, "installed": true, "alreadyInstalled": false, "backup": null})
+        );
+        let written: Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
         assert_eq!(written["hooks"]["Stop"].as_array().unwrap().len(), 1);
 
         let before = std::fs::read_to_string(&path).unwrap();
         let (_, body) = h.call("POST", "/api/hooks/install", None).await;
-        assert_eq!(body, json!({"ok": true, "installed": true, "alreadyInstalled": true, "backup": null}));
+        assert_eq!(
+            body,
+            json!({"ok": true, "installed": true, "alreadyInstalled": true, "backup": null})
+        );
         assert_eq!(std::fs::read_to_string(&path).unwrap(), before);
 
         // An unrelated user setting + hook survive, and the pre-install file is backed up.
@@ -458,7 +612,9 @@ mod tests {
         let (_, body) = h.call("POST", "/api/hooks/install", None).await;
         assert_eq!(body["alreadyInstalled"], false);
         let backup = body["backup"].as_str().unwrap();
-        assert!(std::fs::read_to_string(backup).unwrap().contains("echo mine"));
+        assert!(std::fs::read_to_string(backup)
+            .unwrap()
+            .contains("echo mine"));
         let merged: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
         assert_eq!(merged["model"], "opus");
         assert_eq!(merged["hooks"]["Stop"].as_array().unwrap().len(), 2);
@@ -472,7 +628,10 @@ mod tests {
         let (s, body) = h.call("POST", "/api/hooks/install", None).await;
         assert_eq!(s, StatusCode::UNPROCESSABLE_ENTITY);
         assert!(body["error"].as_str().unwrap().contains("not valid JSON"));
-        assert_eq!(std::fs::read_to_string(&path).unwrap(), "{ not: valid json !!");
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "{ not: valid json !!"
+        );
     }
 
     #[tokio::test]
@@ -491,7 +650,10 @@ mod tests {
             std::fs::write(&path, body).unwrap();
             let (s, resp) = h.call("POST", "/api/hooks/install", None).await;
             assert_eq!(s, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
-            assert!(resp["error"].as_str().unwrap().contains("left untouched"), "{body}");
+            assert!(
+                resp["error"].as_str().unwrap().contains("left untouched"),
+                "{body}"
+            );
             assert_eq!(std::fs::read_to_string(&path).unwrap(), body);
             let siblings = std::fs::read_dir(path.parent().unwrap()).unwrap().count();
             assert_eq!(siblings, 1, "no backup or tmp file for {body}");
