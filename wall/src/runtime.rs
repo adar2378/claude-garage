@@ -40,6 +40,7 @@ use ratatui::widgets::{Block, BorderType, Widget as _};
 use serde_json::Value;
 use tokio::sync::mpsc;
 
+use crate::actions::{command_for_action, ids, ActionCtx, ActionId, ActionSource};
 use crate::api::client::{ApiError, GarageClient};
 use crate::api::models::{
     FinishAction, HooksInstallResult, RestartResponse, SessionInfo, UsageInfo, WorkspaceInfo,
@@ -49,12 +50,12 @@ use crate::api::sse::SseClient;
 use crate::input::encode::encode_key;
 use crate::input::links::url_at;
 use crate::input::paste::wrap_bracketed_paste;
+use crate::keymap::{Keymap, Layer};
 use crate::state::armed_action::{ArmedAction, ArmedClose};
 use crate::state::persistence::{self, WallFile};
 use crate::state::salience::restorable_session_ids;
 use crate::state::store::{
-    garage_command_for, restart_arm_notice, restart_command_for, ArmedRestart, GarageCommand,
-    WallStore, RESTART_PREFIX,
+    restart_arm_notice, ArmedRestart, GarageCommand, WallStore,
 };
 use crate::state::views::{self, ViewSummary};
 use crate::state::wall_state::{KeyLayer, OverlayKind, WallSession, WallState};
@@ -453,6 +454,8 @@ pub struct GarageRouter {
     /// True between the `r` prefix press and the very next key (p16-restart,
     /// design.md D5: a one-shot prefix, like `X` → `X`/`K`).
     restart_prefix: bool,
+    /// Key → action table (p22 tui-actions); arming stays in this router.
+    keymap: Keymap,
     pub notices: Notices,
 }
 
@@ -490,49 +493,50 @@ impl GarageRouter {
             self.restart_chord(store, key, now_ms, &mut effects);
             return effects;
         }
+        // Resolve the key to its action once; arming below is keyed on the
+        // action (so `x`'s double-press is "session.close twice"), which is
+        // byte-identical for the default keymap.
+        let mut resolved = self.keymap.resolve(Layer::Garage, key);
+        let mut action = resolved.map(|r| r.action);
         // p8.4: while an `X` remove arm is active, `K` confirms the removal
         // WITH session kill — checked BEFORE the disarm pass (K would
         // otherwise disarm the very arm it confirms). Outside a live arm `K`
         // falls through as an ordinary unbound key (typing hint).
-        if key == "K" && self.kill_remove_pressed(store, now_ms, &mut effects) {
-            return effects;
+        if action == Some(ids::WORKSPACE_REMOVE_KILL) {
+            if self.kill_remove_pressed(store, now_ms, &mut effects) {
+                return effects;
+            }
+            resolved = None;
+            action = None;
         }
         // Any key but `x` disarms a pending close (spec p8.1: "any other key
         // disarms"); same for `X` and a pending workspace removal (p8.3) —
         // the two arms are independent, so an `X` disarms a pending `x` and
         // vice versa. `K` only survives the remove arm via the branch above.
-        if key != "x" {
+        if action != Some(ids::SESSION_CLOSE) {
             self.disarm_close();
         }
-        if key != "X" {
+        if action != Some(ids::WORKSPACE_REMOVE) {
             self.disarm_remove();
         }
         // p16-restart: the `r r` arm survives only the prefix key itself —
         // the second `r` arrives through the chord branch above, so every
         // key that reaches here (including a bare `r` opening a fresh
         // prefix) leaves the arm alone or disarms it, same rule as `x`.
-        if key != RESTART_PREFIX {
+        if action != Some(ids::CHORD_RESTART) {
             self.disarm_restart();
         }
         // p16-restart: `r` alone is a prefix, not a command — consume it and
         // wait for the chord. The hint would bury a live `r r` arm notice
         // (which already says what the next press does), so it yields to it.
-        if key == RESTART_PREFIX {
+        if action == Some(ids::CHORD_RESTART) {
             self.restart_prefix = true;
             if self.armed_restart.armed_id().is_none() {
                 self.notices.show(RESTART_PREFIX_HINT, 3000, now_ms);
             }
             return effects;
         }
-        // `P` (spec tui-pit-pet "Opt-in roster cycled by `P`"): not a
-        // `GarageCommand` — `pet.rs` (the render module) has no business
-        // being a store dependency, so this stays here rather than growing
-        // `state::store`'s command enum for one field's cycling.
-        if key == "P" {
-            self.cycle_pet_pressed(store, now_ms);
-            return effects;
-        }
-        let Some(command) = garage_command_for(key) else {
+        let Some(resolved) = resolved else {
             // Unbound garage keys are consumed (never reach an agent), but
             // silence reads as a dead wall — show where the keys actually go.
             if is_printable(key) {
@@ -540,20 +544,54 @@ impl GarageRouter {
             }
             return effects;
         };
+        let ctx = ActionCtx::from_focus(store.state(), ActionSource::Key(key.to_owned()))
+            .with_index(resolved.index);
+        self.run_action(store, resolved.action, &ctx, now_ms, &mut effects);
+        effects
+    }
+
+    /// Run one action (from a key or a click) against the store. The state
+    /// transitions go through [`WallStore::dispatch`]; commands the store
+    /// declines become [`Effect`]s or notices here.
+    pub fn run_action(
+        &mut self,
+        store: &mut WallStore,
+        id: ActionId,
+        ctx: &ActionCtx,
+        now_ms: i64,
+        effects: &mut Vec<Effect>,
+    ) {
+        // `P` (spec tui-pit-pet "Opt-in roster cycled by `P`"): not a
+        // `GarageCommand` — `pet.rs` (the render module) has no business
+        // being a store dependency, so this stays here rather than growing
+        // `state::store`'s command enum for one field's cycling.
+        if id == ids::PET_CYCLE_SPECIES {
+            self.cycle_pet_pressed(store, now_ms);
+            return;
+        }
+        if id == ids::SESSION_RESTORE {
+            if let Some(session) = ctx.session.clone() {
+                self.restore(session, effects);
+            }
+            return;
+        }
+        let Some(command) = command_for_action(id, ctx.index) else {
+            return;
+        };
         // `d` needs to know afterward whether it detached (solo view) or
         // rejoined (default view) to show the right notice — special-cased
         // ahead of the generic dispatch below.
         if let GarageCommand::DetachFocused = command {
             self.detach_pressed(store, now_ms);
-            return effects;
+            return;
         }
         if store.dispatch(command) {
-            return effects;
+            return;
         }
         // Commands the store declined: effects (spawn/restore/close/quit),
         // the empty-jump notice, and Enter on a restorable tile (restore).
         match command {
-            GarageCommand::Spawn { worktree } => self.spawn(store, worktree, &mut effects),
+            GarageCommand::Spawn { worktree } => self.spawn(store, worktree, effects),
             GarageCommand::Quit => effects.push(Effect::Quit),
             GarageCommand::Jump => {
                 // Spec tui-triage: no-op with a brief strip notice.
@@ -568,17 +606,16 @@ impl GarageRouter {
                     .filter(|s| !s.live())
                     .map(|s| s.id.clone());
                 if let Some(id) = restorable {
-                    self.restore(id, &mut effects);
+                    self.restore(id, effects);
                 }
             }
-            GarageCommand::RestoreAll => self.restore_all(store, now_ms, &mut effects),
-            GarageCommand::Close => self.close_pressed(store, now_ms, &mut effects),
-            GarageCommand::WorkspaceRemove => self.remove_pressed(store, now_ms, &mut effects),
-            GarageCommand::InstallStatusline => self.install_pressed(&mut effects),
-            GarageCommand::OpenWindow => self.open_window_pressed(store, now_ms, &mut effects),
+            GarageCommand::RestoreAll => self.restore_all(store, now_ms, effects),
+            GarageCommand::Close => self.close_pressed(store, now_ms, effects),
+            GarageCommand::WorkspaceRemove => self.remove_pressed(store, now_ms, effects),
+            GarageCommand::InstallStatusline => self.install_pressed(effects),
+            GarageCommand::OpenWindow => self.open_window_pressed(store, now_ms, effects),
             _ => {}
         }
-        effects
     }
 
     /// `n`/`N`: spawn into the focused workspace with a generated `claude-N`
@@ -821,14 +858,14 @@ impl GarageRouter {
         effects: &mut Vec<Effect>,
     ) {
         self.notices.clear_prefix(RESTART_PREFIX_HINT);
-        match restart_command_for(key) {
-            Some(GarageCommand::RestartFocused) => {
-                self.restart_focused_pressed(store, now_ms, effects)
-            }
-            Some(GarageCommand::RestartWorkspace) => {
-                self.restart_workspace_pressed(store, now_ms, effects)
-            }
-            Some(GarageCommand::RestartDaemon) => {
+        match self
+            .keymap
+            .resolve(Layer::RestartChord, key)
+            .map(|r| r.action)
+        {
+            Some(ids::SESSION_RESTART) => self.restart_focused_pressed(store, now_ms, effects),
+            Some(ids::WORKSPACE_RESTART) => self.restart_workspace_pressed(store, now_ms, effects),
+            Some(ids::DAEMON_RESTART) => {
                 self.notices.show("restarting the daemon…", 5000, now_ms);
                 effects.push(Effect::RestartDaemon);
             }
@@ -2993,6 +3030,7 @@ mod tests {
     //! themselves are covered by `state/store.rs`; these tests cover the
     //! caller-side behavior the Dart TUI kept in `bin/garage_tui.dart`.
     use super::*;
+    use crate::state::store::garage_command_for;
     use crate::api::models::{SessionInfo, WorkspaceInfo};
 
     fn ws(name: &str) -> WorkspaceInfo {

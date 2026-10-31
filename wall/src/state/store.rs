@@ -5,6 +5,8 @@
 
 use std::collections::{HashMap, HashSet};
 
+use crate::actions::command_for_action;
+use crate::keymap::{Keymap, Layer};
 use crate::api::models::{SessionInfo, UsageInfo, WorkspaceInfo};
 use crate::state::armed_action::ArmedAction;
 use crate::state::salience::{build_groups, jump_target};
@@ -105,32 +107,8 @@ pub enum GarageCommand {
 /// `KeyCode::Tab => Some("\t".to_owned())` arm — the reservation design.md
 /// refers to ("Tab-in-garage was reserved for exactly this").
 pub fn garage_command_for(key: &str) -> Option<GarageCommand> {
-    let bytes = key.as_bytes();
-    if bytes.len() == 1 && (b'1'..=b'9').contains(&bytes[0]) {
-        return Some(GarageCommand::FocusWorkspace((bytes[0] - b'1') as usize));
-    }
-    match key {
-        "[" => Some(GarageCommand::CycleFocus(-1)),
-        "]" => Some(GarageCommand::CycleFocus(1)),
-        "a" => Some(GarageCommand::Jump),
-        "A" => Some(GarageCommand::OpenQueue),
-        "n" => Some(GarageCommand::Spawn { worktree: false }),
-        "N" => Some(GarageCommand::Spawn { worktree: true }),
-        "m" => Some(GarageCommand::Maximize),
-        "R" => Some(GarageCommand::RestoreAll),
-        "x" => Some(GarageCommand::Close),
-        "w" => Some(GarageCommand::WorkspaceAdd),
-        "X" => Some(GarageCommand::WorkspaceRemove),
-        "d" => Some(GarageCommand::DetachFocused),
-        "D" => Some(GarageCommand::OpenViewPicker),
-        "\t" => Some(GarageCommand::CycleView),
-        "\n" | "\r" => Some(GarageCommand::Engage),
-        "?" => Some(GarageCommand::ToggleHelp),
-        "I" => Some(GarageCommand::InstallStatusline),
-        "t" => Some(GarageCommand::OpenWindow),
-        "q" => Some(GarageCommand::Quit),
-        _ => None,
-    }
+    let resolved = Keymap::shared_defaults().resolve(Layer::Garage, key)?;
+    command_for_action(resolved.action, resolved.index)
 }
 
 /// The one-shot restart prefix key (p16-restart, design.md D5: "`r` opens a
@@ -143,12 +121,8 @@ pub const RESTART_PREFIX: &str = "r";
 /// so a mistyped chord can never fire the unrelated binding that key
 /// normally carries (`a` jump, `d` detach…).
 pub fn restart_command_for(key: &str) -> Option<GarageCommand> {
-    match key {
-        "r" => Some(GarageCommand::RestartFocused),
-        "a" => Some(GarageCommand::RestartWorkspace),
-        "d" => Some(GarageCommand::RestartDaemon),
-        _ => None,
-    }
+    let resolved = Keymap::shared_defaults().resolve(Layer::RestartChord, key)?;
+    command_for_action(resolved.action, resolved.index)
 }
 
 /// The `r r` arming (p16-restart, spec restart "TUI chords"): the generic

@@ -8,8 +8,10 @@
 //! attach PTY lifecycle with detach-first teardown), `term` (raw-mode /
 //! restore plumbing) and `runtime` (tokio event channel + state loop).
 
+pub mod actions;
 pub mod api;
 pub mod input;
+pub mod keymap;
 pub mod pty;
 pub mod runtime;
 pub mod state;
