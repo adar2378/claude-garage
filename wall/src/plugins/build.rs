@@ -73,7 +73,14 @@ fn span(seg: &Segment) -> Span<'static> {
 /// manifest (and no core id) declared it. Never interns anything.
 pub fn resolve_click(plugin: &str, click: &Click) -> Option<ClickTarget> {
     let a = click.action.as_str();
-    let id = if a.contains(':') || garage_protocol::widgets::is_core_action_id(a) {
+    let id = if let Some((owner, _)) = a.split_once(':') {
+        // Only this plugin's own actions: another plugin's id is refused
+        // even when that plugin declared it.
+        if owner != plugin {
+            return None;
+        }
+        ActionId::lookup(a)?
+    } else if garage_protocol::widgets::is_core_action_id(a) {
         ActionId::lookup(a)?
     } else {
         ActionId::lookup(&format!("{plugin}:{a}"))?
@@ -207,6 +214,27 @@ mod tests {
         assert!(c("bt:never-declared").is_none());
         assert!(ActionId::lookup("bt:never-declared").is_none(), "resolving did not intern it");
         assert!(c("evil:go").is_none(), "another plugin's id nobody declared");
+        ActionId::declare("victim:poke").unwrap();
+        assert!(c("victim:poke").is_none(), "another plugin's id, declared by that plugin, is still not ours to click");
+    }
+
+    #[test]
+    fn a_cross_plugin_click_drops_the_target_but_keeps_the_item_visible() {
+        declared();
+        ActionId::declare("victim:poke").unwrap();
+        let it = &items("bt", SlotId::StripRight, &wire(json!({"segments": [{"text": "hi", "click": {"action": "victim:poke"}}]})))[0];
+        assert_eq!(it.width(), 2);
+        assert!(it.on_click.is_none());
+        let b = ButtonSummary {
+            slot: garage_protocol::widgets::WidgetSlot::StripRight,
+            label: "[x]".into(),
+            tooltip: None,
+            on_click: "victim:poke".into(),
+            args: None,
+            confirm: false,
+            priority: 0,
+        };
+        assert!(button("bt", &b).is_none(), "a button on another plugin's action is not drawn");
     }
 
     #[test]

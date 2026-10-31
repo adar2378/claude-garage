@@ -291,9 +291,12 @@ fn on_click_problem(m: &Manifest, on_click: &str) -> Option<String> {
         if !valid_plugin_id(plugin) || !valid_local_id(action) {
             return Some(format!("{on_click:?} is not a valid plugin:action id"));
         }
-        // Another plugin's action can only be resolved against what is
-        // installed; this plugin's own must exist.
-        if plugin == m.id && m.action(action).is_none() {
+        // A button may only target this plugin's own actions (or a core id):
+        // another plugin's action is never reachable from here.
+        if plugin != m.id {
+            return Some(format!("{on_click:?} belongs to plugin {plugin:?}; a plugin may only target its own actions or a core id"));
+        }
+        if m.action(action).is_none() {
             return Some(format!("this plugin has no action {action:?}"));
         }
         return None;
@@ -460,6 +463,16 @@ checksums = "SHA256SUMS"
     fn tweak(from: &str, to: &str) -> String {
         assert!(GOOD.contains(from), "fixture lacks {from:?}");
         GOOD.replacen(from, to, 1)
+    }
+
+    #[test]
+    fn a_button_may_not_target_another_plugins_action_but_its_own_prefixed_id_is_fine() {
+        let errs = fail(&tweak("on_click = \"refresh\"", "on_click = \"other-plugin:refresh\""));
+        assert!(errs.iter().any(|e| e.contains("on_click") && e.contains("only target its own actions")), "{errs:?}");
+        let own = tweak("on_click = \"refresh\"", "on_click = \"usage:refresh\"");
+        let id = own.lines().find_map(|l| l.strip_prefix("id = \"")).unwrap_or("usage").trim_end_matches('"').to_owned();
+        let own = tweak("on_click = \"refresh\"", &format!("on_click = \"{id}:refresh\""));
+        parse_ok(&own);
     }
 
     #[test]

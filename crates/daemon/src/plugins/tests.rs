@@ -717,7 +717,9 @@ async fn a_widget_click_on_a_core_action_needs_core_actions_and_a_plugin_invocab
     assert!(b["error"].as_str().unwrap().contains("core.actions"), "{b}");
     assert_eq!(pw(&r, "plain", Some(&tp), &click("plain:go")).await.0, StatusCode::OK, "a plugin action needs no permission");
     assert_eq!(pw(&r, "plain", Some(&tp), &click("go")).await.0, StatusCode::OK, "nor does a bare local id");
-    assert_eq!(pw(&r, "plain", Some(&tp), &click("other:thing")).await.0, StatusCode::OK, "another plugin's action resolves at click time");
+    let (s, _, b) = pw(&r, "plain", Some(&tp), &click("other:thing")).await;
+    assert_eq!(s, StatusCode::UNPROCESSABLE_ENTITY, "another plugin's action is refused, whoever declares it");
+    assert!(b["error"].as_str().unwrap().contains("its own actions"), "{b}");
     assert_eq!(pw(&r, "plain", Some(&tp), &click("plain:nope")).await.0, StatusCode::UNPROCESSABLE_ENTITY);
     assert_eq!(pw(&r, "plain", Some(&tp), &click("nope")).await.0, StatusCode::UNPROCESSABLE_ENTITY);
 
@@ -1207,7 +1209,9 @@ async fn a_ui_action_needs_ui_invoke_and_an_allowed_action_and_is_forwarded_with
     let (s, _, b) = ui_post(&r, Some(tc), json!({"action": "session.close"})).await;
     assert_eq!(s, StatusCode::FORBIDDEN, "a core action needs core.actions too");
     assert!(b["error"].as_str().unwrap().contains("core.actions"), "{b}");
-    for bad in ["app.quit", "overlay.close", "session.teleport"] {
+    r.install("victim", &manifest("victim", &[], &action("poke", "\"./x\"")));
+    r.events();
+    for bad in ["app.quit", "overlay.close", "session.teleport", "victim:poke"] {
         assert_eq!(ui_post(&r, Some(ta.clone()), json!({"action": bad})).await.0, StatusCode::UNPROCESSABLE_ENTITY, "{bad}");
     }
     assert_eq!(ui_post(&r, Some(ta.clone()), json!({"action": "asker:nope"})).await.0, StatusCode::UNPROCESSABLE_ENTITY);

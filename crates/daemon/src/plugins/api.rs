@@ -194,7 +194,13 @@ fn check_action(manifest: &garage_plugin::manifest::Manifest, id: &str, a: &str)
         };
     }
     let (owner, local) = a.split_once(':').unwrap_or((id, a));
-    if owner == id && manifest.action(local).is_none() {
+    if owner != id {
+        return refuse(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            format!("click.action {a:?}: plugin {id} may only target its own actions or a core id, not plugin {owner}'s"),
+        );
+    }
+    if manifest.action(local).is_none() {
         return refuse(StatusCode::UNPROCESSABLE_ENTITY, format!("click.action {a:?}: plugin {id} has no action {local:?}"));
     }
     Ok(())
