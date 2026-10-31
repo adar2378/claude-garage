@@ -327,6 +327,7 @@ mod tests {
             ("GET", "/api/plugin/features"),
             ("POST", "/api/plugins/reload"),
             ("PUT", "/api/plugins/ui/slots"),
+            ("POST", "/api/plugins/ui/challenge"),
             ("PUT", "/api/plugins/p/registration"),
             ("POST", "/api/plugins/p/enable"),
             ("POST", "/api/plugins/p/disable"),

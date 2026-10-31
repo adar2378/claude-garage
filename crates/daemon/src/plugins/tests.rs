@@ -1153,6 +1153,22 @@ async fn registration_routes_need_the_ui_token_and_a_plugin_token_is_not_enough(
 }
 
 #[tokio::test]
+async fn the_challenge_route_proves_the_ui_token_without_credentials_or_leaking_it() {
+    use garage_protocol::auth::{new_nonce, verify_response};
+    let r = Rig::new();
+    let nonce = new_nonce().unwrap();
+    let body = json!({"nonce": nonce}).to_string();
+    let (s, _, v) = r.call("POST", "/api/plugins/ui/challenge", None, Some(&body)).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    assert!(verify_response(&r.ui_token(), &nonce, &v.to_string()), "{v}");
+    assert!(!v.to_string().contains(&r.ui_token()));
+    assert!(!verify_response("a-different-token", &nonce, &v.to_string()), "an impostor without the token cannot match");
+    for bad in [r#"{}"#, r#"{"nonce":"short"}"#, r#"{"nonce":7}"#, r#"{"nonce":"ZZZZZZZZZZZZZZZZZZZZ"}"#] {
+        assert_eq!(r.call("POST", "/api/plugins/ui/challenge", None, Some(bad)).await.0, StatusCode::UNPROCESSABLE_ENTITY, "{bad}");
+    }
+}
+
+#[tokio::test]
 async fn link_approval_through_the_daemon_activates_the_plugin_with_the_recorded_grant() {
     let r = Rig::new();
     let dir = r.link_unapproved("fresh", &manifest("fresh", &["ui.widgets"], ""));

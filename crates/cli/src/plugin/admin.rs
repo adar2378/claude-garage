@@ -103,24 +103,55 @@ impl Admin for DaemonAdmin {
     }
 }
 
-/// Is a garage daemon answering on `port`?
+/// Is a garage daemon answering on `port`? The answer must be a JSON object
+/// with an `api_versions` key, not merely text containing the word.
 pub fn daemon_up(port: u16) -> bool {
     ureq::get(&format!("http://127.0.0.1:{port}/api/plugin/features"))
         .timeout(Duration::from_millis(700))
         .call()
         .ok()
         .and_then(|r| r.into_string().ok())
-        .is_some_and(|b| b.contains("api_versions"))
+        .and_then(|b| serde_json::from_str::<Value>(&b).ok())
+        .is_some_and(|v| v.get("api_versions").is_some())
 }
 
-/// The daemon when it is up (and the UI token is readable), else direct.
+/// Does the listener at `base` hold the UI token? Sends a random nonce and
+/// no credentials, and checks the keyed proof against our own copy of the
+/// token. Whatever else sits on the port never sees the token.
+pub fn prove_daemon(base: &str, token: &str) -> Result<(), String> {
+    use garage_protocol::auth::{new_nonce, verify_response, CHALLENGE_PATH};
+    let nonce = new_nonce()?;
+    let res = ureq::post(&format!("{base}{CHALLENGE_PATH}"))
+        .timeout(Duration::from_secs(2))
+        .set("Content-Type", "application/json")
+        .send_string(&json!({"nonce": nonce}).to_string())
+        .map_err(|e| format!("the listener did not answer the identity challenge ({e})"))?;
+    let body = res.into_string().map_err(|e| e.to_string())?;
+    if verify_response(token, &nonce, &body) {
+        Ok(())
+    } else {
+        Err("the listener could not prove it holds this install's UI token".into())
+    }
+}
+
+/// The daemon when it is up and proves its identity, else direct. An
+/// unverifiable listener gets a warning and no token.
 pub fn choose(garage_dir: &Path, port: u16) -> Result<Box<dyn Admin>, String> {
+    choose_with(garage_dir, port, &mut |w| eprintln!("warning: {w}"))
+}
+
+pub fn choose_with(garage_dir: &Path, port: u16, warn: &mut dyn FnMut(&str)) -> Result<Box<dyn Admin>, String> {
     let paths = Paths::new(garage_dir);
     if daemon_up(port) {
         let tok = ui_token_path(garage_dir);
         let token = std::fs::read_to_string(&tok)
             .map_err(|e| format!("the daemon is running but {} is unreadable ({e}); fix that or stop the daemon", tok.display()))?;
-        return Ok(Box::new(DaemonAdmin { base: format!("http://127.0.0.1:{port}"), token: token.trim().to_owned() }));
+        let token = token.trim().to_owned();
+        let base = format!("http://127.0.0.1:{port}");
+        match prove_daemon(&base, &token) {
+            Ok(()) => return Ok(Box::new(DaemonAdmin { base, token })),
+            Err(why) => warn(&format!("something answers on port {port} as a garage daemon, but {why}; not sending it the UI token. Writing plugins.json directly instead.")),
+        }
     }
     Ok(Box::new(DirectAdmin { paths }))
 }
@@ -159,6 +190,93 @@ mod tests {
             String::from_utf8_lossy(&got).to_string()
         });
         (port, h)
+    }
+
+    /// A loopback server that answers each of `n` requests with `f(request)`.
+    fn serve_fn(n: usize, f: impl Fn(&str) -> String + Send + 'static) -> (u16, std::thread::JoinHandle<()>) {
+        let l = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = l.local_addr().unwrap().port();
+        let h = std::thread::spawn(move || {
+            for _ in 0..n {
+                let (mut s, _) = l.accept().unwrap();
+                let mut got = Vec::new();
+                let mut buf = [0u8; 4096];
+                loop {
+                    let k = s.read(&mut buf).unwrap();
+                    got.extend_from_slice(&buf[..k]);
+                    let text = String::from_utf8_lossy(&got).to_string();
+                    if let Some(i) = text.find("\r\n\r\n") {
+                        let len = text.to_lowercase().split("content-length:").nth(1).and_then(|r| r.split("\r\n").next()).and_then(|v| v.trim().parse::<usize>().ok()).unwrap_or(0);
+                        if got.len() >= i + 4 + len || k == 0 {
+                            break;
+                        }
+                    } else if k == 0 {
+                        break;
+                    }
+                }
+                let body = f(&String::from_utf8_lossy(&got));
+                write!(s, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).unwrap();
+            }
+        });
+        (port, h)
+    }
+
+    fn garage_dir_with_token(token: &str) -> tempfile::TempDir {
+        let d = tempfile::tempdir().unwrap();
+        std::fs::write(ui_token_path(d.path()), format!("{token}\n")).unwrap();
+        d
+    }
+
+    /// Answers like a daemon: features, then a challenge proof keyed with `key`.
+    fn fake_daemon(key: &'static str, n: usize) -> (u16, std::thread::JoinHandle<()>) {
+        serve_fn(n, move |req| {
+            if req.starts_with("GET /api/plugin/features") {
+                return r#"{"api_versions":[1]}"#.into();
+            }
+            assert!(req.starts_with("POST /api/plugins/ui/challenge "), "{req}");
+            assert!(!req.to_lowercase().contains("authorization"), "the challenge carries no credentials: {req}");
+            let body: Value = serde_json::from_str(req.split("\r\n\r\n").nth(1).unwrap()).unwrap();
+            json!({"proof": garage_protocol::auth::proof_for(key, body["nonce"].as_str().unwrap())}).to_string()
+        })
+    }
+
+    #[test]
+    fn a_daemon_that_proves_the_token_is_used_and_an_impostor_never_sees_it() {
+        let d = garage_dir_with_token("real-token");
+        let (port, h) = fake_daemon("real-token", 2);
+        let mut warned = vec![];
+        let a = choose_with(d.path(), port, &mut |w| warned.push(w.to_owned())).unwrap();
+        h.join().unwrap();
+        assert_eq!(a.via(), "the running daemon");
+        assert!(warned.is_empty());
+
+        // Same port shape, wrong key: the plugin registry is written directly and we warn.
+        let seen = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
+        let seen2 = seen.clone();
+        let (port, h) = serve_fn(2, move |req| {
+            seen2.lock().unwrap().push_str(req);
+            if req.starts_with("GET /api/plugin/features") {
+                r#"{"api_versions":[1]}"#.into()
+            } else {
+                r#"{"proof":"00"}"#.into()
+            }
+        });
+        let mut warned = vec![];
+        let a = choose_with(d.path(), port, &mut |w| warned.push(w.to_owned())).unwrap();
+        h.join().unwrap();
+        assert!(a.via().contains("daemon not running"));
+        assert!(warned.len() == 1 && warned[0].contains("UI token"), "{warned:?}");
+        assert!(!seen.lock().unwrap().contains("real-token"), "the token never left the machine's own file");
+    }
+
+    #[test]
+    fn a_listener_that_mentions_api_versions_in_prose_is_not_a_daemon() {
+        let (port, h) = serve_once("200 OK", "<p>api_versions are great</p>");
+        assert!(!daemon_up(port));
+        let _ = h.join();
+        let (port, h) = serve_once("200 OK", r#"{"other":1}"#);
+        assert!(!daemon_up(port));
+        let _ = h.join();
     }
 
     fn admin(port: u16) -> DaemonAdmin {

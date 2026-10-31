@@ -32,6 +32,7 @@ pub fn routes() -> Router<AppState> {
         .route("/api/plugin/features", get(features))
         .route("/api/plugins/reload", post(reload))
         .route("/api/plugins/ui/slots", put(put_ui_slots))
+        .route("/api/plugins/ui/challenge", post(ui_challenge))
         .route("/api/plugins/{id}", axum::routing::delete(remove_plugin))
         .route("/api/plugins/{id}/registration", put(register_plugin))
         .route("/api/plugins/{id}/enable", post(enable_plugin))
@@ -82,6 +83,23 @@ fn require_ui(st: &AppState, headers: &HeaderMap) -> Result<(), Box<Response>> {
         None => Err(Box::new(error_response(StatusCode::UNAUTHORIZED, "missing UI token (Authorization: Bearer <contents of GARAGE_DIR/ui-token>)"))),
         Some(t) if st.plugins.is_ui_token(t) => Ok(()),
         Some(_) => Err(Box::new(error_response(StatusCode::FORBIDDEN, "this route needs the UI token; a plugin token is not enough"))),
+    }
+}
+
+/// Proves this is the real daemon before a client sends it the UI token:
+/// `{"nonce": "<hex>"}` in, `{"proof": HMAC-SHA256(ui_token, ...)}` out. Needs
+/// no credentials and reveals nothing but the keyed digest of the nonce.
+async fn ui_challenge(State(st): State<AppState>, body: Bytes) -> Response {
+    let body = match parse_body(&body) {
+        Ok(b) => b,
+        Err(r) => return *r,
+    };
+    let Some(nonce) = body.get("nonce").and_then(Value::as_str).filter(|n| garage_protocol::auth::nonce_ok(n)) else {
+        return error_response(StatusCode::UNPROCESSABLE_ENTITY, "nonce must be 16 to 128 lowercase hex digits");
+    };
+    match st.plugins.ui_proof(nonce) {
+        Some(proof) => Json(json!({"proof": proof})).into_response(),
+        None => error_response(StatusCode::SERVICE_UNAVAILABLE, "this daemon has no UI token"),
     }
 }
 

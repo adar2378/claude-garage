@@ -360,6 +360,12 @@ impl PluginHost {
         !self.0.ui_token.is_empty() && crate::security::token_matches(Some(token), &self.0.ui_token)
     }
 
+    /// The answer to a client's `ui/challenge`: proof that this daemon holds
+    /// the UI token, without revealing it. `None` when no token exists.
+    pub fn ui_proof(&self, nonce: &str) -> Option<String> {
+        (!self.0.ui_token.is_empty()).then(|| garage_protocol::auth::proof_for(&self.0.ui_token, nonce))
+    }
+
     /// Enable or disable via the registry file, then reload (the teardown
     /// sequence runs when a plugin stops being active).
     pub fn set_enabled(&self, id: &str, enabled: bool) -> Result<(), String> {
