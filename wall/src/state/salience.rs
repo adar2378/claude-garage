@@ -197,11 +197,10 @@ pub fn jump_target(sessions: &[WallSession]) -> Option<&WallSession> {
         match best {
             None => best = Some(s),
             Some(incumbent) => {
-                if let Some(candidate) = s.since {
-                    if incumbent.since.is_none_or(|i| candidate < i) {
+                if let Some(candidate) = s.since
+                    && incumbent.since.is_none_or(|i| candidate < i) {
                         best = Some(s);
                     }
-                }
             }
         }
     }

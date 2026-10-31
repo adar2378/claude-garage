@@ -280,11 +280,10 @@ pub async fn list(State(st): State<AppState>) -> Response {
             let csid = meta_by_id
                 .get(s.id.as_str())
                 .and_then(|m| m.claude_session_id.as_deref());
-            if let Some(csid) = csid.filter(|c| !c.is_empty()) {
-                if !dir.is_empty() {
+            if let Some(csid) = csid.filter(|c| !c.is_empty())
+                && !dir.is_empty() {
                     st.telemetry.transcripts.refresh_context(&s.id, &dir, csid);
                 }
-            }
         }
 
         let (workspace, label) = split_session_id(&s.id);
@@ -504,13 +503,11 @@ pub async fn restore(State(st): State<AppState>, body: Bytes) -> Response {
             // A worktree session restores INTO its worktree. Metadata is kept
             // on every failure so a retry (or a manual finish) can recover.
             let mut spawn_dir = meta.worktree.as_ref().map(|w| w.path.clone());
-            if spawn_dir.is_none() {
-                if let Some(d) = closed_dir.as_deref() {
-                    if is_dir(d).await {
+            if spawn_dir.is_none()
+                && let Some(d) = closed_dir.as_deref()
+                    && is_dir(d).await {
                         spawn_dir = Some(d.to_owned());
                     }
-                }
-            }
             let spawn_dir = spawn_dir.or_else(|| registered.dir.clone()).unwrap_or_default();
             if !is_dir(&spawn_dir).await {
                 return failed(if meta.worktree.is_some() {
@@ -593,11 +590,10 @@ pub async fn restart(State(st): State<AppState>, body: Bytes) -> Response {
     }
 
     let live = st.backend.list().await.unwrap_or_default();
-    if let Some(id) = id {
-        if !live.iter().any(|s| s.id == id) {
+    if let Some(id) = id
+        && !live.iter().any(|s| s.id == id) {
             return error_response(StatusCode::NOT_FOUND, format!("no live session: {id}"));
         }
-    }
     let scoped: Vec<&BackendSession> = match id {
         Some(id) => live.iter().filter(|s| s.id == id).collect(),
         None => live.iter().collect(),

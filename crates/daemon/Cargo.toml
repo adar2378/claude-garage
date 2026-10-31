@@ -1,7 +1,7 @@
 [package]
 name = "garage-daemon"
 version.workspace = true
-edition = "2021"
+edition.workspace = true
 description = "claude-garage daemon: HTTP API over tmux-owned Claude Code sessions"
 
 [dependencies]

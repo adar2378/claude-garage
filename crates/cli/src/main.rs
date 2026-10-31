@@ -61,8 +61,17 @@ fn exit_fail(f: launcher::Fail) -> i32 {
     std::process::exit(1)
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
+fn main() -> Result<()> {
+    // Before any thread exists: the daemon scrubs its restart hand-off
+    // variable from the environment here (see the function's note).
+    garage_daemon::take_predecessor_env();
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?
+        .block_on(run_cli())
+}
+
+async fn run_cli() -> Result<()> {
     // `host` takes its own flags and a `-- <command>` tail: hand them over
     // untouched instead of letting clap interpret them.
     let raw: Vec<String> = std::env::args().skip(1).collect();

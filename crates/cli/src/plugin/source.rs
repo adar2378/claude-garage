@@ -206,11 +206,10 @@ pub fn find_symlink_escape(root: &Path) -> Result<Option<PathBuf>, String> {
                 if to_dir || target.is_absolute() || !stays_inside(&base, &target) {
                     return Ok(Some(path.strip_prefix(root).unwrap_or(&path).to_path_buf()));
                 }
-            } else if ty.is_dir() {
-                if let Some(bad) = walk(root, &path)? {
+            } else if ty.is_dir()
+                && let Some(bad) = walk(root, &path)? {
                     return Ok(Some(bad));
                 }
-            }
         }
         Ok(None)
     }

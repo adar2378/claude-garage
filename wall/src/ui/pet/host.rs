@@ -165,11 +165,10 @@ impl PetHost {
     /// the late-night lines all day.
     fn local_hour(&mut self, now: i64) -> u8 {
         let minute_bucket = now.div_euclid(60_000);
-        if let Some((bucket, hour)) = self.local_hour_cache {
-            if bucket == minute_bucket {
+        if let Some((bucket, hour)) = self.local_hour_cache
+            && bucket == minute_bucket {
                 return hour;
             }
-        }
         let hour = std::process::Command::new("date")
             .arg("+%H")
             .output()
@@ -270,11 +269,10 @@ impl PetHost {
         let mut rng = || xorshift_next(&mut rng_state);
         let line = self.chatter.next_line(species, &ctx, &mut rng);
         self.rng = rng_state;
-        if let Some(line) = line {
-            if notices.show_pet(line, 4000, now) {
+        if let Some(line) = line
+            && notices.show_pet(line, 4000, now) {
                 dirty = true;
             }
-        }
 
         dirty
     }

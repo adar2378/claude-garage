@@ -1,7 +1,7 @@
 [package]
 name = "garage-host"
 version.workspace = true
-edition = "2021"
+edition.workspace = true
 description = "claude-garage session host: one detached process per session (ConPTY/PTY + vt100 + loopback socket), the Windows backend"
 
 [dependencies]

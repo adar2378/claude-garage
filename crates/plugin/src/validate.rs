@@ -124,11 +124,10 @@ fn command_problems(path: &str, cmd: &[String], out: &mut Vec<Problem>) {
 }
 
 fn range_problem(path: &str, v: Option<u32>, lo: u32, hi: u32, out: &mut Vec<Problem>) {
-    if let Some(v) = v {
-        if !(lo..=hi).contains(&v) {
+    if let Some(v) = v
+        && !(lo..=hi).contains(&v) {
             out.push(Problem::new(path, format!("{v} is out of range {lo}..={hi}")));
         }
-    }
 }
 
 /// Structural rules (no host knowledge). See [`check_host`] for the rest.

@@ -38,11 +38,10 @@ impl ViewPickerState {
     }
 
     pub fn insert_char(&mut self, c: char) {
-        if let Some(input) = self.new_group_input.as_mut() {
-            if !c.is_control() {
+        if let Some(input) = self.new_group_input.as_mut()
+            && !c.is_control() {
                 input.push(c);
             }
-        }
     }
 
     pub fn backspace(&mut self) {

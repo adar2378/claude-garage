@@ -1,7 +1,7 @@
 [package]
 name = "garage-plugin-sdk"
 version.workspace = true
-edition = "2021"
+edition.workspace = true
 description = "claude-garage plugin helper: read the run context, call the daemon with the plugin token, push widgets"
 
 [dependencies]

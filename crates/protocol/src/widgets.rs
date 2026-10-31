@@ -316,11 +316,10 @@ pub fn validate_slot_geometry(v: &Value) -> Result<(), LimitError> {
 
 fn check_style(path: &str, style: &Style) -> Result<(), LimitError> {
     for (name, c) in [("fg", &style.fg), ("bg", &style.bg)] {
-        if let Some(c) = c {
-            if !color_ok(c) {
+        if let Some(c) = c
+            && !color_ok(c) {
                 return Err(bad(format!("{path}.{name}: {c:?} is neither a theme token nor #rrggbb")));
             }
-        }
     }
     Ok(())
 }

@@ -79,11 +79,10 @@ pub fn load_entry(paths: &Paths, entry: Entry) -> Loaded {
             if m.id != l.entry.id {
                 l.problems.push(format!("id: manifest says {:?} but the registry entry is {:?}", m.id, l.entry.id));
             }
-            if let Some(granted) = &l.entry.granted_permissions {
-                if m.permission_names().iter().any(|p| !granted.contains(p)) {
+            if let Some(granted) = &l.entry.granted_permissions
+                && m.permission_names().iter().any(|p| !granted.contains(p)) {
                     l.problems.push(format!("plugin {} wants new permissions - run `claude-garage plugin link` to approve", l.entry.id));
                 }
-            }
             l.manifest = Some(m);
         }
         Err(ps) => l.problems.extend(ps.iter().map(ToString::to_string)),

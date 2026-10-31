@@ -347,11 +347,10 @@ fn check_action(manifest: &garage_plugin::manifest::Manifest, id: &str, a: &str)
 /// when both are given. Anything else is 422 and nothing reaches the TUI.
 async fn check_target(st: &AppState, target: &garage_protocol::plugins::UiTarget) -> Result<(), Box<Response>> {
     let refuse = |msg: String| Err(Box::new(error_response(StatusCode::UNPROCESSABLE_ENTITY, msg)));
-    if let Some(ws) = &target.workspace {
-        if st.registry.get_workspace(ws).await.is_none() {
+    if let Some(ws) = &target.workspace
+        && st.registry.get_workspace(ws).await.is_none() {
             return refuse(format!("target.workspace: {ws:?} is not a registered workspace"));
         }
-    }
     if let Some(session) = &target.session {
         let parts: Vec<&str> = session.split('/').collect();
         let shaped = parts.len() == 3 && parts[0] == "garage" && parts[1..].iter().all(|p| !p.is_empty());
@@ -364,11 +363,10 @@ async fn check_target(st: &AppState, target: &garage_protocol::plugins::UiTarget
         if !exists {
             return refuse(format!("target.session: no session {session:?}"));
         }
-        if let Some(ws) = &target.workspace {
-            if parts[1] != ws {
+        if let Some(ws) = &target.workspace
+            && parts[1] != ws {
                 return refuse(format!("target.session {session:?} does not belong to workspace {ws:?}"));
             }
-        }
     }
     Ok(())
 }
@@ -583,11 +581,10 @@ async fn session_input(State(st): State<AppState>, headers: HeaderMap, body: Byt
 /// `GET /api/workspaces/{name}/closed`. Core data; a token is optional, but
 /// one that is presented must be valid and hold `sessions.read`.
 async fn closed(State(st): State<AppState>, Path(name): Path<String>, headers: HeaderMap) -> Response {
-    if headers.contains_key(AUTHORIZATION) {
-        if let Err(r) = authed(&st, &headers, Permission::SessionsRead) {
+    if headers.contains_key(AUTHORIZATION)
+        && let Err(r) = authed(&st, &headers, Permission::SessionsRead) {
             return *r;
         }
-    }
     if st.registry.get_workspace(&name).await.is_none() {
         return error_response(StatusCode::NOT_FOUND, format!("unknown workspace: {name}"));
     }

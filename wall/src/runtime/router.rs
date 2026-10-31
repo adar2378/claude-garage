@@ -402,13 +402,11 @@ impl GarageRouter {
         if from_click && store.state().layer == KeyLayer::Engaged {
             store.disengage();
         }
-        if matches!(id, ids::SESSION_FOCUS | ids::SESSION_ENGAGE | ids::SESSION_RESTORE) {
-            if let Some(session) = &ctx.session {
-                if from_click || store.state().focused_session_id.as_deref() != Some(session) {
+        if matches!(id, ids::SESSION_FOCUS | ids::SESSION_ENGAGE | ids::SESSION_RESTORE)
+            && let Some(session) = &ctx.session
+                && (from_click || store.state().focused_session_id.as_deref() != Some(session)) {
                     store.focus_session(session);
                 }
-            }
-        }
         match id {
             _ if id.is_plugin() => self.run_plugin_action(id, ctx, now_ms, effects),
             // `P` (spec tui-pit-pet "Opt-in roster cycled by `P`"): not a

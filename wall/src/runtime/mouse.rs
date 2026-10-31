@@ -55,17 +55,16 @@ impl App {
         // not "type here". Not an action; everything else resolves below.
         if self.store.state().overlay.is_none()
             && !(layout.view_strip.height > 0 && row == layout.view_strip.y)
-        {
-            if let Some((id, rect)) = self.tile_at(col, row) {
+            && let Some((id, rect)) = self.tile_at(col, row) {
                 let inner = Rect {
                     x: rect.x + 1,
                     y: rect.y + 1,
                     width: rect.width.saturating_sub(2),
                     height: rect.height.saturating_sub(2),
                 };
-                if inner.contains((col, row).into()) {
-                    if let Some(line) = self.registry.row_text(&id, row - inner.y) {
-                        if let Some(url) = url_at(&line, usize::from(col - inner.x)) {
+                if inner.contains((col, row).into())
+                    && let Some(line) = self.registry.row_text(&id, row - inner.y)
+                        && let Some(url) = url_at(&line, usize::from(col - inner.x)) {
                             // A click like any other: it cancels a pending
                             // plugin arm before it does its own thing.
                             if self.router.plugin_origin_arm_pending() {
@@ -75,10 +74,7 @@ impl App {
                             self.router.notices.show(format!("opened {url}"), 2000, now_ms());
                             return false;
                         }
-                    }
-                }
             }
-        }
         let picker_entries = if self.store.state().overlay == Some(OverlayKind::ViewPicker) {
             view_picker_entries(&self.store).len()
         } else {

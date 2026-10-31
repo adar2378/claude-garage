@@ -67,18 +67,41 @@ pub async fn bind(config: &Config) -> Result<tokio::net::TcpListener> {
 /// starts before the server is dropped anyway (JS `forceCloseConnections`).
 const SHUTDOWN_GRACE: std::time::Duration = std::time::Duration::from_secs(1);
 
+static PREDECESSOR_PID: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+
+fn read_predecessor_pid() -> Option<String> {
+    std::env::var("GARAGE_PREDECESSOR_PID")
+        .ok()
+        .filter(|s| !s.is_empty())
+}
+
+/// Reads `GARAGE_PREDECESSOR_PID` and removes it from the environment, so the
+/// tmux server and the sessions' children never inherit it (it is not a daemon
+/// setting). The binary calls this first thing in `main`, before any thread
+/// exists; that is what makes the environment write sound. Without the call
+/// (tests), `run` still reads the variable but leaves it in place.
+pub fn take_predecessor_env() {
+    PREDECESSOR_PID.get_or_init(|| {
+        let raw = read_predecessor_pid();
+        if raw.is_some() {
+            // SAFETY: documented above: called single-threaded, before the
+            // async runtime starts.
+            unsafe { std::env::remove_var("GARAGE_PREDECESSOR_PID") };
+        }
+        raw
+    });
+}
+
+fn predecessor_pid_env() -> Option<String> {
+    PREDECESSOR_PID.get_or_init(read_predecessor_pid).clone()
+}
+
 /// Serve on 127.0.0.1 until ctrl-c or `POST /api/daemon/restart`.
 pub async fn run(config: Config) -> Result<()> {
     // A successor spawned by the restart route carries GARAGE_PREDECESSOR_PID:
     // wait for that daemon's port to free before binding, failing loud if it
     // does not (no race for the port).
-    if let Some(raw) = std::env::var("GARAGE_PREDECESSOR_PID")
-        .ok()
-        .filter(|s| !s.is_empty())
-    {
-        // Not a daemon setting: keep it out of the environment tmux and the
-        // sessions' children inherit.
-        std::env::remove_var("GARAGE_PREDECESSOR_PID");
+    if let Some(raw) = predecessor_pid_env() {
         let pid = raw.parse::<u32>().ok();
         api::daemon_restart::wait_for_predecessor_real(config.port, pid)
             .await

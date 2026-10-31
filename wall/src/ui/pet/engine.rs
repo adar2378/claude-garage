@@ -631,20 +631,18 @@ impl Chatter {
             self.said_back = false;
         }
 
-        if ctx.just_back_live && !self.said_back {
-            if let Some(line) = pick_line(species, Intent::Back, self.last_line, rng) {
+        if ctx.just_back_live && !self.said_back
+            && let Some(line) = pick_line(species, Intent::Back, self.last_line, rng) {
                 self.said_back = true;
                 self.commit(ctx.now_ms, line);
                 return Some(line);
             }
-        }
 
-        if ctx.just_celebrated {
-            if let Some(line) = pick_line(species, Intent::Proud, self.last_line, rng) {
+        if ctx.just_celebrated
+            && let Some(line) = pick_line(species, Intent::Proud, self.last_line, rng) {
                 self.commit(ctx.now_ms, line);
                 return Some(line);
             }
-        }
 
         if ctx.now_ms - self.last_said_ms < self.floor_ms {
             return None;

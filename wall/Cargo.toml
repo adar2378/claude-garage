@@ -7,7 +7,7 @@
 [package]
 name = "garage-wall"
 version.workspace = true
-edition = "2021"
+edition.workspace = true
 
 [features]
 default = ["pet"]

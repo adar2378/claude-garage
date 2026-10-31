@@ -152,11 +152,10 @@ fn checkout(cx: &Cx, src: &GithubSource, git_ref: Option<&str>, stage: &Stage) -
 }
 
 fn plugin_dir_in(stage: &Path, subdir: Option<&str>) -> Result<PathBuf, String> {
-    if let Some(s) = subdir {
-        if let Some(bad) = super::source::find_symlink_in_path(stage, s) {
+    if let Some(s) = subdir
+        && let Some(bad) = super::source::find_symlink_in_path(stage, s) {
             return Err(format!("the plugin folder {s} goes through a symlink ({}); refusing it", bad.display()));
         }
-    }
     let dir = match subdir {
         Some(s) => stage.join(s),
         None => stage.to_path_buf(),
@@ -334,11 +333,10 @@ pub enum Outcome {
 /// failed update leaves the old plugin working.
 pub fn update(cx: &mut Cx, only: Option<&str>, opts: &Opts) -> Result<Vec<Outcome>, String> {
     let entries = PluginsFile::read(&cx.paths)?.plugins;
-    if let Some(id) = only {
-        if !entries.iter().any(|e| e.id == id) {
+    if let Some(id) = only
+        && !entries.iter().any(|e| e.id == id) {
             return Err(format!("no plugin {id:?}"));
         }
-    }
     let mut out = Vec::new();
     for e in entries.into_iter().filter(|e| only.is_none_or(|id| e.id == id)) {
         let Source::Github { repo, subdir, git_ref, commit } = e.source.clone() else {

@@ -96,11 +96,10 @@ pub fn serialize(file: &WallFile) -> String {
     // Written only when not off (spec: off is the default and never takes
     // disk space) — an unconditional write would also happily persist a
     // caller's typo, which the lenient reader would then just discard.
-    if let Some(pet) = file.pet.as_deref() {
-        if PET_VALUES.contains(&pet) {
+    if let Some(pet) = file.pet.as_deref()
+        && PET_VALUES.contains(&pet) {
             doc["pet"] = Value::String(pet.to_owned());
         }
-    }
     // A `Value` built from owned strings/numbers always serializes; the
     // fallback is unreachable in practice but keeps this function total.
     serde_json::to_string_pretty(&doc).unwrap_or_else(|_| "{}".to_owned())

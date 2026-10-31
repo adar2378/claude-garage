@@ -274,14 +274,13 @@ pub async fn finish_worktree(
             // The usual failure is an agent that edited but never committed:
             // nothing to merge, and `worktree remove` would refuse anyway. A
             // failing status call is swallowed (JS `.catch(() => null)`).
-            if let Ok(dirty) = git_checked(path, &["status", "--porcelain"]).await {
-                if !dirty.trim().is_empty() {
+            if let Ok(dirty) = git_checked(path, &["status", "--porcelain"]).await
+                && !dirty.trim().is_empty() {
                     return Err(GitFailure::new(
                         409,
                         "worktree has uncommitted changes \u{2014} commit them in the session first, or discard",
                     ));
                 }
-            }
             if let Err(e) = git_checked(repo_dir, &["merge", "--no-ff", branch]).await {
                 // Abort so repo_dir is not left mid-merge (no conflict UI to finish it).
                 let _ = git_checked(repo_dir, &["merge", "--abort"]).await;

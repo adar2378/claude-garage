@@ -747,12 +747,11 @@ impl Inner {
                         e.granted_permissions = Some(g.clone());
                         dirty = true;
                     }
-                    if let Some(sha) = sha {
-                        if e.manifest_sha256.as_ref() != Some(sha) {
+                    if let Some(sha) = sha
+                        && e.manifest_sha256.as_ref() != Some(sha) {
                             e.manifest_sha256 = Some(sha.clone());
                             dirty = true;
                         }
-                    }
                 }
                 (dirty, ())
             });
@@ -1061,14 +1060,13 @@ impl Inner {
             if job.kind.is_hook() && q.events_disabled {
                 return;
             }
-            if q.queue.len() >= QUEUE_CAP {
-                if let Some(dropped) = q.queue.pop_front() {
+            if q.queue.len() >= QUEUE_CAP
+                && let Some(dropped) = q.queue.pop_front() {
                     let (log, plugin) = (self.log_for(plugin), plugin.to_owned());
                     tokio::spawn(async move {
                         log.append(&format!("{} {}", dropped.run_id, dropped.label), &format!("queue full for {plugin}: dropped this run")).await;
                     });
                 }
-            }
             q.queue.push_back(job);
         }
         self.pump(plugin);

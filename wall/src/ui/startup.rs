@@ -46,7 +46,12 @@ pub enum Outcome {
 
 /// The pid the launcher spawned (`GARAGE_DAEMON_PID`), if it said.
 pub fn daemon_pid_from_env() -> Option<u32> {
-    std::env::var("GARAGE_DAEMON_PID").ok()?.trim().parse().ok().filter(|p| *p > 1)
+    parse_daemon_pid(std::env::var("GARAGE_DAEMON_PID").ok().as_deref())
+}
+
+/// The value of `GARAGE_DAEMON_PID` as a usable pid (not 0, not pid 1).
+fn parse_daemon_pid(value: Option<&str>) -> Option<u32> {
+    value?.trim().parse().ok().filter(|p| *p > 1)
 }
 
 /// True when the spawned daemon is certainly dead: `kill(pid, 0)` says no
@@ -165,15 +170,14 @@ pub fn reveal(
                 effect.process(tachyonfx::Duration::from_millis(step.as_millis().min(100) as _), f.buffer_mut(), word);
             }
         })?;
-        if event::poll(FRAME)? {
-            if let Event::Key(key) = event::read()? {
+        if event::poll(FRAME)?
+            && let Event::Key(key) = event::read()? {
                 let ctrl_c = key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c');
                 // Only Ctrl+C aborts; every other key is dropped.
                 if key.kind != KeyEventKind::Release && ctrl_c {
                     return Ok(Outcome::Aborted);
                 }
             }
-        }
     }
 }
 

@@ -145,11 +145,10 @@ pub fn resolve(inp: &Inputs, builder: &dyn Builder, out: &dyn Out) -> Result<Pat
         return Ok(dist_bin);
     }
 
-    if !in_checkout {
-        if let Some(sib) = inp.exe_dir.as_ref().map(|d| d.join(format!("garage-wall{EXE}"))).filter(|p| p.exists()) {
+    if !in_checkout
+        && let Some(sib) = inp.exe_dir.as_ref().map(|d| d.join(format!("garage-wall{EXE}"))).filter(|p| p.exists()) {
             return Ok(sib);
         }
-    }
 
     if in_checkout && builder.have_cargo() {
         out.say(&format!(

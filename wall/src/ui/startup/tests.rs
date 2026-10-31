@@ -94,13 +94,10 @@ fn the_timeout_message_names_the_log_when_the_launcher_gave_one() {
 
 #[test]
 fn the_launcher_pid_is_parsed_and_junk_or_system_pids_are_ignored() {
-    // (Env access is process-global; this test owns the variable.)
     for (value, want) in [("4242", Some(4242)), (" 77\n", Some(77)), ("1", None), ("0", None), ("abc", None), ("-5", None)] {
-        std::env::set_var("GARAGE_DAEMON_PID", value);
-        assert_eq!(daemon_pid_from_env(), want, "{value:?}");
+        assert_eq!(parse_daemon_pid(Some(value)), want, "{value:?}");
     }
-    std::env::remove_var("GARAGE_DAEMON_PID");
-    assert_eq!(daemon_pid_from_env(), None);
+    assert_eq!(parse_daemon_pid(None), None);
 }
 
 #[cfg(unix)]

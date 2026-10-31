@@ -256,11 +256,10 @@ impl TranscriptCache {
         {
             let mut cache = self.cache.lock().unwrap();
             let entry = cache.get(id);
-            if let Some(e) = entry {
-                if e.pending || (self.clock)() - e.at < TTL_MS {
+            if let Some(e) = entry
+                && (e.pending || (self.clock)() - e.at < TTL_MS) {
                     return;
                 }
-            }
             let (value, at) = entry.map(|e| (e.value.clone(), e.at)).unwrap_or((None, 0));
             cache.insert(
                 id.to_owned(),

@@ -276,11 +276,10 @@ impl Registry {
             },
         );
         let next = Value::Object(next);
-        if let Some(e) = &existing {
-            if serde_json::to_string(e).ok() == serde_json::to_string(&next).ok() {
+        if let Some(e) = &existing
+            && serde_json::to_string(e).ok() == serde_json::to_string(&next).ok() {
                 return Ok(meta_of(e));
             }
-        }
         let meta = meta_of(&next);
         state["sessions"][id] = next;
         self.write(&state)?;

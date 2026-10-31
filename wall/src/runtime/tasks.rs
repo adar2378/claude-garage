@@ -195,8 +195,8 @@ pub(super) fn spawn_sse_task(
             let revs = revs.clone();
             move |event: crate::api::sse::SseEvent| match event.event.as_str() {
                 "status" => {
-                    if let Ok(v) = serde_json::from_str::<Value>(&event.data) {
-                        if let Some(id) = v.get("id").and_then(Value::as_str) {
+                    if let Ok(v) = serde_json::from_str::<Value>(&event.data)
+                        && let Some(id) = v.get("id").and_then(Value::as_str) {
                             let status = v
                                 .get("status")
                                 .and_then(Value::as_str)
@@ -217,7 +217,6 @@ pub(super) fn spawn_sse_task(
                                 refetch(client);
                             }
                         }
-                    }
                 }
                 "sessions" => refetch(client),
                 _ => {

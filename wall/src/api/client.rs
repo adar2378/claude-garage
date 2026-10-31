@@ -19,11 +19,10 @@ use super::models::{
 /// unit-tests without touching the process environment.
 pub fn port_from_env(tui_port: Option<&str>, garage_port: Option<&str>) -> u16 {
     for value in [tui_port, garage_port].into_iter().flatten() {
-        if let Ok(port) = value.trim().parse::<u32>() {
-            if port > 0 && port <= 65535 {
+        if let Ok(port) = value.trim().parse::<u32>()
+            && port > 0 && port <= 65535 {
                 return port as u16;
             }
-        }
     }
     4747
 }
@@ -204,15 +203,14 @@ impl GarageClient {
     pub fn restore_session(&self, id: &str) -> Result<Option<String>, ApiError> {
         let body = self.post_json("/api/sessions/restore", &json!({ "id": id }))?;
         let failed = body.as_ref().and_then(|b| b.get("failed")).and_then(Value::as_array);
-        if let Some(failed) = failed {
-            if let Some(first) = failed.first() {
+        if let Some(failed) = failed
+            && let Some(first) = failed.first() {
                 let reason = first
                     .get("reason")
                     .and_then(Value::as_str)
                     .unwrap_or("restore failed");
                 return Ok(Some(reason.to_owned()));
             }
-        }
         Ok(None)
     }
 

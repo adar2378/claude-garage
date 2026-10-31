@@ -185,13 +185,12 @@ impl HostBackend {
     async fn stop(&self, entry: Entry) -> Result<()> {
         let dir = self.hosts_dir.clone();
         blocking(move || {
-            if let Err(e) = proto::shutdown(&entry.addr(), &entry.token) {
-                if is_gone(&e) {
+            if let Err(e) = proto::shutdown(&entry.addr(), &entry.token)
+                && is_gone(&e) {
                     prune(&dir, &entry);
                     bail!("can't find session: {}", entry.id);
                 }
                 // Busy or reset mid-reply: the frame may still have landed.
-            }
             let deadline = Instant::now() + STOP_TIMEOUT;
             while registry::read(&dir, &entry.id).is_some() {
                 if Instant::now() > deadline {

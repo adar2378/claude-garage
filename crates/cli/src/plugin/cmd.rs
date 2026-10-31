@@ -201,12 +201,11 @@ fn bind(paths: &Paths, admin: &dyn Admin, action: &str, key: Option<&str>, clear
     let (plugin, local) = split_action(action)?;
     let all = load_all(paths)?;
     let Some(l) = all.iter().find(|l| l.entry.id == plugin) else { return Err(format!("no plugin {plugin:?}")) };
-    if let Some(m) = &l.manifest {
-        if m.action(local).is_none() {
+    if let Some(m) = &l.manifest
+        && m.action(local).is_none() {
             let known: Vec<String> = m.actions.iter().map(|a| format!("{plugin}:{}", a.id)).collect();
             return Err(format!("{plugin} has no action {local:?} (it has: {})", if known.is_empty() { "none".into() } else { known.join(", ") }));
         }
-    }
     if clear {
         admin.bind(plugin, action, None)?;
         return Ok(format!("Cleared the key for {action}; its default key (if any) applies again."));

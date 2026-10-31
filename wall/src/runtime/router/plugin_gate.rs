@@ -129,11 +129,10 @@ impl GarageRouter {
     /// prompt was on screen in it.
     pub(in crate::runtime) fn mark_prompt_drawn(&mut self, now_ms: i64) {
         let current = self.notices.current(now_ms).map(str::to_owned);
-        if let Some(arm) = self.plugin_arm.as_mut() {
-            if current.as_deref() == Some(arm.notice.as_str()) {
+        if let Some(arm) = self.plugin_arm.as_mut()
+            && current.as_deref() == Some(arm.notice.as_str()) {
                 arm.drawn = true;
             }
-        }
     }
 
     /// True when the pending arm was raised by a human trigger of `id`.
@@ -317,8 +316,8 @@ impl GarageRouter {
             .plugin_arm
             .as_ref()
             .is_some_and(|a| a.origin == ArmOrigin::Human && a.key == arm_key(id, ctx));
-        if human_arm && self.armed_plugin.confirm(&arm_key(id, ctx), now_ms) {
-            if let Some(arm) = self.plugin_arm.take() {
+        if human_arm && self.armed_plugin.confirm(&arm_key(id, ctx), now_ms)
+            && let Some(arm) = self.plugin_arm.take() {
                 self.notices.clear_prefix(&arm.notice);
                 if store.state().layer == crate::state::wall_state::KeyLayer::Engaged {
                     store.disengage();
@@ -326,7 +325,6 @@ impl GarageRouter {
                 self.run_confirmed(store, id, &arm.ctx, arm.force, now_ms, effects);
                 return true;
             }
-        }
         // ... and `session.delete`, which has no native double-press of its
         // own, arms on a human's first trigger instead of running at once.
         if id == ids::SESSION_DELETE || asks_confirm {
@@ -570,20 +568,18 @@ fn retarget(store: &mut WallStore, id: ActionId, ctx: &ActionCtx) {
         | ids::SESSION_DETACH
         | ids::SESSION_OPEN_WINDOW
         | ids::OVERLAY_OPEN_VIEW_PICKER => {
-            if let Some(session) = ctx.session.as_deref() {
-                if store.state().focused_session_id.as_deref() != Some(session)
+            if let Some(session) = ctx.session.as_deref()
+                && store.state().focused_session_id.as_deref() != Some(session)
                     && store.state().session_by_id(Some(session)).is_some()
                 {
                     store.focus_session(session);
                 }
-            }
         }
         ids::SESSION_SPAWN | ids::SESSION_SPAWN_WORKTREE | ids::WORKSPACE_FOCUS => {
-            if let Some(ws) = ctx.workspace.as_deref() {
-                if store.state().focused_workspace.as_deref() != Some(ws) {
+            if let Some(ws) = ctx.workspace.as_deref()
+                && store.state().focused_workspace.as_deref() != Some(ws) {
                     store.focus_workspace_named(ws);
                 }
-            }
         }
         _ => {}
     }

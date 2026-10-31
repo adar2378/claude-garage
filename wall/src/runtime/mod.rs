@@ -1171,8 +1171,8 @@ async fn state_loop(
         if app.store.views_revision() != saved_views_revision {
             views_dirty_since.get_or_insert_with(Instant::now);
         }
-        if let Some(since) = views_dirty_since {
-            if since.elapsed() >= VIEWS_SAVE_DEBOUNCE {
+        if let Some(since) = views_dirty_since
+            && since.elapsed() >= VIEWS_SAVE_DEBOUNCE {
                 saved_views_revision = app.store.views_revision();
                 views_dirty_since = None;
                 let file = wall_file_snapshot(&app.store);
@@ -1181,7 +1181,6 @@ async fn state_loop(
                     let _ = persistence::save(&path, &file);
                 });
             }
-        }
         // Motion (p23): the only timed redraw. `next_tick` is `None` while
         // nothing animates, so an idle wall never takes this branch.
         if app.motion.next_tick().is_some_and(|tick| last_render.elapsed() >= tick) {
@@ -1220,12 +1219,11 @@ async fn state_loop(
             // safe to load the persisted views (see the comment above). The
             // pet choice needs no such pruning (it isn't session-shaped), so
             // it's applied in the same beat, right alongside `load_views`.
-            if was_sessions {
-                if let Some(file) = pending_file.take() {
+            if was_sessions
+                && let Some(file) = pending_file.take() {
                     app.store.load_views(file.views);
                     app.store.set_pet(file.pet);
                 }
-            }
         }
         // Downstream of the batch: registry sync, dead-tile disengage,
         // escalation. The bell/title bytes go straight to the terminal

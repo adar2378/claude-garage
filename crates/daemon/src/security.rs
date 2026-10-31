@@ -52,8 +52,8 @@ pub async fn origin_guard(State(state): State<AppState>, req: Request, next: Nex
         *req.method(),
         Method::POST | Method::PUT | Method::PATCH | Method::DELETE
     );
-    if state_changing {
-        if let Some(origin) = req.headers().get("origin") {
+    if state_changing
+        && let Some(origin) = req.headers().get("origin") {
             let ok = origin
                 .to_str()
                 .map(|o| state.config.ui_origins.iter().any(|a| a == o))
@@ -62,7 +62,6 @@ pub async fn origin_guard(State(state): State<AppState>, req: Request, next: Nex
                 return error_response(axum::http::StatusCode::FORBIDDEN, "origin not allowed");
             }
         }
-    }
     next.run(req).await
 }
 

@@ -1,7 +1,7 @@
 [package]
 name = "claude-garage"
 version.workspace = true
-edition = "2021"
+edition.workspace = true
 description = "claude-garage: one binary for the TUI, the daemon and the launcher"
 
 [[bin]]
