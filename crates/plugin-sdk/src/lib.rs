@@ -7,6 +7,12 @@
 //! `GARAGE_API`, `GARAGE_PLUGIN_ID`, `GARAGE_PLUGIN_TOKEN`, and the context as
 //! `GARAGE_CONTEXT` (or `GARAGE_CONTEXT_FILE` when it is large) and on stdin.
 
+pub mod fuzzy;
+#[cfg(feature = "testing")]
+pub mod testing;
+#[cfg(feature = "tui")]
+pub mod tui;
+
 use std::fmt;
 use std::io::Read;
 
@@ -53,6 +59,77 @@ pub fn read_context() -> Result<Value, Error> {
         s
     };
     serde_json::from_str(&raw).map_err(|e| Error::Context(e.to_string()))
+}
+
+/// What a `ui/action` applies to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Target<'a> {
+    Session(&'a str),
+    Workspace(&'a str),
+}
+
+/// A typed view of the run context. Every accessor returns `None` for a
+/// `null` or missing field, as the context itself never omits keys.
+#[derive(Debug, Clone)]
+pub struct Context(pub Value);
+
+impl Context {
+    pub fn read() -> Result<Self, Error> {
+        read_context().map(Self)
+    }
+
+    fn text(&self, pointer: &str) -> Option<&str> {
+        self.0
+            .pointer(pointer)
+            .and_then(Value::as_str)
+            .filter(|s| !s.is_empty())
+    }
+
+    /// The focused workspace; failing that the one the focused session is in.
+    pub fn workspace(&self) -> Option<&str> {
+        self.text("/focus/workspace")
+    }
+
+    /// The focused session id (`garage/<workspace>/<label>`).
+    pub fn session(&self) -> Option<&str> {
+        self.text("/focus/session/id")
+    }
+
+    /// The event name of an event hook run.
+    pub fn event_name(&self) -> Option<&str> {
+        self.text("/event/name")
+    }
+
+    /// The event payload of an event hook run.
+    pub fn event_data(&self) -> &Value {
+        self.0.pointer("/event/data").unwrap_or(&Value::Null)
+    }
+
+    /// The words after `claude-garage` of a CLI run.
+    pub fn argv(&self) -> Vec<String> {
+        self.0
+            .pointer("/trigger/args/argv")
+            .and_then(Value::as_array)
+            .map(|a| {
+                a.iter()
+                    .filter_map(Value::as_str)
+                    .map(str::to_owned)
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// The caller's working directory of a CLI run.
+    pub fn cwd(&self) -> Option<&str> {
+        self.text("/focus/dir")
+    }
+}
+
+/// `workspace` of a session id `garage/<workspace>/<label>`.
+pub fn workspace_of(session_id: &str) -> Option<&str> {
+    let mut parts = session_id.split('/');
+    (parts.next()? == "garage").then_some(())?;
+    parts.next().filter(|w| !w.is_empty())
 }
 
 /// A client for the daemon's plugin routes.
@@ -116,6 +193,48 @@ impl Api {
             }
             Err(e) => Err(Error::Transport(e.to_string())),
         }
+    }
+
+    /// `GET`; the JSON body.
+    pub fn get(&self, path: &str) -> Result<Value, Error> {
+        self.request("GET", path, None)
+    }
+
+    /// `POST` a JSON body.
+    pub fn post(&self, path: &str, body: &Value) -> Result<Value, Error> {
+        self.request("POST", path, Some(body))
+    }
+
+    /// `PUT` a JSON body.
+    pub fn put(&self, path: &str, body: &Value) -> Result<Value, Error> {
+        self.request("PUT", path, Some(body))
+    }
+
+    /// `DELETE`.
+    pub fn delete(&self, path: &str) -> Result<Value, Error> {
+        self.request("DELETE", path, None)
+    }
+
+    /// `POST /api/plugins/ui/action`: ask the wall to run `action` (a core id
+    /// or one of this plugin's actions) on `target`. Needs `ui.invoke`, and
+    /// `core.actions` for a core id.
+    pub fn ui_action(&self, action: &str, target: Target<'_>) -> Result<(), Error> {
+        let t = match target {
+            Target::Session(s) => json!({"session": s}),
+            Target::Workspace(w) => json!({"workspace": w}),
+        };
+        self.post(
+            "/api/plugins/ui/action",
+            &json!({"action": action, "target": t}),
+        )
+        .map(|_| ())
+    }
+
+    /// `POST /api/sessions/input`: type `text` into the session and press
+    /// Enter. Needs `sessions.input` (dangerous).
+    pub fn session_input(&self, id: &str, text: &str) -> Result<(), Error> {
+        self.post("/api/sessions/input", &json!({"id": id, "text": text}))
+            .map(|_| ())
     }
 
     /// `PUT /api/plugins/{me}/widgets/{widget}`; returns the new `rev`.
@@ -230,5 +349,59 @@ mod tests {
             other => panic!("{other:?}"),
         }
         h.join().unwrap();
+    }
+
+    #[test]
+    fn ui_action_and_session_input_send_the_documented_bodies() {
+        let (base, h) = one_shot("200 OK", r#"{"ok":true}"#);
+        Api::new(&base, "p", "tok")
+            .ui_action("session.focus", Target::Session("garage/a/main"))
+            .unwrap();
+        let seen = h.join().unwrap();
+        assert!(seen.starts_with("POST /api/plugins/ui/action "), "{seen}");
+        let body: Value = serde_json::from_str(seen.rsplit('\n').next().unwrap()).unwrap();
+        assert_eq!(
+            body,
+            json!({"action": "session.focus", "target": {"session": "garage/a/main"}})
+        );
+
+        let (base, h) = one_shot("200 OK", r#"{"ok":true}"#);
+        Api::new(&base, "p", "tok")
+            .session_input("garage/a/main", "ls -la")
+            .unwrap();
+        let seen = h.join().unwrap();
+        assert!(seen.starts_with("POST /api/sessions/input "), "{seen}");
+        let body: Value = serde_json::from_str(seen.rsplit('\n').next().unwrap()).unwrap();
+        assert_eq!(body, json!({"id": "garage/a/main", "text": "ls -la"}));
+    }
+
+    #[test]
+    fn the_context_view_reads_focus_event_and_argv_and_treats_null_as_none() {
+        let c = Context(json!({
+            "focus": {"workspace": "app", "session": {"id": "garage/app/main"}, "dir": "/work"},
+            "event": {"name": "session.closed", "data": {"reason": "user"}},
+            "trigger": {"args": {"argv": ["~/dev/x", "--no-open"]}},
+        }));
+        assert_eq!(c.workspace(), Some("app"));
+        assert_eq!(c.session(), Some("garage/app/main"));
+        assert_eq!(c.event_name(), Some("session.closed"));
+        assert_eq!(c.event_data()["reason"], "user");
+        assert_eq!(c.argv(), ["~/dev/x", "--no-open"]);
+        assert_eq!(c.cwd(), Some("/work"));
+
+        let empty = Context(json!({"focus": {"workspace": null, "session": null}, "event": null}));
+        assert_eq!(empty.workspace(), None);
+        assert_eq!(empty.session(), None);
+        assert_eq!(empty.event_name(), None);
+        assert!(empty.event_data().is_null());
+        assert!(empty.argv().is_empty());
+    }
+
+    #[test]
+    fn workspace_of_reads_garage_session_ids_only() {
+        assert_eq!(workspace_of("garage/app/main"), Some("app"));
+        assert_eq!(workspace_of("other/app/main"), None);
+        assert_eq!(workspace_of("garage//main"), None);
+        assert_eq!(workspace_of("garage"), None);
     }
 }

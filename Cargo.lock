@@ -970,6 +970,7 @@ dependencies = [
 name = "garage-plugin-sdk"
 version = "0.6.2"
 dependencies = [
+ "crossterm",
  "garage-protocol",
  "serde_json",
  "ureq",
