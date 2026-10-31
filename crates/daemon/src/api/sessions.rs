@@ -756,18 +756,29 @@ pub async fn remove(
                 format!("session is live — delete it without meta=1: {id}"),
             );
         }
-        let Some(meta) = st.registry.get_session_meta(&id).await else {
+        // A deliberately closed session has no metadata any more, only its
+        // closed record: forgetting it removes that record.
+        let meta = st.registry.get_session_meta(&id).await;
+        let closed = st.registry.get_closed(&id).await;
+        let worktree = match meta
+            .as_ref()
+            .and_then(|m| m.worktree.as_ref())
+            .or_else(|| closed.as_ref().and_then(|c| c.worktree.as_ref()))
+        {
+            Some(w) => with_target(w).await,
+            None => Value::Null,
+        };
+        if meta.is_none() && closed.is_none() {
             return error_response(
                 StatusCode::NOT_FOUND,
                 format!("no resume metadata for: {id}"),
             );
-        };
+        }
         let _ = st.registry.remove_session_meta(&id).await;
         let _ = st.registry.remove_closed(&id).await;
-        let worktree = match &meta.worktree {
-            Some(w) => with_target(w).await,
-            None => Value::Null,
-        };
+        let (workspace, _) = split_session_id(&id);
+        st.bus
+            .publish(crate::bus::DaemonEvent::SessionForgotten { id, workspace });
         return Json(json!({"deleted": true, "meta": true, "worktree": worktree})).into_response();
     }
 
@@ -1241,6 +1252,43 @@ mod tests {
                 .await
                 .is_some()
         );
+    }
+
+    #[tokio::test]
+    async fn forgetting_a_closed_only_session_drops_its_record_and_says_so_on_the_bus() {
+        let h = harness();
+        h.workspace("ws").await;
+        // a deliberate close leaves a closed record and no resume metadata
+        h.st.registry
+            .record_closed(crate::state::registry::ClosedRecord {
+                id: "garage/ws/gone".into(),
+                workspace: "ws".into(),
+                dir: "/d".into(),
+                branch: None,
+                closed_at: 1,
+                reason: "user".into(),
+                last_status: None,
+                claude_session_id: Some("c".into()),
+                worktree: None,
+            })
+            .await
+            .unwrap();
+        let mut rx = h.st.bus.subscribe();
+        let (c, body) = h
+            .call("DELETE", "/api/sessions/garage%2Fws%2Fgone?meta=1", None)
+            .await;
+        assert_eq!(c, StatusCode::OK, "{body}");
+        assert!(h.st.registry.get_closed("garage/ws/gone").await.is_none());
+        match rx.recv().await.unwrap() {
+            crate::bus::DaemonEvent::SessionForgotten { id, workspace } => {
+                assert_eq!((id.as_str(), workspace.as_str()), ("garage/ws/gone", "ws"));
+            }
+            other => panic!("{other:?}"),
+        }
+        let (c, _) = h
+            .call("DELETE", "/api/sessions/garage%2Fws%2Fgone?meta=1", None)
+            .await;
+        assert_eq!(c, StatusCode::NOT_FOUND, "nothing left to forget");
     }
 
     // --- sessions.title.test.js ---

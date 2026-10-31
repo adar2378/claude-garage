@@ -88,6 +88,8 @@ pub enum EventName {
     SessionClosed,
     #[serde(rename = "session.turn")]
     SessionTurn,
+    #[serde(rename = "session.forgotten")]
+    SessionForgotten,
     #[serde(rename = "session.status_changed")]
     SessionStatusChanged,
     #[serde(rename = "worktree.created")]
@@ -108,6 +110,7 @@ impl EventName {
             EventName::SessionCreated => "session.created",
             EventName::SessionClosed => "session.closed",
             EventName::SessionTurn => "session.turn",
+            EventName::SessionForgotten => "session.forgotten",
             EventName::SessionStatusChanged => "session.status_changed",
             EventName::WorktreeCreated => "worktree.created",
             EventName::WorkspaceAdded => "workspace.added",

@@ -49,6 +49,12 @@ pub enum DaemonEvent {
         branch: String,
         repo_dir: String,
     },
+    /// A closed session was forgotten (`DELETE /api/sessions/{id}?meta=1`):
+    /// its closed record and resume metadata are gone.
+    SessionForgotten {
+        id: String,
+        workspace: String,
+    },
     WorkspaceAdded {
         name: String,
     },
@@ -129,6 +135,10 @@ impl DaemonEvent {
             } => (
                 "session.turn",
                 json!({"id": id, "workspace": workspace, "at": at, "transcript_offset": transcript_offset}),
+            ),
+            DaemonEvent::SessionForgotten { id, workspace } => (
+                "session.forgotten",
+                json!({"id": id, "workspace": workspace}),
             ),
             DaemonEvent::WorktreeCreated {
                 workspace,

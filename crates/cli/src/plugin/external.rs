@@ -113,6 +113,10 @@ pub fn prepare(
     if let Ok(t) = std::fs::read_to_string(paths.token(&route.plugin_id)) {
         set("GARAGE_PLUGIN_TOKEN", t.trim().to_owned());
     }
+    // Lets a CLI plugin hand over to the wall (`claude-garage` itself).
+    if let Ok(exe) = std::env::current_exe() {
+        set("GARAGE_BIN", exe.to_string_lossy().into_owned());
+    }
     set("GARAGE_TRIGGER", "cli".into());
     set(
         "GARAGE_CONTEXT",
@@ -319,6 +323,10 @@ mod tests {
         assert_eq!(get("GARAGE_TOKEN"), None);
         assert_eq!(get("GARAGE_API").as_deref(), Some("http://127.0.0.1:4747"));
         assert_eq!(get("GARAGE_TRIGGER").as_deref(), Some("cli"));
+        assert!(
+            get("GARAGE_BIN").is_some_and(|b| std::path::Path::new(&b).is_absolute()),
+            "a CLI plugin can hand over to claude-garage itself"
+        );
         assert_eq!(get("GARAGE_PLUGIN_TOKEN").map(|t| t.len()), Some(64));
         assert!(
             !env.iter().any(|(_, v)| v.contains("SECRET-UI")),
