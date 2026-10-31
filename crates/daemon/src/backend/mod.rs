@@ -49,4 +49,9 @@ pub trait SessionBackend: Send + Sync {
     async fn rename(&self, from: &str, to: &str) -> Result<()>;
     async fn capture(&self, id: &str, lines: usize) -> Result<String>;
     fn attach_spec(&self, id: &str) -> AttachSpec; // how the TUI attaches a PTY
+    /// Type `text` into the session as keystrokes, then press Enter. Backends
+    /// without keystroke injection keep this default.
+    async fn send_text(&self, id: &str, _text: &str) -> Result<()> {
+        anyhow::bail!("this session backend cannot send text to {id}")
+    }
 }

@@ -6,6 +6,7 @@ description = "claude-garage daemon: HTTP API over tmux-owned Claude Code sessio
 
 [dependencies]
 garage-protocol = { path = "../protocol" }
+garage-plugin = { path = "../plugin" }
 anyhow = "1"
 libc = "0.2"
 getrandom = "0.3"

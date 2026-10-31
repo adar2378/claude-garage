@@ -7,6 +7,7 @@
 pub mod macos;
 pub mod notify;
 pub mod other;
+pub mod process;
 
 use std::path::PathBuf;
 use std::sync::Arc;

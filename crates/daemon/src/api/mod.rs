@@ -58,5 +58,6 @@ pub fn routes() -> Router<AppState> {
         .route("/api/open-editor", post(editor::open))
         .route("/api/pick-directory", post(picker::pick))
         .route("/api/worktrees/finish", post(worktrees::finish))
+        .merge(crate::plugins::api::routes())
         .fallback(not_found)
 }

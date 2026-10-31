@@ -1,0 +1,531 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Manifest",
+  "type": "object",
+  "required": [
+    "api_version",
+    "id",
+    "name",
+    "platforms",
+    "version"
+  ],
+  "properties": {
+    "actions": {
+      "default": [],
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/Action"
+      }
+    },
+    "api_version": {
+      "description": "The plugin API major version.",
+      "type": "integer",
+      "format": "uint32",
+      "minimum": 0.0
+    },
+    "build": {
+      "default": [],
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/Build"
+      }
+    },
+    "buttons": {
+      "default": [],
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/Button"
+      }
+    },
+    "cli": {
+      "default": [],
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/Cli"
+      }
+    },
+    "description": {
+      "default": null,
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "events": {
+      "default": [],
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/EventHook"
+      }
+    },
+    "homepage": {
+      "default": null,
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "id": {
+      "type": "string"
+    },
+    "name": {
+      "type": "string"
+    },
+    "panes": {
+      "default": [],
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/Pane"
+      }
+    },
+    "permissions": {
+      "default": [],
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/Permission"
+      }
+    },
+    "platforms": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/Platform"
+      }
+    },
+    "release": {
+      "default": null,
+      "anyOf": [
+        {
+          "$ref": "#/definitions/Release"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "requires": {
+      "description": "Feature names from `/api/plugin/features` the plugin needs.",
+      "default": [],
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "version": {
+      "description": "Semver.",
+      "type": "string"
+    },
+    "widgets": {
+      "default": [],
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/Widget"
+      }
+    }
+  },
+  "additionalProperties": false,
+  "definitions": {
+    "Action": {
+      "description": "Bindable to keys and buttons. Exactly one of `command` / `pane`.",
+      "type": "object",
+      "required": [
+        "id",
+        "title"
+      ],
+      "properties": {
+        "command": {
+          "default": null,
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "string"
+          }
+        },
+        "confirm": {
+          "default": false,
+          "type": "boolean"
+        },
+        "contexts": {
+          "default": [
+            "global"
+          ],
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/ActionContext"
+          }
+        },
+        "default_key": {
+          "description": "A suggestion; never overrides an existing binding.",
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "id": {
+          "description": "Local id; the full id is `<plugin>:<id>`.",
+          "type": "string"
+        },
+        "pane": {
+          "description": "Open one of this plugin's panes instead of running a command.",
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "timeout_secs": {
+          "description": "1..=300, default 30.",
+          "default": null,
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0.0
+        },
+        "title": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "ActionContext": {
+      "description": "What must be focused for an action to be available.",
+      "type": "string",
+      "enum": [
+        "global",
+        "workspace",
+        "session"
+      ]
+    },
+    "Build": {
+      "description": "Run once at install.",
+      "type": "object",
+      "required": [
+        "command"
+      ],
+      "properties": {
+        "command": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "platforms": {
+          "description": "Default: all header platforms.",
+          "default": [],
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/Platform"
+          }
+        },
+        "timeout_secs": {
+          "description": "Default 600.",
+          "default": null,
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0.0
+        }
+      },
+      "additionalProperties": false
+    },
+    "Button": {
+      "type": "object",
+      "required": [
+        "label",
+        "on_click",
+        "slot"
+      ],
+      "properties": {
+        "args": {
+          "description": "JSON passed as `trigger.args`.",
+          "default": null
+        },
+        "confirm": {
+          "description": "May only add confirmation; a core action's own cannot be removed.",
+          "default": false,
+          "type": "boolean"
+        },
+        "label": {
+          "type": "string"
+        },
+        "on_click": {
+          "description": "A core id, `plugin:action`, or a bare local action id.",
+          "type": "string"
+        },
+        "priority": {
+          "description": "Higher survives narrow widths.",
+          "default": 0,
+          "type": "integer",
+          "format": "int32"
+        },
+        "slot": {
+          "$ref": "#/definitions/Slot"
+        },
+        "tooltip": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "Cli": {
+      "description": "Exposed as `claude-garage <name>`.",
+      "type": "object",
+      "required": [
+        "command",
+        "name"
+      ],
+      "properties": {
+        "command": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "description": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "fallback": {
+          "description": "Also receives an unknown first word. At most one installed plugin.",
+          "default": false,
+          "type": "boolean"
+        },
+        "name": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "EventHook": {
+      "type": "object",
+      "required": [
+        "command",
+        "on"
+      ],
+      "properties": {
+        "command": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "every_secs": {
+          "description": "Only with `on = \"timer\"`; at least 5.",
+          "default": null,
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0.0
+        },
+        "on": {
+          "$ref": "#/definitions/EventName"
+        },
+        "timeout_secs": {
+          "description": "1..=60, default 10.",
+          "default": null,
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0.0
+        }
+      },
+      "additionalProperties": false
+    },
+    "EventName": {
+      "type": "string",
+      "enum": [
+        "session.created",
+        "session.closed",
+        "session.turn",
+        "session.status_changed",
+        "worktree.created",
+        "workspace.added",
+        "workspace.removed",
+        "daemon.started",
+        "timer"
+      ]
+    },
+    "Pane": {
+      "description": "Runs as a backend session.",
+      "type": "object",
+      "required": [
+        "command",
+        "id",
+        "placement",
+        "title"
+      ],
+      "properties": {
+        "command": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "id": {
+          "type": "string"
+        },
+        "placement": {
+          "$ref": "#/definitions/PanePlacement"
+        },
+        "singleton": {
+          "description": "Opening again focuses the existing pane. Default true.",
+          "default": true,
+          "type": "boolean"
+        },
+        "size": {
+          "default": null,
+          "anyOf": [
+            {
+              "$ref": "#/definitions/PaneSize"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "title": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "PanePlacement": {
+      "type": "string",
+      "enum": [
+        "tile",
+        "overlay",
+        "popup"
+      ]
+    },
+    "PaneSize": {
+      "type": "object",
+      "required": [
+        "cols",
+        "rows"
+      ],
+      "properties": {
+        "cols": {
+          "type": "integer",
+          "format": "uint16",
+          "minimum": 0.0
+        },
+        "pct": {
+          "description": "`cols`/`rows` are percent of the screen.",
+          "default": false,
+          "type": "boolean"
+        },
+        "rows": {
+          "type": "integer",
+          "format": "uint16",
+          "minimum": 0.0
+        }
+      },
+      "additionalProperties": false
+    },
+    "Permission": {
+      "type": "string",
+      "enum": [
+        "sessions.read",
+        "sessions.input",
+        "sessions.manage",
+        "workspaces.read",
+        "workspaces.write",
+        "ui.widgets",
+        "ui.panes",
+        "ui.invoke",
+        "core.actions",
+        "network"
+      ]
+    },
+    "Platform": {
+      "type": "string",
+      "enum": [
+        "macos",
+        "linux",
+        "windows"
+      ]
+    },
+    "Release": {
+      "description": "Per-OS binary assets; when the current target is listed `[[build]]` is skipped.",
+      "type": "object",
+      "required": [
+        "checksums"
+      ],
+      "properties": {
+        "assets": {
+          "description": "`os-arch` (for example `macos-aarch64`) to asset name.",
+          "default": {},
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "checksums": {
+          "description": "Asset holding `<sha256>  <asset>` lines.",
+          "type": "string"
+        },
+        "repo": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "tag": {
+          "description": "Template; `{version}` is replaced.",
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "Slot": {
+      "type": "string",
+      "enum": [
+        "tile.title.right",
+        "tile.gutter",
+        "rail.row",
+        "rail.extra_rows",
+        "rail.header",
+        "strip.right"
+      ]
+    },
+    "Widget": {
+      "description": "Content is pushed at runtime over the daemon API.",
+      "type": "object",
+      "required": [
+        "id",
+        "slot"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "slot": {
+          "$ref": "#/definitions/Slot"
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}
