@@ -52,6 +52,9 @@ impl App {
     /// A left press: starts a divider drag or the anchor of a selection.
     /// Returns true when the press was the divider's (nothing else sees it).
     fn begin_drag(&mut self, col: u16, row: u16) -> bool {
+        // A release that never arrived (the pointer left the window): the
+        // drag is settled by the next press.
+        self.commit_rail_drag();
         self.selection = None;
         self.drag = None;
         if self.store.state().overlay.is_some() {
@@ -81,12 +84,12 @@ impl App {
     fn drag_to(&mut self, col: u16, row: u16) {
         match self.drag.clone() {
             Some(Drag::Rail) => {
+                // Only the divider moves while the button is down; the tiles
+                // keep their PTY size until release (a resize per mouse
+                // event makes every session redraw for nothing).
                 let rail_x = self.layout.as_ref().map_or(0, |l| l.rail.x);
                 let width = col.saturating_add(1).saturating_sub(rail_x);
-                self.store.set_rail(RailPrefs {
-                    hidden: false,
-                    width,
-                });
+                self.rail_drag = Some(RailPrefs::clamp_width(width));
             }
             Some(Drag::Select {
                 session,
@@ -104,16 +107,33 @@ impl App {
         }
     }
 
-    /// The button came up: a finished selection is copied right away.
+    /// The button came up: a finished selection is copied right away and
+    /// the highlight goes (the notice says what was taken). A divider drag
+    /// is committed here: only now do the tiles' PTYs change size.
     fn end_drag(&mut self) {
-        if matches!(self.drag.take(), Some(Drag::Select { .. })) {
-            self.copy_selection();
+        match self.drag.take() {
+            Some(Drag::Select { .. }) => {
+                self.copy_selection();
+                self.selection = None;
+            }
+            Some(Drag::Rail) => self.commit_rail_drag(),
+            None => {}
         }
     }
 
-    /// Queue the highlighted text for the clipboard. The highlight stays so
-    /// the user sees what was taken. True when there was text to copy.
-    pub(super) fn copy_selection(&mut self) -> bool {
+    /// Make the divider's dragged-to width the saved one.
+    fn commit_rail_drag(&mut self) {
+        if let Some(width) = self.rail_drag.take() {
+            self.store.set_rail(RailPrefs {
+                hidden: false,
+                width,
+            });
+        }
+    }
+
+    /// Queue the highlighted text for the clipboard. True when there was
+    /// text to copy.
+    fn copy_selection(&mut self) -> bool {
         let Some(sel) = self.selection.clone().filter(|s| !s.is_empty()) else {
             return false;
         };
@@ -131,23 +151,6 @@ impl App {
             .notices
             .show(format!("copied {chars} chars"), 1500, now_ms());
         true
-    }
-
-    /// Ctrl+C while text is highlighted copies it instead of interrupting
-    /// the session; any other key just drops the highlight. True = the key
-    /// was consumed.
-    pub(super) fn selection_key(&mut self, key: &crossterm::event::KeyEvent) -> bool {
-        if self.selection.is_none() {
-            return false;
-        }
-        let ctrl_c = key.modifiers == crossterm::event::KeyModifiers::CONTROL
-            && key.code == crossterm::event::KeyCode::Char('c');
-        if ctrl_c && self.copy_selection() {
-            self.selection = None;
-            return true;
-        }
-        self.selection = None;
-        false
     }
 
     /// True when the event raised a quit.

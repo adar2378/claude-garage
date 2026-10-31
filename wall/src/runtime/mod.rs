@@ -174,6 +174,11 @@ pub enum AppEvent {
     },
     /// A spawn effect settled (success or failure) — clears the busy guard.
     SpawnSettled,
+    /// The daemon created this session fresh (a spawn succeeded): whatever
+    /// draft an earlier session of the same id left behind is not its own.
+    SessionSpawned(String),
+    /// The daemon's `session.closed` event, for any reason.
+    SessionClosed(String),
     /// A restore effect settled for this session id.
     RestoreSettled(String),
     /// The `I` install effect settled: both results (statusline first, then
@@ -414,6 +419,9 @@ struct App {
     selection: Option<crate::input::selection::Selection>,
     /// p25: draft and pasted-image recovery (off until `enable`d).
     drafts: drafts::DraftSync,
+    /// The divider's width while it is being dragged; the store (and the
+    /// tiles' PTY sizes) take it on release.
+    rail_drag: Option<u16>,
     /// p25: text waiting to reach the system clipboard (drained by the loop,
     /// which owns the terminal and the OS).
     copies: Vec<String>,
@@ -501,6 +509,7 @@ impl App {
             selection: None,
             copies: Vec::new(),
             drafts: drafts::DraftSync::default(),
+            rail_drag: None,
             triage_rect: None,
             ws_add_rect: None,
             view_picker_rect: None,
@@ -679,6 +688,7 @@ impl App {
             AppEvent::Status { id, status, since } => {
                 self.store.status_changed(&id, &status, since);
             }
+            AppEvent::SessionSpawned(id) | AppEvent::SessionClosed(id) => self.forget_drafts(&id),
             AppEvent::Connection(live) => {
                 self.motion.connection_changed(live, now_ms());
                 self.store.connection(live);
@@ -834,11 +844,10 @@ impl App {
 
     /// The three-layer dispatch; true = quit.
     fn handle_key(&mut self, key: &KeyEvent) -> bool {
-        // A highlighted selection: Ctrl+C copies it (and never reaches the
-        // session); any other key clears it. Overlays own their keys.
-        if self.store.state().layer != KeyLayer::Overlay && self.selection_key(key) {
-            return false;
-        }
+        // Keys never copy (a copy happens on mouse release) and never get
+        // swallowed: Ctrl+C always reaches the session. A highlight is only
+        // dropped, since typing moves the text under it.
+        self.selection = None;
         match self.store.state().layer {
             KeyLayer::Overlay => {
                 self.keylog
@@ -1180,8 +1189,12 @@ async fn state_loop(
     // frame so a restart opens at the remembered width with no flash.
     app.store.load_rail(loaded_file.rail);
     let mut pending_file = Some(loaded_file);
-    app.drafts
-        .enable(persistence::garage_dir_from_env().join("drafts"));
+    let drafts_root = persistence::garage_dir_from_env().join("drafts");
+    if crate::drafts::load_enabled() {
+        app.drafts.enable(drafts_root);
+    } else {
+        drafts::DraftSync::disabled(&drafts_root);
+    }
     let mut saved_views_revision = app.store.views_revision();
     let mut views_dirty_since: Option<Instant> = None;
     const VIEWS_SAVE_DEBOUNCE: Duration = Duration::from_millis(500);

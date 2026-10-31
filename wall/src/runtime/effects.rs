@@ -181,8 +181,11 @@ pub(super) fn run_effect(effect: Effect, tx: &EventSender, base_url: &str) {
                 label,
                 worktree,
             } => {
-                if let Err(e) = client.spawn_session(&workspace, &label, worktree) {
-                    send_notice(&tx, failure_notice("spawn failed", &e), 5000);
+                match client.spawn_session(&workspace, &label, worktree) {
+                    Ok(spawned) => {
+                        let _ = tx.send(AppEvent::SessionSpawned(spawned.id));
+                    }
+                    Err(e) => send_notice(&tx, failure_notice("spawn failed", &e), 5000),
                 }
                 fetch_and_send(&client, &tx);
                 let _ = tx.send(AppEvent::SpawnSettled);

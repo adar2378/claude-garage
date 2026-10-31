@@ -13,8 +13,9 @@
 //! come out right, and nothing is kept for a prompt that is not on screen.
 
 use std::fs;
-use std::io::Write;
+use std::io::{Read as _, Write};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime};
 
 /// Longest draft kept (bytes). A bigger one is cut on a character boundary.
@@ -23,10 +24,18 @@ pub const MAX_TEXT_BYTES: usize = 64 * 1024;
 pub const MAX_IMAGES: usize = 8;
 /// Largest single image kept (bytes).
 pub const MAX_IMAGE_BYTES: u64 = 20 * 1024 * 1024;
-/// Files older than this are removed at startup.
-pub const MAX_AGE: Duration = Duration::from_secs(30 * 24 * 3600);
+/// Files older than this are removed (at startup and hourly while running).
+pub const MAX_AGE: Duration = Duration::from_secs(7 * 24 * 3600);
+
+static IMAGE_SEQ: AtomicU64 = AtomicU64::new(0);
 
 const IMAGE_EXTS: [&str; 5] = ["png", "jpg", "jpeg", "gif", "webp"];
+
+/// The image extensions with their dot (`.png`), for a cheap look at text
+/// before any file is touched.
+pub fn image_extensions() -> [String; 5] {
+    IMAGE_EXTS.map(|e| format!(".{e}"))
+}
 
 // ── reading the prompt off a screen ────────────────────────────────────
 
@@ -66,7 +75,10 @@ pub fn read_prompt(screen: &vt100::Screen) -> Prompt {
     else {
         return Prompt::Unknown;
     };
-    let mut out: Vec<String> = Vec::new();
+    let mut out = String::new();
+    // The previous row was soft-wrapped by the terminal: this row continues
+    // it, with no line break and no prompt indent in between.
+    let mut continued = false;
     for (r, line) in lines.iter().enumerate().take(b).skip(a + 1) {
         let Ok(row) = u16::try_from(r) else {
             return Prompt::Unknown;
@@ -74,52 +86,88 @@ pub fn read_prompt(screen: &vt100::Screen) -> Prompt {
         if row >= rows {
             break;
         }
-        let body: &str = if r == a + 1 {
-            match line.strip_prefix('❯').or_else(|| line.strip_prefix('>')) {
-                Some(rest) => rest.trim_start_matches(' '),
-                None => return Prompt::Unknown, // not a prompt line
+        let first = r == a + 1;
+        let mut from = 0;
+        if first {
+            if !(line.starts_with('❯') || line.starts_with('>')) {
+                return Prompt::Unknown; // not a prompt line
             }
+            from = 1;
+        } else if !continued {
+            from = 2; // the box indents its continuation lines
+        }
+        // Only text drawn at normal intensity was typed: a dim suggestion
+        // ("Try ...") or ghost completion is not, even on the same row.
+        let mut text = String::new();
+        for c in from..cols {
+            match screen.cell(row, c) {
+                Some(cell) if cell.is_wide_continuation() => {}
+                Some(cell) if cell.dim() => {}
+                Some(cell) if !cell.contents().is_empty() => text.push_str(cell.contents()),
+                _ => text.push(' '),
+            }
+        }
+        let wrapped = screen.row_wrapped(row);
+        if !continued && !out.is_empty() {
+            out.push('\n');
+        }
+        let text = if first {
+            text.trim_start_matches(' ')
         } else {
-            line.strip_prefix("  ").unwrap_or(line)
+            text.as_str()
         };
-        if body.trim().is_empty() {
-            out.push(String::new());
-            continue;
+        if wrapped {
+            out.push_str(text);
+        } else {
+            out.push_str(text.trim_end());
         }
-        // A suggestion is drawn dim; dim text on the row means the user has
-        // not typed here.
-        let dim = (0..cols).any(|c| {
-            screen
-                .cell(row, c)
-                .is_some_and(|cell| !cell.contents().trim().is_empty() && cell.dim())
-        });
-        if dim || body.trim_start().starts_with("Try \"") {
-            return Prompt::Empty;
-        }
-        out.push(body.trim_end().to_owned());
+        continued = wrapped;
     }
-    let text = out.join("\n").trim().to_owned();
-    if text.is_empty() {
+    let text = out.trim().to_owned();
+    if text.is_empty() || text.starts_with("Try \"") {
         Prompt::Empty
     } else {
         Prompt::Text(text)
     }
 }
 
-/// `text` with Claude Code's `[Image #N]` placeholders removed (the images
-/// come back as files, which Claude numbers afresh).
-pub fn strip_image_placeholders(text: &str) -> String {
+/// Length of a Claude Code placeholder at the start of `s`: `[Image #N]` or
+/// `[Pasted text #N +M lines]` (the `+M lines` part is optional).
+fn placeholder_len(s: &str) -> Option<usize> {
+    fn digits(t: &str) -> Option<&str> {
+        let n = t.chars().take_while(char::is_ascii_digit).count();
+        (n > 0).then(|| &t[n..])
+    }
+    let rest = if let Some(r) = s.strip_prefix("[Image #") {
+        digits(r)?
+    } else {
+        let r = digits(s.strip_prefix("[Pasted text #")?)?;
+        match r.strip_prefix(" +") {
+            Some(more) => {
+                let after = digits(more)?.strip_prefix(" line")?;
+                after.strip_prefix('s').unwrap_or(after)
+            }
+            None => r,
+        }
+    };
+    rest.strip_prefix(']').map(|after| s.len() - after.len())
+}
+
+/// `text` with Claude Code's `[Image #N]` and `[Pasted text #N +M lines]`
+/// placeholders removed (images come back as files, which Claude numbers
+/// afresh; a pasted block is a stand-in for text we do not hold).
+pub fn strip_placeholders(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut rest = text;
-    while let Some(i) = rest.find("[Image #") {
+    while let Some(i) = rest.find('[') {
         out.push_str(&rest[..i]);
-        let tail = &rest[i + "[Image #".len()..];
-        let digits = tail.chars().take_while(char::is_ascii_digit).count();
-        if digits > 0 && tail[digits..].starts_with(']') {
-            rest = &tail[digits + 1..];
-        } else {
-            out.push_str("[Image #");
-            rest = tail;
+        let tail = &rest[i..];
+        match placeholder_len(tail) {
+            Some(n) => rest = &tail[n..],
+            None => {
+                out.push('[');
+                rest = &tail[1..];
+            }
         }
     }
     out.push_str(rest);
@@ -182,6 +230,29 @@ pub fn pasted_image_paths(text: &str) -> Vec<PathBuf> {
         .collect()
 }
 
+// ── the off switch ─────────────────────────────────────────────────────
+
+/// Whether drafts may be kept: off when `GARAGE_DRAFTS` is `0`/`false`/`no`/
+/// `off`, or `config.toml` says `drafts = false` (the file and the parser
+/// `animations` uses). On by default. Pure; [`load_enabled`] feeds it the
+/// real world.
+pub fn drafts_enabled(config: Option<&str>, env: &dyn Fn(&str) -> Option<String>) -> bool {
+    let env_off = env("GARAGE_DRAFTS").is_some_and(|v| {
+        matches!(
+            v.trim().to_ascii_lowercase().as_str(),
+            "0" | "false" | "no" | "off"
+        )
+    });
+    !env_off && config.and_then(|c| crate::ui::motion::config_bool(c, "drafts")) != Some(false)
+}
+
+pub fn load_enabled() -> bool {
+    let config =
+        fs::read_to_string(crate::state::persistence::garage_dir_from_env().join("config.toml"))
+            .ok();
+    drafts_enabled(config.as_deref(), &|name| std::env::var(name).ok())
+}
+
 // ── the store ──────────────────────────────────────────────────────────
 
 /// Per-session draft files under one directory (`<GARAGE_DIR>/drafts`).
@@ -231,6 +302,26 @@ fn private_file(path: &Path) -> std::io::Result<fs::File> {
         o.mode(0o600);
     }
     o.open(path)
+}
+
+/// Copy `src` to `tmp` (private, synced), at most `cap` bytes. `Ok(false)`
+/// when the file is bigger than that (it grew since it was measured): the
+/// partial copy is removed, so a truncated image is never kept. Any failure
+/// removes `tmp` too.
+fn copy_bounded(src: &Path, tmp: &Path, cap: u64) -> std::io::Result<bool> {
+    let copied = (|| {
+        let input = fs::File::open(src)?;
+        let mut out = private_file(tmp)?;
+        // One byte past the cap tells a file that outgrew it from one that
+        // fits exactly.
+        let n = std::io::copy(&mut input.take(cap + 1), &mut out)?;
+        out.sync_all()?;
+        Ok::<bool, std::io::Error>(n <= cap)
+    })();
+    if !matches!(copied, Ok(true)) {
+        let _ = fs::remove_file(tmp);
+    }
+    copied
 }
 
 impl DraftStore {
@@ -288,12 +379,20 @@ impl DraftStore {
         let ms = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
             .map_or(0, |d| d.as_millis());
+        let seq = IMAGE_SEQ.fetch_add(1, Ordering::Relaxed);
         // Zero-padded so a plain sort is oldest-first.
-        let dest = dir.join(format!("img-{ms:016}-{}.{ext}", self.images(id).len()));
-        let mut input = fs::File::open(src)?;
-        let mut out = private_file(&dest)?;
-        std::io::copy(&mut input, &mut out)?;
-        Ok(Some(dest))
+        let dest = dir.join(format!("img-{ms:016}-{seq:08}.{ext}"));
+        // Copied under a name `images()` ignores, then renamed: a copy cut
+        // short (crash, full disk, a file that kept growing) is never replayed.
+        let tmp = dir.join(format!(".copy-{ms:016}-{seq:08}.tmp"));
+        if copy_bounded(src, &tmp, MAX_IMAGE_BYTES)? {
+            fs::rename(&tmp, &dest).inspect_err(|_| {
+                let _ = fs::remove_file(&tmp);
+            })?;
+            Ok(Some(dest))
+        } else {
+            Ok(None)
+        }
     }
 
     /// The kept images, oldest first.
@@ -301,13 +400,26 @@ impl DraftStore {
         let Ok(rd) = fs::read_dir(self.images_dir(id)) else {
             return Vec::new();
         };
-        let mut v: Vec<PathBuf> = rd.flatten().map(|e| e.path()).collect();
+        let mut v: Vec<PathBuf> = rd
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| {
+                p.file_name()
+                    .and_then(|n| n.to_str())
+                    .is_some_and(|n| n.starts_with("img-"))
+            })
+            .collect();
         v.sort();
         v
     }
 
     pub fn has_anything(&self, id: &str) -> bool {
         self.load_text(id).is_some() || !self.images(id).is_empty()
+    }
+
+    /// Remove the whole drafts folder (recovery switched off).
+    pub fn wipe(&self) {
+        let _ = fs::remove_dir_all(&self.root);
     }
 
     /// Forget everything kept for the session.
@@ -371,6 +483,35 @@ mod tests {
     }
 
     #[test]
+    fn dim_ghost_text_beside_typed_text_does_not_hide_the_draft() {
+        // Typed words followed by a dim completion: the draft is the typed part.
+        let p = screen_with("❯ fix the \x1b[2mfailing test\x1b[0m");
+        assert_eq!(read_prompt(p.screen()), Prompt::Text("fix the".into()));
+        // Only dim text (and a bare "Try ..." that lost its dimness) is empty.
+        let all_dim = screen_with("❯ \x1b[2mTry \"x\"\x1b[0m");
+        assert_eq!(read_prompt(all_dim.screen()), Prompt::Empty);
+        assert_eq!(
+            read_prompt(screen_with("❯ Try \"x\"").screen()),
+            Prompt::Empty
+        );
+    }
+
+    #[test]
+    fn a_soft_wrapped_row_joins_without_a_line_break() {
+        // 40 columns: 50 characters wrap once by the terminal itself.
+        let long = "word ".repeat(10);
+        let p = screen_with(&format!("❯ {}", long.trim_end()));
+        let Prompt::Text(t) = read_prompt(p.screen()) else {
+            panic!("expected text");
+        };
+        assert!(!t.contains('\n'), "{t:?}");
+        assert_eq!(t, long.trim_end());
+        // A real line break stays one.
+        let two = screen_with("❯ one\r\n  two");
+        assert_eq!(read_prompt(two.screen()), Prompt::Text("one\ntwo".into()));
+    }
+
+    #[test]
     fn a_screen_without_a_prompt_box_proves_nothing() {
         let mut p = vt100::Parser::new(6, 40, 0);
         p.process(b"$ ls\r\nfile\r\n");
@@ -381,14 +522,23 @@ mod tests {
     }
 
     #[test]
-    fn image_placeholders_are_removed_and_lookalikes_kept() {
+    fn placeholders_are_removed_and_lookalikes_kept() {
         assert_eq!(
-            strip_image_placeholders("look [Image #1] and [Image #12] here"),
+            strip_placeholders("look [Image #1] and [Image #12] here"),
             "look  and  here"
         );
         assert_eq!(
-            strip_image_placeholders("[Image #x] [Image #"),
+            strip_placeholders("[Image #x] [Image #"),
             "[Image #x] [Image #"
+        );
+        // A pasted block is a stand-in for text we never held.
+        assert_eq!(
+            strip_placeholders("see [Pasted text #2 +35 lines] now [Pasted text #3 +1 line]"),
+            "see  now"
+        );
+        assert_eq!(
+            strip_placeholders("[Pasted text #1] [Pasted text #x +2 lines] [Pasted text #1 +2"),
+            "[Pasted text #x +2 lines] [Pasted text #1 +2"
         );
     }
 
@@ -482,6 +632,48 @@ mod tests {
         assert!(!s.has_anything("y"));
         s.clear("x");
         assert!(s.images("x").is_empty());
+    }
+
+    #[test]
+    fn a_copy_over_the_cap_is_dropped_and_a_half_copied_file_is_never_replayed() {
+        let root = tempfile::tempdir().unwrap();
+        let src = root.path().join("a.png");
+        fs::write(&src, b"12345").unwrap();
+        let tmp = root.path().join("t.tmp");
+        // Fits exactly: kept. One byte over: no truncated copy survives.
+        assert!(copy_bounded(&src, &tmp, 5).unwrap());
+        assert_eq!(fs::read(&tmp).unwrap(), b"12345");
+        assert!(!copy_bounded(&src, &tmp, 4).unwrap());
+        assert!(!tmp.exists());
+        assert!(copy_bounded(&root.path().join("gone.png"), &tmp, 4).is_err());
+        assert!(!tmp.exists());
+
+        // A leftover temp copy (crash mid-copy) is not an image to replay.
+        let s = DraftStore::new(root.path().join("drafts"));
+        let dir = s.images_dir("g");
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join(".copy-0-0.tmp"), b"half").unwrap();
+        fs::write(dir.join("img-0000000000000001-00000001.png"), b"ok").unwrap();
+        assert_eq!(s.images("g").len(), 1);
+    }
+
+    #[test]
+    fn drafts_can_be_switched_off_by_env_or_config() {
+        let env = |v: Option<&'static str>| {
+            move |k: &str| v.filter(|_| k == "GARAGE_DRAFTS").map(str::to_owned)
+        };
+        assert!(drafts_enabled(None, &env(None)), "on by default");
+        assert!(!drafts_enabled(None, &env(Some("0"))));
+        assert!(!drafts_enabled(None, &env(Some("off"))));
+        assert!(drafts_enabled(None, &env(Some("1"))));
+        assert!(!drafts_enabled(Some("drafts = false\n"), &env(None)));
+        assert!(drafts_enabled(
+            Some("drafts = true\nanimations = false\n"),
+            &env(None)
+        ));
+        // The animations key is a different switch.
+        assert!(drafts_enabled(Some("animations = false\n"), &env(None)));
+        assert!(!drafts_enabled(Some("drafts = true\n"), &env(Some("0"))));
     }
 
     #[test]

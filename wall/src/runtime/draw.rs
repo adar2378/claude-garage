@@ -71,14 +71,19 @@ impl App {
             maximized_index,
             show_view_strip,
             framed,
-            self.store.state().rail.layout_width(),
+            self.rail_drag
+                .unwrap_or_else(|| self.store.state().rail.layout_width()),
         );
 
         // PTY size tracks the tile (TIOCSWINSZ) on every layout pass —
-        // startup, grid reshape, maximize both ways, terminal resize.
-        for (i, id) in ids.iter().enumerate() {
-            let (cols, rows) = tile_inner(layout.tiles[i]);
-            self.registry.apply_size(id, cols, rows);
+        // startup, grid reshape, maximize both ways, terminal resize. Not
+        // while the divider is being dragged: that frame is a preview, and
+        // the sizes follow on release.
+        if self.rail_drag.is_none() {
+            for (i, id) in ids.iter().enumerate() {
+                let (cols, rows) = tile_inner(layout.tiles[i]);
+                self.registry.apply_size(id, cols, rows);
+            }
         }
 
         self.gutter_sessions.clear(); // refilled by the tiles drawn below

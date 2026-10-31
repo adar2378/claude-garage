@@ -48,6 +48,15 @@ fn fetch_plugins_full(client: &GarageClient, tx: &EventSender, revs: &RefCell<Re
 }
 
 /// The plugin-host SSE frames. Returns false for a frame it does not know.
+/// The session id a `session.closed` frame names.
+fn closed_session_id(data: &str) -> Option<String> {
+    serde_json::from_str::<Value>(data)
+        .ok()?
+        .get("id")?
+        .as_str()
+        .map(str::to_owned)
+}
+
 fn plugin_frame(
     event: &crate::api::sse::SseEvent,
     client: &GarageClient,
@@ -251,6 +260,12 @@ pub(super) fn spawn_sse_task(
                     }
                 }
                 "sessions" => refetch(client),
+                "session.closed" => {
+                    if let Some(id) = closed_session_id(&event.data) {
+                        let _ = tx.send(AppEvent::SessionClosed(id));
+                    }
+                    // Plugin frames carry nothing for a core event.
+                }
                 _ => {
                     plugin_frame(&event, client, &tx, &revs);
                 }
@@ -313,6 +328,14 @@ pub(super) fn spawn_signal_task(rt: &tokio::runtime::Runtime, tx: EventSender) {
 mod tests {
     use super::*;
     use crate::api::sse::SseEvent;
+
+    #[test]
+    fn a_session_closed_frame_names_the_session_to_forget() {
+        let data = r#"{"id":"garage/ws/one","reason":"crash","workspace":"ws"}"#;
+        assert_eq!(closed_session_id(data).as_deref(), Some("garage/ws/one"));
+        assert_eq!(closed_session_id("{}"), None);
+        assert_eq!(closed_session_id("not json"), None);
+    }
 
     #[test]
     fn a_widgets_frame_whose_fetch_failed_is_asked_for_again_on_the_next_frame() {
