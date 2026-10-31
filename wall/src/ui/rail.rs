@@ -22,7 +22,7 @@ use crate::ui::theme::{colors, elapsed_for, glyph_for, status_color};
 
 /// One rendered line per rail row: each group's optional family label, its
 /// header, then its sessions — the exact rows `rail_target_at` maps clicks against.
-pub fn rail_lines(state: &WallState, now_ms: i64) -> Vec<Line<'static>> {
+pub fn rail_lines(state: &WallState, slots: &SlotRegistry, now_ms: i64) -> Vec<Line<'static>> {
     let gridded: HashSet<&str> = state
         .gridded_session_ids
         .iter()
@@ -39,7 +39,7 @@ pub fn rail_lines(state: &WallState, now_ms: i64) -> Vec<Line<'static>> {
             group: Some(group),
             ..SlotCtx::default()
         };
-        for item in SlotRegistry::core().items(SlotId::RailHeader, &header_ctx) {
+        for item in slots.items(SlotId::RailHeader, &header_ctx) {
             lines.push(Line::from(item.text));
         }
         lines.push(workspace_row(group, i, focused_ws));
@@ -149,13 +149,13 @@ fn session_row(s: &WallSession, gridded: bool, focused: bool, now_ms: i64) -> Li
 /// Render the rail with its right border. Rows stay aligned with `rect`'s
 /// rows (only a RIGHT border — no top inset), so the click router can map
 /// `row - rect.y` straight through `rail_target_at`.
-pub fn render_rail(buf: &mut Buffer, rect: Rect, state: &WallState, now_ms: i64) {
+pub fn render_rail(buf: &mut Buffer, rect: Rect, state: &WallState, slots: &SlotRegistry, now_ms: i64) {
     let block = Block::default()
         .borders(Borders::RIGHT)
         .border_style(Style::default().fg(colors::FAINT));
     let inner = block.inner(rect);
     block.render(rect, buf);
-    Paragraph::new(rail_lines(state, now_ms)).render(inner, buf);
+    Paragraph::new(rail_lines(state, slots, now_ms)).render(inner, buf);
 }
 
 #[cfg(test)]
@@ -205,7 +205,7 @@ mod tests {
             si("alpha", "two", "idle", None),
             si("beta", "other", "idle", None),
         ]);
-        let rows = texts(&rail_lines(store.state(), 60_000));
+        let rows = texts(&rail_lines(store.state(), &SlotRegistry::core(), 60_000));
         assert_eq!(rows.len(), 5);
         assert_eq!(rows[0], " 1 alpha");
         assert_eq!(rows[1], " ▸ ◐ one 1:00", "focused session carries the marker");
@@ -223,7 +223,7 @@ mod tests {
             si("a", "b2", "needs-input", Some(0)),
             si("a", "w", "working", Some(0)),
         ]);
-        let rows = texts(&rail_lines(store.state(), 0));
+        let rows = texts(&rail_lines(store.state(), &SlotRegistry::core(), 0));
         assert_eq!(rows[0], " 1 a  ● 2");
     }
 
@@ -232,7 +232,7 @@ mod tests {
         let mut store = WallStore::new();
         store.workspaces_fetched(vec![ws("a")]);
         store.sessions_fetched(vec![si("a", "blocked", "needs-input", Some(0))]);
-        let line = &rail_lines(store.state(), 60_000)[1];
+        let line = &rail_lines(store.state(), &SlotRegistry::core(), 60_000)[1];
         assert_eq!(line.to_string(), " ▸ ● blocked 1:00");
         // marker span is fg, glyph/label/elapsed spans amber.
         assert_eq!(line.spans[0].style.fg, Some(colors::FG));
@@ -246,7 +246,7 @@ mod tests {
         let mut store = WallStore::new();
         store.workspaces_fetched(vec![ws("a")]);
         store.sessions_fetched((1..=7).map(|i| si("a", &format!("s{i}"), "working", Some(0))).collect());
-        let lines = rail_lines(store.state(), 0);
+        let lines = rail_lines(store.state(), &SlotRegistry::core(), 0);
         let overflow = &lines[7]; // header + 6 gridded rows before it
         assert!(overflow.to_string().contains("s7"));
         assert_eq!(overflow.spans[1].style.fg, Some(colors::FAINT), "glyph dimmed");
@@ -262,7 +262,7 @@ mod tests {
             branch: None,
         };
         store.workspaces_fetched(vec![sib("et-a"), sib("et-b"), ws("solo")]);
-        let lines = rail_lines(store.state(), 0);
+        let lines = rail_lines(store.state(), &SlotRegistry::core(), 0);
         let rows = texts(&lines);
         assert_eq!(rows, [" elite-traders", " 1 et-a", " 2 et-b", " 3 solo"]);
         assert_eq!(lines[0].spans[0].style.fg, Some(colors::FAINT));
@@ -271,7 +271,7 @@ mod tests {
     #[test]
     fn empty_rail_names_the_state() {
         let store = WallStore::new();
-        let rows = texts(&rail_lines(store.state(), 0));
+        let rows = texts(&rail_lines(store.state(), &SlotRegistry::core(), 0));
         assert_eq!(rows, [" no workspaces"]);
     }
 }

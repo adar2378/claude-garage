@@ -44,7 +44,7 @@ impl App {
         }
 
         let buf = frame.buffer_mut();
-        render_rail(buf, layout.rail, self.store.state(), now_ms);
+        render_rail(buf, layout.rail, self.store.state(), &self.slots, now_ms);
 
         if show_view_strip {
             let ranges = render_view_strip(buf, layout.view_strip, &views, &focused_view_name);
@@ -107,6 +107,7 @@ impl App {
             buf,
             layout.strip,
             self.store.state(),
+            &self.slots,
             self.router.notices.current_of(NoticeKind::User, now_ms),
             self.pet
                 .as_ref()
@@ -164,6 +165,7 @@ impl App {
             dead_reason: self.registry.dead_reason(id),
             frozen_new_lines: frozen.map(|f| f.new_lines),
             now_ms,
+            slots: &self.slots,
         };
         if let Some(frozen) = frozen {
             render_tile(buf, rect, &view, Some(frozen.parser.screen()));

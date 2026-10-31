@@ -8,6 +8,7 @@ use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier};
 
 use crate::api::models::{SessionInfo, UsageInfo, UsageWindow, WorkspaceInfo};
+use crate::slots::SlotRegistry;
 use crate::state::store::WallStore;
 use crate::state::wall_state::WallSession;
 use crate::ui::rail::render_rail;
@@ -77,7 +78,7 @@ fn si(workspace: &str, label: &str, status: &str, since: Option<i64>) -> Session
 fn render_rail_dump(store: &WallStore, w: u16, h: u16) -> String {
     let rect = Rect::new(0, 0, w, h);
     let mut buf = Buffer::empty(rect);
-    render_rail(&mut buf, rect, store.state(), 125_000);
+    render_rail(&mut buf, rect, store.state(), &SlotRegistry::core(), 125_000);
     dump(&buf)
 }
 
@@ -107,7 +108,7 @@ fn rail_empty_state() {
 fn strip_dump(store: &WallStore, notice: Option<&str>, w: u16) -> String {
     let rect = Rect::new(0, 0, w, 1);
     let mut buf = Buffer::empty(rect);
-    render_strip(&mut buf, rect, store.state(), notice, None);
+    render_strip(&mut buf, rect, store.state(), &SlotRegistry::core(), notice, None);
     dump(&buf)
 }
 
@@ -180,7 +181,7 @@ fn strip_with_the_pet_in_the_filler() {
     for (name, pet) in [("alert with speech", alert), ("asleep", asleep)] {
         let rect = Rect::new(0, 0, 110, 1);
         let mut buf = Buffer::empty(rect);
-        render_strip(&mut buf, rect, store.state(), None, Some(pet));
+        render_strip(&mut buf, rect, store.state(), &SlotRegistry::core(), None, Some(pet));
         out.push_str(&format!("## {name}\n{}\n", dump(&buf)));
     }
     insta::assert_snapshot!(out);
@@ -203,6 +204,7 @@ fn session(status: &str) -> WallSession {
 }
 
 fn tile_dump(s: &WallSession, focused: bool, engaged: bool, w: u16) -> String {
+    let slots = SlotRegistry::core();
     let v = TileView {
         session: s,
         focused,
@@ -211,6 +213,7 @@ fn tile_dump(s: &WallSession, focused: bool, engaged: bool, w: u16) -> String {
         dead_reason: None,
         frozen_new_lines: None,
         now_ms: 125_000,
+        slots: &slots,
     };
     let rect = Rect::new(0, 0, w, 4);
     let mut buf = Buffer::empty(rect);

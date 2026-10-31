@@ -51,6 +51,7 @@ use crate::input::encode::encode_key;
 use crate::input::links::url_at;
 use crate::input::paste::wrap_bracketed_paste;
 use crate::keymap::{overlay_key_string, Keymap, Layer};
+use crate::slots::SlotRegistry;
 use crate::state::armed_action::{ArmedAction, ArmedClose};
 use crate::state::persistence::{self, WallFile};
 use crate::state::salience::restorable_session_ids;
@@ -322,6 +323,8 @@ struct App {
     store: WallStore,
     router: GarageRouter,
     registry: TileRegistry,
+    /// The slot providers every renderer asks for its items.
+    slots: SlotRegistry,
     escalation: EscalationPolicy,
     keylog: KeyLog,
     tx: EventSender,
@@ -369,6 +372,7 @@ impl App {
             store: WallStore::new(),
             router: GarageRouter::default(),
             registry: TileRegistry::new(tx.clone()),
+            slots: SlotRegistry::core(),
             escalation: EscalationPolicy::default(),
             keylog: KeyLog::new(),
             tx,

@@ -1,12 +1,11 @@
 //! UI slots (p22 tui-actions "UI slots"): named contribution points the core
-//! renderers ask for items. A provider is a pure function from a [`SlotCtx`]
-//! to [`SlotItem`]s; the renderer lays the items out in registration order
+//! renderers ask for items. A provider maps a [`SlotCtx`] to [`SlotItem`]s
+//! (a plain function, or a struct holding state of its own); the renderer lays the items out in registration order
 //! and, when it has a width budget, drops the lowest-priority items first.
 //! Only core providers are registered today; the plugin host fills the same
 //! slots later.
 
 use std::ops::Range;
-use std::sync::OnceLock;
 
 use ratatui::text::Span;
 
@@ -72,16 +71,33 @@ pub struct SlotCtx<'a> {
     pub group: Option<&'a WorkspaceGroup>,
 }
 
-pub type Provider = fn(&SlotCtx) -> Vec<SlotItem>;
+/// Something that contributes items to a slot. Plain functions and closures
+/// qualify; a struct can hold state of its own (the pit pet's current frame).
+pub trait SlotProvider {
+    fn items(&self, ctx: &SlotCtx) -> Vec<SlotItem>;
+}
 
+impl<F: Fn(&SlotCtx) -> Vec<SlotItem>> SlotProvider for F {
+    fn items(&self, ctx: &SlotCtx) -> Vec<SlotItem> {
+        self(ctx)
+    }
+}
+
+impl SlotProvider for Box<dyn SlotProvider> {
+    fn items(&self, ctx: &SlotCtx) -> Vec<SlotItem> {
+        (**self).items(ctx)
+    }
+}
+
+/// The providers per slot. The app owns one and hands it to the renderers.
 #[derive(Default)]
 pub struct SlotRegistry {
-    providers: Vec<(SlotId, Provider)>,
+    providers: Vec<(SlotId, Box<dyn SlotProvider>)>,
 }
 
 impl SlotRegistry {
-    pub fn register(&mut self, slot: SlotId, provider: Provider) {
-        self.providers.push((slot, provider));
+    pub fn register(&mut self, slot: SlotId, provider: impl SlotProvider + 'static) {
+        self.providers.push((slot, Box::new(provider)));
     }
 
     /// The items every provider of `slot` contributes, in registration order.
@@ -89,20 +105,17 @@ impl SlotRegistry {
         self.providers
             .iter()
             .filter(|(s, _)| *s == slot)
-            .flat_map(|(_, provider)| provider(ctx))
+            .flat_map(|(_, provider)| provider.items(ctx))
             .collect()
     }
 
-    /// The registry the wall renders through: the core providers.
-    pub fn core() -> &'static SlotRegistry {
-        static CORE: OnceLock<SlotRegistry> = OnceLock::new();
-        CORE.get_or_init(|| {
-            let mut registry = SlotRegistry::default();
-            registry.register(SlotId::TileTitleRight, crate::ui::tile::context_meter_provider);
-            registry.register(SlotId::StripRight, crate::ui::strip::usage_chip_provider);
-            registry.register(SlotId::RailHeader, crate::ui::rail::family_label_provider);
-            registry
-        })
+    /// A registry holding the core providers.
+    pub fn core() -> SlotRegistry {
+        let mut registry = SlotRegistry::default();
+        registry.register(SlotId::TileTitleRight, crate::ui::tile::context_meter_provider);
+        registry.register(SlotId::StripRight, crate::ui::strip::usage_chip_provider);
+        registry.register(SlotId::RailHeader, crate::ui::rail::family_label_provider);
+        registry
     }
 }
 
@@ -222,6 +235,28 @@ mod tests {
         assert_eq!(laid.clicks(10, 100), vec![(12..15, ids::PET_PET)]);
         assert_eq!(laid.clicks(10, 13), vec![(12..13, ids::PET_PET)], "clipped to the limit");
         assert!(laid.clicks(10, 12).is_empty(), "fully clipped away");
+    }
+
+    #[test]
+    fn a_boxed_provider_can_hold_state_and_a_registry_owns_its_own_providers() {
+        use std::cell::Cell;
+        use std::rc::Rc;
+        struct Counter(Rc<Cell<u32>>);
+        impl SlotProvider for Counter {
+            fn items(&self, _ctx: &SlotCtx) -> Vec<SlotItem> {
+                self.0.set(self.0.get() + 1);
+                vec![item(&format!("n{}", self.0.get()), 1)]
+            }
+        }
+        let calls = Rc::new(Cell::new(0));
+        let boxed: Box<dyn SlotProvider> = Box::new(Counter(calls.clone()));
+        let mut mine = SlotRegistry::default();
+        mine.register(SlotId::StripRight, boxed);
+        let ctx = SlotCtx::default();
+        assert_eq!(joined(&layout(mine.items(SlotId::StripRight, &ctx), None).spans), "n1");
+        assert_eq!(joined(&layout(mine.items(SlotId::StripRight, &ctx), None).spans), "n2");
+        assert_eq!(calls.get(), 2);
+        assert!(SlotRegistry::default().items(SlotId::StripRight, &ctx).is_empty(), "another registry is untouched");
     }
 
     #[test]

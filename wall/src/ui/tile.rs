@@ -38,6 +38,8 @@ pub struct TileView<'a> {
     /// arrived since freezing).
     pub frozen_new_lines: Option<i64>,
     pub now_ms: i64,
+    /// The slot registry the title bar asks for its right-hand items.
+    pub slots: &'a SlotRegistry,
 }
 
 /// Border color + type per the salience ladder.
@@ -174,7 +176,7 @@ pub fn title_line(v: &TileView, width: u16) -> Line<'static> {
     };
     tail.extend(
         slots::layout(
-            SlotRegistry::core().items(SlotId::TileTitleRight, &slot_ctx),
+            v.slots.items(SlotId::TileTitleRight, &slot_ctx),
             None,
         )
         .spans,
@@ -327,6 +329,11 @@ mod tests {
         }
     }
 
+    /// A registry for the tests' `TileView`s (leaked: a view borrows it).
+    fn test_slots() -> &'static SlotRegistry {
+        Box::leak(Box::new(SlotRegistry::core()))
+    }
+
     fn view(session: &WallSession) -> TileView<'_> {
         TileView {
             session,
@@ -336,6 +343,7 @@ mod tests {
             dead_reason: None,
             frozen_new_lines: None,
             now_ms: 65_000,
+            slots: test_slots(),
         }
     }
 

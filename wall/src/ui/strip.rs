@@ -125,7 +125,13 @@ pub struct StripLine {
 /// Build the strip's line for `width` columns: tabs left, then a filler
 /// (with the pet inserted into it, when given and there's room), then
 /// notice · badge · chip right-aligned.
-pub fn strip_line(state: &WallState, notice: Option<&str>, width: u16, pet: Option<PetRender>) -> StripLine {
+pub fn strip_line(
+    state: &WallState,
+    slots: &SlotRegistry,
+    notice: Option<&str>,
+    width: u16,
+    pet: Option<PetRender>,
+) -> StripLine {
     let mut left: Vec<Span<'static>> = Vec::new();
     for (i, group) in state.groups.iter().take(9).enumerate() {
         let focused = state.focused_workspace.as_deref() == Some(group.name.as_str());
@@ -158,7 +164,7 @@ pub fn strip_line(state: &WallState, notice: Option<&str>, width: u16, pet: Opti
     };
     let notice_w: usize = right.iter().map(Span::width).sum();
     let laid = slots::layout(
-        SlotRegistry::core().items(SlotId::StripRight, &slot_ctx),
+        slots.items(SlotId::StripRight, &slot_ctx),
         None,
     );
     right.extend(laid.spans.iter().cloned());
@@ -273,10 +279,11 @@ pub fn render_strip(
     buf: &mut Buffer,
     rect: Rect,
     state: &WallState,
+    slots: &SlotRegistry,
     notice: Option<&str>,
     pet: Option<PetRender>,
 ) -> StripCols {
-    let built = strip_line(state, notice, rect.width, pet);
+    let built = strip_line(state, slots, notice, rect.width, pet);
     Paragraph::new(built.line)
         .style(Style::default().bg(Color::Black))
         .render(rect, buf);
@@ -339,7 +346,7 @@ mod tests {
     #[test]
     fn tabs_follow_salience_order_with_amber_dots() {
         let store = store();
-        let s = strip_line(store.state(), None, 120, None);
+        let s = strip_line(store.state(), &SlotRegistry::core(), None, 120, None);
         let text = s.line.to_string();
         // beta is blocked → salience puts it first, with the dot.
         assert!(text.starts_with(" 1:beta● 2:alpha"), "{text}");
@@ -348,7 +355,7 @@ mod tests {
     #[test]
     fn badge_and_chip_sit_at_the_right_edge() {
         let store = store();
-        let s = strip_line(store.state(), None, 120, None);
+        let s = strip_line(store.state(), &SlotRegistry::core(), None, 120, None);
         let text = s.line.to_string();
         assert_eq!(text.chars().count(), 120);
         assert!(text.ends_with(" ● 1 blocked  keys → garage "), "{text}");
@@ -366,7 +373,7 @@ mod tests {
         let mut store = WallStore::new();
         store.workspaces_fetched(vec![ws("a")]);
         store.sessions_fetched(vec![si("a", "one", "working")]);
-        let s = strip_line(store.state(), None, 80, None);
+        let s = strip_line(store.state(), &SlotRegistry::core(), None, 80, None);
         assert!(s.badge.is_none());
         assert!(!s.line.to_string().contains("blocked"));
     }
@@ -376,7 +383,7 @@ mod tests {
         let mut store = store();
         store.focus_session("garage/beta/blocked");
         store.engage();
-        let s = strip_line(store.state(), None, 120, None);
+        let s = strip_line(store.state(), &SlotRegistry::core(), None, 120, None);
         let text = s.line.to_string();
         assert!(text.ends_with(" keys → beta/blocked "), "{text}");
         let chip = s.line.spans.last().unwrap();
@@ -387,7 +394,7 @@ mod tests {
     #[test]
     fn notice_renders_before_the_badge() {
         let store = store();
-        let s = strip_line(store.state(), Some("closed ghost"), 120, None);
+        let s = strip_line(store.state(), &SlotRegistry::core(), Some("closed ghost"), 120, None);
         let text = s.line.to_string();
         assert!(
             text.ends_with(" closed ghost  ● 1 blocked  keys → garage "),
@@ -398,7 +405,7 @@ mod tests {
     #[test]
     fn overflow_keeps_positions_consistent_with_the_clipped_paint() {
         let store = store();
-        let s = strip_line(store.state(), Some("a very long notice that overflows"), 30, None);
+        let s = strip_line(store.state(), &SlotRegistry::core(), Some("a very long notice that overflows"), 30, None);
         // Whatever fits, the badge range never exceeds the width.
         if let Some(badge) = s.badge {
             assert!(badge.end <= 30);
@@ -410,7 +417,7 @@ mod tests {
     #[test]
     fn usage_chip_hidden_entirely_when_both_windows_are_null() {
         let store = store(); // fresh: no /api/usage post yet
-        let text = strip_line(store.state(), None, 120, None).line.to_string();
+        let text = strip_line(store.state(), &SlotRegistry::core(), None, 120, None).line.to_string();
         assert!(!text.contains("5h"));
         assert!(!text.contains("wk"));
     }
@@ -422,7 +429,7 @@ mod tests {
             five_hour: Some(UsageWindow { used_percentage: 24, resets_at: None }),
             seven_day: Some(UsageWindow { used_percentage: 61, resets_at: None }),
         });
-        let s = strip_line(store.state(), None, 120, None);
+        let s = strip_line(store.state(), &SlotRegistry::core(), None, 120, None);
         let text = s.line.to_string();
         assert!(text.contains("5h 24% · wk 61%"), "{text}");
         let chip_span = s
@@ -441,7 +448,7 @@ mod tests {
             five_hour: Some(UsageWindow { used_percentage: 24, resets_at: None }),
             seven_day: None,
         });
-        let text = strip_line(five_only.state(), None, 120, None).line.to_string();
+        let text = strip_line(five_only.state(), &SlotRegistry::core(), None, 120, None).line.to_string();
         assert!(text.contains("5h 24%"), "{text}");
         assert!(!text.contains("wk"), "{text}");
 
@@ -450,7 +457,7 @@ mod tests {
             five_hour: None,
             seven_day: Some(UsageWindow { used_percentage: 61, resets_at: None }),
         });
-        let text = strip_line(week_only.state(), None, 120, None).line.to_string();
+        let text = strip_line(week_only.state(), &SlotRegistry::core(), None, 120, None).line.to_string();
         assert!(text.contains("wk 61%"), "{text}");
         assert!(!text.contains("5h"), "{text}");
     }
@@ -462,7 +469,7 @@ mod tests {
             five_hour: Some(UsageWindow { used_percentage: 24, resets_at: None }),
             seven_day: Some(UsageWindow { used_percentage: 61, resets_at: None }),
         });
-        let s = strip_line(store.state(), Some("closed ghost"), 140, None);
+        let s = strip_line(store.state(), &SlotRegistry::core(), Some("closed ghost"), 140, None);
         let text = s.line.to_string();
         assert!(text.contains("closed ghost"), "{text}");
         assert!(text.contains("5h 24% · wk 61%"), "{text}");
@@ -485,7 +492,7 @@ mod tests {
     #[test]
     fn install_hint_notice_renders_dim_never_bright_or_amber() {
         let store = store();
-        let s = strip_line(store.state(), Some(STATUSLINE_HINT), 120, None);
+        let s = strip_line(store.state(), &SlotRegistry::core(), Some(STATUSLINE_HINT), 120, None);
         let hint_span = s
             .line
             .spans
@@ -499,7 +506,7 @@ mod tests {
     #[test]
     fn an_ordinary_notice_still_renders_bright() {
         let store = store();
-        let s = strip_line(store.state(), Some("closed ghost"), 120, None);
+        let s = strip_line(store.state(), &SlotRegistry::core(), Some("closed ghost"), 120, None);
         let notice_span = s
             .line
             .spans
@@ -518,7 +525,7 @@ mod tests {
     #[test]
     fn pet_renders_at_200_cols_with_correct_columns() {
         let store = store();
-        let s = strip_line(store.state(), None, 200, Some(pet_render(3)));
+        let s = strip_line(store.state(), &SlotRegistry::core(), None, 200, Some(pet_render(3)));
         let pet = s.pet.expect("plenty of filler at 200 cols");
         let text = s.line.to_string();
         let sprite: String = text
@@ -532,7 +539,7 @@ mod tests {
     #[test]
     fn pet_at_x_zero_still_leaves_a_gutter_after_the_tabs() {
         let store = store();
-        let s = strip_line(store.state(), None, 200, Some(pet_render(0)));
+        let s = strip_line(store.state(), &SlotRegistry::core(), None, 200, Some(pet_render(0)));
         let pet = s.pet.expect("room at 200 cols");
         let text: Vec<char> = s.line.to_string().chars().collect();
         let start = usize::from(pet.start);
@@ -545,7 +552,7 @@ mod tests {
         let store = store();
         let mut right_home = pet_render(150);
         right_home.say = Some("you're doing great!!".to_owned());
-        let s = strip_line(store.state(), None, 200, Some(right_home));
+        let s = strip_line(store.state(), &SlotRegistry::core(), None, 200, Some(right_home));
         let text = s.line.to_string();
         let pet = s.pet.expect("room at 200 cols");
         let before: String = text.chars().take(usize::from(pet.start)).collect();
@@ -554,7 +561,7 @@ mod tests {
 
         let mut left_home = pet_render(0);
         left_home.say = Some("quack.".to_owned());
-        let s = strip_line(store.state(), None, 200, Some(left_home));
+        let s = strip_line(store.state(), &SlotRegistry::core(), None, 200, Some(left_home));
         let text = s.line.to_string();
         let pet = s.pet.expect("room at 200 cols");
         let after: String = text.chars().skip(usize::from(pet.end)).collect();
@@ -566,7 +573,7 @@ mod tests {
         let store = store();
         let mut p = pet_render(0);
         p.say = Some("x".repeat(400));
-        let s = strip_line(store.state(), None, 200, Some(p));
+        let s = strip_line(store.state(), &SlotRegistry::core(), None, 200, Some(p));
         let text = s.line.to_string();
         assert!(s.pet.is_some(), "sprite still renders");
         assert!(!text.contains("xxxx"), "oversized speech dropped for the frame");
@@ -583,6 +590,7 @@ mod tests {
         );
         let s = strip_line(
             store.state(),
+            &SlotRegistry::core(),
             Some("a longish strip notice sits here"),
             80,
             Some(pet_render(0)),
@@ -594,8 +602,8 @@ mod tests {
     #[test]
     fn badge_range_unaffected_by_pet_presence() {
         let store = store(); // one blocked session baked in (beta/blocked)
-        let without = strip_line(store.state(), None, 120, None);
-        let with = strip_line(store.state(), None, 120, Some(pet_render(2)));
+        let without = strip_line(store.state(), &SlotRegistry::core(), None, 120, None);
+        let with = strip_line(store.state(), &SlotRegistry::core(), None, 120, Some(pet_render(2)));
         assert_eq!(without.badge, with.badge, "badge sits at the same absolute columns either way");
     }
 
@@ -604,8 +612,8 @@ mod tests {
         let store = store();
         let lit = PetRender { text: "(O.O)", bang: true, bang_lit: true, x: 0, dim: false, say: None };
         let unlit = PetRender { text: "(O.O)", bang: true, bang_lit: false, x: 0, dim: false, say: None };
-        let s_lit = strip_line(store.state(), None, 120, Some(lit));
-        let s_unlit = strip_line(store.state(), None, 120, Some(unlit));
+        let s_lit = strip_line(store.state(), &SlotRegistry::core(), None, 120, Some(lit));
+        let s_unlit = strip_line(store.state(), &SlotRegistry::core(), None, 120, Some(unlit));
         assert_eq!(s_lit.pet, s_unlit.pet, "the bang column's width never changes on blink");
         assert_eq!(s_lit.badge, s_unlit.badge, "and nothing downstream shifts either");
     }
