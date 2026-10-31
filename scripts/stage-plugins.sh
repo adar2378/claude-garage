@@ -3,9 +3,9 @@
 #   <dest>/<name>/garage-plugin.toml
 #   <dest>/<name>/bin/<name>
 # which is the layout the daemon discovers (plugins/ next to the claude-garage
-# binary; see crates/daemon/src/plugins/bundled.rs).
+# binary; see crates/daemon/src/plugins/bundled.rs). Releases do not use this:
+# cargo-dist builds embed the plugins (crates/daemon/build.rs).
 #
-#   scripts/stage-plugins.sh release wall/dist/plugins   # npm package
 #   scripts/stage-plugins.sh release target/release/plugins
 #   scripts/stage-plugins.sh debug                       # dev: bins into plugins/<name>/bin (gitignored)
 #

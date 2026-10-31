@@ -1,5 +1,37 @@
 # Changelog
 
+## 1.0.0-rc.1 — one binary
+
+Release candidate. The npm package is published under the `next` tag
+(`npx claude-garage@next`); the shell and PowerShell installers are on the
+GitHub release. There is no Homebrew formula yet.
+
+### Changed
+
+- **garage is now one native binary.** The daemon, the TUI and the `claude-garage`
+  command are a single Rust program: no Node at runtime, and nothing else to
+  download. Your sessions are untouched: tmux still owns them.
+- **Install with whichever you like.** `npx claude-garage`, or a shell or
+  PowerShell installer. macOS (Apple silicon and Intel), Linux (x64 and arm64)
+  and Windows (x64) get prebuilt binaries. Windows is a preview until a
+  contributor has verified it on real Windows, which is planned before 1.0.0.
+- **Upgrading from 0.6.x is automatic.** The first `claude-garage` after the
+  upgrade notices the old daemon, stops only that process, and starts the new
+  one. No session is closed.
+- **The bundled plugins ship inside the binary,** and each plugin's files are
+  checked against the hashes of that build before every start, by the daemon
+  and by `claude-garage <plugin command>`. A plugin binary that was damaged or
+  replaced on disk is refused; restarting the daemon puts the shipped files
+  back. This guards against accidental damage, not against someone who already
+  runs code as you. Unpacked sets are keyed by the build, and one is removed
+  only after a week without use. All first-party plugins, including on
+  Windows, ship in the binary.
+- `GARAGE_TUI_BIN` is read by debug builds only.
+
+### Removed
+
+- The unused `GET /api/diff/:workspace` route.
+
 ## 0.6.2 — parent folders lead their group
 
 0.6.1 was tagged but never published; this is the same change.

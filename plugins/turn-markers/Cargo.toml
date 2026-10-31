@@ -6,6 +6,10 @@ rust-version.workspace = true
 description = "claude-garage bundled plugin: a marker in the tile gutter where each agent turn ended"
 publish = false
 
+# Not a release artifact of its own: shipped inside the claude-garage archive.
+[package.metadata.dist]
+dist = false
+
 [[bin]]
 name = "turn-markers"
 path = "src/main.rs"

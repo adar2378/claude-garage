@@ -20,7 +20,6 @@ fn fail<T>(msg: impl Into<String>) -> Result<T, Fail> {
 /// stdout / stderr sinks (`console.log` / `console.error`).
 pub trait Out {
     fn say(&self, line: &str);
-    fn warn(&self, line: &str);
     /// `GARAGE_VERBOSE=1`: the launcher narrates what it does on a start.
     /// Off by default, so a normal start prints nothing before the wall.
     fn verbose(&self) -> bool {
@@ -534,6 +533,7 @@ mod tests {
         fetch_cost_ms: u64,
         fetches: RefCell<u64>,
         host_backend: bool,
+        launcher_version: String,
         verbose: bool,
         /// The `GARAGE_*` variables the process had when the TUI was started.
         tui_garage_env: RefCell<Vec<String>>,
@@ -563,6 +563,7 @@ mod tests {
                 fetch_cost_ms: 0,
                 fetches: Default::default(),
                 host_backend: false,
+                launcher_version: V.to_owned(),
                 verbose: false,
                 tui_garage_env: Default::default(),
             }
@@ -598,9 +599,6 @@ mod tests {
         fn say(&self, line: &str) {
             self.said.borrow_mut().push(line.to_owned());
         }
-        fn warn(&self, line: &str) {
-            self.warned.borrow_mut().push(line.to_owned());
-        }
         fn verbose(&self) -> bool {
             self.verbose
         }
@@ -611,7 +609,7 @@ mod tests {
             4747
         }
         fn version(&self) -> &str {
-            V
+            &self.launcher_version
         }
         fn fetch_health(&self, _t: u64) -> Option<Value> {
             *self.fetches.borrow_mut() += 1;
@@ -1027,6 +1025,48 @@ mod tests {
         );
     }
 
+    // ── the 0.6.x (Node) to 1.0 (Rust) upgrade ──────────────────────────
+
+    /// What the Node daemon of 0.6.x answers on `/api/health` (daemon/src/health.js).
+    fn node_era_health(version: &str, pid: u64) -> Value {
+        json!({ "status": "ok", "version": version, "pid": pid })
+    }
+
+    #[test]
+    fn a_node_era_daemon_is_replaced_by_this_binarys_daemon_and_no_session_is_touched() {
+        for old in ["0.6.0", "0.6.2"] {
+            let mut f = Fake::new(Some(node_era_health(old, 4242)));
+            f.launcher_version = env!("CARGO_PKG_VERSION").to_owned();
+            assert_eq!(tui_main(&f), Ok(0), "from {old}");
+            let log = f.log();
+            let at = |needle: &str| log.iter().position(|c| c == needle);
+            assert!(
+                at("terminate 4242") < at("spawn_daemon") && at("spawn_daemon").is_some(),
+                "stop the old daemon by the pid it reported, then start ours: {log:?}"
+            );
+            assert_eq!(f.called("terminate"), 1, "exactly one process is signalled");
+            // sessions are tmux's: no restart request, no session call of any kind
+            assert_eq!(f.called("post"), 0, "{log:?}");
+        }
+    }
+
+    #[test]
+    fn every_other_build_of_the_daemon_counts_as_stale_prereleases_included() {
+        // a stable release replaces its own candidate, and the reverse
+        assert!(daemon_is_stale(&node_era_health("1.0.0-rc.1", 7), "1.0.0"));
+        assert!(daemon_is_stale(&node_era_health("1.0.0", 7), "1.0.0-rc.1"));
+        assert!(!daemon_is_stale(&node_era_health("1.0.0-rc.1", 7), "1.0.0-rc.1"));
+    }
+
+    #[test]
+    fn a_current_daemon_of_this_build_is_reused_and_the_old_one_is_never_signalled() {
+        let mut f = Fake::new(Some(node_era_health(env!("CARGO_PKG_VERSION"), 4242)));
+        f.launcher_version = env!("CARGO_PKG_VERSION").to_owned();
+        assert_eq!(tui_main(&f), Ok(0));
+        assert_eq!(f.called("terminate"), 0);
+        assert_eq!(f.called("spawn_daemon"), 0);
+    }
+
     #[test]
     fn a_pre_upgrade_daemon_without_pid_or_version_falls_back_to_the_port_listener() {
         let mut f = Fake::new(Some(health(None, None)));
@@ -1294,6 +1334,36 @@ mod tests {
             let f = Fake::new(None);
             assert_eq!(go(&f, &paths, &["notes.txt"], d.path()), Ok(None));
             assert!(f.log().is_empty());
+        }
+
+        #[test]
+        fn a_bundled_plugin_with_a_swapped_binary_is_refused_before_any_daemon_starts() {
+            let d = tempfile::tempdir().unwrap();
+            let paths = Paths::new(d.path());
+            link_plugin(
+                &paths,
+                d.path(),
+                "disp-swap",
+                "[[cli]]\nname = \"swap\"\ncommand = [\"true\"]\nneeds_daemon = true\n",
+                true,
+            );
+            let dir = crate::plugin::testkit::make_embedded(&paths, d.path(), "disp-swap");
+            let f = Fake::new(None);
+            assert_eq!(go_word(&f, &paths, &["swap"], d.path()), Ok(Some(0)));
+            assert_eq!(f.called("spawn_daemon"), 1);
+
+            std::fs::write(dir.join("bin/disp-swap"), b"tampered").unwrap();
+            let f = Fake::new(None);
+            let err = go_word(&f, &paths, &["swap"], d.path()).unwrap_err();
+            assert!(err.contains("refusing") && err.contains("restart the daemon"), "{err}");
+            assert!(f.log().is_empty(), "no daemon was started for it: {:?}", f.log());
+        }
+
+        fn go_word(f: &Fake, paths: &Paths, argv: &[&str], cwd: &Path) -> Result<Option<i32>, String> {
+            let argv = words(argv);
+            let all = load_all(paths).unwrap();
+            let r = route(&all, &argv).expect("a route");
+            dispatch_route(f, paths, &r, &argv, cwd, Some(cwd))
         }
 
         #[test]

@@ -9,6 +9,10 @@ publish = false
 [lib]
 path = "src/lib.rs"
 
+# Not a release artifact of its own: shipped inside the claude-garage archive.
+[package.metadata.dist]
+dist = false
+
 [[bin]]
 name = "closed-chats"
 path = "src/main.rs"

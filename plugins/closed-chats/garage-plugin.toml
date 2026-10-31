@@ -3,7 +3,7 @@ id          = "closed-chats"
 name        = "Closed chats"
 version     = "0.1.0"
 api_version = 1
-platforms   = ["macos", "linux"]
+platforms   = ["macos", "linux", "windows"]
 description = "Closed chats stay in the rail as grey rows; H lists the recent ones"
 permissions = ["ui.widgets", "ui.panes", "sessions.read", "core.actions"]
 

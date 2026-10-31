@@ -204,3 +204,31 @@ pub mod repo {
         git(dir, &["rev-parse", "HEAD"])
     }
 }
+
+/// Turn a linked test plugin into a bundled one that this build "embeds":
+/// the manifest and a `bin/<id>` file are registered as the shipped payload.
+/// Returns the plugin's directory.
+pub fn make_embedded(paths: &Paths, root: &Path, id: &str) -> std::path::PathBuf {
+    let dir = root.join("linked").join(id);
+    std::fs::create_dir_all(dir.join("bin")).unwrap();
+    let bin: &[u8] = b"#!/bin/sh\nexit 0\n";
+    std::fs::write(dir.join("bin").join(id), bin).unwrap();
+    let manifest = std::fs::read(dir.join(MANIFEST_FILE)).unwrap();
+    garage_daemon::plugins::bundled::embed_for_tests(
+        id,
+        &[
+            (MANIFEST_FILE, manifest.as_slice(), false),
+            (&format!("bin/{id}"), bin, true),
+        ],
+    );
+    PluginsFile::update(paths, |f| {
+        for e in f.plugins.iter_mut().filter(|e| e.id == id) {
+            e.source = Source::Bundled {
+                path: dir.to_string_lossy().into_owned(),
+            };
+        }
+        (true, ())
+    })
+    .unwrap();
+    dir
+}

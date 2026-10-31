@@ -6,6 +6,10 @@ rust-version.workspace = true
 description = "claude-garage bundled plugin: 5-hour and weekly usage in the status strip"
 publish = false
 
+# Not a release artifact of its own: shipped inside the claude-garage archive.
+[package.metadata.dist]
+dist = false
+
 [[bin]]
 name = "usage-bar"
 path = "src/main.rs"

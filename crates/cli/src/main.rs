@@ -4,7 +4,6 @@
 mod host;
 mod launcher;
 mod plugin;
-mod tui_bin;
 
 use anyhow::Result;
 use clap::{CommandFactory, Parser, Subcommand};

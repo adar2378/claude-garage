@@ -1,10 +1,9 @@
 //! The real [`Host`]: ureq, libc, `std::process`. Not unit-tested (it is the
-//! system); every decision it feeds lives in `launcher` / `tui_bin`.
+//! system); every decision it feeds lives in `launcher`.
 
 use crate::launcher::{
     Fail, Host, Out, Probe, Reply, Starting, Terminate, checked_pid, parse_listener_pid,
 };
-use crate::tui_bin::{self, Builder};
 use serde_json::Value;
 use std::io::{BufRead, IsTerminal, Write};
 use std::path::{Path, PathBuf};
@@ -117,26 +116,6 @@ pub struct RealHost {
     pub port: u16,
 }
 
-struct CargoBuilder;
-impl Builder for CargoBuilder {
-    fn have_cargo(&self) -> bool {
-        Command::new("cargo")
-            .arg("--version")
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .is_ok_and(|s| s.success())
-    }
-    fn build(&self, root: &Path) -> bool {
-        Command::new("cargo")
-            .args(["build", "--release", "-p", "garage-wall"])
-            .current_dir(root)
-            .status()
-            .is_ok_and(|s| s.success())
-    }
-}
-
 /// `GARAGE_DIR` or `~/.garage` (where the daemon keeps its state and log).
 pub fn log_dir(get: impl Fn(&str) -> Option<String>) -> Option<PathBuf> {
     match get("GARAGE_DIR").filter(|s| !s.is_empty()) {
@@ -145,25 +124,35 @@ pub fn log_dir(get: impl Fn(&str) -> Option<String>) -> Option<PathBuf> {
     }
 }
 
-/// A package/checkout root: `package.json` named "claude-garage" (an
-/// unrelated `~/package.json` does not count) or `wall/Cargo.toml`.
-fn is_root(dir: &Path) -> bool {
-    let named = std::fs::read_to_string(dir.join("package.json"))
-        .ok()
-        .and_then(|s| serde_json::from_str::<Value>(&s).ok())
-        .is_some_and(|v| v.get("name").and_then(Value::as_str) == Some("claude-garage"));
-    named || dir.join("wall/Cargo.toml").exists()
+/// Is `p` a file the user can run? (`GARAGE_TUI_BIN` must be one.)
+fn is_executable(p: &Path) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::metadata(p).is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+    }
+    #[cfg(not(unix))]
+    {
+        p.is_file()
+    }
 }
 
-/// Package/checkout root: the nearest ancestor of the (canonical) binary path
-/// that is a root (target/release/x -> checkout root).
-fn find_root(exe: &Path) -> PathBuf {
-    exe.ancestors()
-        .skip(1)
-        .take(6)
-        .find(|d| is_root(d))
-        .map(Path::to_path_buf)
-        .unwrap_or_else(|| exe.parent().unwrap_or(Path::new(".")).to_path_buf())
+/// `GARAGE_TUI_BIN`'s value as an override of the wall program, when it is
+/// honoured (`allowed`: debug builds only) and set.
+fn tui_override(var: Option<String>, allowed: bool) -> Option<Result<PathBuf, Fail>> {
+    let o = var.filter(|s| allowed && !s.is_empty())?;
+    let p = PathBuf::from(&o);
+    Some(if is_executable(&p) {
+        Ok(p)
+    } else {
+        Err(Fail(format!("GARAGE_TUI_BIN is set but not an executable file: {o}")))
+    })
+}
+
+/// The running binary, symlinks resolved (npm and Homebrew expose a link).
+fn own_exe() -> Option<PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    Some(exe.canonicalize().unwrap_or(exe))
 }
 
 fn url(port: u16, path: &str) -> String {
@@ -188,9 +177,6 @@ fn reply_of(res: Result<ureq::http::Response<ureq::Body>, ureq::Error>) -> Resul
 impl Out for RealHost {
     fn say(&self, line: &str) {
         println!("{line}");
-    }
-    fn warn(&self, line: &str) {
-        eprintln!("{line}");
     }
     fn verbose(&self) -> bool {
         crate::launcher::verbose_from(std::env::var("GARAGE_VERBOSE").ok().as_deref())
@@ -334,20 +320,34 @@ impl Host for RealHost {
             .elapsed()
             .as_millis() as u64
     }
+    /// The wall is part of this binary. In a debug build `GARAGE_TUI_BIN` (for
+    /// tests and for trying another build) names a separate program to run
+    /// instead; a release build ignores it, so an environment variable can
+    /// never swap the program the launcher runs.
     fn resolve_tui(&self) -> Result<PathBuf, Fail> {
-        let exe = std::env::current_exe()
-            .map_err(|e| Fail(format!("cannot locate claude-garage: {e}")))?;
-        // npm/homebrew expose a bin symlink; resolve it to the real package.
-        let exe = exe.canonicalize().unwrap_or(exe);
-        let inputs = tui_bin::Inputs {
-            override_bin: std::env::var("GARAGE_TUI_BIN").ok(),
-            root: find_root(&exe),
-            exe_dir: exe.parent().map(Path::to_path_buf),
-            target: tui_bin::node_target(),
-        };
-        tui_bin::resolve(&inputs, &CargoBuilder, self)
+        let var = std::env::var("GARAGE_TUI_BIN").ok();
+        if let Some(over) = tui_override(var, cfg!(debug_assertions)) {
+            return over;
+        }
+        own_exe().ok_or_else(|| Fail("cannot locate claude-garage".into()))
     }
     fn run_tui(&self, bin: &Path, starting: Option<&Starting>) -> Result<i32, String> {
+        if own_exe().is_some_and(|me| me == bin) {
+            let launch = garage_wall::app::Launch {
+                base_url: Some(url(self.port, "")),
+                daemon_starting: starting.is_some(),
+                daemon_pid: starting.map(|s| s.pid),
+                daemon_log: starting.map(|s| s.log.display().to_string()),
+            };
+            // The wall builds its own tokio runtime; a thread of its own keeps
+            // it out of the one this process is already inside.
+            return std::thread::Builder::new()
+                .name("wall".into())
+                .spawn(move || garage_wall::app::run(launch))
+                .map_err(|e| e.to_string())?
+                .join()
+                .map_err(|_| "the wall panicked".to_owned());
+        }
         let mut cmd = Command::new(bin);
         if let Some(s) = starting {
             cmd.envs(s.env());
@@ -361,11 +361,16 @@ impl Host for RealHost {
 mod tests {
     use super::*;
 
-    fn scratch(tag: &str) -> PathBuf {
-        let d = std::env::temp_dir().join(format!("garage-host-{tag}-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&d);
-        std::fs::create_dir_all(&d).unwrap();
-        d
+    #[test]
+    fn the_wall_override_is_honoured_in_debug_builds_only() {
+        let me = std::env::current_exe().unwrap().to_string_lossy().into_owned();
+        assert_eq!(tui_override(Some(me.clone()), true), Some(Ok(PathBuf::from(&me))));
+        assert!(matches!(tui_override(Some("/no/such/wall".into()), true), Some(Err(_))));
+        // a release build never looks at it, even when it names a real program
+        assert_eq!(tui_override(Some(me), false), None);
+        assert_eq!(tui_override(Some("/no/such/wall".into()), false), None);
+        assert_eq!(tui_override(None, true), None);
+        assert_eq!(tui_override(Some(String::new()), true), None);
     }
 
     #[test]
@@ -405,30 +410,5 @@ mod tests {
             "ERROR: The process \"4242\" not found."
         ));
         assert!(!taskkill_says_gone("", "ERROR: Access is denied."));
-    }
-
-    #[test]
-    fn find_root_skips_an_unrelated_package_json_and_finds_the_package() {
-        let top = scratch("root");
-        // top/package.json is unrelated; top/pkg is the real package.
-        std::fs::write(top.join("package.json"), r#"{"name":"someone-elses"}"#).unwrap();
-        let pkg = top.join("pkg");
-        std::fs::create_dir_all(pkg.join("bin")).unwrap();
-        std::fs::write(pkg.join("package.json"), r#"{"name":"claude-garage"}"#).unwrap();
-        assert_eq!(find_root(&pkg.join("bin/claude-garage")), pkg);
-        // nested sub-package.json with another name does not stop the walk
-        std::fs::create_dir_all(pkg.join("bin/inner")).unwrap();
-        std::fs::write(pkg.join("bin/package.json"), r#"{"name":"nested"}"#).unwrap();
-        assert_eq!(find_root(&pkg.join("bin/inner/x")), pkg);
-        std::fs::remove_dir_all(&top).unwrap();
-    }
-
-    #[test]
-    fn find_root_accepts_a_checkout_by_wall_cargo_toml() {
-        let top = scratch("checkout");
-        std::fs::create_dir_all(top.join("wall")).unwrap();
-        std::fs::write(top.join("wall/Cargo.toml"), "").unwrap();
-        assert_eq!(find_root(&top.join("target/release/claude-garage")), top);
-        std::fs::remove_dir_all(&top).unwrap();
     }
 }

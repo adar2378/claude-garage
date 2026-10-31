@@ -3,7 +3,7 @@ id          = "tile-buttons"
 name        = "Tile buttons"
 version     = "0.1.0"
 api_version = 1
-platforms   = ["macos", "linux"]
+platforms   = ["macos", "linux", "windows"]
 description = "A close button in every tile title bar"
 permissions = ["core.actions"]
 

@@ -7,11 +7,11 @@ members = ["wall", "crates/protocol", "crates/plugin", "crates/host", "crates/da
 exclude = ["plugins/tile-buttons"]
 
 [workspace.package]
-version = "0.6.2" # keep in step with package.json
+version = "1.0.0-rc.1" # keep in step with package.json
 edition = "2024"
 license = "MIT"
 repository = "https://github.com/adar2378/claude-garage"
-homepage = "https://github.com/adar2378/claude-garage"
+homepage = "https://github.com/adar2378/claude-garage#readme"
 rust-version = "1.88" # edition 2024 + let chains; ratatui, tachyonfx, time and bon need 1.88
 
 # garage-protocol and garage-plugin-sdk are published on their own version
@@ -22,3 +22,9 @@ garage-protocol = { path = "crates/protocol", version = "1" }
 
 [profile.release]
 debug = false
+
+# cargo-dist builds the release binaries with this profile.
+[profile.dist]
+inherits = "release"
+lto = "thin"
+strip = true

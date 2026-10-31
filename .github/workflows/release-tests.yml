@@ -1,0 +1,64 @@
+# The gate in front of a release: dist's plan job calls this before anything is
+# built or published (dist-workspace.toml: plan-jobs). It replaces the test
+# steps the hand-written release workflow had.
+name: release-tests
+
+on:
+  workflow_call:
+    inputs:
+      plan:
+        description: dist's plan (JSON); unused
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  # The pushed tag must name the workspace version: a tag typed against the
+  # wrong commit, or a bump that was forgotten, fails here before anything is
+  # built or published.
+  version:
+    if: github.event_name != 'pull_request'
+    name: tag matches the workspace version
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: scripts/check-release-tag.sh "$GITHUB_REF_NAME"
+
+  test:
+    needs: version
+    # pull requests already run ci.yml
+    if: github.event_name != 'pull_request'
+    name: test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: true
+      matrix:
+        os: [macos-15, ubuntu-24.04]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # rustup ships on GitHub's runners; no third-party action in a job
+      # that gates a publish
+      - run: rustup toolchain install stable --profile minimal --component clippy && rustup default stable
+
+      # the daemon tests start and kill their own scratch tmux sessions
+      - name: Install tmux
+        run: |
+          if [ "$RUNNER_OS" = macOS ]; then brew install tmux; else sudo apt-get update && sudo apt-get install -y tmux; fi
+
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+
+      # tests/injection.rs in the wall needs a tmux server: lib and bins only
+      - name: TUI tests
+        run: cargo test -p garage-wall --lib --bins
+
+      - name: Workspace tests
+        run: cargo test -p garage-protocol -p garage-plugin -p garage-plugin-sdk -p garage-host -p garage-daemon -p claude-garage
+
+      # the release build, with the plugins embedded and their hashes checked
+      - name: Embedded plugins are intact
+        run: cargo test -p garage-daemon --features embed-plugins --lib -- plugins::bundled

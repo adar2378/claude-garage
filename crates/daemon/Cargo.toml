@@ -26,6 +26,10 @@ sha2 = "0.11"
 [features]
 # Exposes `test_support` (TestTmux) to other crates' tests.
 test-support = []
+# Release builds: build the first-party plugins (nested cargo run) and embed
+# them, with their SHA-256, so every installer ships them and the daemon can
+# check them before each start (build.rs, plugins::bundled).
+embed-plugins = []
 
 [dev-dependencies]
 jsonschema = { version = "0.60", default-features = false }
