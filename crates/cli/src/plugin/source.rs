@@ -81,13 +81,43 @@ pub trait Git {
 
 pub struct RealGit;
 
-/// Run git with a deadline; stderr is kept for the error message.
-fn run_git(args: &[&str], cwd: Option<&Path>, timeout: Duration) -> Result<String, String> {
+/// Config that keeps a fetched repository from running anything on this
+/// machine: no hooks, no fsmonitor, no submodules, no LFS or other
+/// clean/smudge filters, and https as the only transport.
+const HARDENING: &[&str] = &[
+    "core.hooksPath=/dev/null",
+    "core.fsmonitor=false",
+    "submodule.recurse=false",
+    "filter.lfs.process=",
+    "filter.lfs.smudge=",
+    "filter.lfs.required=false",
+    "protocol.allow=never",
+    "protocol.https.allow=always",
+];
+
+/// `git` with the hardening above, no system or user config, and no prompts.
+fn git_command(args: &[&str], cwd: Option<&Path>) -> Command {
     let mut cmd = Command::new("git");
-    cmd.args(args).env("GIT_TERMINAL_PROMPT", "0").stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
+    for c in HARDENING {
+        cmd.args(["-c", c]);
+    }
+    cmd.args(args)
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .env("GIT_LFS_SKIP_SMUDGE", "1")
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_CONFIG_GLOBAL", if cfg!(windows) { "NUL" } else { "/dev/null" })
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
     if let Some(c) = cwd {
         cmd.current_dir(c);
     }
+    cmd
+}
+
+/// Run git with a deadline; stderr is kept for the error message.
+fn run_git(args: &[&str], cwd: Option<&Path>, timeout: Duration) -> Result<String, String> {
+    let mut cmd = git_command(args, cwd);
     let mut child = cmd.spawn().map_err(|e| format!("cannot run git: {e} (is git installed?)"))?;
     let (mut out, mut err) = (child.stdout.take().unwrap(), child.stderr.take().unwrap());
     let t_out = std::thread::spawn(move || {
@@ -151,9 +181,13 @@ impl Git for RealGit {
     }
 }
 
-/// A symlink in a checkout may point only inside it. Absolute targets and
-/// anything that walks above the root are refused, whether or not the target
-/// exists. Returns the offending path, relative to the root.
+/// What a checkout may contain in the way of symlinks: file links that stay
+/// inside it. A link to a folder is refused outright (it could be walked
+/// through later to somewhere the lexical check below cannot see), and so is
+/// any link whose target is absolute or climbs above the root, whether or
+/// not the target exists. With no folder links, resolving `..` by name is
+/// exact, so a chain of file links cannot escape either. Returns the first
+/// offending path, relative to the root.
 pub fn find_symlink_escape(root: &Path) -> Result<Option<PathBuf>, String> {
     fn walk(root: &Path, dir: &Path) -> Result<Option<PathBuf>, String> {
         for entry in std::fs::read_dir(dir).map_err(|e| format!("cannot read {}: {e}", dir.display()))? {
@@ -163,7 +197,9 @@ pub fn find_symlink_escape(root: &Path) -> Result<Option<PathBuf>, String> {
             if ty.is_symlink() {
                 let target = std::fs::read_link(&path).map_err(|e| e.to_string())?;
                 let base = path.parent().unwrap_or(root).strip_prefix(root).unwrap_or(Path::new("")).to_path_buf();
-                if target.is_absolute() || !stays_inside(&base, &target) {
+                // `metadata` follows the whole chain: a link to a link to a folder is a folder link.
+                let to_dir = std::fs::metadata(&path).is_ok_and(|m| m.is_dir());
+                if to_dir || target.is_absolute() || !stays_inside(&base, &target) {
                     return Ok(Some(path.strip_prefix(root).unwrap_or(&path).to_path_buf()));
                 }
             } else if ty.is_dir() {
@@ -175,6 +211,19 @@ pub fn find_symlink_escape(root: &Path) -> Result<Option<PathBuf>, String> {
         Ok(None)
     }
     walk(root, root)
+}
+
+/// No component of `root/subdir` may be a symlink: the plugin folder is
+/// whatever the path really names.
+pub fn find_symlink_in_path(root: &Path, subdir: &str) -> Option<PathBuf> {
+    let mut cur = root.to_path_buf();
+    for part in subdir.split('/') {
+        cur.push(part);
+        if std::fs::symlink_metadata(&cur).is_ok_and(|m| m.file_type().is_symlink()) {
+            return Some(cur.strip_prefix(root).unwrap_or(&cur).to_path_buf());
+        }
+    }
+    None
 }
 
 /// Does `base/target` (lexically) stay at or below the root?
@@ -225,19 +274,117 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn symlinks_may_point_inside_the_checkout_only() {
+    fn symlinks_may_point_at_files_inside_the_checkout_only() {
         use std::os::unix::fs::symlink;
         let d = tempfile::tempdir().unwrap();
         let root = d.path();
         std::fs::create_dir_all(root.join("a/b")).unwrap();
         std::fs::write(root.join("a/file"), "x").unwrap();
         symlink("../file", root.join("a/b/ok")).unwrap();
-        symlink("b", root.join("a/dirlink")).unwrap();
-        assert_eq!(find_symlink_escape(root).unwrap(), None);
+        symlink("../b/ok", root.join("a/chain")).unwrap();
+        assert_eq!(find_symlink_escape(root).unwrap(), None, "file links, chained, inside the root");
         symlink("../../../outside", root.join("a/b/up")).unwrap();
         assert_eq!(find_symlink_escape(root).unwrap(), Some(PathBuf::from("a/b/up")));
         std::fs::remove_file(root.join("a/b/up")).unwrap();
         symlink("/etc/passwd", root.join("abs")).unwrap();
         assert_eq!(find_symlink_escape(root).unwrap(), Some(PathBuf::from("abs")));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn folder_links_and_chains_that_end_in_a_folder_or_outside_are_refused() {
+        use std::os::unix::fs::symlink;
+        let outside = tempfile::tempdir().unwrap();
+        std::fs::write(outside.path().join("secret"), "s").unwrap();
+        // a folder link, even one that stays inside
+        let d = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(d.path().join("a/b")).unwrap();
+        symlink("b", d.path().join("a/dirlink")).unwrap();
+        assert_eq!(find_symlink_escape(d.path()).unwrap(), Some(PathBuf::from("a/dirlink")));
+        // a chain: two innocent-looking hops ending at a folder
+        let d = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(d.path().join("real")).unwrap();
+        symlink("real", d.path().join("hop2")).unwrap();
+        symlink("hop2", d.path().join("hop1")).unwrap();
+        assert!(find_symlink_escape(d.path()).unwrap().is_some());
+        // a chain whose last hop leaves the root: the walk reaches that hop
+        let d = tempfile::tempdir().unwrap();
+        symlink(outside.path().join("secret"), d.path().join("last")).unwrap();
+        symlink("last", d.path().join("first")).unwrap();
+        assert_eq!(find_symlink_escape(d.path()).unwrap().map(|p| p.to_string_lossy().into_owned()).as_deref().map(|p| p == "last" || p == "first"), Some(true));
+        // `..` through a folder link cannot be used to climb out
+        let d = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(d.path().join("x/y")).unwrap();
+        symlink("x/y", d.path().join("deep")).unwrap();
+        symlink("deep/../../../outside", d.path().join("climb")).unwrap();
+        assert!(find_symlink_escape(d.path()).unwrap().is_some());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_plugin_subdir_may_not_pass_through_a_symlink() {
+        use std::os::unix::fs::symlink;
+        let d = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(d.path().join("real/inner")).unwrap();
+        assert_eq!(find_symlink_in_path(d.path(), "real/inner"), None);
+        symlink("real", d.path().join("alias")).unwrap();
+        assert_eq!(find_symlink_in_path(d.path(), "alias/inner"), Some(PathBuf::from("alias")));
+        symlink("inner", d.path().join("real/last")).unwrap();
+        assert_eq!(find_symlink_in_path(d.path(), "real/last"), Some(PathBuf::from("real/last")));
+    }
+
+    fn plain_git(dir: &Path, args: &[&str], home: Option<&Path>) -> std::process::Output {
+        let mut c = Command::new("git");
+        c.args(args).current_dir(dir).env("GIT_CONFIG_NOSYSTEM", "1").env("GIT_CONFIG_GLOBAL", "/dev/null");
+        if let Some(h) = home {
+            c.env("HOME", h).env("GIT_CONFIG_GLOBAL", h.join(".gitconfig"));
+        }
+        let o = c.output().unwrap();
+        assert!(o.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&o.stderr));
+        o
+    }
+
+    /// The user's own git config names a filter and a hooks folder that would
+    /// run commands; a repository with `.gitattributes` asking for that filter
+    /// must not make them run when garage checks it out.
+    #[cfg(unix)]
+    #[test]
+    fn a_hostile_attributes_file_and_user_git_config_run_nothing() {
+        use std::os::unix::fs::PermissionsExt;
+        let t = tempfile::tempdir().unwrap();
+        let (repo, home, marker, hooks) = (t.path().join("repo"), t.path().join("home"), t.path().join("ran"), t.path().join("hooks"));
+        std::fs::create_dir_all(&repo).unwrap();
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::create_dir_all(&hooks).unwrap();
+        let hook = hooks.join("post-checkout");
+        std::fs::write(&hook, format!("#!/bin/sh\necho hook >> {}\n", marker.display())).unwrap();
+        std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let smudge = t.path().join("smudge.sh");
+        std::fs::write(&smudge, format!("#!/bin/sh\necho smudge >> {}\ncat\n", marker.display())).unwrap();
+        std::fs::set_permissions(&smudge, std::fs::Permissions::from_mode(0o755)).unwrap();
+        std::fs::write(
+            home.join(".gitconfig"),
+            format!("[filter \"evil\"]\n\tsmudge = {s}\n\tclean = cat\n\trequired = true\n[core]\n\thooksPath = {h}\n", s = smudge.display(), h = hooks.display()),
+        )
+        .unwrap();
+        std::fs::write(repo.join(".gitattributes"), "* filter=evil\n").unwrap();
+        std::fs::write(repo.join("garage-plugin.toml"), "x").unwrap();
+        plain_git(&repo, &["init", "--quiet"], None);
+        plain_git(&repo, &["-c", "user.name=t", "-c", "user.email=t@t", "add", "-A"], None);
+        plain_git(&repo, &["-c", "user.name=t", "-c", "user.email=t@t", "commit", "--quiet", "-m", "x"], None);
+
+        // Control: with the user's config honoured, checking the file out runs both.
+        std::fs::remove_file(repo.join("garage-plugin.toml")).unwrap();
+        plain_git(&repo, &["checkout", "--quiet", "--", "."], Some(&home));
+        let ran = std::fs::read_to_string(&marker).unwrap_or_default();
+        assert!(ran.contains("smudge"), "the fixture must be able to run a filter: {ran:?}");
+
+        // Through garage's git: the same checkout, the same config in HOME, nothing runs.
+        std::fs::remove_file(&marker).unwrap();
+        std::fs::remove_file(repo.join("garage-plugin.toml")).unwrap();
+        let out = git_command(&["checkout", "--quiet", "--", "."], Some(&repo)).env("HOME", &home).env("XDG_CONFIG_HOME", &home).output().unwrap();
+        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+        assert_eq!(std::fs::read_to_string(repo.join("garage-plugin.toml")).unwrap(), "x");
+        assert!(!marker.exists(), "garage's git ran a filter or hook: {:?}", std::fs::read_to_string(&marker));
     }
 }

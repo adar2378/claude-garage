@@ -146,12 +146,17 @@ fn checkout(cx: &Cx, src: &GithubSource, git_ref: Option<&str>, stage: &Stage) -
     let url = src.clone_url(&cx.github_base);
     let sha = cx.git.clone_shallow(&url, git_ref, &stage.path)?;
     if let Some(bad) = find_symlink_escape(&stage.path)? {
-        return Err(format!("{} contains a symlink that points outside the repository ({}); refusing it", src.repo, bad.display()));
+        return Err(format!("{} contains a symlink that points outside the repository or at a folder ({}); refusing it", src.repo, bad.display()));
     }
     Ok(sha)
 }
 
 fn plugin_dir_in(stage: &Path, subdir: Option<&str>) -> Result<PathBuf, String> {
+    if let Some(s) = subdir {
+        if let Some(bad) = super::source::find_symlink_in_path(stage, s) {
+            return Err(format!("the plugin folder {s} goes through a symlink ({}); refusing it", bad.display()));
+        }
+    }
     let dir = match subdir {
         Some(s) => stage.join(s),
         None => stage.to_path_buf(),

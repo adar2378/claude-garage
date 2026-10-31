@@ -25,7 +25,9 @@ pub struct CurlFetch;
 
 impl Fetch for CurlFetch {
     fn get(&self, url: &str, max_bytes: usize) -> Result<Vec<u8>, String> {
+        // `-q` first: ignore any ~/.curlrc (it could point curl anywhere).
         let out = Command::new("curl")
+            .arg("-q")
             .args(["--fail", "--silent", "--show-error", "--location", "--proto", "=https", "--proto-redir", "=https", "--max-time", "300"])
             .args(["--max-filesize", &max_bytes.to_string(), "--", url])
             .stdin(Stdio::null())
@@ -128,14 +130,39 @@ pub fn download_release(fetch: &dyn Fetch, plan: &ReleasePlan, plugin_dir: &Path
         return Err(format!("checksum mismatch for {}: expected {want}, got {got}; nothing was installed", plan.asset));
     }
     let dest = argv::bin_path(plugin_dir, plugin_id);
-    std::fs::create_dir_all(dest.parent().expect("bin has a parent")).map_err(|e| format!("cannot create {}: {e}", dest.display()))?;
-    std::fs::write(&dest, &bytes).map_err(|e| format!("cannot write {}: {e}", dest.display()))?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&dest, std::fs::Permissions::from_mode(0o755)).map_err(|e| e.to_string())?;
+    let dir = dest.parent().expect("bin has a parent");
+    std::fs::create_dir_all(dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
+    let is_link = |p: &Path| std::fs::symlink_metadata(p).is_ok_and(|m| m.file_type().is_symlink());
+    if is_link(dir) || is_link(&dest) {
+        return Err(format!("{} is a symlink; refusing to write through it", if is_link(dir) { dir } else { &dest }.display()));
     }
-    Ok(())
+    write_atomic_exec(&dest, &bytes)
+}
+
+/// Write `bytes` next to `dest` under a fresh name (`create_new` never
+/// follows a planted link), flush them to disk, mark the file executable and
+/// rename it into place.
+fn write_atomic_exec(dest: &Path, bytes: &[u8]) -> Result<(), String> {
+    use std::io::Write;
+    let dir = dest.parent().expect("dest has a parent");
+    let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
+    let tmp = dir.join(format!(".download-{}-{nanos}", std::process::id()));
+    let result = (|| -> std::io::Result<()> {
+        let mut f = std::fs::OpenOptions::new().write(true).create_new(true).open(&tmp)?;
+        f.write_all(bytes)?;
+        f.sync_all()?;
+        drop(f);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o755))?;
+        }
+        std::fs::rename(&tmp, dest)
+    })();
+    result.map_err(|e| {
+        let _ = std::fs::remove_file(&tmp);
+        format!("cannot write {}: {e}", dest.display())
+    })
 }
 
 /// The `[[build]]` entries that apply to this OS.
@@ -164,8 +191,12 @@ impl Builder for ProcessBuilder {
             let _ = writeln!(&file, "[build] {}", argv.join(" "));
         }
         let mut cmd = Command::new(argv::resolve_program(program, cwd));
+        // Same clean environment as a plugin's own commands: the user's tokens
+        // and cloud keys stay out of a stranger's build script.
         cmd.args(args)
             .current_dir(cwd)
+            .env_clear()
+            .envs(garage_daemon::plugins::runner::base_env(std::env::vars()))
             .stdin(Stdio::null())
             .stdout(Stdio::from(file.try_clone().map_err(|e| e.to_string())?))
             .stderr(Stdio::from(file));
@@ -192,7 +223,10 @@ impl Builder for ProcessBuilder {
 }
 
 /// Run the manifest's builds in `plugin_dir`, substituting the argv variables
-/// against that directory.
+/// against that directory. At install and update time `plugin_dir` is the
+/// staging folder, which is moved to its final place afterwards, so a build
+/// must not record `{plugin_dir}` in what it produces; use paths relative to
+/// the plugin folder instead.
 pub fn run_builds(builder: &dyn Builder, m: &Manifest, plugin_dir: &Path, state_dir: &Path, log: &Path) -> Result<(), String> {
     let platform = argv::platform_id();
     let vars = Vars { plugin_id: &m.id, plugin_dir, state_dir, platform: &platform };
@@ -280,6 +314,44 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    fn a_planted_symlink_at_the_destination_is_never_written_through() {
+        use std::os::unix::fs::symlink;
+        let m = rel_manifest();
+        let plan = release_plan_for(&m, Some("o/r"), "macos-aarch64").unwrap().unwrap();
+        let body = b"#!/bin/sh\necho hi\n";
+        let sums = format!("{}  demo-mac\n", sha256_hex(body));
+        let fetch = FakeFetch::new(&[(&plan.asset_url, body), (&plan.checksums_url, sums.as_bytes())]);
+        let victim = tempfile::tempdir().unwrap();
+        std::fs::write(victim.path().join("precious"), "keep me").unwrap();
+
+        // the binary path itself is a link to a file elsewhere
+        let d = tempfile::tempdir().unwrap();
+        let bin = argv::bin_path(d.path(), "rel-demo");
+        std::fs::create_dir_all(bin.parent().unwrap()).unwrap();
+        symlink(victim.path().join("precious"), &bin).unwrap();
+        let e = download_release(&fetch, &plan, d.path(), "rel-demo").unwrap_err();
+        assert!(e.contains("symlink"), "{e}");
+        assert_eq!(std::fs::read_to_string(victim.path().join("precious")).unwrap(), "keep me");
+
+        // the bin folder is a link to a folder elsewhere
+        let d = tempfile::tempdir().unwrap();
+        let bin = argv::bin_path(d.path(), "rel-demo");
+        symlink(victim.path(), bin.parent().unwrap()).unwrap();
+        assert!(download_release(&fetch, &plan, d.path(), "rel-demo").unwrap_err().contains("symlink"));
+        assert_eq!(std::fs::read_dir(victim.path()).unwrap().count(), 1, "nothing was created in the target folder");
+
+        // a regular old file is replaced atomically and no temp file is left behind
+        let d = tempfile::tempdir().unwrap();
+        let bin = argv::bin_path(d.path(), "rel-demo");
+        std::fs::create_dir_all(bin.parent().unwrap()).unwrap();
+        std::fs::write(&bin, "old").unwrap();
+        download_release(&fetch, &plan, d.path(), "rel-demo").unwrap();
+        assert_eq!(std::fs::read(&bin).unwrap(), body);
+        assert_eq!(std::fs::read_dir(bin.parent().unwrap()).unwrap().count(), 1);
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn a_real_build_step_runs_without_a_shell_logs_output_and_reports_failure_and_timeout() {
         let d = tempfile::tempdir().unwrap();
         let log = d.path().join("logs/p.log");
@@ -291,6 +363,12 @@ mod tests {
         let e = b.run(&sh("echo boom >&2; exit 3"), d.path(), Duration::from_secs(10), &log).unwrap_err();
         assert!(e.contains("failed") && e.contains("p.log"), "{e}");
         assert!(std::fs::read_to_string(&log).unwrap().contains("boom"));
+        // the parent's variables are not in a build's environment, but PATH is
+        assert!(std::env::var("CARGO_MANIFEST_DIR").is_ok(), "cargo gives the test process this variable");
+        b.run(&sh("echo \"[$CARGO_MANIFEST_DIR][$PATH]\" > env.txt"), d.path(), Duration::from_secs(10), &log).unwrap();
+        let env_seen = std::fs::read_to_string(d.path().join("env.txt")).unwrap();
+        assert!(env_seen.starts_with("[]["), "{env_seen}");
+        assert!(env_seen.trim_end().len() > "[][]".len(), "PATH survives: {env_seen}");
         let e = b.run(&sh("sleep 30"), d.path(), Duration::from_millis(200), &log).unwrap_err();
         assert!(e.contains("timed out"), "{e}");
         assert!(b.run(&["./definitely-not-here".into()], d.path(), Duration::from_secs(1), &log).unwrap_err().contains("cannot start"));
