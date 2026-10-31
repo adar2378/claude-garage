@@ -81,6 +81,8 @@ jobs:
             id=$(basename "$dir")
             [ "$id" = hello ] && continue
             grep -q "wall/dist/plugins/$id/garage-plugin.toml" "$RUNNER_TEMP/pack.txt"
+            # manifest-only plugins (no Cargo.toml) have no binary
+            [ -f "$dir/Cargo.toml" ] || continue
             grep -q "wall/dist/plugins/$id/bin/$id" "$RUNNER_TEMP/pack.txt"
           done
 

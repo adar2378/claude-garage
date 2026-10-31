@@ -10,7 +10,8 @@
 #   scripts/stage-plugins.sh debug                       # dev: bins into plugins/<name>/bin (gitignored)
 #
 # Build first (`cargo build [--release] --workspace`); this only copies, and
-# fails when a plugin's binary is missing. `hello` is a dev/test fixture and
+# fails when a plugin's binary is missing. A plugin without a Cargo.toml is
+# manifest-only and ships just the manifest. `hello` is a dev/test fixture and
 # is never staged.
 set -eu
 profile="${1:?usage: stage-plugins.sh <debug|release> [dest]}"
@@ -22,6 +23,15 @@ for dir in "$root"/plugins/*/; do
   [ -f "$dir/garage-plugin.toml" ] || continue
   name="$(basename "$dir")"
   [ "$name" = hello ] && continue
+  if [ ! -f "$dir/Cargo.toml" ]; then
+    # manifest-only plugin (no commands): ships just its manifest
+    if [ -n "$dest" ]; then
+      mkdir -p "$dest/$name"
+      cp "$dir/garage-plugin.toml" "$dest/$name/garage-plugin.toml"
+      echo "staged $name (manifest only) -> $dest/$name"
+    fi
+    continue
+  fi
   out="${dest:+$dest/$name}"
   out="${out:-$dir}"
   if [ ! -f "$bins/$name" ]; then

@@ -1,0 +1,26 @@
+#:schema https://raw.githubusercontent.com/adar2378/claude-garage/main/schemas/garage-plugin.schema.json
+id          = "tile-buttons"
+name        = "Tile buttons"
+version     = "0.1.0"
+api_version = 1
+platforms   = ["macos", "linux"]
+description = "Close and delete buttons in every tile title bar"
+permissions = ["core.actions"]
+
+# No commands: both buttons trigger core actions. Both are dangerous, so the
+# wall arms them on the first click and runs them on the second.
+[[buttons]]
+slot     = "tile.title.right"
+label    = " x "
+tooltip  = "Close this session (click again to confirm)"
+on_click = "session.close"
+confirm  = true
+priority = 5
+
+[[buttons]]
+slot     = "tile.title.right"
+label    = " del "
+tooltip  = "Forget this session's saved state (click again to confirm)"
+on_click = "session.delete"
+confirm  = true
+priority = 1
