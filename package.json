@@ -40,7 +40,7 @@
   ],
   "scripts": {
     "test": "node --test \"daemon/test/*.test.js\"",
-    "build:tui": "cd wall && cargo build --release && mkdir -p dist && rm -f dist/garage-wall-$(node -p \"process.platform+'-'+process.arch\") && cp target/release/garage-wall dist/garage-wall-$(node -p \"process.platform+'-'+process.arch\")"
+    "build:tui": "cargo build --release -p garage-wall && mkdir -p wall/dist && rm -f wall/dist/garage-wall-$(node -p \"process.platform+'-'+process.arch\") && cp target/release/garage-wall wall/dist/garage-wall-$(node -p \"process.platform+'-'+process.arch\")"
   },
   "dependencies": {
     "fastify": "^5.3.0"
