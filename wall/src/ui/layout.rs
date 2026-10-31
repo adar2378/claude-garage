@@ -199,7 +199,10 @@ mod tests {
         assert_eq!(hidden.grid.x, 0);
         assert_eq!(hidden.grid.width, 100);
         let wide = wall_layout_with_rail(area(100, 30), 1, None, false, false, 40);
-        assert_eq!((wide.rail.width, wide.grid.x, wide.grid.width), (40, 40, 60));
+        assert_eq!(
+            (wide.rail.width, wide.grid.x, wide.grid.width),
+            (40, 40, 60)
+        );
         assert_eq!(
             slot_geometry(&hidden, &(0..0)).rail_width,
             0,

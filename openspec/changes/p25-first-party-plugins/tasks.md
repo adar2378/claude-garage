@@ -15,10 +15,10 @@
 - [ ] 2.9 pit-pet (moved out of `ui/pet.rs`, same behaviour)
 
 ## 3. Core items
-- [ ] 3.1 Draft and pasted-screenshot recovery
-- [ ] 3.2 Mouse selection and copy
-- [ ] 3.3 Sidebar hide and resize
-- [ ] 3.4 Quiet startup (`GARAGE_VERBOSE=1` for full output)
+- [x] 3.1 Draft and pasted-screenshot recovery
+- [x] 3.2 Mouse selection and copy
+- [x] 3.3 Sidebar hide and resize
+- [x] 3.4 Quiet startup (`GARAGE_VERBOSE=1` for full output)
 
 ## 4. API freeze
 - [ ] 4.1 List every plugin API gap found in group 2 and close it in the plugin host

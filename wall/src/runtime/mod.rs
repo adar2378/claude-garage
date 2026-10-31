@@ -58,6 +58,7 @@ use crate::ui::workspace_add::{PickOutcome, WorkspaceAddForm};
 use crate::ui::worktree_finish::WorktreeFinishState;
 
 mod dispatch;
+mod drafts;
 mod draw;
 mod effects;
 mod mouse;
@@ -411,6 +412,8 @@ struct App {
     drag: Option<mouse::Drag>,
     /// p25: the highlighted tile text, if any.
     selection: Option<crate::input::selection::Selection>,
+    /// p25: draft and pasted-image recovery (off until `enable`d).
+    drafts: drafts::DraftSync,
     /// p25: text waiting to reach the system clipboard (drained by the loop,
     /// which owns the terminal and the OS).
     copies: Vec<String>,
@@ -497,6 +500,7 @@ impl App {
             drag: None,
             selection: None,
             copies: Vec::new(),
+            drafts: drafts::DraftSync::default(),
             triage_rect: None,
             ws_add_rect: None,
             view_picker_rect: None,
@@ -815,6 +819,7 @@ impl App {
                 if let Some(id) = state.focused_session_id.clone() {
                     self.registry.set_frozen(&id, None);
                     self.registry.write(&id, &wrap_bracketed_paste(text));
+                    self.note_paste_for_drafts(&id, text, now_ms());
                 }
             }
             PasteTarget::Pane => {
@@ -885,7 +890,9 @@ impl App {
                 let Some(key_str) = garage_key_string(key) else {
                     return false; // consumed: garage typing never reaches an agent
                 };
-                if self.take_pane_offer(&key_str, now_ms()) {
+                if self.take_pane_offer(&key_str, now_ms())
+                    || self.take_draft_offer(&key_str, now_ms())
+                {
                     return false;
                 }
                 let outcome =
@@ -907,6 +914,9 @@ impl App {
             if matches!(effect, Effect::Quit) {
                 quit = true;
             } else {
+                if let Effect::Close { id, .. } = &effect {
+                    self.forget_drafts(id);
+                }
                 if matches!(effect, Effect::RestartDaemon) {
                     self.motion.daemon_restart_requested(now_ms());
                 }
@@ -1170,6 +1180,8 @@ async fn state_loop(
     // frame so a restart opens at the remembered width with no flash.
     app.store.load_rail(loaded_file.rail);
     let mut pending_file = Some(loaded_file);
+    app.drafts
+        .enable(persistence::garage_dir_from_env().join("drafts"));
     let mut saved_views_revision = app.store.views_revision();
     let mut views_dirty_since: Option<Instant> = None;
     const VIEWS_SAVE_DEBOUNCE: Duration = Duration::from_millis(500);
@@ -1253,6 +1265,9 @@ async fn state_loop(
         // Pit pet (spec tui-pit-pet): a 300 ms tick while a species is
         // selected, one cheap `if` otherwise (design.md decision 3).
         if app.pet_tick(now) {
+            dirty = true;
+        }
+        if app.draft_tick(now) {
             dirty = true;
         }
         // Debounced wall.json save (spec tui-views "View persistence"):

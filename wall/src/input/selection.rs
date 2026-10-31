@@ -42,8 +42,14 @@ impl Selection {
 
 /// `point` (absolute) clamped into `inner` and made tile-local.
 pub fn local_cell(inner: Rect, col: u16, row: u16) -> (u16, u16) {
-    let col = col.clamp(inner.x, (inner.x + inner.width).saturating_sub(1).max(inner.x));
-    let row = row.clamp(inner.y, (inner.y + inner.height).saturating_sub(1).max(inner.y));
+    let col = col.clamp(
+        inner.x,
+        (inner.x + inner.width).saturating_sub(1).max(inner.x),
+    );
+    let row = row.clamp(
+        inner.y,
+        (inner.y + inner.height).saturating_sub(1).max(inner.y),
+    );
     (col - inner.x, row - inner.y)
 }
 
@@ -126,7 +132,10 @@ mod tests {
         let p = screen("hello world\r\nsecond line   \r\nthird");
         let s = p.screen();
         assert_eq!(text_in(s, (6, 0), (5, 1)), "world\nsecond");
-        assert_eq!(text_in(s, (0, 0), (19, 2)), "hello world\nsecond line\nthird");
+        assert_eq!(
+            text_in(s, (0, 0), (19, 2)),
+            "hello world\nsecond line\nthird"
+        );
         assert_eq!(text_in(s, (2, 1), (2, 1)), "c");
     }
 

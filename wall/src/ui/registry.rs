@@ -300,6 +300,13 @@ impl TileRegistry {
         }
     }
 
+    /// Run `f` on the tile's LIVE screen, ignoring a frozen scrollback view.
+    pub fn with_live_screen<R>(&self, id: &str, f: impl FnOnce(&vt100::Screen) -> R) -> Option<R> {
+        let client = self.client(id)?;
+        let parser = client.parser().lock().unwrap();
+        Some(f(parser.screen()))
+    }
+
     /// One rendered row of a tile's terminal as plain text, one char per
     /// cell (blank cells become spaces so byte-column == cell-column for
     /// the ASCII text URLs are made of). Reads the frozen snapshot when the

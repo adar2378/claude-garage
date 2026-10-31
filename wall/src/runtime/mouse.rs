@@ -65,9 +65,7 @@ impl App {
             .layout
             .as_ref()
             .is_some_and(|l| l.view_strip.height > 0 && row == l.view_strip.y);
-        if !in_view_strip
-            && let Some((id, rect)) = self.tile_at(col, row)
-        {
+        if !in_view_strip && let Some((id, rect)) = self.tile_at(col, row) {
             let inner = inner_of(rect);
             if inner.contains((col, row).into()) {
                 self.drag = Some(Drag::Select {

@@ -272,10 +272,13 @@ fn stop_stale_daemon(host: &dyn Host, health: &Value) -> Result<(), Fail> {
         Some(v) => format!("v{v}"),
         None => "with no version (pre-upgrade)".to_owned(),
     };
-    detail(host, &format!(
-        "garage daemon {label} is stale (launcher v{}) — restarting it; sessions are untouched (tmux owns them)",
-        host.version()
-    ));
+    detail(
+        host,
+        &format!(
+            "garage daemon {label} is stale (launcher v{}) — restarting it; sessions are untouched (tmux owns them)",
+            host.version()
+        ),
+    );
     // The pid health reports; else the exact listener on the port. Never a
     // process-name match.
     let Some(pid) = health_pid(health).or_else(|| host.listener_pid()) else {
@@ -319,9 +322,10 @@ pub fn tui_main(host: &dyn Host) -> Result<i32, Fail> {
     let mut starting = None;
     if health.is_none() || stale {
         if !stale {
-            detail(host, &format!(
-                "no daemon on port {port} — starting one (it outlives the TUI)"
-            ));
+            detail(
+                host,
+                &format!("no daemon on port {port} — starting one (it outlives the TUI)"),
+            );
         }
         // No wait here: the TUI waits for /api/health itself, behind its
         // startup reveal, with the same 15s budget and failure message.

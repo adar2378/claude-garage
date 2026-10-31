@@ -179,8 +179,18 @@ fn a_drag_across_rows_copies_both_lines_and_a_click_copies_nothing() {
 
     let mut plain_click = app_with_layout();
     let (_, rect) = first_tile_with_text(&mut plain_click);
-    mouse(&mut plain_click, MouseEventKind::Down(LEFT), rect.x + 2, rect.y + 2);
-    mouse(&mut plain_click, MouseEventKind::Up(LEFT), rect.x + 2, rect.y + 2);
+    mouse(
+        &mut plain_click,
+        MouseEventKind::Down(LEFT),
+        rect.x + 2,
+        rect.y + 2,
+    );
+    mouse(
+        &mut plain_click,
+        MouseEventKind::Up(LEFT),
+        rect.x + 2,
+        rect.y + 2,
+    );
     assert!(plain_click.copies.is_empty());
     assert!(plain_click.selection.is_none());
 }
@@ -246,4 +256,109 @@ fn the_highlight_paints_reverse_video_only_on_the_selected_cells() {
     assert!(!rev(2 + 7, 1));
     assert!(rev(2, 2) && rev(3, 2), "last row up to the head");
     assert!(!rev(4, 2));
+}
+
+// ── draft recovery ────────────────────────────────────────────────────
+
+mod draft_flow {
+    use super::*;
+    use crate::drafts::{DraftStore, Prompt};
+
+    fn app_with_drafts() -> (App, tempfile::TempDir, DraftStore, String) {
+        let mut app = app_with_layout();
+        let dir = tempfile::tempdir().unwrap();
+        app.drafts.enable(dir.path().join("drafts"));
+        let store = DraftStore::new(dir.path().join("drafts"));
+        let id = app.store.state().gridded_session_ids[0].clone();
+        (app, dir, store, id)
+    }
+
+    #[test]
+    fn typed_text_is_kept_and_a_sent_prompt_forgets_it() {
+        let (mut app, _d, store, id) = app_with_drafts();
+        app.observe_prompt(&id, Prompt::Text("half a thought".into()), 1000);
+        assert_eq!(store.load_text(&id).as_deref(), Some("half a thought"));
+        app.observe_prompt(&id, Prompt::Unknown, 2000);
+        assert!(store.has_anything(&id), "a dialog proves nothing");
+        app.observe_prompt(&id, Prompt::Empty, 3000);
+        assert!(!store.has_anything(&id), "sent: nothing left to recover");
+    }
+
+    #[test]
+    fn a_power_cut_draft_is_offered_once_on_the_empty_prompt_and_typed_back_on_u() {
+        let (mut app, _d, store, id) = app_with_drafts();
+        store.save_text(&id, "the plan [Image #1] is").unwrap();
+        let png = _d.path().join("a.png");
+        std::fs::write(&png, b"png").unwrap();
+        let kept = store.add_image(&id, &png).unwrap().unwrap();
+
+        // The restored session shows an empty prompt: offer, keep the files.
+        assert!(app.observe_prompt(&id, Prompt::Empty, 10_000));
+        assert!(store.has_anything(&id), "an open offer protects the draft");
+        assert!(
+            app.router
+                .notices
+                .current(10_000)
+                .is_some_and(|n| n.contains("press u"))
+        );
+        assert!(!app.observe_prompt(&id, Prompt::Empty, 11_000), "once only");
+        assert!(store.has_anything(&id));
+
+        // Another key is not an answer; u is.
+        assert!(!app.take_draft_offer("x", 12_000));
+        assert!(app.take_draft_offer("u", 12_000));
+        let r = &app.drafts.restoring[0];
+        assert_eq!(r.session, id);
+        let pieces: Vec<&String> = r.pieces.iter().collect();
+        assert_eq!(pieces[0], "the plan  is", "placeholder dropped, text first");
+        assert_eq!(pieces[1], &kept.to_string_lossy().into_owned());
+
+        // Pieces go out one per gap, not all at once.
+        assert!(app.draft_tick(12_000));
+        assert_eq!(app.drafts.restoring[0].pieces.len(), 1);
+        assert!(!app.draft_tick(12_300), "next piece is not due yet");
+        assert!(app.draft_tick(12_800));
+        assert!(app.drafts.restoring.is_empty());
+        assert!(!app.take_draft_offer("u", 13_000), "the offer is spent");
+    }
+
+    #[test]
+    fn typing_instead_of_restoring_withdraws_the_offer() {
+        let (mut app, _d, store, id) = app_with_drafts();
+        store.save_text(&id, "old").unwrap();
+        app.observe_prompt(&id, Prompt::Empty, 1000);
+        app.observe_prompt(&id, Prompt::Text("new words".into()), 2000);
+        assert!(!app.take_draft_offer("u", 3000));
+        assert_eq!(store.load_text(&id).as_deref(), Some("new words"));
+    }
+
+    #[test]
+    fn a_pasted_image_is_kept_and_survives_the_moment_before_claude_draws_it() {
+        let (mut app, d, store, id) = app_with_drafts();
+        let png = d.path().join("shot.png");
+        std::fs::write(&png, b"png").unwrap();
+        app.note_paste_for_drafts(&id, png.to_str().unwrap(), 1000);
+        assert_eq!(store.images(&id).len(), 1);
+        // Prompt still empty a beat later: not judged yet.
+        app.observe_prompt(&id, Prompt::Empty, 2000);
+        assert_eq!(store.images(&id).len(), 1);
+        // Long after, still empty: it was sent.
+        app.observe_prompt(&id, Prompt::Empty, 20_000);
+        assert!(store.images(&id).is_empty());
+        // And an image pasted this run never raises an offer.
+        assert!(app.drafts.offers.is_empty());
+    }
+
+    #[test]
+    fn closing_a_session_deletes_what_was_kept_and_nothing_is_written_when_off() {
+        let (mut app, _d, store, id) = app_with_drafts();
+        app.observe_prompt(&id, Prompt::Text("x".into()), 1000);
+        app.forget_drafts(&id);
+        assert!(!store.has_anything(&id));
+
+        let mut off = app_with_layout(); // never enabled
+        let id = off.store.state().gridded_session_ids[0].clone();
+        assert!(!off.observe_prompt(&id, Prompt::Text("x".into()), 1000));
+        assert!(!off.take_draft_offer("u", 1000));
+    }
 }
