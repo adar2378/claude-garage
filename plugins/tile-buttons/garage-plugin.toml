@@ -4,11 +4,15 @@ name        = "Tile buttons"
 version     = "0.1.0"
 api_version = 1
 platforms   = ["macos", "linux"]
-description = "Close and delete buttons in every tile title bar"
+description = "A close button in every tile title bar"
 permissions = ["core.actions"]
 
-# No commands: both buttons trigger core actions. Both are dangerous, so the
-# wall arms them on the first click and runs them on the second.
+# No commands: the button triggers a core action. session.close is dangerous,
+# so the wall arms it on the first click and runs it on the second.
+#
+# There is no delete button on purpose: session.delete forgets a CLOSED session
+# and the wall refuses it on a live tile ("close it first"), so a button on a
+# tile could never act. See openspec p25 tasks 4.1.
 [[buttons]]
 slot     = "tile.title.right"
 label    = " x "
@@ -16,11 +20,3 @@ tooltip  = "Close this session (click again to confirm)"
 on_click = "session.close"
 confirm  = true
 priority = 5
-
-[[buttons]]
-slot     = "tile.title.right"
-label    = " del "
-tooltip  = "Forget this session's saved state (click again to confirm)"
-on_click = "session.delete"
-confirm  = true
-priority = 1
