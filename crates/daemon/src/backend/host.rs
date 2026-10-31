@@ -32,7 +32,7 @@ enum Probe {
     /// The port is open but did not answer in time (a host busy writing to a
     /// slow client). Not stale: never delete its record.
     Busy,
-    /// Nothing listens there any more.
+    /// Nothing listens there any more, or the host process is gone.
     Dead,
 }
 
@@ -43,13 +43,61 @@ fn is_gone(e: &std::io::Error) -> bool {
     matches!(e.kind(), ConnectionRefused | AddrNotAvailable | NotFound | InvalidInput)
 }
 
-fn probe(entry: &Entry) -> Probe {
-    match proto::info(&entry.addr(), &entry.token) {
+/// Decide from the outcome of an info request. Pure, so the cases are testable.
+fn classify(entry: &Entry, answer: std::io::Result<Info>, pid_alive: impl Fn(u32) -> bool) -> Probe {
+    match answer {
         Ok(info) => Probe::Alive(info),
         Err(e) if is_gone(&e) => Probe::Dead,
+        // Something answers but not with our reply. If the record's own host
+        // process is gone, that something is a stranger holding a recycled
+        // port (it rejects our token): the record is stale.
+        Err(_) if !pid_alive(entry.pid) => Probe::Dead,
         // A connect timeout also lands here; a host that cannot even accept in
         // 2s is stuck, but deleting its record would orphan a live process.
         Err(_) => Probe::Busy,
+    }
+}
+
+fn probe(entry: &Entry) -> Probe {
+    classify(entry, proto::info(&entry.addr(), &entry.token), registry::pid_alive)
+}
+
+/// Delete a record found stale, but only if the file still holds the entry that
+/// was probed: the probe can take seconds, and a respawn may have written a new
+/// record (new pid and token) under the same id meanwhile.
+fn prune(dir: &Path, probed: &Entry) {
+    registry::remove_if_same(dir, probed);
+}
+
+type ProbeFn<'a> = &'a (dyn Fn(&Entry) -> Probe + Sync);
+
+fn live_blocking(dir: &Path, probe: ProbeFn) -> Vec<(Entry, Option<Info>)> {
+    let entries: Vec<Entry> =
+        registry::read_all(dir).into_iter().filter(|e| e.id.starts_with(GARAGE_PREFIX)).collect();
+    // Probe in parallel: one stuck host must not delay the others.
+    let results: Vec<Probe> = std::thread::scope(|s| {
+        let handles: Vec<_> = entries.iter().map(|e| s.spawn(move || probe(e))).collect();
+        handles.into_iter().map(|h| h.join().unwrap_or(Probe::Busy)).collect()
+    });
+    let mut out = Vec::new();
+    for (entry, result) in entries.into_iter().zip(results) {
+        match result {
+            Probe::Alive(info) => out.push((entry, Some(info))),
+            Probe::Busy => out.push((entry, None)),
+            Probe::Dead => prune(dir, &entry),
+        }
+    }
+    out
+}
+
+fn find_blocking(dir: &Path, id: &str, probe: ProbeFn) -> Option<Entry> {
+    let entry = registry::read(dir, id)?;
+    match probe(&entry) {
+        Probe::Alive(_) | Probe::Busy => Some(entry),
+        Probe::Dead => {
+            prune(dir, &entry);
+            None
+        }
     }
 }
 
@@ -77,41 +125,13 @@ impl HostBackend {
     /// Every garage record with its probe result; stale records are deleted.
     async fn live(&self) -> Result<Vec<(Entry, Option<Info>)>> {
         let dir = self.hosts_dir.clone();
-        blocking(move || {
-            let entries: Vec<Entry> =
-                registry::read_all(&dir).into_iter().filter(|e| e.id.starts_with(GARAGE_PREFIX)).collect();
-            // Probe in parallel: one stuck host must not delay the others.
-            let results: Vec<Probe> = std::thread::scope(|s| {
-                let handles: Vec<_> = entries.iter().map(|e| s.spawn(move || probe(e))).collect();
-                handles.into_iter().map(|h| h.join().unwrap_or(Probe::Busy)).collect()
-            });
-            let mut out = Vec::new();
-            for (entry, result) in entries.into_iter().zip(results) {
-                match result {
-                    Probe::Alive(info) => out.push((entry, Some(info))),
-                    Probe::Busy => out.push((entry, None)),
-                    Probe::Dead => registry::remove(&dir, &entry.id),
-                }
-            }
-            Ok(out)
-        })
-        .await?
+        blocking(move || live_blocking(&dir, &probe)).await
     }
 
     /// The live record for `id`, if any.
     async fn find(&self, id: &str) -> Result<Option<Entry>> {
         let (dir, id) = (self.hosts_dir.clone(), id.to_owned());
-        blocking(move || {
-            let entry = registry::read(&dir, &id)?;
-            match probe(&entry) {
-                Probe::Alive(_) | Probe::Busy => Some(entry),
-                Probe::Dead => {
-                    registry::remove(&dir, &id);
-                    None
-                }
-            }
-        })
-        .await
+        blocking(move || find_blocking(&dir, &id, &probe)).await
     }
 
     async fn start(&self, id: &str, dir: &Path, cmd: &str, args: &[String], env: &[(String, String)]) -> Result<()> {
@@ -160,7 +180,7 @@ impl HostBackend {
         blocking(move || {
             if let Err(e) = proto::shutdown(&entry.addr(), &entry.token) {
                 if is_gone(&e) {
-                    registry::remove(&dir, &entry.id);
+                    prune(&dir, &entry);
                     bail!("can't find session: {}", entry.id);
                 }
                 // Busy or reset mid-reply: the frame may still have landed.
@@ -273,5 +293,65 @@ impl SessionBackend for HostBackend {
     fn attach_spec(&self, id: &str) -> AttachSpec {
         let known = registry::read(&self.hosts_dir, id).is_some();
         AttachSpec::Host { id: if known { id.to_owned() } else { String::new() } }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::{Error, ErrorKind};
+
+    fn entry(pid: u32, token: &str) -> Entry {
+        Entry { id: "garage/ws/a".into(), pid, child_pid: 2, port: 4000, token: token.repeat(32), dir: "/w".into(), created_at: 5, title: String::new() }
+    }
+
+    fn info() -> Info {
+        Info { id: "garage/ws/a".into(), pid: 1, child_pid: 2, dir: "/w".into(), created_at: 5, title: String::new(), attached: 0 }
+    }
+
+    #[test]
+    fn a_stranger_on_a_recycled_port_is_stale_only_when_the_host_process_is_gone() {
+        let e = entry(111, "a");
+        let rejected = || Err(Error::new(ErrorKind::UnexpectedEof, "token rejected"));
+        assert!(matches!(classify(&e, rejected(), |_| false), Probe::Dead), "host pid gone -> stale");
+        assert!(matches!(classify(&e, rejected(), |_| true), Probe::Busy), "host pid alive -> never delete");
+        assert!(matches!(classify(&e, Err(Error::new(ErrorKind::TimedOut, "slow")), |_| true), Probe::Busy));
+        assert!(matches!(classify(&e, Err(Error::from(ErrorKind::ConnectionRefused)), |_| true), Probe::Dead));
+        assert!(matches!(classify(&e, Ok(info()), |_| false), Probe::Alive(_)));
+    }
+
+    #[test]
+    fn a_respawn_during_a_slow_probe_keeps_its_new_record() {
+        let d = tempfile::tempdir().unwrap();
+        let old = entry(111, "a");
+        registry::write(d.path(), &old).unwrap();
+        // The probe of the old record reports Dead, but while it "runs" the
+        // session is respawned: a new host writes its record under the same id.
+        let fresh = entry(222, "b");
+        let slow_dead_probe = |e: &Entry| {
+            assert_eq!(e.pid, 111);
+            registry::write(d.path(), &fresh).unwrap();
+            Probe::Dead
+        };
+        assert!(live_blocking(d.path(), &slow_dead_probe).is_empty());
+        assert_eq!(registry::read(d.path(), "garage/ws/a"), Some(fresh.clone()), "live host's record must survive");
+        assert_eq!(find_blocking(d.path(), "garage/ws/a", &|_| Probe::Busy).map(|e| e.pid), Some(222));
+
+        // The same race through `find`.
+        let newer = entry(333, "c");
+        let find_probe = |_: &Entry| {
+            registry::write(d.path(), &newer).unwrap();
+            Probe::Dead
+        };
+        assert_eq!(find_blocking(d.path(), "garage/ws/a", &find_probe).map(|e| e.pid), None);
+        assert_eq!(registry::read(d.path(), "garage/ws/a"), Some(newer));
+    }
+
+    #[test]
+    fn a_dead_record_nobody_replaced_is_deleted() {
+        let d = tempfile::tempdir().unwrap();
+        registry::write(d.path(), &entry(111, "a")).unwrap();
+        assert!(live_blocking(d.path(), &|_| Probe::Dead).is_empty());
+        assert_eq!(registry::read(d.path(), "garage/ws/a"), None);
     }
 }

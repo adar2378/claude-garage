@@ -79,12 +79,34 @@ pub fn read_all(hosts_dir: &Path) -> Vec<Entry> {
     out
 }
 
-/// Create the hosts directory. Records hold each host's token, so on Unix the
-/// directory is private to the user (0700), including when it already exists.
+/// Whether `dir` lies inside `profile` (the user's profile directory), by
+/// case-insensitive component comparison. A path with `..` never counts: it
+/// could climb out of the profile.
+pub fn is_under_profile(dir: &Path, profile: &Path) -> bool {
+    use std::path::Component;
+    let norm = |p: &Path| -> Option<Vec<String>> {
+        p.components()
+            .map(|c| match c {
+                Component::ParentDir => None,
+                c => Some(c.as_os_str().to_string_lossy().to_lowercase()),
+            })
+            .collect()
+    };
+    match (norm(dir), norm(profile)) {
+        (Some(d), Some(p)) => !p.is_empty() && d.starts_with(&p),
+        _ => false,
+    }
+}
+
+/// Create the hosts directory. Records hold each host's token, so the
+/// directory must be private to the user.
 ///
-/// On Windows the directory sits under the per-user profile (`%USERPROFILE%\.garage`),
-/// which is readable by that user (and administrators) only by default; this
-/// code relies on that and sets no ACL of its own.
+/// Unix: mode 0700, including when it already exists. Windows: the directory
+/// normally sits under the per-user profile (`%USERPROFILE%\.garage`), which
+/// other users cannot read by default. If `GARAGE_DIR` points elsewhere (for
+/// example `D:\garage`, whose ACL is typically inherited from a shared
+/// drive root) an owner-only ACL is set on it, and failing to set it is an
+/// error: the host refuses to put tokens in a directory it cannot protect.
 pub fn ensure_dir(hosts_dir: &Path) -> std::io::Result<()> {
     #[cfg(unix)]
     {
@@ -92,8 +114,72 @@ pub fn ensure_dir(hosts_dir: &Path) -> std::io::Result<()> {
         std::fs::DirBuilder::new().recursive(true).mode(0o700).create(hosts_dir)?;
         std::fs::set_permissions(hosts_dir, std::fs::Permissions::from_mode(0o700))
     }
-    #[cfg(not(unix))]
+    #[cfg(windows)]
+    {
+        std::fs::create_dir_all(hosts_dir)?;
+        let inside = std::env::var_os("USERPROFILE").is_some_and(|p| is_under_profile(hosts_dir, Path::new(&p)));
+        if inside {
+            return Ok(());
+        }
+        windows_acl::restrict_to_owner(hosts_dir).map_err(|e| {
+            std::io::Error::other(format!(
+                "{} is outside your user profile and could not be made private ({e}); set GARAGE_DIR under {}",
+                hosts_dir.display(),
+                std::env::var("USERPROFILE").unwrap_or_else(|_| "your profile".into())
+            ))
+        })
+    }
+    #[cfg(not(any(unix, windows)))]
     std::fs::create_dir_all(hosts_dir)
+}
+
+#[cfg(windows)]
+mod windows_acl {
+    use std::os::windows::ffi::OsStrExt;
+    use std::path::Path;
+
+    use windows_sys::Win32::Foundation::{LocalFree, ERROR_SUCCESS};
+    use windows_sys::Win32::Security::Authorization::{
+        ConvertStringSecurityDescriptorToSecurityDescriptorW, SetNamedSecurityInfoW, SDDL_REVISION_1, SE_FILE_OBJECT,
+    };
+    use windows_sys::Win32::Security::{
+        GetSecurityDescriptorDacl, ACL, DACL_SECURITY_INFORMATION, PROTECTED_DACL_SECURITY_INFORMATION,
+    };
+
+    /// Replace the directory's ACL with one that grants full control to the
+    /// owner only (SDDL `OW` = OWNER RIGHTS) and does not inherit from the
+    /// parent, so files created inside inherit the same owner-only access.
+    pub fn restrict_to_owner(dir: &Path) -> Result<(), String> {
+        let path: Vec<u16> = dir.as_os_str().encode_wide().chain(std::iter::once(0)).collect();
+        let sddl: Vec<u16> = "D:PAI(A;OICI;FA;;;OW)".encode_utf16().chain(std::iter::once(0)).collect();
+        // SAFETY: FFI. `sd` is allocated by the call and freed with LocalFree
+        // on every path; the DACL pointer points into `sd` and is used only
+        // before that free; `path` and `sddl` are NUL-terminated.
+        unsafe {
+            let mut sd = std::ptr::null_mut();
+            if ConvertStringSecurityDescriptorToSecurityDescriptorW(sddl.as_ptr(), SDDL_REVISION_1, &mut sd, std::ptr::null_mut()) == 0 {
+                return Err(format!("security descriptor: {}", std::io::Error::last_os_error()));
+            }
+            let (mut present, mut defaulted) = (0i32, 0i32);
+            let mut dacl: *mut ACL = std::ptr::null_mut();
+            let result = if GetSecurityDescriptorDacl(sd, &mut present, &mut dacl, &mut defaulted) == 0 || present == 0 {
+                Err(format!("dacl: {}", std::io::Error::last_os_error()))
+            } else {
+                let rc = SetNamedSecurityInfoW(
+                    path.as_ptr().cast_mut(),
+                    SE_FILE_OBJECT,
+                    DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                    dacl,
+                    std::ptr::null_mut(),
+                );
+                if rc == ERROR_SUCCESS { Ok(()) } else { Err(format!("SetNamedSecurityInfo error {rc}")) }
+            };
+            LocalFree(sd);
+            result
+        }
+    }
 }
 
 /// Atomic write (temp file, then rename), so a reader never sees half a file.
@@ -120,6 +206,54 @@ pub fn write(hosts_dir: &Path, entry: &Entry) -> std::io::Result<()> {
 
 pub fn remove(hosts_dir: &Path, id: &str) {
     let _ = std::fs::remove_file(path_for(hosts_dir, id));
+}
+
+/// Remove the record for `seen.id` only if the file on disk still names the
+/// same host (pid AND token). Anyone who decided to delete a record after a
+/// delay (a probe, a shutdown wait) must use this: in the meantime a respawn
+/// may have written a new record under the same id, which must survive.
+/// The file is re-read immediately before the removal; the remaining window
+/// is that of a single read-then-unlink. Returns whether a record was removed.
+pub fn remove_if_same(hosts_dir: &Path, seen: &Entry) -> bool {
+    match read(hosts_dir, &seen.id) {
+        Some(now) if now.pid == seen.pid && now.token == seen.token => {
+            std::fs::remove_file(path_for(hosts_dir, &seen.id)).is_ok()
+        }
+        _ => false,
+    }
+}
+
+/// Whether a process with this pid exists (a zombie or a reused pid counts as
+/// alive: the caller only uses this to avoid deleting records of live hosts).
+pub fn pid_alive(pid: u32) -> bool {
+    #[cfg(unix)]
+    {
+        let Ok(p) = i32::try_from(pid) else { return false };
+        if p <= 0 {
+            return false;
+        }
+        // SAFETY: signal 0 only checks that the pid can be signalled.
+        unsafe { libc::kill(p, 0) == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM) }
+    }
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::Foundation::{CloseHandle, ERROR_ACCESS_DENIED, STILL_ACTIVE};
+        use windows_sys::Win32::System::Threading::{GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION};
+        if pid == 0 {
+            return false;
+        }
+        // SAFETY: plain Win32 calls; the handle is closed before returning.
+        unsafe {
+            let h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+            if h.is_null() {
+                return std::io::Error::last_os_error().raw_os_error() == Some(ERROR_ACCESS_DENIED as i32);
+            }
+            let mut code = 0u32;
+            let ok = GetExitCodeProcess(h, &mut code) != 0;
+            CloseHandle(h);
+            !ok || code == STILL_ACTIVE as u32
+        }
+    }
 }
 
 #[cfg(test)]
@@ -192,6 +326,40 @@ mod tests {
         write(&loose, &entry("garage/ws/b")).unwrap(); // rewrite keeps 0600
         assert_eq!(mode(&loose), 0o700, "an existing directory is tightened");
         assert_eq!(mode(&path_for(&loose, "garage/ws/b")), 0o600);
+    }
+
+    #[test]
+    fn remove_if_same_spares_a_record_a_respawn_wrote_in_the_meantime() {
+        let d = tempfile::tempdir().unwrap();
+        let old = entry("garage/ws/a");
+        write(d.path(), &old).unwrap();
+        // Same pid, same token: ours, removed.
+        assert!(remove_if_same(d.path(), &old));
+        assert_eq!(read(d.path(), "garage/ws/a"), None);
+        assert!(!remove_if_same(d.path(), &old), "already gone");
+        // A respawn replaced it: a different pid or a different token both survive.
+        for fresh in [Entry { pid: 99, ..entry("garage/ws/a") }, Entry { token: "z".repeat(32), ..entry("garage/ws/a") }] {
+            write(d.path(), &fresh).unwrap();
+            assert!(!remove_if_same(d.path(), &old));
+            assert_eq!(read(d.path(), "garage/ws/a"), Some(fresh));
+        }
+    }
+
+    #[test]
+    fn pid_alive_knows_this_process_and_not_pid_zero() {
+        assert!(pid_alive(std::process::id()));
+        assert!(!pid_alive(0));
+    }
+
+    #[test]
+    fn profile_membership_is_by_component_case_insensitive_and_never_through_dotdot() {
+        let p = Path::new("C:/Users/Me");
+        assert!(is_under_profile(Path::new("C:/Users/Me/.garage/hosts"), p));
+        assert!(is_under_profile(Path::new("c:/users/me/.garage"), p));
+        assert!(!is_under_profile(Path::new("D:/garage/hosts"), p));
+        assert!(!is_under_profile(Path::new("C:/Users/Meagan/.garage"), p), "prefix of a name is not a parent");
+        assert!(!is_under_profile(Path::new("C:/Users/Me/../Other/.garage"), p));
+        assert!(!is_under_profile(Path::new("anything"), Path::new("")));
     }
 
     #[test]
