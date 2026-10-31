@@ -5,10 +5,10 @@
 # TUI assume tmux and a Unix shell, so that job shows the gap without blocking.
 name: ci
 
+# Manual only for now (Actions tab → ci → Run workflow): the full
+# macOS/Linux/Windows matrix is too heavy to run on every push.
 on:
-  pull_request:
-  push:
-    branches: [main, dev]
+  workflow_dispatch:
 
 permissions:
   contents: read
