@@ -21,6 +21,27 @@ fn fail<T>(msg: impl Into<String>) -> Result<T, Fail> {
 pub trait Out {
     fn say(&self, line: &str);
     fn warn(&self, line: &str);
+    /// `GARAGE_VERBOSE=1`: the launcher narrates what it does on a start.
+    /// Off by default, so a normal start prints nothing before the wall.
+    fn verbose(&self) -> bool {
+        false
+    }
+}
+
+/// A startup progress line: shown only when [`Out::verbose`] is on. Errors
+/// and prompts do not use this; they always print.
+fn detail(host: &dyn Host, line: &str) {
+    if host.verbose() {
+        host.say(line);
+    }
+}
+
+/// Whether an env value turns verbose startup on (`1`, `true`, `yes`).
+pub fn verbose_from(value: Option<&str>) -> bool {
+    matches!(
+        value.map(|v| v.trim().to_ascii_lowercase()).as_deref(),
+        Some("1" | "true" | "yes")
+    )
 }
 
 /// Result of running `<bin> <args>` just to see whether it exists.
@@ -251,10 +272,13 @@ fn stop_stale_daemon(host: &dyn Host, health: &Value) -> Result<(), Fail> {
         Some(v) => format!("v{v}"),
         None => "with no version (pre-upgrade)".to_owned(),
     };
-    host.say(&format!(
-        "garage daemon {label} is stale (launcher v{}) — restarting it; sessions are untouched (tmux owns them)",
-        host.version()
-    ));
+    detail(
+        host,
+        &format!(
+            "garage daemon {label} is stale (launcher v{}) — restarting it; sessions are untouched (tmux owns them)",
+            host.version()
+        ),
+    );
     // The pid health reports; else the exact listener on the port. Never a
     // process-name match.
     let Some(pid) = health_pid(health).or_else(|| host.listener_pid()) else {
@@ -298,9 +322,10 @@ pub fn tui_main(host: &dyn Host) -> Result<i32, Fail> {
     let mut starting = None;
     if health.is_none() || stale {
         if !stale {
-            host.say(&format!(
-                "no daemon on port {port} — starting one (it outlives the TUI)"
-            ));
+            detail(
+                host,
+                &format!("no daemon on port {port} — starting one (it outlives the TUI)"),
+            );
         }
         // No wait here: the TUI waits for /api/health itself, behind its
         // startup reveal, with the same 15s budget and failure message.
@@ -479,6 +504,7 @@ mod tests {
         fetch_cost_ms: u64,
         fetches: RefCell<u64>,
         host_backend: bool,
+        verbose: bool,
     }
 
     impl Fake {
@@ -505,6 +531,7 @@ mod tests {
                 fetch_cost_ms: 0,
                 fetches: Default::default(),
                 host_backend: false,
+                verbose: false,
             }
         }
         fn called(&self, prefix: &str) -> usize {
@@ -540,6 +567,9 @@ mod tests {
         }
         fn warn(&self, line: &str) {
             self.warned.borrow_mut().push(line.to_owned());
+        }
+        fn verbose(&self) -> bool {
+            self.verbose
         }
     }
 
@@ -830,7 +860,8 @@ mod tests {
 
     #[test]
     fn no_daemon_starts_one_detached_waits_for_health_then_runs_the_tui() {
-        let f = Fake::new(None);
+        let mut f = Fake::new(None);
+        f.verbose = true;
         assert_eq!(tui_main(&f), Ok(0));
         let log = f.log();
         let pos = |s: &str| {
@@ -845,6 +876,33 @@ mod tests {
         assert!(pos("spawn_daemon") < pos("run_tui /fake/garage-wall"));
         assert_eq!(f.called("terminate"), 0);
         assert!(f.said()[0].starts_with("no daemon on port 4747 — starting one"));
+    }
+
+    #[test]
+    fn a_normal_start_prints_nothing_even_when_it_starts_or_replaces_a_daemon() {
+        let f = Fake::new(None);
+        assert_eq!(tui_main(&f), Ok(0));
+        assert!(f.said().is_empty(), "{:?}", f.said());
+        assert!(f.warned.borrow().is_empty());
+
+        let mut f = Fake::new(Some(health(Some("0.5.0"), Some(4242))));
+        assert_eq!(tui_main(&f), Ok(0));
+        assert!(f.said().is_empty(), "{:?}", f.said());
+
+        // Errors still print: a missing binary is reported, not swallowed.
+        f.tui = Err(Fail("no prebuilt TUI binary".into()));
+        assert_eq!(tui_main(&f).unwrap_err().0, "no prebuilt TUI binary");
+    }
+
+    #[test]
+    fn garage_verbose_accepts_the_usual_truthy_spellings_only() {
+        for on in ["1", "true", "TRUE", " yes "] {
+            assert!(verbose_from(Some(on)), "{on}");
+        }
+        for off in ["", "0", "false", "no", "2"] {
+            assert!(!verbose_from(Some(off)), "{off}");
+        }
+        assert!(!verbose_from(None));
     }
 
     #[test]
@@ -875,6 +933,7 @@ mod tests {
     #[test]
     fn a_stale_daemon_is_stopped_by_the_pid_it_reports_then_replaced() {
         let mut f = Fake::new(Some(health(Some("0.5.0"), Some(4242))));
+        f.verbose = true;
         f.listener = Some(9999); // must be ignored: health reported a pid
         assert_eq!(tui_main(&f), Ok(0));
         let log = f.log();
@@ -903,6 +962,7 @@ mod tests {
     #[test]
     fn a_pre_upgrade_daemon_without_pid_or_version_falls_back_to_the_port_listener() {
         let mut f = Fake::new(Some(health(None, None)));
+        f.verbose = true;
         f.listener = Some(5150);
         assert_eq!(tui_main(&f), Ok(0));
         assert!(f.log().contains(&"terminate 5150".to_owned()));

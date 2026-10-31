@@ -10,7 +10,7 @@ use crate::slots::{SlotClickRegion, SlotCtx, SlotId};
 use crate::state::views::ViewSummary;
 use crate::state::wall_state::{KeyLayer, OverlayKind};
 use crate::ui::help::render_help_with;
-use crate::ui::layout::{slot_geometry, tile_inner, wall_layout};
+use crate::ui::layout::{slot_geometry, tile_inner, wall_layout_with_rail};
 use crate::ui::rail::render_rail_fading;
 use crate::ui::strip::render_strip;
 use crate::ui::theme::colors;
@@ -65,25 +65,41 @@ impl App {
             .find(|v| v.name == focused_view_name)
             .is_some_and(|v| v.session_ids.len() >= 2);
 
-        let layout = wall_layout(area, ids.len(), maximized_index, show_view_strip, framed);
+        let layout = wall_layout_with_rail(
+            area,
+            ids.len(),
+            maximized_index,
+            show_view_strip,
+            framed,
+            self.rail_drag
+                .unwrap_or_else(|| self.store.state().rail.layout_width()),
+        );
 
         // PTY size tracks the tile (TIOCSWINSZ) on every layout pass —
-        // startup, grid reshape, maximize both ways, terminal resize.
-        for (i, id) in ids.iter().enumerate() {
-            let (cols, rows) = tile_inner(layout.tiles[i]);
-            self.registry.apply_size(id, cols, rows);
+        // startup, grid reshape, maximize both ways, terminal resize. Not
+        // while the divider is being dragged: that frame is a preview, and
+        // the sizes follow on release.
+        if self.rail_drag.is_none() {
+            for (i, id) in ids.iter().enumerate() {
+                let (cols, rows) = tile_inner(layout.tiles[i]);
+                self.registry.apply_size(id, cols, rows);
+            }
         }
 
         self.gutter_sessions.clear(); // refilled by the tiles drawn below
         let buf = frame.buffer_mut();
-        let mut slot_clicks = render_rail_fading(
-            buf,
-            layout.rail,
-            self.store.state(),
-            &self.slots,
-            now_ms,
-            self.motion.enabled(),
-        );
+        let mut slot_clicks = if layout.rail.width == 0 {
+            Vec::new() // hidden (`b`)
+        } else {
+            render_rail_fading(
+                buf,
+                layout.rail,
+                self.store.state(),
+                &self.slots,
+                now_ms,
+                self.motion.enabled(),
+            )
+        };
 
         if show_view_strip {
             let ranges = render_view_strip(buf, layout.view_strip, &views, &focused_view_name);
@@ -148,6 +164,16 @@ impl App {
                     self.motion.spinner_shown();
                 }
                 slot_clicks.extend(self.draw_tile(buf, layout.tiles[i], id, now_ms, spinning));
+                if let Some(sel) = self.selection.as_ref().filter(|s| s.session == *id) {
+                    let r = layout.tiles[i];
+                    let inner = Rect::new(
+                        r.x + 1,
+                        r.y + 1,
+                        r.width.saturating_sub(2),
+                        r.height.saturating_sub(2),
+                    );
+                    crate::input::selection::paint(buf, inner, sel);
+                }
             }
         }
         // Effects run over the finished tiles, under the strip and overlays.

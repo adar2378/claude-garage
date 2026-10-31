@@ -10,7 +10,7 @@ use crate::api::models::{SessionInfo, UsageInfo, WorkspaceInfo};
 use crate::state::armed_action::ArmedAction;
 use crate::state::salience::jump_target;
 use crate::state::views::{DEFAULT_VIEW, View, ViewsByWorkspace, derive_view_name, view_of};
-use crate::state::wall_state::{KeyLayer, OverlayKind, WallSession, WallState};
+use crate::state::wall_state::{KeyLayer, OverlayKind, RailPrefs, WallSession, WallState};
 
 /// The `r r` arming (p16-restart, spec restart "TUI chords"): the generic
 /// [`ArmedAction`] machine (3s window, same as the `x x` close) plus the one
@@ -191,6 +191,54 @@ impl WallStore {
         next.pet = pet;
         self.views_revision += 1;
         self.set(next);
+    }
+
+    /// Show or hide the rail, or move its divider. Bumps `views_revision`
+    /// (the debounced `wall.json` save) only when something changed, so a
+    /// drag that ends where it began writes nothing.
+    pub fn set_rail(&mut self, rail: RailPrefs) {
+        let rail = RailPrefs {
+            width: RailPrefs::clamp_width(rail.width),
+            ..rail
+        };
+        if rail == self.state.rail {
+            return;
+        }
+        let mut next = self.state.clone();
+        next.rail = rail;
+        self.views_revision += 1;
+        self.set(next);
+    }
+
+    /// The startup load: like [`WallStore::set_rail`] but never schedules a
+    /// save (nothing changed from what is on disk).
+    pub fn load_rail(&mut self, rail: RailPrefs) {
+        let mut next = self.state.clone();
+        next.rail = RailPrefs {
+            width: RailPrefs::clamp_width(rail.width),
+            ..rail
+        };
+        self.set(next);
+    }
+
+    /// `b`.
+    pub fn toggle_rail(&mut self) {
+        let rail = self.state.rail;
+        self.set_rail(RailPrefs {
+            hidden: !rail.hidden,
+            ..rail
+        });
+    }
+
+    /// `<` / `>`: move the divider by `delta` columns. Resizing a hidden
+    /// rail brings it back, so the key never seems to do nothing.
+    pub fn resize_rail(&mut self, delta: i32) {
+        let rail = self.state.rail;
+        let width = (i32::from(rail.width) + delta).clamp(0, i32::from(u16::MAX)) as u16;
+        self.set_rail(RailPrefs {
+            hidden: false,
+            width,
+        });
     }
 
     /// `AppEvent::Connection(bool)` from the SSE task (spec tui-pit-pet "One-

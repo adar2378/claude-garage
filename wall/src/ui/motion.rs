@@ -63,16 +63,21 @@ fn env_flag(value: &str) -> bool {
     !(v.is_empty() || matches!(v.as_str(), "0" | "false" | "no" | "off"))
 }
 
-/// The `animations` key of a `config.toml` body: a single hand-parsed
-/// `animations = true|false` line (no TOML crate for one key).
+/// The `animations` key of a `config.toml` body.
 pub fn config_animations(text: &str) -> Option<bool> {
+    config_bool(text, "animations")
+}
+
+/// A boolean `key = true|false` line of a `config.toml` body, hand-parsed
+/// (no TOML crate for a couple of keys). The last valid line wins.
+pub fn config_bool(text: &str, wanted: &str) -> Option<bool> {
     let mut found = None;
     for line in text.lines() {
         let line = line.split('#').next().unwrap_or("").trim();
         let Some((key, value)) = line.split_once('=') else {
             continue;
         };
-        if key.trim() == "animations" {
+        if key.trim() == wanted {
             found = match value.trim().trim_matches(|c| c == '"' || c == '\'') {
                 "true" => Some(true),
                 "false" => Some(false),

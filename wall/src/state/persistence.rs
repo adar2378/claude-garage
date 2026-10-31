@@ -31,6 +31,7 @@ use std::path::{Path, PathBuf};
 use serde_json::{Value, json};
 
 use crate::state::views::{DEFAULT_VIEW, View, ViewsByWorkspace};
+use crate::state::wall_state::RailPrefs;
 
 pub const SCHEMA_VERSION: u64 = 1;
 
@@ -48,6 +49,10 @@ const PET_VALUES: [&str; 3] = ["cat", "duck", "pup"];
 pub struct WallFile {
     pub views: ViewsByWorkspace,
     pub pet: Option<String>,
+    /// The rail's hide/width choice. Written as `"rail": {"hidden", "width"}`
+    /// only when it differs from the default; a missing or malformed value
+    /// loads as the default.
+    pub rail: RailPrefs,
 }
 
 /// `$GARAGE_DIR`, else `~/.garage` (shared by `wall.json` and `config.toml`).
@@ -106,6 +111,12 @@ pub fn serialize(file: &WallFile) -> String {
         && PET_VALUES.contains(&pet)
     {
         doc["pet"] = Value::String(pet.to_owned());
+    }
+    if file.rail != RailPrefs::default() {
+        doc["rail"] = json!({
+            "hidden": file.rail.hidden,
+            "width": RailPrefs::clamp_width(file.rail.width),
+        });
     }
     // A `Value` built from owned strings/numbers always serializes; the
     // fallback is unreachable in practice but keeps this function total.
@@ -177,7 +188,26 @@ pub fn deserialize(raw: &str) -> WallFile {
         .filter(|p| PET_VALUES.contains(p))
         .map(str::to_owned);
 
-    WallFile { views: out, pet }
+    // Lenient like the pet: a bad `rail` costs only the rail.
+    let rail = root
+        .get("rail")
+        .and_then(Value::as_object)
+        .map(|r| RailPrefs {
+            hidden: r.get("hidden").and_then(Value::as_bool).unwrap_or(false),
+            width: r
+                .get("width")
+                .and_then(Value::as_u64)
+                .map_or(RailPrefs::DEFAULT_WIDTH, |w| {
+                    RailPrefs::clamp_width(u16::try_from(w).unwrap_or(u16::MAX))
+                }),
+        })
+        .unwrap_or_default();
+
+    WallFile {
+        views: out,
+        pet,
+        rail,
+    }
 }
 
 /// Load `wall.json` from `path`. Missing file, unreadable, or invalid
@@ -230,6 +260,7 @@ mod tests {
         WallFile {
             views,
             pet: pet.map(str::to_owned),
+            rail: RailPrefs::default(),
         }
     }
 
@@ -276,6 +307,36 @@ mod tests {
         let raw = serialize(&file(views, None));
         let parsed: Value = serde_json::from_str(&raw).unwrap();
         assert_eq!(parsed["views"].as_object().unwrap().len(), 0);
+    }
+
+    // ── rail round trip (p25 sidebar hide and resize) ──────────────────
+
+    #[test]
+    fn the_rail_choice_round_trips_and_the_default_takes_no_disk_space() {
+        let mut f = file(HashMap::new(), None);
+        assert!(
+            serde_json::from_str::<Value>(&serialize(&f))
+                .unwrap()
+                .get("rail")
+                .is_none()
+        );
+        f.rail = RailPrefs {
+            hidden: true,
+            width: 40,
+        };
+        assert_eq!(deserialize(&serialize(&f)).rail, f.rail);
+    }
+
+    #[test]
+    fn a_bad_or_out_of_range_rail_value_loads_safely_without_losing_the_views() {
+        let raw = r#"{"version":1,"views":{},"rail":{"hidden":"yes","width":9999}}"#;
+        let got = deserialize(raw).rail;
+        assert!(!got.hidden);
+        assert_eq!(got.width, RailPrefs::MAX);
+        let raw = r#"{"version":1,"views":{},"rail":"wide"}"#;
+        assert_eq!(deserialize(raw).rail, RailPrefs::default());
+        let raw = r#"{"version":1,"views":{},"rail":{"width":1}}"#;
+        assert_eq!(deserialize(raw).rail.width, RailPrefs::MIN);
     }
 
     // ── pet round trip (spec tui-pit-pet "Choice survives restart") ────

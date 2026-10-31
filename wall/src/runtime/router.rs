@@ -9,7 +9,7 @@ use crate::state::armed_action::{ArmedAction, ArmedClose};
 use crate::state::salience::restorable_session_ids;
 use crate::state::store::{ArmedRestart, GarageCommand, WallStore, restart_arm_notice};
 use crate::state::views;
-use crate::state::wall_state::{KeyLayer, WallState};
+use crate::state::wall_state::{KeyLayer, RailPrefs, WallState};
 use crate::state::workspace_remove::{confirm_kill_target, remove_arm_notice};
 use crate::ui::pet::PetHost;
 
@@ -437,6 +437,9 @@ impl GarageRouter {
             // being a store dependency, so this stays here rather than
             // growing `state::store`'s command enum for one field's cycling.
             ids::PET_CYCLE_SPECIES => self.cycle_pet_pressed(store, now_ms),
+            ids::RAIL_TOGGLE => store.toggle_rail(),
+            ids::RAIL_NARROW => store.resize_rail(-i32::from(RailPrefs::STEP)),
+            ids::RAIL_WIDEN => store.resize_rail(i32::from(RailPrefs::STEP)),
             ids::SESSION_RESTORE => {
                 if let Some(session) = ctx.session.clone() {
                     self.restore(session, effects);

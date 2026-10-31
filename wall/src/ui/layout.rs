@@ -78,9 +78,22 @@ pub fn wall_layout(
     view_strip: bool,
     framed: bool,
 ) -> WallLayout {
+    wall_layout_with_rail(area, n_tiles, maximized, view_strip, framed, RAIL_WIDTH)
+}
+
+/// [`wall_layout`] with the rail's width chosen by the user (`0` = hidden:
+/// the rail rect is empty and the grid takes the whole row).
+pub fn wall_layout_with_rail(
+    area: Rect,
+    n_tiles: usize,
+    maximized: Option<usize>,
+    view_strip: bool,
+    framed: bool,
+    rail_width: u16,
+) -> WallLayout {
     let [main, strip] = Layout::vertical([Constraint::Fill(1), Constraint::Length(1)]).areas(area);
     let [rail, grid_full] = Layout::horizontal([
-        Constraint::Length(RAIL_WIDTH.min(main.width)),
+        Constraint::Length(rail_width.min(main.width)),
         Constraint::Fill(1),
     ])
     .areas(main);
@@ -177,6 +190,24 @@ mod tests {
 
     fn area(w: u16, h: u16) -> Rect {
         Rect::new(0, 0, w, h)
+    }
+
+    #[test]
+    fn a_hidden_rail_gives_the_grid_the_whole_row_and_a_wider_one_narrows_it() {
+        let hidden = wall_layout_with_rail(area(100, 30), 1, None, false, false, 0);
+        assert_eq!(hidden.rail.width, 0);
+        assert_eq!(hidden.grid.x, 0);
+        assert_eq!(hidden.grid.width, 100);
+        let wide = wall_layout_with_rail(area(100, 30), 1, None, false, false, 40);
+        assert_eq!(
+            (wide.rail.width, wide.grid.x, wide.grid.width),
+            (40, 40, 60)
+        );
+        assert_eq!(
+            slot_geometry(&hidden, &(0..0)).rail_width,
+            0,
+            "slots are told there is no rail room"
+        );
     }
 
     // ── p24: slot geometry ──────────────────────────────────────────────

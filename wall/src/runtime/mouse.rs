@@ -6,6 +6,8 @@ use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
 use ratatui::layout::Rect;
 
 use crate::input::links::url_at;
+use crate::input::selection::{Selection, local_cell, text_in};
+use crate::state::wall_state::RailPrefs;
 use crate::state::wall_state::{KeyLayer, OverlayKind, WallSession};
 use crate::ui::hit_targets::{self, ClickMap, action_at};
 use crate::ui::scroll::WHEEL_LINES;
@@ -13,7 +15,144 @@ use crate::ui::scroll::WHEEL_LINES;
 use super::router::plugin_gate::ClickConfirm;
 use super::{App, now_ms, view_picker_entries};
 
+/// What a held left button is doing.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) enum Drag {
+    /// Moving the rail's divider.
+    Rail,
+    /// Selecting text in a tile; `inner` is the tile's terminal area.
+    Select {
+        session: String,
+        inner: Rect,
+        anchor: (u16, u16),
+    },
+}
+
+/// A tile rect minus its 1-cell border: the terminal area.
+fn inner_of(rect: Rect) -> Rect {
+    Rect {
+        x: rect.x + 1,
+        y: rect.y + 1,
+        width: rect.width.saturating_sub(2),
+        height: rect.height.saturating_sub(2),
+    }
+}
+
 impl App {
+    /// The rail's divider column, when the rail is showing.
+    fn on_rail_divider(&self, col: u16, row: u16) -> bool {
+        self.layout.as_ref().is_some_and(|l| {
+            l.rail.width > 0
+                && col == l.rail.x + l.rail.width - 1
+                && row >= l.rail.y
+                && row < l.rail.y + l.rail.height
+        })
+    }
+
+    /// A left press: starts a divider drag or the anchor of a selection.
+    /// Returns true when the press was the divider's (nothing else sees it).
+    fn begin_drag(&mut self, col: u16, row: u16) -> bool {
+        // A release that never arrived (the pointer left the window): the
+        // drag is settled by the next press.
+        self.commit_rail_drag();
+        self.selection = None;
+        self.drag = None;
+        if self.store.state().overlay.is_some() {
+            return false;
+        }
+        if self.on_rail_divider(col, row) {
+            self.drag = Some(Drag::Rail);
+            return true;
+        }
+        let in_view_strip = self
+            .layout
+            .as_ref()
+            .is_some_and(|l| l.view_strip.height > 0 && row == l.view_strip.y);
+        if !in_view_strip && let Some((id, rect)) = self.tile_at(col, row) {
+            let inner = inner_of(rect);
+            if inner.contains((col, row).into()) {
+                self.drag = Some(Drag::Select {
+                    session: id,
+                    inner,
+                    anchor: local_cell(inner, col, row),
+                });
+            }
+        }
+        false
+    }
+
+    fn drag_to(&mut self, col: u16, row: u16) {
+        match self.drag.clone() {
+            Some(Drag::Rail) => {
+                // Only the divider moves while the button is down; the tiles
+                // keep their PTY size until release (a resize per mouse
+                // event makes every session redraw for nothing).
+                let rail_x = self.layout.as_ref().map_or(0, |l| l.rail.x);
+                let width = col.saturating_add(1).saturating_sub(rail_x);
+                self.rail_drag = Some(RailPrefs::clamp_width(width));
+            }
+            Some(Drag::Select {
+                session,
+                inner,
+                anchor,
+            }) => {
+                let head = local_cell(inner, col, row);
+                self.selection = (head != anchor).then_some(Selection {
+                    session,
+                    anchor,
+                    head,
+                });
+            }
+            None => {}
+        }
+    }
+
+    /// The button came up: a finished selection is copied right away and
+    /// the highlight goes (the notice says what was taken). A divider drag
+    /// is committed here: only now do the tiles' PTYs change size.
+    fn end_drag(&mut self) {
+        match self.drag.take() {
+            Some(Drag::Select { .. }) => {
+                self.copy_selection();
+                self.selection = None;
+            }
+            Some(Drag::Rail) => self.commit_rail_drag(),
+            None => {}
+        }
+    }
+
+    /// Make the divider's dragged-to width the saved one.
+    fn commit_rail_drag(&mut self) {
+        if let Some(width) = self.rail_drag.take() {
+            self.store.set_rail(RailPrefs {
+                hidden: false,
+                width,
+            });
+        }
+    }
+
+    /// Queue the highlighted text for the clipboard. True when there was
+    /// text to copy.
+    fn copy_selection(&mut self) -> bool {
+        let Some(sel) = self.selection.clone().filter(|s| !s.is_empty()) else {
+            return false;
+        };
+        let (start, end) = sel.ordered();
+        let text = self
+            .registry
+            .with_screen(&sel.session, |screen| text_in(screen, start, end))
+            .unwrap_or_default();
+        if text.trim().is_empty() {
+            return false;
+        }
+        let chars = text.chars().count();
+        self.copies.push(text);
+        self.router
+            .notices
+            .show(format!("copied {chars} chars"), 1500, now_ms());
+        true
+    }
+
     /// True when the event raised a quit.
     pub(super) fn handle_mouse(&mut self, mouse: &MouseEvent) -> bool {
         // A plugin pane is modal: a click outside it closes it, nothing
@@ -31,10 +170,21 @@ impl App {
         }
         match mouse.kind {
             MouseEventKind::Down(MouseButton::Left) => {
+                if self.begin_drag(mouse.column, mouse.row) {
+                    return false;
+                }
                 return self.handle_click(mouse.column, mouse.row);
             }
-            MouseEventKind::ScrollUp => self.handle_wheel(mouse.column, mouse.row, true),
-            MouseEventKind::ScrollDown => self.handle_wheel(mouse.column, mouse.row, false),
+            MouseEventKind::Drag(MouseButton::Left) => self.drag_to(mouse.column, mouse.row),
+            MouseEventKind::Up(MouseButton::Left) => self.end_drag(),
+            MouseEventKind::ScrollUp => {
+                self.selection = None; // the text moves under the highlight
+                self.handle_wheel(mouse.column, mouse.row, true);
+            }
+            MouseEventKind::ScrollDown => {
+                self.selection = None;
+                self.handle_wheel(mouse.column, mouse.row, false);
+            }
             _ => {}
         }
         false

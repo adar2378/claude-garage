@@ -58,6 +58,7 @@ use crate::ui::workspace_add::{PickOutcome, WorkspaceAddForm};
 use crate::ui::worktree_finish::WorktreeFinishState;
 
 mod dispatch;
+mod drafts;
 mod draw;
 mod effects;
 mod mouse;
@@ -173,6 +174,11 @@ pub enum AppEvent {
     },
     /// A spawn effect settled (success or failure) — clears the busy guard.
     SpawnSettled,
+    /// The daemon created this session fresh (a spawn succeeded): whatever
+    /// draft an earlier session of the same id left behind is not its own.
+    SessionSpawned(String),
+    /// The daemon's `session.closed` event, for a close the user made.
+    SessionClosed(String),
     /// A restore effect settled for this session id.
     RestoreSettled(String),
     /// The `I` install effect settled: both results (statusline first, then
@@ -407,6 +413,18 @@ struct App {
     /// View-strip click targets from the last frame (absolute columns paired
     /// with the view name they focus) — empty when the strip isn't shown.
     view_strip_targets: Vec<(Range<u16>, String)>,
+    /// p25: the mouse button is down on the rail divider or inside a tile.
+    drag: Option<mouse::Drag>,
+    /// p25: the highlighted tile text, if any.
+    selection: Option<crate::input::selection::Selection>,
+    /// p25: draft and pasted-image recovery (off until `enable`d).
+    drafts: drafts::DraftSync,
+    /// The divider's width while it is being dragged; the store (and the
+    /// tiles' PTY sizes) take it on release.
+    rail_drag: Option<u16>,
+    /// p25: text waiting to reach the system clipboard (drained by the loop,
+    /// which owns the terminal and the OS).
+    copies: Vec<String>,
     /// Modal rects from the last frame, per open overlay.
     triage_rect: Option<Rect>,
     ws_add_rect: Option<Rect>,
@@ -487,6 +505,11 @@ impl App {
             slot_clicks: Vec::new(),
             gutter_sessions: std::collections::HashSet::new(),
             view_strip_targets: Vec::new(),
+            drag: None,
+            selection: None,
+            copies: Vec::new(),
+            drafts: drafts::DraftSync::default(),
+            rail_drag: None,
             triage_rect: None,
             ws_add_rect: None,
             view_picker_rect: None,
@@ -665,6 +688,8 @@ impl App {
             AppEvent::Status { id, status, since } => {
                 self.store.status_changed(&id, &status, since);
             }
+            AppEvent::SessionSpawned(id) => self.fresh_session(&id),
+            AppEvent::SessionClosed(id) => self.user_closed(&id),
             AppEvent::Connection(live) => {
                 self.motion.connection_changed(live, now_ms());
                 self.store.connection(live);
@@ -805,6 +830,7 @@ impl App {
                 if let Some(id) = state.focused_session_id.clone() {
                     self.registry.set_frozen(&id, None);
                     self.registry.write(&id, &wrap_bracketed_paste(text));
+                    self.note_paste_for_drafts(&id, text, now_ms());
                 }
             }
             PasteTarget::Pane => {
@@ -819,6 +845,10 @@ impl App {
 
     /// The three-layer dispatch; true = quit.
     fn handle_key(&mut self, key: &KeyEvent) -> bool {
+        // Keys never copy (a copy happens on mouse release) and never get
+        // swallowed: Ctrl+C always reaches the session. A highlight is only
+        // dropped, since typing moves the text under it.
+        self.selection = None;
         match self.store.state().layer {
             KeyLayer::Overlay => {
                 self.keylog
@@ -870,7 +900,9 @@ impl App {
                 let Some(key_str) = garage_key_string(key) else {
                     return false; // consumed: garage typing never reaches an agent
                 };
-                if self.take_pane_offer(&key_str, now_ms()) {
+                if self.take_pane_offer(&key_str, now_ms())
+                    || self.take_draft_offer(&key_str, now_ms())
+                {
                     return false;
                 }
                 let outcome =
@@ -892,6 +924,9 @@ impl App {
             if matches!(effect, Effect::Quit) {
                 quit = true;
             } else {
+                if let Effect::Close { id, .. } = &effect {
+                    self.user_closed(id);
+                }
                 if matches!(effect, Effect::RestartDaemon) {
                     self.motion.daemon_restart_requested(now_ms());
                 }
@@ -1091,6 +1126,7 @@ fn wall_file_snapshot(store: &WallStore) -> WallFile {
     WallFile {
         views: store.state().views.clone(),
         pet: store.state().pet.clone(),
+        rail: store.state().rail,
     }
 }
 
@@ -1149,7 +1185,17 @@ async fn state_loop(
     // so calling it before any session exists would prune every loaded
     // assignment on the spot and silently lose the whole file.
     let views_path = persistence::wall_json_path();
-    let mut pending_file = Some(persistence::load(&views_path));
+    let loaded_file = persistence::load(&views_path);
+    // The rail is layout, not session-shaped: apply it before the first
+    // frame so a restart opens at the remembered width with no flash.
+    app.store.load_rail(loaded_file.rail);
+    let mut pending_file = Some(loaded_file);
+    let drafts_root = persistence::garage_dir_from_env().join("drafts");
+    if crate::drafts::load_enabled() {
+        app.drafts.enable(drafts_root);
+    } else {
+        drafts::DraftSync::disabled(&drafts_root);
+    }
     let mut saved_views_revision = app.store.views_revision();
     let mut views_dirty_since: Option<Instant> = None;
     const VIEWS_SAVE_DEBOUNCE: Duration = Duration::from_millis(500);
@@ -1235,6 +1281,9 @@ async fn state_loop(
         if app.pet_tick(now) {
             dirty = true;
         }
+        if app.draft_tick(now) {
+            dirty = true;
+        }
         // Debounced wall.json save (spec tui-views "View persistence"):
         // start the timer the moment views_revision moves, fire once it's
         // sat still for VIEWS_SAVE_DEBOUNCE — a burst of view mutations
@@ -1303,9 +1352,14 @@ async fn state_loop(
         // Downstream of the batch: registry sync, dead-tile disengage,
         // escalation. The bell/title bytes go straight to the terminal
         // between frames — same thread as the draw, so no interleaving.
-        if let Some(seq) = app.after_events() {
+        let mut tty = app.after_events().unwrap_or_default();
+        for text in app.copies.drain(..) {
+            tty.push_str(&crate::input::clipboard::osc52(&text));
+            crate::input::clipboard::native_copy(&text);
+        }
+        if !tty.is_empty() {
             let mut out = std::io::stdout();
-            let _ = out.write_all(seq.as_bytes());
+            let _ = out.write_all(tty.as_bytes());
             let _ = out.flush();
         }
     }

@@ -119,6 +119,11 @@ pub mod ids {
     pub const PET_PET: ActionId = ActionId("pet.pet");
     /// `P`: not a [`super::GarageCommand`] (the store has no pet dependency).
     pub const PET_CYCLE_SPECIES: ActionId = ActionId("pet.cycle_species");
+    /// `b` / `<` / `>`: hide or show the rail, move its divider. Wall layout,
+    /// not session state, so the router handles them beside the store.
+    pub const RAIL_TOGGLE: ActionId = ActionId("rail.toggle");
+    pub const RAIL_NARROW: ActionId = ActionId("rail.narrow");
+    pub const RAIL_WIDEN: ActionId = ActionId("rail.widen");
     /// Overlay and view-strip ids (the overlay keys and their clicks).
     pub const OVERLAY_CLOSE: ActionId = ActionId("overlay.close");
     pub const OVERLAY_SELECT_NEXT: ActionId = ActionId("overlay.select.next");
@@ -160,6 +165,9 @@ pub mod ids {
         SESSION_DELETE,
         PET_PET,
         PET_CYCLE_SPECIES,
+        RAIL_TOGGLE,
+        RAIL_NARROW,
+        RAIL_WIDEN,
         OVERLAY_CLOSE,
         OVERLAY_SELECT_NEXT,
         OVERLAY_SELECT_PREV,
@@ -219,6 +227,9 @@ pub const META: &[ActionMeta] = &[
     meta_row(ids::SESSION_DELETE, true, true),
     meta_row(ids::PET_PET, false, true),
     meta_row(ids::PET_CYCLE_SPECIES, false, false),
+    meta_row(ids::RAIL_TOGGLE, false, false),
+    meta_row(ids::RAIL_NARROW, false, false),
+    meta_row(ids::RAIL_WIDEN, false, false),
     meta_row(ids::OVERLAY_CLOSE, false, false),
     meta_row(ids::OVERLAY_SELECT_NEXT, false, false),
     meta_row(ids::OVERLAY_SELECT_PREV, false, false),
@@ -495,6 +506,9 @@ mod tests {
             ids::SESSION_DELETE,
             ids::PET_PET,
             ids::PET_CYCLE_SPECIES,
+            ids::RAIL_TOGGLE,
+            ids::RAIL_NARROW,
+            ids::RAIL_WIDEN,
             ids::OVERLAY_CLOSE,
             ids::OVERLAY_SELECT_NEXT,
             ids::OVERLAY_SELECT_PREV,
@@ -565,6 +579,9 @@ mod tests {
             [
                 "app.quit",
                 "pet.cycle_species",
+                "rail.toggle",
+                "rail.narrow",
+                "rail.widen",
                 "overlay.close",
                 "overlay.select.next",
                 "overlay.select.prev",

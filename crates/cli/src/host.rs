@@ -192,6 +192,9 @@ impl Out for RealHost {
     fn warn(&self, line: &str) {
         eprintln!("{line}");
     }
+    fn verbose(&self) -> bool {
+        crate::launcher::verbose_from(std::env::var("GARAGE_VERBOSE").ok().as_deref())
+    }
 }
 
 impl Host for RealHost {
