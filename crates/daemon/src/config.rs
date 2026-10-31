@@ -11,7 +11,10 @@ pub struct Config {
     pub port: u16,
     /// `GARAGE_DIR`, default `~/.garage` on every OS.
     pub garage_dir: PathBuf,
-    /// `GARAGE_TMUX_SOCKET`: `tmux -L <name>`. Unset means the default server.
+    /// `GARAGE_TMUX_SOCKET`: `tmux -L <name> -f /dev/null`. Unset means the
+    /// default server with the user's normal tmux.conf. Setting it also skips
+    /// the user's tmux.conf (`-f /dev/null`); that is intended, for tests and
+    /// isolation.
     pub tmux_socket: Option<String>,
     /// `GARAGE_UI_ORIGINS`: browser origins allowed past the origin guard.
     pub ui_origins: Vec<String>,

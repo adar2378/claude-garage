@@ -6,16 +6,10 @@ use std::process::Stdio;
 use tokio::process::Command;
 
 async fn git(dir: &str, args: &[&str]) -> Option<String> {
-    let out = Command::new("git")
-        .arg("-C")
-        .arg(dir)
-        .args(args)
-        .stdin(Stdio::null())
-        .stderr(Stdio::null())
-        .kill_on_drop(true)
-        .output()
-        .await
-        .ok()?;
+    let mut cmd = Command::new("git");
+    cmd.arg("-C").arg(dir).args(args).stdin(Stdio::null()).stderr(Stdio::null()).kill_on_drop(true);
+    // Timeout drops the future, which kills the child (kill_on_drop).
+    let out = tokio::time::timeout(crate::backend::COMMAND_TIMEOUT, cmd.output()).await.ok()?.ok()?;
     out.status.success().then(|| String::from_utf8_lossy(&out.stdout).trim().to_string())
 }
 

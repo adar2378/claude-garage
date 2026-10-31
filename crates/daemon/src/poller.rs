@@ -14,12 +14,11 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use async_trait::async_trait;
-use garage_protocol::SessionStatus;
 use tokio::process::Command;
 use tokio::task::JoinHandle;
 
 use crate::backend::tmux::{normalize_title, split_session_id};
-use crate::backend::{BackendSession, PaneInfo, SessionBackend};
+use crate::backend::{BackendSession, PaneInfo, SessionBackend, COMMAND_TIMEOUT};
 use crate::bus::{DaemonEvent, EventBus};
 
 pub const POLL_INTERVAL: Duration = Duration::from_millis(2000);
@@ -67,11 +66,18 @@ pub trait AgentSource: Send + Sync {
 pub struct CommandAgents {
     program: String,
     args: Vec<String>,
+    timeout: Duration,
 }
 
 impl CommandAgents {
     pub fn new(program: impl Into<String>, args: Vec<String>) -> Self {
-        Self { program: program.into(), args }
+        Self { program: program.into(), args, timeout: COMMAND_TIMEOUT }
+    }
+
+    /// Override the command timeout (tests).
+    pub fn with_timeout(mut self, timeout: Duration) -> Self {
+        self.timeout = timeout;
+        self
     }
 }
 
@@ -84,15 +90,11 @@ impl Default for CommandAgents {
 #[async_trait]
 impl AgentSource for CommandAgents {
     async fn agents(&self) -> Vec<Agent> {
-        let out = Command::new(&self.program)
-            .args(&self.args)
-            .stdin(Stdio::null())
-            .stderr(Stdio::null())
-            .kill_on_drop(true)
-            .output()
-            .await;
-        match out {
-            Ok(o) if o.status.success() => Agent::parse_list(&String::from_utf8_lossy(&o.stdout)),
+        let mut cmd = Command::new(&self.program);
+        cmd.args(&self.args).stdin(Stdio::null()).stderr(Stdio::null()).kill_on_drop(true);
+        // A timeout drops the future, which kills the child: "no agents".
+        match tokio::time::timeout(self.timeout, cmd.output()).await {
+            Ok(Ok(o)) if o.status.success() => Agent::parse_list(&String::from_utf8_lossy(&o.stdout)),
             _ => Vec::new(),
         }
     }
@@ -101,31 +103,15 @@ impl AgentSource for CommandAgents {
 /// The poller's view of the stores owned by other lanes.
 #[async_trait]
 pub trait PollerSink: Send + Sync {
-    /// Current status; the "idle" default for an unknown session (JS `getStatus`).
-    fn status(&self, id: &str) -> SessionStatus;
-    /// Set status without a message (JS `setStatus(id, status)`).
-    fn set_status(&self, id: &str, status: SessionStatus);
+    /// Hand over a raw `claude agents --json` status (`busy` | `waiting` |
+    /// `idle`). The real sink delegates to `StatusStore::apply_agent_status`,
+    /// which owns the mapping and the "coarse idle must not stomp
+    /// needs-input/done" rule under a single lock.
+    fn apply_agent_status(&self, id: &str, agent_status: &str);
     /// Forget a dead session: status entry and statusline context.
     fn drop_session(&self, id: &str);
     /// Record resume metadata after a trusted pid join.
     async fn upsert_session_meta(&self, id: &str, claude_session_id: &str, workspace: &str, label: &str);
-}
-
-/// `claude agents --json` self-reports busy | waiting | idle. `waiting` is
-/// blocked on the user, i.e. needs-input (2 s coarse). The poller's coarse
-/// `idle` must not stomp the hook-sourced precision states: needs-input clears
-/// only on real activity, and done holds until its decay or a busy tick.
-pub fn apply_agent_status(sink: &dyn PollerSink, id: &str, agent_status: &str) {
-    let mapped = match agent_status {
-        "busy" => SessionStatus::Working,
-        "waiting" => SessionStatus::NeedsInput,
-        _ => SessionStatus::Idle,
-    };
-    let current = sink.status(id);
-    if mapped == SessionStatus::Idle && matches!(current, SessionStatus::NeedsInput | SessionStatus::Done) {
-        return;
-    }
-    sink.set_status(id, mapped);
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -238,7 +224,7 @@ impl Poller {
             let agent = panes.get(&s.id).and_then(|p| p.pid).and_then(|pid| by_pid.get(&pid));
             match agent {
                 Some(agent) => {
-                    apply_agent_status(self.sink.as_ref(), &s.id, &agent.status);
+                    self.sink.apply_agent_status(&s.id, &agent.status);
                     // Only a successful pid join yields a trusted sessionId.
                     if let Some(csid) = agent.session_id.as_deref().filter(|c| !c.is_empty()) {
                         let (workspace, label) = split_session_id(&s.id);
@@ -254,7 +240,7 @@ impl Poller {
         // sessions there. Over-notify rather than silently drop.
         for s in unmatched {
             if let Some(a) = agents.iter().find(|a| a.cwd.as_deref() == Some(s.dir.as_str())) {
-                apply_agent_status(self.sink.as_ref(), &s.id, &a.status);
+                self.sink.apply_agent_status(&s.id, &a.status);
             }
         }
     }
@@ -280,21 +266,18 @@ pub(crate) mod fakes {
 
     #[derive(Default)]
     pub struct FakeSink {
-        pub statuses: Mutex<HashMap<String, SessionStatus>>,
+        /// `(id, raw agent status)` in call order.
+        pub applied: Mutex<Vec<(String, String)>>,
         pub dropped: Mutex<Vec<String>>,
         pub metas: Mutex<Vec<(String, String, String, String)>>,
     }
 
     #[async_trait]
     impl PollerSink for FakeSink {
-        fn status(&self, id: &str) -> SessionStatus {
-            self.statuses.lock().unwrap().get(id).copied().unwrap_or(SessionStatus::Idle)
-        }
-        fn set_status(&self, id: &str, status: SessionStatus) {
-            self.statuses.lock().unwrap().insert(id.into(), status);
+        fn apply_agent_status(&self, id: &str, agent_status: &str) {
+            self.applied.lock().unwrap().push((id.into(), agent_status.into()));
         }
         fn drop_session(&self, id: &str) {
-            self.statuses.lock().unwrap().remove(id);
             self.dropped.lock().unwrap().push(id.into());
         }
         async fn upsert_session_meta(&self, id: &str, c: &str, w: &str, l: &str) {
@@ -314,7 +297,7 @@ pub(crate) mod fakes {
         pub fn set(&self, id: &str, dir: &str, pid: Option<u32>, title: &str) {
             let mut s = self.sessions.lock().unwrap();
             s.retain(|x| x.id != id);
-            s.push(BackendSession { id: id.into(), dir: dir.into(), attached: false, created_at: 1 });
+            s.push(BackendSession { id: id.into(), dir: dir.into(), attached: false, created_at: Some(1) });
             self.panes.lock().unwrap().insert(id.into(), PaneInfo { cwd: dir.into(), title: title.into(), pid });
         }
         pub fn remove(&self, id: &str) {
@@ -325,6 +308,9 @@ pub(crate) mod fakes {
 
     #[async_trait]
     impl SessionBackend for FakeBackend {
+        async fn init(&self) -> anyhow::Result<()> {
+            Ok(())
+        }
         async fn list(&self) -> anyhow::Result<Vec<BackendSession>> {
             Ok(self.sessions.lock().unwrap().clone())
         }
@@ -376,54 +362,13 @@ mod tests {
     const ID: &str = "garage/test/poll";
     const HOST: &str = "my-mac";
 
-    // ---- poller.test.js: applyAgentStatus ----
-    // (The two message-retention tests -- "poller-sourced needs-input carries
-    // no message" and "same-state poller tick must not clear a hook-set
-    // message" -- exercise the status store and are ported by lane A.)
-
-    fn applied(initial: Option<SessionStatus>, agent_status: &str) -> SessionStatus {
-        let sink = FakeSink::default();
-        if let Some(s) = initial {
-            sink.set_status(ID, s);
-        }
-        apply_agent_status(&sink, ID, agent_status);
-        sink.status(ID)
-    }
-
-    #[test]
-    fn busy_maps_to_working() {
-        assert_eq!(applied(None, "busy"), SessionStatus::Working);
-    }
-
-    #[test]
-    fn waiting_maps_to_needs_input() {
-        assert_eq!(applied(None, "waiting"), SessionStatus::NeedsInput);
-    }
-
-    #[test]
-    fn idle_maps_to_idle_for_a_session_with_no_precision_state() {
-        assert_eq!(applied(Some(SessionStatus::Working), "idle"), SessionStatus::Idle);
-    }
-
-    #[test]
-    fn coarse_idle_must_not_stomp_hook_sourced_needs_input() {
-        assert_eq!(applied(Some(SessionStatus::NeedsInput), "idle"), SessionStatus::NeedsInput);
-    }
-
-    #[test]
-    fn coarse_idle_must_not_stomp_done_before_its_decay() {
-        assert_eq!(applied(Some(SessionStatus::Done), "idle"), SessionStatus::Done);
-    }
-
-    #[test]
-    fn busy_clears_needs_input() {
-        assert_eq!(applied(Some(SessionStatus::NeedsInput), "busy"), SessionStatus::Working);
-    }
+    // applyAgentStatus mapping and the no-stomp rule live in StatusStore
+    // (lane A); the poller only forwards the raw status.
 
     // ---- poller.test.js: diffSessionState ----
 
     fn session(id: &str) -> BackendSession {
-        BackendSession { id: id.into(), dir: "/d".into(), attached: false, created_at: 1 }
+        BackendSession { id: id.into(), dir: "/d".into(), attached: false, created_at: Some(1) }
     }
     fn pane(title: &str) -> PaneInfo {
         PaneInfo { cwd: "/d".into(), title: title.into(), pid: Some(123) }
@@ -536,7 +481,7 @@ mod tests {
         r.backend.set(ID, "/d", Some(100), "");
         *r.agents.0.lock().unwrap() = vec![agent(100, "busy", Some("claude-sid"), Some("/other"))];
         r.poller.poll_once().await;
-        assert_eq!(r.sink.status(ID), SessionStatus::Working);
+        assert_eq!(*r.sink.applied.lock().unwrap(), [(ID.to_string(), "busy".to_string())], "raw status forwarded");
         assert_eq!(*r.sink.metas.lock().unwrap(), [(ID.into(), "claude-sid".into(), "test".into(), "poll".into())]);
         assert_eq!(drain(&mut r.rx), 1, "a new session is one sessions-changed");
     }
@@ -552,10 +497,13 @@ mod tests {
             agent(901, "busy", None, Some("/proj")),
         ];
         r.poller.poll_once().await;
-        assert_eq!(r.sink.status("garage/ws/a"), SessionStatus::NeedsInput);
-        assert_eq!(r.sink.status("garage/ws/b"), SessionStatus::NeedsInput);
-        assert_eq!(r.sink.status("garage/ws/c"), SessionStatus::Idle, "untouched default");
-        assert!(r.sink.statuses.lock().unwrap().get("garage/ws/c").is_none());
+        let mut applied = r.sink.applied.lock().unwrap().clone();
+        applied.sort();
+        assert_eq!(
+            applied,
+            [("garage/ws/a".to_string(), "waiting".to_string()), ("garage/ws/b".to_string(), "waiting".to_string())],
+            "/elsewhere has no agent, so session c is untouched"
+        );
         assert!(r.sink.metas.lock().unwrap().is_empty(), "no trusted sessionId without a pid join");
     }
 
@@ -565,7 +513,7 @@ mod tests {
         r.backend.set(ID, "/d", Some(1), "");
         r.poller.poll_once().await;
         assert_eq!(drain(&mut r.rx), 1);
-        assert!(r.sink.statuses.lock().unwrap().is_empty());
+        assert!(r.sink.applied.lock().unwrap().is_empty());
         r.poller.poll_once().await;
         assert_eq!(drain(&mut r.rx), 0, "steady state is quiet");
     }
@@ -616,5 +564,19 @@ mod tests {
         assert!(src.agents().await.is_empty());
         let stub = CommandAgents::new("sh", vec!["-c".into(), "echo '[{\"pid\":9,\"status\":\"idle\"}]'".into()]);
         assert_eq!(stub.agents().await.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn a_hung_agents_command_times_out_and_the_tick_still_completes() {
+        let mut r = rig();
+        let slow = CommandAgents::new("sleep", vec!["10".into()]).with_timeout(Duration::from_millis(200));
+        let poller = Poller::new(r.backend.clone(), Arc::new(slow), r.sink.clone(), EventBus::default())
+            .with_hostname(Some(HOST.into()));
+        r.backend.set(ID, "/d", Some(1), "");
+        let started = std::time::Instant::now();
+        tokio::time::timeout(Duration::from_secs(3), poller.poll_once()).await.expect("tick must not hang");
+        assert!(started.elapsed() < Duration::from_secs(3));
+        assert!(r.sink.applied.lock().unwrap().is_empty(), "timeout means no agents");
+        drain(&mut r.rx);
     }
 }

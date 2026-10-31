@@ -4,6 +4,10 @@
 //! `tmux -L <socket> -f /dev/null ...` with `TMUX`/`TMUX_PANE` removed from the
 //! child environment, so an isolated server can never be confused with the
 //! user's. When unset the argv is exactly what the JS daemon ran.
+//!
+//! Note `-f /dev/null`: setting `GARAGE_TMUX_SOCKET` also means "do not load the
+//! user's tmux.conf". That is intended (tests and isolation); production leaves
+//! the variable unset.
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -123,7 +127,10 @@ impl TmuxBackend {
 
     /// Run tmux; `Err` carries tmux's stderr on a non-zero exit.
     async fn run(&self, args: &[String]) -> Result<String> {
-        let out = self.command(args).output().await.map_err(|e| anyhow!("cannot run tmux: {e}"))?;
+        let out = tokio::time::timeout(super::COMMAND_TIMEOUT, self.command(args).output())
+            .await
+            .map_err(|_| anyhow!("tmux timed out after {:?}", super::COMMAND_TIMEOUT))?
+            .map_err(|e| anyhow!("cannot run tmux: {e}"))?;
         if out.status.success() {
             Ok(String::from_utf8_lossy(&out.stdout).into_owned())
         } else {
@@ -168,6 +175,11 @@ fn has_extkeys_feature(shown: &str) -> bool {
 
 #[async_trait]
 impl SessionBackend for TmuxBackend {
+    async fn init(&self) -> Result<()> {
+        self.ensure_extended_keys().await;
+        Ok(())
+    }
+
     async fn list(&self) -> Result<Vec<BackendSession>> {
         // tmux exits non-zero when no server runs: that means "no sessions".
         let Ok(out) = self
@@ -189,12 +201,12 @@ impl SessionBackend for TmuxBackend {
                 let id = f.next().unwrap_or("").to_string();
                 let dir = f.next().unwrap_or("").to_string();
                 let attached = f.next().is_some_and(|a| a != "0");
+                // 0 or unparseable = unknown (the JS sent null)
                 let created_at = f
                     .next()
                     .and_then(|c| c.parse::<f64>().ok())
                     .map(|s| (s * 1000.0) as i64)
-                    .filter(|ms| *ms > 0)
-                    .unwrap_or(0); // 0 = unknown (the JS sent null)
+                    .filter(|ms| *ms > 0);
                 BackendSession { id, dir, attached, created_at }
             })
             .collect())
@@ -250,7 +262,9 @@ impl SessionBackend for TmuxBackend {
         argv.extend(Self::env_args(env));
         argv.extend(["-t".into(), format!("{}:", exact(id)), cmd.into()]);
         argv.extend(args.iter().cloned());
-        self.run(&argv).await.map(|_| ())
+        self.run(&argv).await?;
+        self.ensure_extended_keys().await;
+        Ok(())
     }
 
     async fn kill(&self, id: &str) -> Result<()> {
@@ -427,7 +441,7 @@ mod tests {
         assert_eq!(list[0].id, "garage/ws/a");
         assert_eq!(Path::new(&list[0].dir).canonicalize().unwrap(), t.dir().canonicalize().unwrap());
         assert!(!list[0].attached);
-        assert!(list[0].created_at > 1_600_000_000_000);
+        assert!(list[0].created_at.is_some_and(|c| c > 1_600_000_000_000));
         assert!(b.has("garage/ws/a").await.unwrap());
         // `=` exact matching: a prefix is not a session.
         assert!(!b.has("garage/ws").await.unwrap());
@@ -482,6 +496,7 @@ mod tests {
         b.create("garage/ws/r", t.dir(), "sleep", &sleeper(), &[]).await.unwrap();
         let before = b.panes().await.unwrap()["garage/ws/r"].pid.unwrap();
         let created = b.list().await.unwrap()[0].created_at;
+        assert!(created.is_some());
         b.respawn("garage/ws/r", t.dir(), "sleep", &["61".into()], &[]).await.unwrap();
         let after = b.panes().await.unwrap()["garage/ws/r"].pid.unwrap();
         assert_ne!(before, after, "a new process runs in the same pane");
@@ -501,6 +516,24 @@ mod tests {
         let p = &panes["garage/ws/p"];
         assert_eq!(Path::new(&p.cwd).canonicalize().unwrap(), t.dir().canonicalize().unwrap());
         assert!(p.pid.is_some_and(|p| p > 1));
+    }
+
+    #[tokio::test]
+    async fn a_session_with_two_panes_reports_the_first_pane() {
+        let t = TestTmux::new();
+        let b = t.backend();
+        let first = t.dir().join("first");
+        let second = t.dir().join("second");
+        std::fs::create_dir_all(&first).unwrap();
+        std::fs::create_dir_all(&second).unwrap();
+        b.create("garage/ws/two", &first, "sleep", &sleeper(), &[]).await.unwrap();
+        let before = b.panes().await.unwrap()["garage/ws/two"].clone();
+        t.tmux(&["split-window", "-d", "-t", "garage/ws/two:", "-c", second.to_str().unwrap(), "sleep", "60"]);
+        let panes = b.panes().await.unwrap();
+        assert_eq!(panes.len(), 1);
+        let p = &panes["garage/ws/two"];
+        assert_eq!(Path::new(&p.cwd).canonicalize().unwrap(), first.canonicalize().unwrap(), "first pane, not the split");
+        assert_eq!(p.pid, before.pid);
     }
 
     #[tokio::test]
