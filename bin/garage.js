@@ -398,6 +398,8 @@ async function tuiMain() {
   // Stale-daemon gate (p8.2): a healthy daemon that predates this launcher
   // is stopped (by its reported pid) and replaced exactly like the
   // daemon-absent path below.
+  let daemonStarting = false;
+  let daemonLogPath;
   const health = await fetchHealth();
   const stale = daemonIsStale(health);
   if (stale) await stopStaleDaemon(health);
@@ -405,20 +407,25 @@ async function tuiMain() {
     if (!stale) {
       console.log(`no daemon on port ${PORT} — starting one (it outlives the TUI)`);
     }
-    const logPath = startDetachedDaemon();
-    if (!(await waitForHealth())) {
-      console.error(
-        `claude-garage daemon did not come up on port ${PORT} — see ${logPath} ` +
-          `(port already in use? set GARAGE_PORT to pick a different one)`
-      );
-      process.exit(1);
-    }
+    // p23: the wall waits for /api/health itself (and shows the startup
+    // reveal while it does), so the launcher hands the terminal over right
+    // after the spawn. The same 15s budget and the same failure message
+    // now live in wall/src/ui/startup.rs.
+    daemonLogPath = startDetachedDaemon();
+    daemonStarting = true;
   }
 
   // Foreground, inherited stdio: the TUI owns the terminal until it exits.
   // The daemon (already running, or the detached child above) is left
   // running, and so are the tmux sessions.
-  const child = spawn(tuiBinary, [], { stdio: "inherit", env: process.env });
+  const tuiEnv = daemonStarting
+    ? {
+        ...process.env,
+        GARAGE_DAEMON_STARTING: "1",
+        GARAGE_DAEMON_LOG: daemonLogPath,
+      }
+    : process.env;
+  const child = spawn(tuiBinary, [], { stdio: "inherit", env: tuiEnv });
   child.on("error", (err) => {
     console.error(`failed to start TUI binary at ${tuiBinary}: ${err.message}`);
     process.exit(1);
