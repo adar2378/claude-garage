@@ -128,8 +128,8 @@ Search lists public GitHub repositories with the topic `claude-garage-plugin`. T
 3. Edit `garage-plugin.toml` and your code. Save. The plugin reloads.
 4. To share it, push it to a public GitHub repository and add the topic `claude-garage-plugin`. Others install it with `claude-garage plugin install you/my-plugin`.
 
-The manifest, events, widgets, panes and the HTTP API are in the Plugins docs section: [Plugin documentation](/plugins/).
+The manifest, events, widgets, panes and the HTTP API are in the Plugins docs section: [Plugin documentation](/docs/plugins/).
 
 ## Next
 
-[Coming from terminal tabs](/guides/from-terminal-tabs/)
+[Coming from terminal tabs](/docs/guides/from-terminal-tabs/)

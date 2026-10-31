@@ -1,0 +1,35 @@
+---
+// Server-rendered lesson list: every lesson (question heading, direct answer, key steps) is real HTML,
+// so crawlers and no-JS readers get the whole tutorial. try.js turns it into the interactive step panel.
+import { LESSONS, FINISH } from '../scripts/try-data.js';
+const kbd = (s: string) =>
+  s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/`([^`]+)`/g, '<kbd>$1</kbd>');
+---
+<ol class="tr-lessons" aria-label="Lessons">
+  {LESSONS.map((l, i) => (
+    <li class="tr-l" data-lesson={i} data-state={i === 0 ? 'current' : 'todo'}>
+      <h2><span class="tr-n">{i + 1}</span>{l.q}</h2>
+      <div class="tr-lb">
+        <p class="tr-ans" set:html={kbd(l.a)} />
+        <ol class="tr-tasks">
+          {l.tasks.map((t) => <li data-task data-done="0" set:html={kbd(t.text)} />)}
+        </ol>
+      </div>
+    </li>
+  ))}
+  <li class="tr-l tr-fin" data-finish data-state="todo">
+    <h2><span class="tr-n">9</span>{FINISH.q}</h2>
+    <div class="tr-lb">
+      <p class="tr-ans" set:html={kbd(FINISH.a)} />
+      <button class="tr-copy" type="button" data-copy={FINISH.command} aria-label={`Copy command: ${FINISH.command}`}>
+        <span class="tr-cmd"><span class="tr-p">$ </span>{FINISH.command}</span><span class="tr-cc lbl">Copy</span>
+      </button>
+      <p class="tr-links">
+        <a href="/docs/getting-started/install/">Install guide</a>
+        <a href="/docs/guides/first-wall/">Your first wall</a>
+        <a href="/docs/guides/worktrees/">Worktree sessions</a>
+        <a href="/docs/reference/keys/">All keys</a>
+      </p>
+    </div>
+  </li>
+</ol>

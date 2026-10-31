@@ -63,4 +63,4 @@ Press `d` to move the focused session into its own view. Press `d` again to move
 
 ## Next
 
-[Sessions in git worktrees](/guides/worktrees/)
+[Sessions in git worktrees](/docs/guides/worktrees/)

@@ -63,7 +63,7 @@ claude-garage is one native binary. You install it once, then run `claude-garage
 
 The first launch checks for tmux and `claude`. If one is missing, garage prints what to install and stops.
 
-Then garage starts its background daemon and opens the wall. With no projects yet, the wall shows a short message: press `w` to add one. Go on with [Your first wall](/guides/first-wall/).
+Then garage starts its background daemon and opens the wall. With no projects yet, the wall shows a short message: press `w` to add one. Go on with [Your first wall](/docs/guides/first-wall/).
 
 ## The daemon
 
@@ -73,7 +73,7 @@ The daemon is a small background program. It starts and watches your Claude sess
 - Its log is `~/.garage/daemon.log`. Your state is in `~/.garage/state.json`.
 - Press `q` in the wall to quit. The daemon and every session keep running.
 - To restart only the daemon, run `claude-garage restart`, or press `r d` in the wall. Your sessions are not touched.
-- If port 4747 is taken, set `GARAGE_PORT` to another number. See [Configuration](/guides/configuration/).
+- If port 4747 is taken, set `GARAGE_PORT` to another number. See [Configuration](/docs/guides/configuration/).
 
 ## Quiet startup
 
@@ -91,4 +91,4 @@ Run `claude-garage` again. It finds the old daemon, stops only that process and 
 
 ## Next
 
-[Your first wall](/guides/first-wall/)
+[Your first wall](/docs/guides/first-wall/)

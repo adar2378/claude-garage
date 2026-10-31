@@ -78,7 +78,7 @@ GARAGE_DRAFTS=0 claude-garage
 drafts = false
 ```
 
-When drafts are off, garage also removes the drafts it kept before. See [Nothing gets lost](/guides/nothing-lost/).
+When drafts are off, garage also removes the drafts it kept before. See [Nothing gets lost](/docs/guides/nothing-lost/).
 
 ### The tmux control off switch
 
@@ -94,8 +94,8 @@ The daemon then checks sessions on a plain 2-second timer. Nothing else changes.
 
 ## Plugin keys
 
-Plugin settings are not in `config.toml`. Turn plugins on and off, and change their keys, with `claude-garage plugin enable`, `disable` and `bind`. See [Plugins](/guides/plugins/).
+Plugin settings are not in `config.toml`. Turn plugins on and off, and change their keys, with `claude-garage plugin enable`, `disable` and `bind`. See [Plugins](/docs/guides/plugins/).
 
 ## Next
 
-Back to [Install](/guides/install/), or open the Plugins docs section to write your own plugin.
+Back to [Install](/docs/guides/install/), or open the Plugins docs section to write your own plugin.

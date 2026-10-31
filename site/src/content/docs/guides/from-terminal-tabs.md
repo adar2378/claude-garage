@@ -34,7 +34,7 @@ You run Claude Code in several tabs or windows today. garage puts all of them on
 ## Tips
 
 - Keep related repos in one parent folder. garage groups them in the rail under the folder name.
-- Use `N` for tasks that touch the same files. Each gets its own git worktree. See [Worktrees](/guides/worktrees/).
+- Use `N` for tasks that touch the same files. Each gets its own git worktree. See [Worktrees](/docs/guides/worktrees/).
 - Learn four keys first: `n` new session, `Enter` engage, `Ctrl+G` leave, `a` jump to a waiting session.
 - Press `m` to maximize a tile when you need the full screen. Press it again to go back.
 - Use a terminal with good key support. Ghostty, iTerm2, kitty and WezTerm work best. In macOS Terminal.app, `Shift+Enter` acts like `Enter`. Use `Option+Enter` for a new line.
@@ -42,4 +42,4 @@ You run Claude Code in several tabs or windows today. garage puts all of them on
 
 ## Next
 
-[Configuration](/guides/configuration/)
+[Configuration](/docs/guides/configuration/)

@@ -41,6 +41,8 @@ export default defineConfig({
         ] },
         { slug: 'docs/platforms' },
         { slug: 'docs/changelog' },
+        { label: 'Blog', link: '/blog/' },
+        { label: 'Compare', link: '/compare/' },
       ],
     }),
     sitemap({ filter: (page) => !/\/404\/?$/.test(page) }),

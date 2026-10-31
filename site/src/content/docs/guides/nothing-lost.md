@@ -80,8 +80,8 @@ Or set it for good in `~/.garage/config.toml`:
 drafts = false
 ```
 
-With drafts off, garage keeps nothing and removes what an earlier run kept. See [Configuration](/guides/configuration/).
+With drafts off, garage keeps nothing and removes what an earlier run kept. See [Configuration](/docs/guides/configuration/).
 
 ## Next
 
-[Plugins](/guides/plugins/)
+[Plugins](/docs/guides/plugins/)

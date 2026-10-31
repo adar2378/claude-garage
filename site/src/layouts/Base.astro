@@ -3,8 +3,8 @@ import '@fontsource-variable/geist/index.css';
 import '@fontsource-variable/geist-mono/index.css';
 import '../styles/theme.css';
 
-interface Props { title: string; description: string; jsonLd?: object; noindex?: boolean }
-const { title, description, jsonLd, noindex = false } = Astro.props;
+interface Props { title: string; description: string; jsonLd?: object; noindex?: boolean; ogType?: string }
+const { title, description, jsonLd, noindex = false, ogType = 'website' } = Astro.props;
 const site = Astro.site ?? new URL('https://claude-garage.xyz');
 const canonical = new URL(Astro.url.pathname, site).href;
 const image = new URL('/og-default.png', site).href;
@@ -20,7 +20,7 @@ const image = new URL('/og-default.png', site).href;
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <meta name="theme-color" content="#FAFAF8" />
     {noindex && <meta name="robots" content="noindex" />}
-    <meta property="og:type" content="website" />
+    <meta property="og:type" content={ogType} />
     <meta property="og:site_name" content="claude-garage" />
     <meta property="og:title" content={title} />
     <meta property="og:description" content={description} />
@@ -32,6 +32,7 @@ const image = new URL('/og-default.png', site).href;
     <meta name="twitter:title" content={title} />
     <meta name="twitter:description" content={description} />
     <meta name="twitter:image" content={image} />
+    <slot name="head" />
     {jsonLd && <script type="application/ld+json" set:html={JSON.stringify(jsonLd)} />}
   </head>
   <body>

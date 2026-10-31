@@ -59,10 +59,10 @@ Scroll back through a tile with `Shift+PageUp`. Press `End` to return to live ou
 
 ## What you'll see
 
-After `n`, a tile fades in and Claude Code starts inside it. When Claude finishes a turn, the glyph turns to `✓`. When Claude needs a decision, the tile turns amber. See [Many sessions](/guides/many-sessions/) for that.
+After `n`, a tile fades in and Claude Code starts inside it. When Claude finishes a turn, the glyph turns to `✓`. When Claude needs a decision, the tile turns amber. See [Many sessions](/docs/guides/many-sessions/) for that.
 
 Press `I` once. It installs the Claude Code hooks (instant status) and the context meter into your Claude settings. Garage works without it, but status is faster with it. If it is already installed, the strip says so.
 
 ## Next
 
-[Run many sessions at once](/guides/many-sessions/)
+[Run many sessions at once](/docs/guides/many-sessions/)

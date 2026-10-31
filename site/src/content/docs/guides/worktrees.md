@@ -49,4 +49,4 @@ Discard only works on `garage/` branches. garage never deletes any other branch.
 
 ## Next
 
-[Nothing gets lost](/guides/nothing-lost/)
+[Nothing gets lost](/docs/guides/nothing-lost/)
