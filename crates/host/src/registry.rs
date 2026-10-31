@@ -30,9 +30,22 @@ impl Entry {
     }
 }
 
-/// Session ids contain `/` (`garage/<ws>/<label>`), which a file name cannot.
+/// A file name for a session id, the same on every OS and for write and read.
+/// Ids look like `garage/<ws>/<label>` but are only trusted as far as the
+/// caller validated them, so every byte outside `[A-Za-z0-9_-]` becomes `%XX`
+/// (including `/`, `\`, `.`, `:` and `%` itself). The result can never hold a
+/// path separator, a drive letter or `..`, and the mapping is injective:
+/// distinct ids never share a file.
 pub fn file_stem(id: &str) -> String {
-    id.replace('/', "__")
+    let mut out = String::with_capacity(id.len() + 8);
+    for b in id.bytes() {
+        if b.is_ascii_alphanumeric() || b == b'_' || b == b'-' {
+            out.push(b as char);
+        } else {
+            out.push_str(&format!("%{b:02X}"));
+        }
+    }
+    out
 }
 
 pub fn path_for(hosts_dir: &Path, id: &str) -> PathBuf {
@@ -44,8 +57,10 @@ pub fn log_path(hosts_dir: &Path, id: &str) -> PathBuf {
     hosts_dir.join(format!("{}.log", file_stem(id)))
 }
 
+/// The record for `id`. A record whose own `id` differs (a copied or tampered
+/// file) is not a record for `id`.
 pub fn read(hosts_dir: &Path, id: &str) -> Option<Entry> {
-    parse(&std::fs::read_to_string(path_for(hosts_dir, id)).ok()?)
+    parse(&std::fs::read_to_string(path_for(hosts_dir, id)).ok()?).filter(|e| e.id == id)
 }
 
 fn parse(text: &str) -> Option<Entry> {
@@ -120,12 +135,42 @@ mod tests {
         let d = tempfile::tempdir().unwrap();
         let e = entry("garage/ws/a");
         write(d.path(), &e).unwrap();
-        assert!(d.path().join("garage__ws__a.json").exists());
+        assert!(d.path().join("garage%2Fws%2Fa.json").exists());
         assert_eq!(read(d.path(), "garage/ws/a"), Some(e.clone()));
         assert_eq!(read(d.path(), "garage/ws/b"), None);
         assert_eq!(e.addr(), "127.0.0.1:4000");
         remove(d.path(), "garage/ws/a");
         assert_eq!(read(d.path(), "garage/ws/a"), None);
+    }
+
+    #[test]
+    fn stems_never_contain_separators_dots_or_colons_and_never_collide() {
+        for id in [
+            "garage/ws/a", "../../etc/passwd", "..\\..\\x", "C:\\Windows\\x", "a/../b", "/abs", "x:y", "a.b", "%2F", "é",
+            "con", "", "a\0b", "..",
+        ] {
+            let stem = file_stem(id);
+            assert!(
+                stem.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-' | b'%')),
+                "{id:?} -> {stem:?}"
+            );
+            assert!(!stem.contains(".."), "{id:?} -> {stem:?}");
+        }
+        assert_eq!(file_stem("garage/ws/a"), "garage%2Fws%2Fa");
+        // '%' is escaped too, so an id that spells an escape cannot alias another id.
+        assert_ne!(file_stem("garage/ws"), file_stem("garage%2Fws"));
+        // Traversal ids stay inside the hosts dir.
+        let dir = Path::new("/h");
+        assert_eq!(path_for(dir, "../../etc/passwd").parent(), Some(dir));
+    }
+
+    #[test]
+    fn a_record_filed_under_another_ids_name_is_not_that_ids_record() {
+        let d = tempfile::tempdir().unwrap();
+        write(d.path(), &entry("garage/ws/real")).unwrap();
+        std::fs::copy(path_for(d.path(), "garage/ws/real"), path_for(d.path(), "garage/ws/alias")).unwrap();
+        assert_eq!(read(d.path(), "garage/ws/alias"), None);
+        assert!(read(d.path(), "garage/ws/real").is_some());
     }
 
     #[cfg(unix)]
@@ -156,7 +201,7 @@ mod tests {
         write(d.path(), &entry("garage/ws/a")).unwrap();
         std::fs::write(d.path().join("broken.json"), "{not json").unwrap();
         std::fs::write(d.path().join("x.json.tmp"), "{}").unwrap();
-        std::fs::write(d.path().join("garage__ws__a.log"), "log").unwrap();
+        std::fs::write(d.path().join("garage%2Fws%2Fa.log"), "log").unwrap();
         let ids: Vec<_> = read_all(d.path()).into_iter().map(|e| e.id).collect();
         assert_eq!(ids, ["garage/ws/a", "garage/ws/b"]);
         assert!(read_all(&d.path().join("missing")).is_empty());
