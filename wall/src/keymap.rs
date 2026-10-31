@@ -6,6 +6,11 @@
 //! behaviour, not bindings: the router keeps that state and decides what an
 //! action does on its first versus second press. The engaged layer is not in
 //! the keymap — engaged input stays verbatim.
+//!
+//! [`Keymap::bind`] extends the table (the first binding for a key wins, so
+//! it never displaces a default); [`Keymap::bind_override`] is for user
+//! config: it replaces whatever the key was bound to, the later layer
+//! winning.
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
@@ -94,8 +99,16 @@ impl Keymap {
         km
     }
 
+    /// Replace the binding of `key` in `layer` (any index it carried is
+    /// dropped), or add it when unbound. Later calls win.
+    pub fn bind_override(&mut self, layer: Layer, key: &str, action: ActionId) {
+        self.bindings.retain(|b| !(b.layer == layer && b.key == key));
+        self.bind(layer, key, action);
+    }
+
     /// Bind `key` in `layer` (the first binding for a key wins on lookup, so
-    /// this extends the table rather than overriding a default).
+    /// this extends the table rather than overriding a default — use
+    /// [`Keymap::bind_override`] for that).
     pub fn bind(&mut self, layer: Layer, key: &str, action: ActionId) {
         self.bindings.push(Binding {
             layer,
@@ -230,6 +243,21 @@ mod tests {
         for key in ["0", "z", " ", "i", "k", "j", "p", "Q"] {
             assert_eq!(garage(key), None, "key {key:?}");
         }
+    }
+
+    #[test]
+    fn an_override_replaces_a_default_and_bind_does_not() {
+        let mut km = Keymap::defaults();
+        km.bind(Layer::Garage, "q", ids::SESSION_MAXIMIZE);
+        assert_eq!(km.resolve(Layer::Garage, "q").unwrap().action, ids::APP_QUIT, "bind extends");
+        km.bind_override(Layer::Garage, "q", ids::SESSION_MAXIMIZE);
+        assert_eq!(km.resolve(Layer::Garage, "q").unwrap().action, ids::SESSION_MAXIMIZE);
+        km.bind_override(Layer::Garage, "q", ids::OVERLAY_OPEN_HELP);
+        assert_eq!(km.resolve(Layer::Garage, "q").unwrap().action, ids::OVERLAY_OPEN_HELP, "later wins");
+        // An indexed default loses its index when replaced; other layers are untouched.
+        km.bind_override(Layer::Garage, "1", ids::SESSION_MAXIMIZE);
+        assert_eq!(km.resolve(Layer::Garage, "1").unwrap().index, None);
+        assert_eq!(km.resolve(Layer::Overlay(OverlayKind::Help), "q").unwrap().action, ids::OVERLAY_CLOSE);
     }
 
     #[test]
