@@ -12,7 +12,17 @@ impl App {
     /// Run one action with its context, whatever raised it. Returns the
     /// effects the caller performs.
     pub(super) fn dispatch_action(&mut self, id: ActionId, ctx: &ActionCtx) -> Vec<Effect> {
-        let now = now_ms();
+        self.dispatch_action_at(id, ctx, now_ms())
+    }
+
+    /// [`Self::dispatch_action`] with an explicit clock, for the armed-press
+    /// windows tests drive in virtual time.
+    pub(super) fn dispatch_action_at(
+        &mut self,
+        id: ActionId,
+        ctx: &ActionCtx,
+        now: i64,
+    ) -> Vec<Effect> {
         // Fresh overlay state on every open (the Dart `A`/`w`/`D`
         // branches) — keyed on the action, so a rebound key or a click
         // resets the same way, and it happens even if the dispatch declines.

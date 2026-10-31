@@ -445,7 +445,11 @@ impl App {
             }
             AppEvent::Term(Event::Resize(_, _)) => {} // layout recomputes per frame
             AppEvent::Term(Event::Paste(text)) => self.handle_paste(&text),
-            AppEvent::Term(Event::Mouse(mouse)) => self.handle_mouse(&mouse),
+            AppEvent::Term(Event::Mouse(mouse)) => {
+                if self.handle_mouse(&mouse) {
+                    return true;
+                }
+            }
             AppEvent::Term(Event::Key(key)) => {
                 if key.kind != KeyEventKind::Release {
                     // Any keypress dismisses the install hint forever this

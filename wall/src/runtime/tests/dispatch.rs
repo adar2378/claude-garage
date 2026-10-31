@@ -125,19 +125,99 @@ fn opening_the_queue_resets_its_selection_whatever_raised_the_action() {
 }
 
 #[test]
-fn the_restart_ids_produce_their_effects() {
-    let mut app = app(vec![ws("a")], vec![si_status("a", "one", "idle"), si_status("a", "two", "idle")]);
-    let ctx = ActionCtx::from_focus(app.store.state(), ActionSource::Key("r".into()));
+fn the_restart_ids_run_only_from_the_chord() {
+    let sessions = || vec![si_status("a", "one", "idle"), si_status("a", "two", "idle")];
+    for id in [ids::SESSION_RESTART, ids::WORKSPACE_RESTART, ids::DAEMON_RESTART] {
+        // Any other source (a key, a click) is ignored: no effect, no arm.
+        for source in [ActionSource::Key("a".into()), ActionSource::Mouse { col: 1, row: 1 }] {
+            let mut app = app(vec![ws("a")], sessions());
+            let ctx = ActionCtx::from_focus(app.store.state(), source);
+            assert!(app.dispatch_action(id, &ctx).is_empty(), "{id:?}");
+            assert!(app.dispatch_action(id, &ctx).is_empty(), "{id:?} twice");
+            assert_eq!(app.router.notices.current(now_ms()), None, "{id:?} left a notice");
+        }
+    }
+
+    let mut app = app(vec![ws("a")], sessions());
+    let chord = ActionCtx::from_focus(app.store.state(), ActionSource::Chord("r".into()));
     // Armed double-press: the first press only arms.
-    assert!(app.dispatch_action(ids::SESSION_RESTART, &ctx).is_empty());
-    let effects = app.dispatch_action(ids::SESSION_RESTART, &ctx);
+    assert!(app.dispatch_action(ids::SESSION_RESTART, &chord).is_empty());
+    let effects = app.dispatch_action(ids::SESSION_RESTART, &chord);
     assert!(matches!(effects.as_slice(), [Effect::RestartSession { force: false, .. }]), "{effects:?}");
-
-    let effects = app.dispatch_action(ids::WORKSPACE_RESTART, &ctx);
+    let effects = app.dispatch_action(ids::WORKSPACE_RESTART, &chord);
     assert!(matches!(effects.as_slice(), [Effect::RestartWorkspace { ids }] if ids.len() == 2), "{effects:?}");
-
-    assert_eq!(app.dispatch_action(ids::DAEMON_RESTART, &ctx), vec![Effect::RestartDaemon]);
+    assert_eq!(app.dispatch_action(ids::DAEMON_RESTART, &chord), vec![Effect::RestartDaemon]);
     assert_eq!(app.router.notices.current(now_ms()), Some("restarting the daemon…"));
+}
+
+#[test]
+fn the_r_chord_reaches_the_restart_action_through_handle_key() {
+    // `r r` arms the session restart; firing it needs a tokio runtime, so
+    // the arm notice is the observable.
+    let mut app = app(vec![ws("a")], vec![si_status("a", "one", "idle")]);
+    assert!(!app.handle_key(&plain(KeyCode::Char('r'))));
+    assert_eq!(app.router.notices.current(now_ms()), Some(RESTART_PREFIX_HINT));
+    assert!(!app.handle_key(&plain(KeyCode::Char('r'))));
+    assert_eq!(
+        app.router.notices.current(now_ms()),
+        Some("restart one? r r again — resumes the conversation")
+    );
+}
+
+#[test]
+fn a_plain_a_key_is_jump_blocked_never_a_workspace_restart() {
+    let mut app = app(vec![ws("a")], vec![si_status("a", "one", "idle")]);
+    app.handle_key(&plain(KeyCode::Char('a')));
+    assert_eq!(app.router.notices.current(now_ms()), Some("no session needs you"));
+}
+
+#[test]
+fn a_key_and_a_click_agree_when_starting_from_the_engaged_layer() {
+    for (key, id) in [('m', ids::SESSION_MAXIMIZE), (']', ids::FOCUS_CYCLE_NEXT)] {
+        let mut by_key = two_workspaces();
+        by_key.store.engage();
+        by_key.handle_key(&KeyEvent::new(KeyCode::Char('g'), KeyModifiers::CONTROL));
+        assert_eq!(by_key.store.state().layer, KeyLayer::Garage);
+        by_key.handle_key(&plain(KeyCode::Char(key)));
+
+        let mut by_click = two_workspaces();
+        by_click.store.engage();
+        let ctx = click_ctx(&by_click);
+        by_click.dispatch_action(id, &ctx);
+
+        assert_eq!(state_of(&by_key), state_of(&by_click), "{key:?} vs click on {id:?}");
+    }
+}
+
+/// An app with a drawn-looking layout and the given clickable strip slots,
+/// so `handle_click` resolves real coordinates.
+fn app_with_strip_slots(slots: Vec<(std::ops::Range<u16>, ActionId)>) -> (App, u16) {
+    let mut app = two_workspaces();
+    let layout = crate::ui::layout::wall_layout(Rect::new(0, 0, 120, 40), 3, None, false, false);
+    let row = layout.strip.y;
+    app.layout = Some(layout);
+    app.strip_slots = slots;
+    (app, row)
+}
+
+#[test]
+fn a_real_click_on_the_pet_slot_reaches_the_dispatcher() {
+    let (mut app, row) = app_with_strip_slots(vec![(50..60, ids::PET_PET)]);
+    app.store.engage();
+    assert!(!app.handle_click(55, row));
+    assert_eq!(
+        app.store.state().layer,
+        KeyLayer::Garage,
+        "the pet click is handled by the dispatcher, which leaves the engaged tile"
+    );
+}
+
+#[test]
+fn a_click_that_raises_quit_quits_like_the_key() {
+    let (mut app, row) = app_with_strip_slots(vec![(50..60, ids::APP_QUIT)]);
+    assert!(app.handle_click(55, row), "click quit");
+    assert!(app.handle_key(&plain(KeyCode::Char('q'))), "key quit");
+    assert!(!app.handle_click(5, row), "an inert point does not quit");
 }
 
 #[test]

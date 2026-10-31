@@ -13,15 +13,17 @@ use crate::ui::scroll::WHEEL_LINES;
 use super::{App, now_ms, view_picker_entries};
 
 impl App {
-    pub(super) fn handle_mouse(&mut self, mouse: &MouseEvent) {
+    /// True when the event raised a quit.
+    pub(super) fn handle_mouse(&mut self, mouse: &MouseEvent) -> bool {
         match mouse.kind {
             MouseEventKind::Down(MouseButton::Left) => {
-                self.handle_click(mouse.column, mouse.row);
+                return self.handle_click(mouse.column, mouse.row);
             }
             MouseEventKind::ScrollUp => self.handle_wheel(mouse.column, mouse.row, true),
             MouseEventKind::ScrollDown => self.handle_wheel(mouse.column, mouse.row, false),
             _ => {}
         }
+        false
     }
 
     /// The session id under a grid point, honoring maximize (a maximized
@@ -30,9 +32,10 @@ impl App {
         hit_targets::tile_at(self.layout.as_ref()?, self.store.state(), col, row)
     }
 
-    pub(super) fn handle_click(&mut self, col: u16, row: u16) {
+    /// True when the click raised a quit.
+    pub(super) fn handle_click(&mut self, col: u16, row: u16) -> bool {
         let Some(layout) = self.layout.clone() else {
-            return;
+            return false;
         };
         // Click on a URL in a tile's grid text opens it (spec
         // tui-key-routing "Click opens links") — our mouse capture starves
@@ -54,7 +57,7 @@ impl App {
                         if let Some(url) = url_at(&line, usize::from(col - inner.x)) {
                             let _ = std::process::Command::new("open").arg(&url).spawn();
                             self.router.notices.show(format!("opened {url}"), 2000, now_ms());
-                            return;
+                            return false;
                         }
                     }
                 }
@@ -79,8 +82,9 @@ impl App {
         };
         if let Some((id, ctx)) = action_at(&map, self.store.state(), col, row) {
             let effects = self.dispatch_action(id, &ctx);
-            self.run_effects(effects);
+            return self.run_effects(effects);
         }
+        false
     }
 
     /// Wheel over a tile's terminal area. A frozen view owns the wheel

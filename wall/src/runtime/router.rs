@@ -258,7 +258,7 @@ impl GarageRouter {
         // so `r a` / `r d` never reach the plain `a` / `d` bindings.
         if std::mem::take(&mut self.restart_prefix) {
             let action = self.restart_chord(keymap, key).map(|id| {
-                let ctx = ActionCtx::from_focus(store.state(), ActionSource::Key(key.to_owned()));
+                let ctx = ActionCtx::from_focus(store.state(), ActionSource::Chord(key.to_owned()));
                 (id, ctx)
             });
             return KeyOutcome { effects, action };
@@ -365,6 +365,11 @@ impl GarageRouter {
                     store.focus_view(view);
                 }
             }
+            // The restart ids run only from the `r` chord: `a` and `d` are
+            // also plain garage keys, and a restart must never fire from a
+            // click or a rebound key by accident.
+            ids::SESSION_RESTART | ids::WORKSPACE_RESTART | ids::DAEMON_RESTART
+                if !matches!(ctx.source, ActionSource::Chord(_)) => {}
             ids::SESSION_RESTART => self.restart_focused_pressed(store, now_ms, effects),
             ids::WORKSPACE_RESTART => self.restart_workspace_pressed(store, now_ms, effects),
             ids::DAEMON_RESTART => {

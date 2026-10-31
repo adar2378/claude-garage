@@ -105,6 +105,9 @@ pub mod ids {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ActionSource {
     Key(String),
+    /// The key after the `r` prefix (the `RestartChord` layer). Only this
+    /// source may run the restart actions.
+    Chord(String),
     Mouse { col: u16, row: u16 },
 }
 

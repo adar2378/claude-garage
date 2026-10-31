@@ -72,17 +72,29 @@ fn store_with(workspaces: Vec<WorkspaceInfo>, sessions: Vec<SessionInfo>) -> Wal
     store
 }
 
+/// A garage key through the production path: `GarageRouter::on_garage_key`,
+/// then `App::dispatch_action_at` (the overlay/pet layer and the router's
+/// `run_action`). The caller's router and store are swapped into a scratch
+/// `App` for the call so the tests keep their virtual clock.
 fn key_at(
     router: &mut GarageRouter,
     store: &mut WallStore,
     key: &str,
     now: i64,
 ) -> Vec<Effect> {
-    let outcome = router.on_garage_key(store, &Keymap::defaults(), key, now);
+    let (tx, _rx) = mpsc::unbounded_channel();
+    let mut app = App::new(tx, "http://127.0.0.1:0", 0);
+    std::mem::swap(&mut app.router, router);
+    std::mem::swap(&mut app.store, store);
+    let outcome = app
+        .router
+        .on_garage_key(&mut app.store, &app.keymap, key, now);
     let mut effects = outcome.effects;
     if let Some((id, ctx)) = outcome.action {
-        router.run_action(store, id, &ctx, now, &mut effects);
+        effects.extend(app.dispatch_action_at(id, &ctx, now));
     }
+    std::mem::swap(&mut app.router, router);
+    std::mem::swap(&mut app.store, store);
     effects
 }
 
