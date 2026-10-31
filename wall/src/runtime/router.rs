@@ -15,6 +15,8 @@ use crate::ui::pet::PetHost;
 
 use super::Effect;
 
+pub(in crate::runtime) mod plugin_gate;
+
 /// The garage-layer typing hint (post-review Dart wording, verbatim — the
 /// click-smoke harness greps it).
 pub const TYPING_HINT: &str = "enter engages the focused terminal — keys go to garage now";
@@ -222,10 +224,49 @@ pub struct GarageRouter {
     /// True between the `r` prefix press and the very next key (p16-restart,
     /// design.md D5: a one-shot prefix, like `X` → `X`/`K`).
     restart_prefix: bool,
+    /// The arm a plugin trigger left on a dangerous action (p24 confirm
+    /// rule): independent of the native machines, armed only by
+    /// [`ArmedAction::arm`], confirmed only by a human key or click.
+    armed_plugin: ArmedAction,
+    plugin_arm: Option<plugin_gate::PluginArm>,
+    /// One-shot proof that a `confirmed` plugin source came from this
+    /// router's own confirm path: (arm key, restart force).
+    confirm_token: Option<(String, bool)>,
+    /// The plugins' declared actions (from the listing): what `plugin:action`
+    /// ids run, which need a confirm, which open a pane.
+    plugin_actions: std::collections::HashMap<ActionId, crate::plugins::PluginAction>,
+    /// When a plugin last moved the focus (ms): a burst of such requests is
+    /// dropped, only the first lands.
+    plugin_focus_at: Option<i64>,
     pub notices: Notices,
 }
 
 impl GarageRouter {
+    /// Replace the declared plugin actions (a new listing arrived).
+    pub fn set_plugin_actions(&mut self, actions: std::collections::HashMap<ActionId, crate::plugins::PluginAction>) {
+        self.plugin_actions = actions;
+    }
+
+    /// A plugin action's effect: gated on its `contexts`, then either the
+    /// run request or the pane open. An id no manifest declared does nothing.
+    pub(super) fn run_plugin_action(&mut self, id: ActionId, ctx: &ActionCtx, now_ms: i64, effects: &mut Vec<Effect>) {
+        let Some(action) = self.plugin_actions.get(&id) else { return };
+        if let Some(hint) = crate::plugins::context::unmet(action.need, &action.title, ctx) {
+            self.notices.show(hint, 3000, now_ms);
+            return;
+        }
+        let body = crate::plugins::context::run_body(ctx);
+        effects.push(match &action.pane {
+            Some(pane) => Effect::OpenPluginPane {
+                plugin: action.plugin.clone(),
+                pane: pane.clone(),
+                body,
+                human: !matches!(ctx.source, ActionSource::Plugin { .. }),
+            },
+            None => Effect::RunPluginAction { plugin: action.plugin.clone(), action: action.local.clone(), body },
+        });
+    }
+
     pub fn restoring(&self) -> &HashSet<String> {
         &self.restoring
     }
@@ -262,6 +303,26 @@ impl GarageRouter {
                 (id, ctx)
             });
             return KeyOutcome { effects, action };
+        }
+        // A pending plugin arm (p24): `y` confirms it, any other key drops it.
+        self.refresh_plugin_arm(now_ms);
+        if self.plugin_arm_pending() {
+            if key == "y" {
+                match self.plugin_confirm_key(now_ms) {
+                    plugin_gate::ConfirmKey::Run(action) => {
+                        return KeyOutcome { effects, action: Some(*action) };
+                    }
+                    // A racing `y` is swallowed; the prompt stays.
+                    plugin_gate::ConfirmKey::TooSoon => return KeyOutcome::effects(effects),
+                    plugin_gate::ConfirmKey::Gone => {}
+                }
+            }
+            // The same trigger again confirms a human-raised arm (that is its
+            // confirm); any other key drops it.
+            let repeats = keymap.resolve(Layer::Garage, key).is_some_and(|r| self.human_arm_is(r.action));
+            if !repeats {
+                self.disarm_plugin();
+            }
         }
         // Resolve the key to its action once; arming below is keyed on the
         // action (so `x`'s double-press is "session.close twice"), which is
@@ -349,6 +410,7 @@ impl GarageRouter {
             }
         }
         match id {
+            _ if id.is_plugin() => self.run_plugin_action(id, ctx, now_ms, effects),
             // `P` (spec tui-pit-pet "Opt-in roster cycled by `P`"): not a
             // `GarageCommand` — `pet.rs` (the render module) has no business
             // being a store dependency, so this stays here rather than
@@ -454,7 +516,7 @@ impl GarageRouter {
     /// `I`: fire the install effect (statusline + hooks), busy-guarded
     /// against a second press before the first settles (spec
     /// tui-context-meters "Install affordance", spec tui-hooks-install).
-    fn install_pressed(&mut self, effects: &mut Vec<Effect>) {
+    pub(super) fn install_pressed(&mut self, effects: &mut Vec<Effect>) {
         if self.installing {
             return;
         }
@@ -505,7 +567,7 @@ impl GarageRouter {
     }
 
     /// Restore one session, deduplicated against in-flight restores.
-    fn restore(&mut self, id: String, effects: &mut Vec<Effect>) {
+    pub(super) fn restore(&mut self, id: String, effects: &mut Vec<Effect>) {
         if self.restoring.contains(&id) {
             return;
         }

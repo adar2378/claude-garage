@@ -6,7 +6,11 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
+use std::cell::RefCell;
+
 use serde_json::Value;
+
+use crate::plugins::revs::RevTracker;
 
 use crate::api::client::GarageClient;
 use crate::api::sse::SseClient;
@@ -23,6 +27,70 @@ pub(super) fn fetch_and_send(client: &GarageClient, tx: &EventSender) {
     if let Ok(sessions) = client.fetch_sessions() {
         let _ = tx.send(AppEvent::Sessions(sessions));
     }
+}
+
+/// Fetch the plugin listing and every plugin's widgets (startup, `plugins`
+/// frame, reconnect). The listing goes first: widget content of a plugin the
+/// listing does not call active is ignored.
+fn fetch_plugins_full(client: &GarageClient, tx: &EventSender, revs: &RefCell<RevTracker>) {
+    let Ok(list) = client.fetch_plugins() else { return };
+    let _ = tx.send(AppEvent::Plugins(list));
+    if let Ok(snapshot) = client.fetch_plugin_widgets(None) {
+        revs.borrow_mut().record_all(snapshot.plugins.iter().map(|(id, w)| (id.clone(), w.rev)));
+        let _ = tx.send(AppEvent::PluginWidgets { snapshot, full: true });
+    }
+}
+
+/// The plugin-host SSE frames. Returns false for a frame it does not know.
+fn plugin_frame(event: &crate::api::sse::SseEvent, client: &GarageClient, tx: &EventSender, revs: &RefCell<RevTracker>) -> bool {
+    let data: Value = serde_json::from_str(&event.data).unwrap_or(Value::Null);
+    let text = |k: &str| data.get(k).and_then(Value::as_str).map(str::to_owned);
+    match event.event.as_str() {
+        "plugins" => {
+            revs.borrow_mut().reset();
+            fetch_plugins_full(client, tx, revs);
+        }
+        "widgets" => {
+            let (Some(plugin), Some(rev)) = (text("plugin"), data.get("rev").and_then(Value::as_u64)) else { return true };
+            let news = revs.borrow().should_fetch(&plugin, rev);
+            if news {
+                // The rev counts as held only once its content arrived; a failed
+                // fetch leaves it unseen so the next frame asks again.
+                if let Ok(snapshot) = client.fetch_plugin_widgets(Some(&plugin)) {
+                    revs.borrow_mut().fetched(&plugin, snapshot.plugins.get(&plugin).map_or(rev, |w| w.rev));
+                    let _ = tx.send(AppEvent::PluginWidgets { snapshot, full: false });
+                }
+            }
+        }
+        "plugin_notice" => {
+            if let (Some(plugin), Some(message)) = (text("plugin"), text("message")) {
+                let _ = tx.send(AppEvent::PluginNotice(format!("{plugin}: {message}")));
+            }
+        }
+        "plugin_run_failed" => {
+            if let (Some(plugin), Some(action)) = (text("plugin"), text("action")) {
+                let reason = text("reason").unwrap_or_default();
+                let _ = tx.send(AppEvent::PluginNotice(format!("{plugin}: {action} failed ({reason}) — see `claude-garage plugin logs {plugin}`")));
+            }
+        }
+        "ui_action" => {
+            if let Ok(frame) = serde_json::from_value(data) {
+                let _ = tx.send(AppEvent::UiAction(frame));
+            }
+        }
+        "pane" => {
+            let Some(session) = text("session") else { return true };
+            if data.get("open").and_then(Value::as_bool) == Some(true) {
+                if let Some(pane) = client.fetch_plugin_panes().ok().and_then(|r| r.panes.into_iter().find(|p| p.session == session)) {
+                    let _ = tx.send(AppEvent::PaneOpened(pane));
+                }
+            } else {
+                let _ = tx.send(AppEvent::PaneClosed { session });
+            }
+        }
+        _ => return false,
+    }
+    true
 }
 
 /// Terminal input → channel. Poll-based so the `stop` flag is honored
@@ -108,6 +176,7 @@ pub(super) fn spawn_sse_task(
     stop: Arc<AtomicBool>,
 ) {
     rt.spawn_blocking(move || {
+        let base_url_for_plugins = base_url.clone();
         let client = GarageClient::new(Some(base_url.clone()));
         let mut sse = SseClient::new(base_url);
         let refetch = {
@@ -118,10 +187,12 @@ pub(super) fn spawn_sse_task(
                 }
             }
         };
+        let revs = std::rc::Rc::new(RefCell::new(RevTracker::default()));
         let on_event = {
             let tx = tx.clone();
             let client = &client;
             let refetch = refetch.clone();
+            let revs = revs.clone();
             move |event: crate::api::sse::SseEvent| match event.event.as_str() {
                 "status" => {
                     if let Ok(v) = serde_json::from_str::<Value>(&event.data) {
@@ -149,7 +220,9 @@ pub(super) fn spawn_sse_task(
                     }
                 }
                 "sessions" => refetch(client),
-                _ => {}
+                _ => {
+                    plugin_frame(&event, client, &tx, &revs);
+                }
             }
         };
         let on_poll = {
@@ -162,10 +235,18 @@ pub(super) fn spawn_sse_task(
         // connect/disconnect calls (one per attempt/poll cycle) down to an
         // edge so the state loop isn't spammed with redundant events.
         let last_live = std::cell::Cell::new(None::<bool>);
+        let plugin_client = GarageClient::new(Some(base_url_for_plugins));
         let on_connection = move |live: bool| {
             if last_live.get() != Some(live) {
                 last_live.set(Some(live));
                 let _ = tx.send(AppEvent::Connection(live));
+                // Events were missed while the stream was down (and on the
+                // very first connect there is nothing yet): take the full
+                // plugin picture.
+                if live {
+                    revs.borrow_mut().reset();
+                    fetch_plugins_full(&plugin_client, &tx, &revs);
+                }
             }
         };
         sse.run(stop, on_event, on_poll, on_connection);
@@ -195,4 +276,25 @@ pub(super) fn spawn_signal_task(rt: &tokio::runtime::Runtime, tx: EventSender) {
             }
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::api::sse::SseEvent;
+
+    #[test]
+    fn a_widgets_frame_whose_fetch_failed_is_asked_for_again_on_the_next_frame() {
+        // Nothing listens on port 1: the fetch fails.
+        let client = GarageClient::new(Some("http://127.0.0.1:1".into()));
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let revs = RefCell::new(RevTracker::default());
+        let frame = SseEvent { event: "widgets".into(), data: r#"{"plugin":"bt","rev":3}"#.into() };
+        assert!(plugin_frame(&frame, &client, &tx, &revs));
+        assert!(rx.try_recv().is_err(), "nothing was fetched, so nothing is applied");
+        assert!(revs.borrow().should_fetch("bt", 3), "the rev is not remembered after a failed fetch");
+        // Once the content really arrived the same rev is news no more.
+        revs.borrow_mut().fetched("bt", 3);
+        assert!(!revs.borrow().should_fetch("bt", 3));
+    }
 }

@@ -10,9 +10,9 @@ use ratatui::layout::Rect;
 
 use crate::actions::{ids, ActionCtx, ActionId, ActionSource};
 use crate::state::wall_state::{KeyLayer, OverlayKind, WallState};
-use crate::slots::SlotRegistry;
+use crate::slots::{SlotClickRegion, SlotId, SlotRegistry};
 use crate::ui::layout::WallLayout;
-use crate::ui::rail::header_items;
+use crate::ui::rail::{extra_row_items, header_items};
 use crate::ui::triage::triage_queue_rows;
 use crate::ui::grid_layout::grid_cell_rect;
 
@@ -46,9 +46,10 @@ pub enum RailTarget {
 
 /// Maps a rail-content row (0-based, local to the rail — the rail renders
 /// one line per row: each group's `rail.header` slot rows, its workspace
-/// row, then its sessions) to its target. The header rows are counted from
-/// the slot registry, exactly as the renderer lays them out. `None` for a
-/// header row, rows past the last group, or an empty rail.
+/// row, its sessions, then its `rail.extra_rows`) to its target. The slot
+/// rows are counted from the slot registry, exactly as the renderer lays
+/// them out. `None` for a header or extra row (their clicks are slot
+/// regions), rows past the last group, or an empty rail.
 pub fn rail_target_at(state: &WallState, slots: &SlotRegistry, row: i32) -> Option<RailTarget> {
     if row < 0 {
         return None;
@@ -70,6 +71,11 @@ pub fn rail_target_at(state: &WallState, slots: &SlotRegistry, row: i32) -> Opti
             return Some(RailTarget::Session(sessions[row - line].id.clone()));
         }
         line += sessions.len();
+        let extra_rows = extra_row_items(state, slots, group).len();
+        if row < line + extra_rows {
+            return None;
+        }
+        line += extra_rows;
     }
     None
 }
@@ -118,10 +124,37 @@ pub struct ClickMap<'a> {
     /// The picker is in its "new group…" text-input sub-mode.
     pub view_picker_typing: bool,
     pub badge_cols: Option<&'a Range<u16>>,
-    /// Clickable `strip.right` slot items from the last frame.
-    pub strip_slots: &'a [(Range<u16>, ActionId)],
+    /// Clickable slot items from the last frame, in every slot (the strip,
+    /// tile titles, rail rows and headers).
+    pub slot_clicks: &'a [SlotClickRegion],
     /// The registry the rail was drawn from (its header rows shift clicks).
     pub slots: &'a SlotRegistry,
+}
+
+/// The context a click on a slot item runs with: seeded from the focus (so a
+/// region with no scope of its own targets the focused session or
+/// workspace), carrying the item's payload. A plugin's item is a `Widget`
+/// source, a core item a plain `Mouse` one.
+pub fn click_ctx(state: &WallState, region: &SlotClickRegion, col: u16, row: u16) -> ActionCtx {
+    let source = match &region.target.plugin {
+        Some(plugin) => ActionSource::Widget { plugin: plugin.to_string(), slot: region.slot },
+        None => ActionSource::Mouse { col, row },
+    };
+    let mut ctx = ActionCtx::from_focus(state, source).with_args(region.target.args.clone());
+    // The item's own scope beats the focus: the close button on an unfocused
+    // tile closes that tile.
+    if let Some(session) = &region.session {
+        ctx.session = Some(session.clone());
+    } else if region.slot == SlotId::RailExtraRows {
+        // An extra row that is not about a session belongs to its
+        // workspace alone: it never inherits the focused session.
+        ctx.session = None;
+    }
+    ctx.region = Some(region.identity());
+    if let Some(workspace) = &region.workspace {
+        ctx.workspace = Some(workspace.clone());
+    }
+    ctx
 }
 
 /// The session id and rect under a grid point, honoring maximize (a
@@ -197,6 +230,8 @@ pub fn action_at(
             // Modal: clicks anywhere are swallowed — an outside click must
             // not quietly "keep" a worktree the user never saw.
             OverlayKind::WorktreeFinish => None,
+            // The runtime handles the pane's clicks (outside closes it).
+            OverlayKind::PluginPane => None,
         };
     }
     // View-strip click: focus that view.
@@ -207,6 +242,13 @@ pub fn action_at(
             .find(|(r, _)| r.contains(&col))
             .map(|(_, name)| name.clone())?;
         return Some((ids::VIEW_FOCUS, ctx().with_view(name)));
+    }
+    // Plugin and core slot items (the pit pet among them) sit on top of the
+    // surface they were painted on, so they are tested before it: a
+    // clickable item near the badge never gets swallowed by it, and a button
+    // in an unfocused tile's title acts on that tile.
+    if let Some(region) = map.slot_clicks.iter().find(|r| r.rect.contains(point)) {
+        return Some((region.target.action, click_ctx(state, region, col, row)));
     }
     // Grid click: focus AND engage (same landing as focus+Enter); a click on
     // a restorable placeholder restores it; clicking the engaged tile itself
@@ -231,14 +273,7 @@ pub fn action_at(
             RailTarget::Session(id) => Some((ids::SESSION_FOCUS, ctx().with_session(id))),
         };
     }
-    // Slot items first (the pit pet among them), so a clickable item sitting
-    // near the badge never gets swallowed by it; then the strip badge (the
-    // `A` binding).
-    if row >= layout.strip.y {
-        if let Some((_, id)) = map.strip_slots.iter().find(|(r, _)| r.contains(&col)) {
-            return Some((*id, ctx()));
-        }
-    }
+    // The strip badge (the `A` binding); strip slot items were tested above.
     if row >= layout.strip.y && map.badge_cols.is_some_and(|r| r.contains(&col)) {
         return Some((ids::OVERLAY_OPEN_QUEUE, ctx()));
     }
@@ -453,6 +488,37 @@ mod tests {
         assert_eq!(rail_target_at(&state, &slots, 7), None);
     }
 
+    #[test]
+    fn extra_rows_sit_after_their_groups_sessions_and_shift_the_rows_below() {
+        use crate::slots::{SlotCtx, SlotId, SlotItem};
+        use crate::ui::rail::rail_lines;
+        use ratatui::text::Span;
+        let mut state = WallState::initial();
+        state.groups = groups();
+        // Two extra rows under `alpha` only, one under `beta`.
+        let mut slots = SlotRegistry::core();
+        slots.register(SlotId::RailExtraRows, |ctx: &SlotCtx| {
+            let n = if ctx.group.is_some_and(|g| g.name == "alpha") { 2 } else { 1 };
+            (0..n).map(|i| SlotItem::new(vec![Span::raw(format!(" closed {i}"))], 0)).collect()
+        });
+        let rows: Vec<String> = rail_lines(&state, &slots, 0).iter().map(ToString::to_string).collect();
+        // 0 alpha, 1 a1, 2 a2, 3-4 extra, 5 beta, 6 b1, 7 extra
+        assert_eq!(rows[3], " closed 0");
+        assert_eq!(rows[5], " 2 beta");
+        assert_eq!(rail_target_at(&state, &slots, 2), Some(RailTarget::Session("a2".into())));
+        assert_eq!(rail_target_at(&state, &slots, 3), None, "extra rows are inert here (slot regions)");
+        assert_eq!(rail_target_at(&state, &slots, 4), None);
+        assert_eq!(rail_target_at(&state, &slots, 5), Some(RailTarget::Workspace(1)));
+        assert_eq!(rail_target_at(&state, &slots, 6), Some(RailTarget::Session("b1".into())));
+        assert_eq!(rail_target_at(&state, &slots, 7), None);
+        assert_eq!(rail_target_at(&state, &slots, 8), None);
+        // Every painted row agrees with what the maths says it is.
+        for (row, text) in rows.iter().enumerate() {
+            let target = rail_target_at(&state, &slots, row as i32);
+            assert_eq!(target.is_some(), !text.trim().starts_with("closed"), "row {row}: {text}");
+        }
+    }
+
     // ── triageRowIndexAt ────────────────────────────────────────────────
 
     #[test]
@@ -495,6 +561,7 @@ mod tests {
         use super::super::*;
         use crate::api::models::{SessionInfo, WorkspaceInfo};
         use crate::keymap::{Keymap, Layer};
+        use crate::slots::{ClickTarget, SlotId};
         use crate::state::store::WallStore;
         use crate::ui::layout::wall_layout;
 
@@ -537,8 +604,10 @@ mod tests {
             layout: WallLayout,
             targets: Vec<(Range<u16>, String)>,
             badge: Range<u16>,
-            /// A clickable `strip.right` item, overlapping the badge's start.
-            slots: Vec<(Range<u16>, ActionId)>,
+            /// Clickable `strip.right` items, one overlapping the badge's start.
+            slots: Vec<(Range<u16>, ClickTarget)>,
+            /// Clickable items painted in tiles and the rail.
+            regions: Vec<SlotClickRegion>,
             registry: SlotRegistry,
         }
 
@@ -549,15 +618,24 @@ mod tests {
                 targets: Vec::new(),
                 badge: 80..95,
                 slots: vec![
-                    (30..40, ids::OVERLAY_OPEN_HELP),
-                    (50..60, ids::PET_PET),
-                    (78..84, ids::OVERLAY_OPEN_HELP),
+                    (30..40, ids::OVERLAY_OPEN_HELP.into()),
+                    (50..60, ids::PET_PET.into()),
+                    (78..84, ids::OVERLAY_OPEN_HELP.into()),
                 ],
+                regions: Vec::new(),
                 registry: SlotRegistry::core(),
             }
         }
 
         fn click(store: &WallStore, f: &Fixture, col: u16, row: u16) -> Option<(&'static str, ActionCtx)> {
+            let mut regions = f.regions.clone();
+            regions.extend(f.slots.iter().map(|(cols, target)| SlotClickRegion {
+                rect: Rect::new(cols.start, f.layout.strip.y, cols.end - cols.start, 1),
+                target: target.clone(),
+                slot: SlotId::StripRight,
+                session: None,
+                workspace: None,
+            }));
             let map = ClickMap {
                 layout: &f.layout,
                 view_strip_targets: &f.targets,
@@ -567,7 +645,7 @@ mod tests {
                 view_picker_entries: 3,
                 view_picker_typing: false,
                 badge_cols: Some(&f.badge),
-                strip_slots: &f.slots,
+                slot_clicks: &regions,
                 slots: &f.registry,
             };
             action_at(&map, store.state(), col, row).map(|(id, ctx)| (id.as_str(), ctx))
@@ -653,6 +731,152 @@ mod tests {
             // 78..84 overlaps the badge (80..95): the slot item wins there.
             assert_eq!(click(&store, &f, 81, row).unwrap().0, "overlay.open.help");
             assert_eq!(click(&store, &f, 85, row).unwrap().0, "overlay.open.queue");
+        }
+
+        #[test]
+        fn a_plugin_items_click_is_a_widget_source_carrying_its_args() {
+            let store = store();
+            let mut f = fixture(&store);
+            let target = ClickTarget::new(ids::SESSION_CLOSE)
+                .with_args(serde_json::json!({"why": "button"}))
+                .from_plugin("closer");
+            f.slots = vec![(10..14, target.clone()), (20..24, ids::PET_PET.into())];
+            let row = f.layout.strip.y;
+            let (id, ctx) = click(&store, &f, 11, row).unwrap();
+            assert_eq!(id, "session.close");
+            assert_eq!(
+                ctx.source,
+                ActionSource::Widget { plugin: "closer".into(), slot: SlotId::StripRight }
+            );
+            assert_eq!(ctx.args.as_deref(), Some(&serde_json::json!({"why": "button"})));
+            assert_eq!(ctx.session, store.state().focused_session_id, "strip clicks target the focus");
+            // A core item keeps the plain mouse source and no payload.
+            let (_, core) = click(&store, &f, 21, row).unwrap();
+            assert!(matches!(core.source, ActionSource::Mouse { col: 21, .. }));
+            assert!(core.args.is_none());
+        }
+
+        fn region(rect: Rect, slot: SlotId, target: ClickTarget, session: Option<&str>) -> SlotClickRegion {
+            SlotClickRegion {
+                rect,
+                target,
+                slot,
+                session: session.map(str::to_owned),
+                workspace: session.map(|_| "et-a".to_owned()),
+            }
+        }
+
+        #[test]
+        fn a_button_in_an_unfocused_tiles_title_acts_on_that_tile_not_the_focus() {
+            let store = store();
+            let mut f = fixture(&store);
+            let focused = store.state().focused_session_id.clone().unwrap();
+            let other = store
+                .state()
+                .gridded_session_ids
+                .iter()
+                .find(|id| {
+                    **id != focused
+                        && store.state().session_by_id(Some(id)).is_some_and(|s| s.live())
+                })
+                .unwrap()
+                .clone();
+            let index = store.state().gridded_session_ids.iter().position(|i| *i == other).unwrap();
+            let tile = f.layout.tiles[index];
+            let button = Rect::new(tile.x + 5, tile.y, 3, 1);
+            f.regions.push(region(
+                button,
+                SlotId::TileTitleRight,
+                ClickTarget::new(ids::SESSION_MAXIMIZE).from_plugin("tiles"),
+                Some(&other),
+            ));
+            let (id, ctx) = click(&store, &f, button.x + 1, button.y).unwrap();
+            assert_eq!(id, "session.maximize");
+            assert_eq!(ctx.session.as_deref(), Some(other.as_str()));
+            assert_ne!(ctx.session, store.state().focused_session_id, "not the focused tile");
+            assert_eq!(ctx.workspace.as_deref(), Some("et-a"));
+            assert!(matches!(ctx.source, ActionSource::Widget { slot: SlotId::TileTitleRight, .. }));
+            // Off the button the same tile row still means "engage the tile".
+            let (id, _) = click(&store, &f, tile.x + 12, tile.y + 2).unwrap();
+            assert_eq!(id, "session.engage");
+        }
+
+        #[test]
+        fn rail_row_and_header_items_resolve_with_their_own_session_and_workspace() {
+            let store = store();
+            let mut f = fixture(&store);
+            let rail = f.layout.rail;
+            f.regions.push(region(
+                Rect::new(rail.x + 20, rail.y + 2, 4, 1),
+                SlotId::RailRow,
+                ClickTarget::new(ids::SESSION_RESTORE).from_plugin("p"),
+                Some("garage/et-a/gone"),
+            ));
+            f.regions.push(SlotClickRegion {
+                rect: Rect::new(rail.x + 2, rail.y, 5, 1),
+                target: ClickTarget::new(ids::SESSION_SPAWN).from_plugin("p"),
+                slot: SlotId::RailHeader,
+                session: None,
+                workspace: Some("et-a".into()),
+            });
+            let (id, ctx) = click(&store, &f, rail.x + 21, rail.y + 2).unwrap();
+            assert_eq!((id, ctx.session.as_deref()), ("session.restore", Some("garage/et-a/gone")));
+            // The family label row is inert without an item; with a header
+            // item on it the item wins.
+            let (id, ctx) = click(&store, &f, rail.x + 3, rail.y).unwrap();
+            assert_eq!((id, ctx.workspace.as_deref()), ("session.spawn", Some("et-a")));
+            assert!(click(&store, &f, rail.x + 10, rail.y).is_none(), "beside the item stays inert");
+        }
+
+        #[test]
+        fn an_extra_row_without_about_session_resolves_to_its_workspace_never_the_focus() {
+            let store = store();
+            let mut f = fixture(&store);
+            assert!(store.state().focused_session_id.is_some());
+            let rail = f.layout.rail;
+            let mut about_none = region(
+                Rect::new(rail.x + 1, rail.y + 3, 10, 1),
+                SlotId::RailExtraRows,
+                ClickTarget::new(ids::SESSION_CLOSE).from_plugin("p"),
+                None,
+            );
+            about_none.workspace = Some("et-a".into());
+            let mut about_one = about_none.clone();
+            about_one.rect = Rect::new(rail.x + 1, rail.y + 4, 10, 1);
+            about_one.session = Some("garage/et-a/gone".into());
+            f.regions.push(about_none);
+            f.regions.push(about_one);
+
+            let (_, ctx) = click(&store, &f, rail.x + 2, rail.y + 3).unwrap();
+            assert_eq!(ctx.session, None, "not the focused session");
+            assert_eq!(ctx.workspace.as_deref(), Some("et-a"));
+            let (_, ctx) = click(&store, &f, rail.x + 2, rail.y + 4).unwrap();
+            assert_eq!(ctx.session.as_deref(), Some("garage/et-a/gone"));
+
+            // Other slots keep the documented fallback to the focus.
+            let row = f.layout.strip.y;
+            f.slots = vec![(10..14, ClickTarget::new(ids::SESSION_CLOSE).from_plugin("p"))];
+            let (_, ctx) = click(&store, &f, 11, row).unwrap();
+            assert_eq!(ctx.session, store.state().focused_session_id);
+        }
+
+        #[test]
+        fn an_open_overlay_is_a_barrier_for_slot_regions() {
+            let mut store = store();
+            store.open_overlay(OverlayKind::WorktreeFinish);
+            let mut f = fixture(&store);
+            let tile = f.layout.tiles[0];
+            let button = Rect::new(tile.x + 5, tile.y, 3, 1);
+            f.regions.push(region(
+                button,
+                SlotId::TileTitleRight,
+                ClickTarget::new(ids::SESSION_MAXIMIZE).from_plugin("tiles"),
+                Some("garage/et-a/one"),
+            ));
+            assert!(click(&store, &f, button.x, button.y).is_none(), "the modal swallows it");
+            store.close_overlay();
+            store.open_overlay(OverlayKind::Help);
+            assert_eq!(click(&store, &f, button.x, button.y).unwrap().0, "overlay.close");
         }
 
         #[test]

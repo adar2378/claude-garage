@@ -6,6 +6,7 @@ description = "claude-garage daemon: HTTP API over tmux-owned Claude Code sessio
 
 [dependencies]
 garage-protocol = { path = "../protocol" }
+garage-plugin = { path = "../plugin" }
 garage-host = { path = "../host" }
 anyhow = "1"
 libc = "0.2"
@@ -17,6 +18,9 @@ serde_json = { version = "1", features = ["preserve_order"] }
 gethostname = "0.5"
 futures-util = { version = "0.3", default-features = false, features = ["std", "alloc"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "sync", "signal", "process", "time", "fs", "io-util"] }
+
+[build-dependencies]
+sha2 = "0.10"
 
 [features]
 # Exposes `test_support` (TestTmux) to other crates' tests.

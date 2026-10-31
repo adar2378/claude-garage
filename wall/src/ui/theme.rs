@@ -49,6 +49,12 @@ pub mod colors {
     pub const FAINT: Color = Color::DarkGray;
     /// Validation errors (never amber — amber is reserved for needs-input).
     pub const ERROR: Color = Color::Red;
+    /// The border of a plugin pane: a hue no core surface uses, so the user
+    /// can tell a plugin's own program from the wall at a glance.
+    pub const PLUGIN: Color = Color::Rgb(122, 162, 247);
+    /// A plugin's `warn` tone: a muted khaki, far from amber in hue and
+    /// brightness. Never an ANSI yellow, which many terminals draw as amber.
+    pub const WARN: Color = Color::Rgb(176, 190, 110);
     /// Context-meter "compact or restart soon" threshold (spec
     /// tui-context-meters "Tile context meter", ≥80%) — the palette's red,
     /// same value as [`ERROR`]; kept as its own name since the two convey

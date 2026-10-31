@@ -1,0 +1,10 @@
+[package]
+name = "garage-plugin-sdk"
+version.workspace = true
+edition = "2021"
+description = "claude-garage plugin helper: read the run context, call the daemon with the plugin token, push widgets"
+
+[dependencies]
+garage-protocol = { path = "../protocol" }
+serde_json = "1"
+ureq = { version = "2.12.1", default-features = false }

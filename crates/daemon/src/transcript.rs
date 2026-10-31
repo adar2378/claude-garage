@@ -23,6 +23,19 @@ pub fn slugify_cwd(cwd: &str) -> String {
     cwd.replace(['/', '.'], "-")
 }
 
+/// Byte length of `path`, only when it is a file under `claude_home` (after
+/// resolving symlinks and `..`). Anything else is `None`: callers pass paths
+/// that came over the wire.
+pub fn size_under(claude_home: &Path, path: &str) -> Option<u64> {
+    let home = std::fs::canonicalize(claude_home).ok()?;
+    let real = std::fs::canonicalize(path).ok()?;
+    if !real.starts_with(&home) {
+        return None;
+    }
+    let meta = std::fs::metadata(&real).ok()?;
+    meta.is_file().then_some(meta.len())
+}
+
 pub fn transcript_path(claude_home: &Path, dir: &str, claude_session_id: &str) -> PathBuf {
     claude_home
         .join("projects")

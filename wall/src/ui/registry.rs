@@ -100,6 +100,10 @@ struct Entry {
     /// on attach and on change (TIOCSWINSZ via TileClient::resize).
     size: (u16, u16),
     frozen: Option<FrozenTile>,
+    /// tmux `#{history_size}` at the last refresh — the absolute scrollback
+    /// row of a live tail view's top row. Refreshed only while a
+    /// `tile.gutter` marker is showing for this tile.
+    history: Option<i64>,
     /// What the last (re)attach used; scrollback and the `+N lines` counter
     /// query the same backend through it.
     spec: Option<Target>,
@@ -112,6 +116,8 @@ pub struct TileRegistry {
     stagger: Duration,
     scrollback: usize,
     resolver: Box<dyn AttachResolver>,
+    /// Ids kept attached whether or not they are in the grid (a plugin pane).
+    pinned: std::collections::HashSet<String>,
 }
 
 impl TileRegistry {
@@ -129,6 +135,7 @@ impl TileRegistry {
             next_attach_at: Instant::now(),
             stagger: Duration::from_millis(50),
             scrollback: 0,
+            pinned: Default::default(),
         }
     }
 
@@ -138,25 +145,42 @@ impl TileRegistry {
     /// must not be passed in — they render placeholders, no PTY is ever
     /// spawned for them.
     pub fn sync(&mut self, live_gridded_ids: &[String]) {
-        self.entries.retain(|id, _| live_gridded_ids.contains(id));
-        let now = Instant::now();
+        self.entries.retain(|id, _| live_gridded_ids.contains(id) || self.pinned.contains(id));
         for id in live_gridded_ids {
-            if self.entries.contains_key(id) {
-                continue;
-            }
-            let at = stagger_at(&mut self.next_attach_at, now, self.stagger);
-            self.entries.insert(
-                id.clone(),
-                Entry {
-                    slot: Slot::Pending { at },
-                    policy: ReattachPolicy::default(),
-                    started_at: now,
-                    size: (80, 24),
-                    frozen: None,
-                    spec: None,
-                },
-            );
+            self.insert_pending(id);
         }
+    }
+
+    fn insert_pending(&mut self, id: &str) {
+        if self.entries.contains_key(id) {
+            return;
+        }
+        let now = Instant::now();
+        let at = stagger_at(&mut self.next_attach_at, now, self.stagger);
+        self.entries.insert(
+            id.to_owned(),
+            Entry {
+                slot: Slot::Pending { at },
+                policy: ReattachPolicy::default(),
+                started_at: now,
+                size: (80, 24),
+                frozen: None,
+                history: None,
+                spec: None,
+            },
+        );
+    }
+
+    /// Keep `id` attached even though it is not in the grid (a plugin pane):
+    /// [`TileRegistry::sync`] leaves it alone until [`TileRegistry::unpin`].
+    pub fn pin(&mut self, id: &str) {
+        self.pinned.insert(id.to_owned());
+        self.insert_pending(id);
+    }
+
+    pub fn unpin(&mut self, id: &str) {
+        self.pinned.remove(id);
+        self.entries.remove(id);
     }
 
     /// Push the tile's inner size from the latest layout pass. Applied to a
@@ -283,6 +307,17 @@ impl TileRegistry {
 
     pub fn frozen(&self, id: &str) -> Option<&FrozenTile> {
         self.entries.get(id).and_then(|e| e.frozen.as_ref())
+    }
+
+    /// The last known tmux history size of a live tile (see `Entry::history`).
+    pub fn history(&self, id: &str) -> Option<i64> {
+        self.entries.get(id).and_then(|e| e.history)
+    }
+
+    pub fn set_history(&mut self, id: &str, size: i64) {
+        if let Some(entry) = self.entries.get_mut(id) {
+            entry.history = Some(size);
+        }
     }
 
     pub fn frozen_mut(&mut self, id: &str) -> Option<&mut FrozenTile> {

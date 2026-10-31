@@ -41,8 +41,16 @@ pub const BINDINGS: [(&str, &str); 24] = [
     ("q", "quit (tmux sessions keep running)"),
 ];
 
+#[cfg(test)]
 fn legend_lines() -> Vec<Line<'static>> {
-    BINDINGS
+    plugin_legend(&[])
+}
+
+/// The legend plus, when plugins add any, a "Plugins" section: each row is
+/// (left column, right column), a plugin's heading having an empty right
+/// column.
+fn plugin_legend(plugins: &[(String, String)]) -> Vec<Line<'static>> {
+    let mut lines: Vec<Line<'static>> = BINDINGS
         .iter()
         .map(|(key, what)| {
             Line::from(vec![
@@ -50,26 +58,49 @@ fn legend_lines() -> Vec<Line<'static>> {
                 Span::styled(*what, Style::default().fg(colors::DIM)),
             ])
         })
-        .collect()
+        .collect();
+    if !plugins.is_empty() {
+        lines.push(Line::raw(""));
+        lines.push(Line::styled("Plugins", Style::default().fg(colors::FG)));
+        for (left, right) in plugins {
+            lines.push(if right.is_empty() {
+                Line::styled(left.clone(), Style::default().fg(colors::DIM))
+            } else {
+                Line::from(vec![
+                    Span::styled(format!("{left:<8}"), Style::default().fg(colors::FG)),
+                    Span::styled(right.clone(), Style::default().fg(colors::DIM)),
+                ])
+            });
+        }
+    }
+    lines
 }
 
 /// The modal's rect for the current frame (also the click router's
 /// inside/outside test — any click dismisses help, so it only needs the
 /// frame for rendering symmetry).
 pub fn help_modal_rect(area: Rect) -> Rect {
-    let content_w = BINDINGS
-        .iter()
-        .map(|(k, w)| 8 + w.chars().count().max(k.chars().count()))
-        .max()
-        .unwrap_or(0) as u16;
+    help_modal_rect_with(area, &[])
+}
+
+fn help_modal_rect_with(area: Rect, plugins: &[(String, String)]) -> Rect {
+    let core = BINDINGS.iter().map(|(k, w)| 8 + w.chars().count().max(k.chars().count()));
+    let extra = plugins.iter().map(|(l, r)| if r.is_empty() { l.chars().count() } else { 8 + r.chars().count() });
+    let content_w = core.chain(extra).max().unwrap_or(0) as u16;
     // border (2) + horizontal padding (4) like the Dart container.
     let width = (content_w + 6).min(area.width);
-    let height = (BINDINGS.len() as u16 + 4).min(area.height);
+    let section = if plugins.is_empty() { 0 } else { plugins.len() + 2 };
+    let height = ((BINDINGS.len() + section) as u16 + 4).min(area.height);
     centered_rect(area, width, height)
 }
 
 pub fn render_help(buf: &mut Buffer, area: Rect) {
-    let rect = help_modal_rect(area);
+    render_help_with(buf, area, &[]);
+}
+
+/// [`render_help`] with the plugins' "Plugins" section (see [`plugin_legend`]).
+pub fn render_help_with(buf: &mut Buffer, area: Rect, plugins: &[(String, String)]) {
+    let rect = help_modal_rect_with(area, plugins);
     Clear.render(rect, buf);
     let block = Block::bordered()
         .border_type(BorderType::Rounded)
@@ -84,7 +115,7 @@ pub fn render_help(buf: &mut Buffer, area: Rect) {
         width: inner.width.saturating_sub(4),
         height: inner.height.saturating_sub(2),
     };
-    Paragraph::new(legend_lines()).render(padded, buf);
+    Paragraph::new(plugin_legend(plugins)).render(padded, buf);
 }
 
 #[cfg(test)]
@@ -107,6 +138,23 @@ mod tests {
         let lines = legend_lines();
         assert_eq!(lines.len(), BINDINGS.len());
         assert!(lines[0].to_string().starts_with("1-9     focus workspace"));
+    }
+
+    #[test]
+    fn plugins_add_a_section_and_without_them_the_overlay_is_unchanged() {
+        let area = Rect::new(0, 0, 120, 50);
+        let mut plain = Buffer::empty(area);
+        render_help(&mut plain, area);
+        let mut none = Buffer::empty(area);
+        render_help_with(&mut none, area, &[]);
+        assert_eq!(plain, none);
+
+        let rows = vec![("usage".to_owned(), String::new()), ("u".to_owned(), "Refresh usage".to_owned())];
+        let mut with = Buffer::empty(area);
+        render_help_with(&mut with, area, &rows);
+        let text: String = (0..50).map(|y| (0..120).map(|x| with[(x, y)].symbol().to_owned()).collect::<String>() + "\n").collect();
+        assert!(text.contains("Plugins") && text.contains("usage") && text.contains("u       Refresh usage"), "{text}");
+        assert_eq!(help_modal_rect_with(area, &rows).height, help_modal_rect(area).height + 4);
     }
 
     #[test]

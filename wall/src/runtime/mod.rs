@@ -35,7 +35,7 @@ use crossterm::event::{
 use ratatui::layout::Rect;
 use tokio::sync::mpsc;
 
-use crate::actions::ActionId;
+use crate::slots::SlotClickRegion;
 use crate::api::client::{ApiError, GarageClient};
 use crate::api::models::{
     FinishAction, HooksInstallResult, SessionInfo, UsageInfo, WorkspaceInfo,
@@ -43,6 +43,7 @@ use crate::api::models::{
 };
 use crate::input::encode::encode_key;
 use crate::input::paste::wrap_bracketed_paste;
+use crate::actions::ActionId;
 use crate::keymap::Keymap;
 use crate::slots::{SlotId, SlotRegistry};
 use crate::state::persistence::{self, WallFile};
@@ -94,6 +95,37 @@ const USAGE_POLL_INTERVAL: Duration = Duration::from_secs(60);
 /// tui-context-meters "Install affordance": "~30s after startup").
 const INSTALL_HINT_DELAY: Duration = Duration::from_secs(30);
 
+/// How often a live tile's tmux history size is polled while a `tile.gutter`
+/// marker is showing for it.
+const HISTORY_POLL: Duration = Duration::from_secs(1);
+
+/// Whether the gutter's history poll is due: only while a marker is showing,
+/// so a wall with no gutter plugin never spawns a tmux call for it.
+fn history_refresh_due(gutter_showing: bool, since_last: Duration) -> bool {
+    gutter_showing && since_last >= HISTORY_POLL
+}
+
+/// What the loop's animation clock asks for this iteration.
+#[derive(Debug, PartialEq, Eq)]
+struct AnimationWake {
+    /// An animated item's frame is due: mark the frame dirty.
+    redraw: bool,
+    /// Wake no later than this (so the next frame is not a whole idle poll
+    /// late); `None` when nothing animates and the loop adds no wake-up.
+    next: Option<Duration>,
+}
+
+/// The loop's animation decision, given the interval of the animated items
+/// drawn last frame (`None` = none) and the time since the last animation
+/// redraw. Pure, so "no animated item, no extra wake-ups" is a test.
+fn animation_wake(interval: Option<Duration>, since_last: Duration) -> AnimationWake {
+    match interval {
+        None => AnimationWake { redraw: false, next: None },
+        Some(interval) if since_last >= interval => AnimationWake { redraw: true, next: Some(interval) },
+        Some(interval) => AnimationWake { redraw: false, next: Some(interval - since_last) },
+    }
+}
+
 /// How long the install hint stays up if never dismissed by a keypress
 /// (spec: "one-time" — it never reappears after this either).
 const INSTALL_HINT_TTL_MS: i64 = 8000;
@@ -122,6 +154,9 @@ pub enum AppEvent {
     /// Emitted only on transitions by `spawn_sse_task` — `true` on
     /// `on_connected`, `false` the moment it drops into the poll fallback.
     Connection(bool),
+    /// A live tile's tmux history size, polled while a `tile.gutter` marker is
+    /// showing for it.
+    History { id: String, size: i64 },
     /// A transient strip notice (fetch/effect errors, lifecycle results).
     Notice { text: String, ttl_ms: i64 },
     /// A spawn effect settled (success or failure) — clears the busy guard.
@@ -155,6 +190,24 @@ pub enum AppEvent {
     /// The `w` overlay's Ctrl+O folder-picker call settled — applied to the
     /// form only while the overlay is still open and picking.
     PickDirectorySettled(PickOutcome),
+    /// `GET /api/plugins` result: the installed set (SSE `plugins` frame,
+    /// reconnect, startup).
+    Plugins(garage_protocol::plugins::PluginList),
+    /// Widget content: one plugin's (`full: false`, the SSE `widgets` frame
+    /// asked for only that plugin) or everyone's (`full: true`).
+    PluginWidgets { snapshot: garage_protocol::plugins::WidgetsSnapshot, full: bool },
+    /// SSE `ui_action`: a plugin asked the TUI to run an action. Handled as
+    /// a plugin trigger, which can arm a dangerous action but never confirm.
+    UiAction(garage_protocol::plugins::UiActionFrame),
+    /// SSE `plugin_notice` / `plugin_run_failed`: a toast about a plugin.
+    /// The same text showing now is not stacked again.
+    PluginNotice(String),
+    /// The slot geometry report settled (`PUT /api/plugins/ui/slots`).
+    SlotsReported(Result<(), String>),
+    /// A plugin pane is open (SSE `pane` frame, then a fetch for the attach info).
+    PaneOpened(garage_protocol::plugins::PaneInstance),
+    /// A plugin pane closed on the daemon side.
+    PaneClosed { session: String },
     Quit,
 }
 
@@ -251,6 +304,8 @@ enum PasteTarget {
     Tile,
     /// The `w` overlay's path field.
     WorkspaceField,
+    /// The open plugin pane's PTY.
+    Pane,
     /// Consumed — garage layer and every other overlay.
     Drop,
 }
@@ -261,6 +316,7 @@ fn paste_target(layer: KeyLayer, overlay: Option<OverlayKind>) -> PasteTarget {
     match (layer, overlay) {
         (KeyLayer::Engaged, _) => PasteTarget::Tile,
         (KeyLayer::Overlay, Some(OverlayKind::WorkspaceAdd)) => PasteTarget::WorkspaceField,
+        (KeyLayer::Overlay, Some(OverlayKind::PluginPane)) => PasteTarget::Pane,
         _ => PasteTarget::Drop,
     }
 }
@@ -323,10 +379,14 @@ struct App {
     /// Rects of the last drawn frame — the mouse router reads the SAME
     /// geometry the paint used. `None` until the first frame.
     layout: Option<WallLayout>,
+    /// Sessions whose last-drawn tile had `tile.gutter` markers: the only ones
+    /// whose tmux history size is polled.
+    gutter_sessions: std::collections::HashSet<String>,
     /// Strip badge columns from the last frame (absolute), when rendered.
     badge_cols: Option<Range<u16>>,
-    /// Clickable `strip.right` slot items from the last frame (absolute).
-    strip_slots: Vec<(Range<u16>, ActionId)>,
+    /// Clickable slot items painted by the last frame (absolute rects, each
+    /// with the session/workspace it sits on).
+    slot_clicks: Vec<SlotClickRegion>,
     /// View-strip click targets from the last frame (absolute columns paired
     /// with the view name they focus) — empty when the strip isn't shown.
     view_strip_targets: Vec<(Range<u16>, String)>,
@@ -345,7 +405,30 @@ struct App {
     /// next `PetSim::step` has to work with. `0` until the first frame
     /// (falls back to a conservative default — see `pet_tick`).
     last_strip_filler: u16,
+
+    // ── p24: plugin host ──────────────────────────────────────────────────
+    /// What the daemon says plugins offer and have pushed; the slot
+    /// providers read it.
+    plugins: std::rc::Rc<std::cell::RefCell<crate::plugins::PluginStore>>,
+    /// Plugin keys that did not take effect (shown in the help overlay).
+    plugin_key_conflicts: Vec<crate::keymap::KeyConflict>,
+    geometry: crate::plugins::geometry::GeometryReporter,
+    /// The open plugin pane, if any.
+    pane: crate::plugins::panes::PluginPaneState,
+    /// Panes this TUI asked for from a human key or click, each with the
+    /// instant (ms) the request stops counting: only these may take the screen.
+    pending_panes: Vec<(String, String, i64)>,
+    /// A pane nobody here asked for, waiting for the user to say `p`, and
+    /// until when (ms). It never takes input by itself.
+    offered_pane: Option<(garage_protocol::plugins::PaneInstance, i64)>,
 }
+
+/// How long a human's request for a pane counts when its frame arrives.
+const PANE_REQUEST_WINDOW_MS: i64 = 5_000;
+/// How long an unrequested pane stays on offer.
+const PANE_OFFER_MS: i64 = 30_000;
+/// The garage-layer key that shows an offered pane.
+const PANE_OFFER_KEY: &str = "p";
 
 impl App {
     #[cfg(test)]
@@ -357,6 +440,8 @@ impl App {
         let pet = PetHost::new(started_ms);
         let motion = Motion::new(motion_enabled);
         let mut slots = SlotRegistry::core();
+        let plugins = crate::plugins::PluginStore::shared();
+        crate::plugins::register(&mut slots, &plugins);
         if let Some(provider) = pet.as_ref().and_then(PetHost::slot_provider) {
             slots.register(SlotId::StripRight, provider);
         }
@@ -379,7 +464,8 @@ impl App {
             wt_finish: WorktreeFinishState::default(),
             layout: None,
             badge_cols: None,
-            strip_slots: Vec::new(),
+            slot_clicks: Vec::new(),
+            gutter_sessions: std::collections::HashSet::new(),
             view_strip_targets: Vec::new(),
             triage_rect: None,
             ws_add_rect: None,
@@ -387,7 +473,143 @@ impl App {
             pet,
             motion,
             last_strip_filler: 0,
+            plugins,
+            plugin_key_conflicts: Vec::new(),
+            geometry: Default::default(),
+            pane: Default::default(),
+            pending_panes: Vec::new(),
+            offered_pane: None,
         }
+    }
+
+    /// A new plugin listing: remember it, declare its action ids, rebuild
+    /// the keymap (defaults, then plugin keys, then the user's own) and tell
+    /// the router what each `plugin:action` does.
+    fn apply_plugin_listing(&mut self, list: garage_protocol::plugins::PluginList) {
+        self.plugins.borrow_mut().apply_listing(list);
+        let store = self.plugins.borrow();
+        let per_plugin: Vec<_> = store
+            .list()
+            .plugins
+            .iter()
+            .filter(|p| p.active)
+            .map(|p| {
+                let actions = p
+                    .actions
+                    .iter()
+                    .filter_map(|a| {
+                        let id = ActionId::lookup(&a.id)?;
+                        let local = a.id.split_once(':').map_or(a.id.as_str(), |(_, l)| l);
+                        Some((id, p.bindings.get(local).cloned(), a.default_key.clone()))
+                    })
+                    .collect::<Vec<_>>();
+                (p.id.clone(), actions)
+            })
+            .collect();
+        let (keymap, conflicts) = Keymap::with_plugins(&per_plugin);
+        let actions = store.actions().map(|(id, a)| (id, a.clone())).collect();
+        let still_open = self.pane.plugin().is_none_or(|plugin| store.summary(plugin).is_some_and(|p| p.active));
+        drop(store);
+        self.keymap = keymap;
+        self.plugin_key_conflicts = conflicts;
+        self.router.set_plugin_actions(actions);
+        if !still_open {
+            self.pane.close(&mut self.registry);
+            if self.store.state().overlay == Some(OverlayKind::PluginPane) {
+                self.store.close_overlay();
+            }
+        }
+    }
+
+    /// Keys while a plugin pane is up: all of them go to its PTY except the
+    /// close chord (Ctrl+Q twice).
+    fn handle_pane_key(&mut self, key: &KeyEvent) {
+        if self.pane.close_chord(key, now_ms()) {
+            self.close_plugin_pane();
+            return;
+        }
+        if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('q') {
+            return; // the first press of the chord
+        }
+        let Some(session) = self.pane.session().map(str::to_owned) else {
+            self.store.close_overlay();
+            return;
+        };
+        if let Some(bytes) = encode_key(key).filter(|b| !b.is_empty()) {
+            self.registry.write(&session, &bytes);
+        }
+    }
+
+    /// Close the pane overlay and the pane itself on the daemon.
+    pub(super) fn close_plugin_pane(&mut self) {
+        let closed = self.pane.instance().map(|i| (i.plugin.clone(), i.pane.clone()));
+        self.pane.close(&mut self.registry);
+        if self.store.state().overlay == Some(OverlayKind::PluginPane) {
+            self.store.close_overlay();
+        }
+        if let Some((plugin, pane)) = closed {
+            self.run_effects(vec![Effect::ClosePluginPane { plugin, pane }]);
+        }
+    }
+
+    /// A pane exists. It takes the screen only when this TUI asked for it a
+    /// moment ago from a human key or click; any other pane is offered in a
+    /// notice and waits for `p`. Input never moves on a plugin's say-so.
+    fn pane_opened(&mut self, pane: garage_protocol::plugins::PaneInstance, now: i64) {
+        self.pending_panes.retain(|(_, _, until)| *until > now);
+        let asked = self.pending_panes.iter().position(|(plugin, id, _)| *plugin == pane.plugin && *id == pane.pane);
+        let name = garage_protocol::widgets::sanitise(&pane.plugin);
+        if let Some(i) = asked {
+            self.pending_panes.remove(i);
+            // Not over a session the user is typing into, nor another overlay.
+            if self.store.state().layer == KeyLayer::Garage {
+                self.show_pane(pane);
+            } else {
+                let text = format!("{name} opened a pane — run its action again from the wall");
+                self.router.notices.show(text, 4000, now);
+            }
+            return;
+        }
+        let text = format!("plugin {name} opened a pane — press {PANE_OFFER_KEY} to show it");
+        self.offered_pane = Some((pane, now + PANE_OFFER_MS));
+        self.router.notices.show(text, 8000, now);
+    }
+
+    /// Remember that a person asked for a pane, so its frame may take the screen.
+    fn note_pane_request(&mut self, effect: &Effect) {
+        if let Effect::OpenPluginPane { plugin, pane, human: true, .. } = effect {
+            self.pending_panes.push((plugin.clone(), pane.clone(), now_ms() + PANE_REQUEST_WINDOW_MS));
+        }
+    }
+
+    fn show_pane(&mut self, pane: garage_protocol::plugins::PaneInstance) {
+        self.offered_pane = None;
+        self.pane.open(pane, &mut self.registry);
+        self.store.open_overlay(OverlayKind::PluginPane);
+    }
+
+    /// `p` in the garage layer while a pane is on offer: show it. True when
+    /// the key was that.
+    fn take_pane_offer(&mut self, key: &str, now: i64) -> bool {
+        if key != PANE_OFFER_KEY {
+            return false;
+        }
+        match self.offered_pane.take() {
+            Some((pane, until)) if until > now => {
+                self.show_pane(pane);
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// A plugin's request to run an action, as a trigger of source
+    /// `Plugin`: it targets only what the request names, and the gate
+    /// decides whether it runs, arms or is refused.
+    fn handle_ui_action(&mut self, frame: &garage_protocol::plugins::UiActionFrame) {
+        let Some((id, ctx)) = crate::plugins::context::ui_action_ctx(self.store.state(), frame) else { return };
+        let effects = self.dispatch_action(id, &ctx);
+        self.run_effects(effects);
     }
 
     /// Apply one event; true = quit.
@@ -408,6 +630,32 @@ impl App {
             AppEvent::Notice { text, ttl_ms } => {
                 self.router.notices.show(text, ttl_ms, now_ms());
             }
+            AppEvent::Plugins(list) => self.apply_plugin_listing(list),
+            AppEvent::PluginWidgets { snapshot, full } => self.plugins.borrow_mut().apply_widgets(snapshot, full),
+            AppEvent::UiAction(frame) => self.handle_ui_action(&frame),
+            AppEvent::SlotsReported(Ok(())) => self.geometry.reported(),
+            AppEvent::SlotsReported(Err(e)) => {
+                // Retried with a growing wait; the user hears of the first failure only.
+                if self.geometry.failed(std::time::Instant::now()) == 1 {
+                    self.router.notices.show(format!("slot geometry not reported: {e} (retrying)"), 3000, now_ms());
+                }
+            }
+            AppEvent::PluginNotice(text) => {
+                let now = now_ms();
+                if self.router.notices.current(now) != Some(text.as_str()) {
+                    self.router.notices.show(text, 5000, now);
+                }
+            }
+            AppEvent::PaneOpened(pane) => self.pane_opened(pane, now_ms()),
+            AppEvent::PaneClosed { session } => {
+                if self.pane.session() == Some(session.as_str()) {
+                    self.pane.close(&mut self.registry);
+                    if self.store.state().overlay == Some(OverlayKind::PluginPane) {
+                        self.store.close_overlay();
+                    }
+                }
+            }
+            AppEvent::History { id, size } => self.registry.set_history(&id, size),
             AppEvent::SpawnSettled => self.router.spawn_settled(),
             AppEvent::RestoreSettled(id) => self.router.restore_settled(&id),
             AppEvent::InstallSettled { statusline, hooks } => {
@@ -503,6 +751,11 @@ impl App {
                     self.registry.write(&id, &wrap_bracketed_paste(text));
                 }
             }
+            PasteTarget::Pane => {
+                if let Some(session) = self.pane.session().map(str::to_owned) {
+                    self.registry.write(&session, &wrap_bracketed_paste(text));
+                }
+            }
             PasteTarget::WorkspaceField => self.ws_form.insert_paste(text),
             PasteTarget::Drop => {}
         }
@@ -514,6 +767,10 @@ impl App {
             KeyLayer::Overlay => {
                 self.keylog
                     .log("overlay", &format!("{:?} {:?}", key.code, key.modifiers));
+                if self.store.state().overlay == Some(OverlayKind::PluginPane) {
+                    self.handle_pane_key(key);
+                    return false;
+                }
                 if self.store.state().overlay == Some(OverlayKind::WorktreeFinish) {
                     let effects = handle_worktree_finish_key(
                         &mut self.store,
@@ -555,6 +812,9 @@ impl App {
                 let Some(key_str) = garage_key_string(key) else {
                     return false; // consumed: garage typing never reaches an agent
                 };
+                if self.take_pane_offer(&key_str, now_ms()) {
+                    return false;
+                }
                 let outcome = self
                     .router
                     .on_garage_key(&mut self.store, &self.keymap, &key_str, now_ms());
@@ -577,6 +837,7 @@ impl App {
                 if matches!(effect, Effect::RestartDaemon) {
                     self.motion.daemon_restart_requested(now_ms());
                 }
+                self.note_pane_request(&effect);
                 run_effect(effect, &self.tx, &self.base_url);
             }
         }
@@ -730,6 +991,11 @@ impl App {
         };
         self.registry.sync(&live_gridded);
         self.registry.tick(Instant::now());
+        // A pane whose process is gone closes its overlay.
+        if self.pane.session().is_some_and(|s| self.registry.dead_reason(s).is_some()) {
+            self.router.notices.show("plugin pane exited", 3000, now_ms());
+            self.close_plugin_pane();
+        }
         if self.store.state().layer == KeyLayer::Engaged {
             let dead = self
                 .store
@@ -826,6 +1092,8 @@ async fn state_loop(
     let mut last_render = Instant::now() - FRAME_CAP;
     let mut last_elapsed_tick = Instant::now();
     let mut last_heartbeat = Instant::now();
+    let mut last_history_poll = Instant::now();
+    let mut last_animation = Instant::now();
     let startup = Instant::now();
     let mut install_hint_shown = false;
 
@@ -848,6 +1116,31 @@ async fn state_loop(
             tokio::task::spawn_blocking(move || {
                 let _ = GarageClient::new(Some(base_url)).post_visibility(&client_id, true);
             });
+        }
+        // Animated slot items (a plugin's frames cycle from this clock): the
+        // loop redraws on the items' own interval, and only while one was
+        // drawn last frame.
+        let animation = animation_wake(app.slots.animation_interval(), last_animation.elapsed());
+        if animation.redraw {
+            last_animation = Instant::now();
+            dirty = true;
+        }
+        // `tile.gutter` markers on a live tail view need tmux's history size
+        // to know which scrollback row the body's top is; poll it only for the
+        // tiles that show a marker.
+        if history_refresh_due(!app.gutter_sessions.is_empty(), last_history_poll.elapsed()) {
+            last_history_poll = Instant::now();
+            for id in app.gutter_sessions.iter().cloned() {
+                let Some(spec) = app.registry.spec(&id).cloned() else {
+                    continue;
+                };
+                let tx = app.tx.clone();
+                tokio::task::spawn_blocking(move || {
+                    if let Some(size) = history_size(&spec, &id) {
+                        let _ = tx.send(AppEvent::History { id, size });
+                    }
+                });
+            }
         }
         // One-time statusline-install hint (spec tui-context-meters
         // "Install affordance"): dim, never repeats after it's shown once —
@@ -899,7 +1192,10 @@ async fn state_loop(
             last_render = Instant::now();
             dirty = false;
         }
-        let timeout = loop_timeout(dirty, last_render.elapsed(), app.motion.next_tick());
+        let mut timeout = loop_timeout(dirty, last_render.elapsed(), app.motion.next_tick());
+        if let Some(next) = animation.next {
+            timeout = timeout.min(next.max(Duration::from_millis(1)));
+        }
         let first = match tokio::time::timeout(timeout, rx.recv()).await {
             Err(_) => continue, // timeout: loop back to tick + render
             Ok(None) => {

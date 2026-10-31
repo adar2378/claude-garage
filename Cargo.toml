@@ -2,7 +2,7 @@
 # cutover; the single build output dir is now `target/` at this level.
 [workspace]
 resolver = "2"
-members = ["wall", "crates/protocol", "crates/host", "crates/daemon", "crates/cli"]
+members = ["wall", "crates/protocol", "crates/plugin", "crates/host", "crates/daemon", "crates/cli", "crates/plugin-sdk", "plugins/*"]
 
 [workspace.package]
 version = "0.6.2" # keep in step with package.json

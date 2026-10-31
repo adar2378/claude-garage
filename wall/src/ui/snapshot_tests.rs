@@ -231,6 +231,7 @@ fn tile_dump_at(
         fade_done,
         spinner: spinner.map(str::to_owned),
         slots: &slots,
+        gutter: None,
     };
     let rect = Rect::new(0, 0, w, 4);
     let mut buf = Buffer::empty(rect);

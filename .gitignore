@@ -24,3 +24,6 @@ wall/target/
 
 # contract test crate build output
 tests/contract/target/
+
+# bundled plugin binaries staged for dev (scripts/stage-plugins.sh debug)
+plugins/*/bin/

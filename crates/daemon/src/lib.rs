@@ -5,12 +5,15 @@
 pub mod api;
 pub mod backend;
 pub mod bus;
+pub mod closing;
+pub mod closed;
 pub mod config;
 pub mod control;
 pub mod error;
 pub mod git;
 pub mod install;
 pub mod os;
+pub mod plugins;
 pub mod poller;
 pub mod security;
 pub mod session_resolve;
@@ -107,6 +110,18 @@ pub async fn run(config: Config) -> Result<()> {
     let control = control_on.then(|| control::spawn(control_backend, shared.control_link()));
     let poller = shared.start();
     let notifier = os::notify::spawn(&state.bus, state.os.clone(), state.visibility.clone());
+    // First-party plugins: register and refresh them before the host loads.
+    if let Some(root) = plugins::bundled::discover() {
+        match plugins::bundled::seed(state.plugins.paths(), &root) {
+            Ok(s) if !s.added.is_empty() || !s.refreshed.is_empty() => {
+                eprintln!("plugins: bundled from {}: added {:?}, refreshed {:?}", root.display(), s.added, s.refreshed);
+            }
+            Ok(_) => {}
+            Err(e) => eprintln!("plugins: cannot register the bundled plugins: {e}"),
+        }
+    }
+    let plugin_host = state.plugins.start();
+    let closed = closed::spawn(&state.bus, state.registry.clone(), state.backend.clone());
     let (poller_stop, notifier_stop, control_stop) = (
         poller.abort_handle(),
         notifier.abort_handle(),
@@ -138,6 +153,8 @@ pub async fn run(config: Config) -> Result<()> {
     };
     poller.abort();
     notifier.abort();
+    plugin_host.abort();
+    closed.abort();
     if let Some(c) = &control {
         c.abort();
     }
@@ -301,6 +318,72 @@ mod tests {
             let none = app(state(c.clone())).oneshot(req(None)).await.unwrap();
             assert_ne!(none.status(), StatusCode::FORBIDDEN, "{m} {u} without a Host header");
         }
+    }
+
+    /// The plugin host's routes sit behind the same Host and Origin guards as
+    /// every other route, and the UI-token routes still authenticate once a
+    /// loopback Host is presented.
+    #[tokio::test]
+    async fn plugin_routes_honour_the_host_and_origin_guards_and_ui_token_routes_work() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut c = config(&[]);
+        c.port = 4747;
+        c.garage_dir = dir.path().to_path_buf();
+        let st = state(c.clone());
+        let token = std::fs::read_to_string(dir.path().join("ui-token")).unwrap().trim().to_owned();
+        assert!(!token.is_empty(), "the plugin host writes the UI token at startup");
+
+        let routes = [
+            ("GET", "/api/plugin/features"),
+            ("POST", "/api/plugins/reload"),
+            ("PUT", "/api/plugins/ui/slots"),
+            ("POST", "/api/plugins/ui/challenge"),
+            ("PUT", "/api/plugins/p/registration"),
+            ("POST", "/api/plugins/p/enable"),
+            ("POST", "/api/plugins/p/disable"),
+            ("POST", "/api/plugins/p/bind"),
+            ("DELETE", "/api/plugins/p"),
+            ("PUT", "/api/plugins/p/widgets/w"),
+            ("DELETE", "/api/plugins/p/widgets/w"),
+            ("POST", "/api/plugins/p/actions/a/run"),
+            ("POST", "/api/sessions/input"),
+            ("GET", "/api/workspaces/ws/closed"),
+        ];
+        let send = |m: &str, u: &str, host: Option<&str>, origin: Option<&str>, bearer: Option<&str>| {
+            let mut r = Request::builder().method(m).uri(u);
+            if let Some(h) = host {
+                r = r.header("host", h);
+            }
+            if let Some(o) = origin {
+                r = r.header("origin", o);
+            }
+            if let Some(b) = bearer {
+                r = r.header("authorization", format!("Bearer {b}"));
+            }
+            let app = app(st.clone());
+            async move { app.oneshot(r.body(Body::empty()).unwrap()).await.unwrap() }
+        };
+        for (m, u) in routes {
+            // Foreign Host: refused before any token is looked at.
+            let res = send(m, u, Some("evil.example:4747"), None, Some(&token)).await;
+            assert_eq!(res.status(), StatusCode::FORBIDDEN, "{m} {u} foreign host");
+            let bytes = res.into_body().collect().await.unwrap().to_bytes();
+            assert_eq!(serde_json::from_slice::<Value>(&bytes).unwrap(), json!({"error": "host not allowed"}), "{m} {u}");
+            // Foreign Origin on a write: refused, even with the UI token.
+            if m != "GET" {
+                let res = send(m, u, Some("127.0.0.1:4747"), Some("https://evil.example"), Some(&token)).await;
+                let bytes = res.into_body().collect().await.unwrap().to_bytes();
+                assert_eq!(serde_json::from_slice::<Value>(&bytes).unwrap(), json!({"error": "origin not allowed"}), "{m} {u}");
+            }
+        }
+        // Loopback Host without a token: the route's own 401, not the guard's 403.
+        let res = send("POST", "/api/plugins/reload", Some("127.0.0.1:4747"), None, None).await;
+        assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
+        // Loopback Host with the UI token: the UI-token route runs.
+        let res = send("POST", "/api/plugins/reload", Some("127.0.0.1:4747"), None, Some(&token)).await;
+        assert_eq!(res.status(), StatusCode::OK);
+        let res = send("POST", "/api/plugins/reload", Some("localhost:4747"), None, Some(&token)).await;
+        assert_eq!(res.status(), StatusCode::OK);
     }
 
     #[tokio::test]

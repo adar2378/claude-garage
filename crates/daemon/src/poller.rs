@@ -20,6 +20,7 @@ use tokio::task::JoinHandle;
 use crate::backend::tmux::{normalize_title, split_session_id};
 use crate::backend::{BackendSession, PaneInfo, SessionBackend, COMMAND_TIMEOUT};
 use crate::bus::{DaemonEvent, EventBus};
+use crate::closing::{CloseReason, ClosingIntents, Intent};
 use crate::control::ControlLink;
 
 pub const POLL_INTERVAL: Duration = Duration::from_millis(2000);
@@ -123,6 +124,11 @@ pub trait PollerSink: Send + Sync {
     fn apply_agent_status(&self, id: &str, agent_status: &str);
     /// Forget a dead session: status entry and statusline context.
     fn drop_session(&self, id: &str);
+    /// The status name the store held for `id` (asked just before
+    /// `drop_session`, for the `session.closed` event). `None` if unknown.
+    fn last_status(&self, _id: &str) -> Option<String> {
+        None
+    }
     /// Record resume metadata after a trusted pid join.
     async fn upsert_session_meta(
         &self,
@@ -172,6 +178,18 @@ pub fn diff_session_state(
 struct Last {
     ids: HashSet<String>,
     titles: HashMap<String, Option<String>>,
+    /// Last known directory per live id, for `session.closed`.
+    dirs: HashMap<String, String>,
+    /// False until the first poll: sessions that already exist when the
+    /// daemon starts are not "created".
+    seen_first: bool,
+}
+
+/// Membership change of one poll, published as typed events.
+#[derive(Default)]
+struct Membership {
+    created: Vec<(String, String)>,
+    closed: Vec<(String, String, Option<String>)>,
 }
 
 pub struct Poller {
@@ -181,6 +199,7 @@ pub struct Poller {
     bus: EventBus,
     hostname: Option<String>,
     last: Mutex<Last>,
+    intents: ClosingIntents,
     control: Arc<ControlLink>,
 }
 
@@ -192,15 +211,7 @@ impl Poller {
         bus: EventBus,
     ) -> Self {
         let hostname = gethostname::gethostname().to_str().map(str::to_string);
-        Self {
-            backend,
-            agents,
-            sink,
-            bus,
-            hostname,
-            last: Mutex::new(Last::default()),
-            control: Arc::default(),
-        }
+        Self { backend, agents, sink, bus, hostname, last: Mutex::new(Last::default()), intents: ClosingIntents::default(), control: Arc::default() }
     }
 
     /// Override the hostname used to filter default pane titles.
@@ -209,29 +220,65 @@ impl Poller {
         self
     }
 
+    /// Share the closing-intent markers the close paths write, so a vanished
+    /// session gets its real `session.closed` reason.
+    pub fn with_intents(mut self, intents: ClosingIntents) -> Self {
+        self.intents = intents;
+        self
+    }
+
+    /// Publish `session.created` / `session.closed` for one poll's membership
+    /// change. A rename marker silences both halves of the rename.
+    fn publish_membership(&self, m: Membership) {
+        for (id, dir, last_status) in m.closed {
+            let reason = match self.intents.take(&id) {
+                Some(Intent::Renamed) => continue,
+                Some(Intent::Reason(r)) => r,
+                None => CloseReason::Crash,
+            };
+            let (workspace, _) = split_session_id(&id);
+            self.bus.publish(DaemonEvent::SessionClosed { id, dir, workspace, reason, last_status });
+        }
+        for (id, dir) in m.created {
+            if self.intents.take(&id) == Some(Intent::Renamed) {
+                continue;
+            }
+            let (workspace, _) = split_session_id(&id);
+            self.bus.publish(DaemonEvent::SessionCreated { id, dir, workspace });
+        }
+    }
+
     /// One poll. Never fails: a tick error is swallowed like the JS `pollOnce`.
     pub async fn poll_once(&self) {
-        let sessions = self.backend.list().await.unwrap_or_default();
+        // A failed listing says nothing about the sessions (tmux hiccup, slow
+        // socket). Treating it as "no sessions" would close everything, fire
+        // hooks and write crash records for sessions that are fine: skip the
+        // tick and keep what we knew.
+        let Ok(sessions) = self.backend.list().await else { return };
 
         if sessions.is_empty() {
+            let mut membership = Membership::default();
             let had = {
                 let mut last = self.last.lock().unwrap();
                 let prev = std::mem::take(&mut *last);
+                last.seen_first = true;
                 for id in &prev.ids {
+                    let status = self.sink.last_status(id);
                     self.sink.drop_session(id);
+                    membership.closed.push((id.clone(), prev.dirs.get(id).cloned().unwrap_or_default(), status));
                 }
                 !prev.ids.is_empty()
             };
             if had {
+                self.publish_membership(membership);
                 self.bus.publish(DaemonEvent::SessionsChanged);
             }
             return;
         }
 
         // One list-panes per tick daemon-wide: pid join and title diff share it.
-        let (agents, panes) = tokio::join!(self.agents.agents(), async {
-            self.backend.panes().await.unwrap_or_default()
-        });
+        let (agents, panes) = tokio::join!(self.agents.agents(), async { self.backend.panes().await.unwrap_or_default() });
+        let mut membership = Membership::default();
         let changed = {
             let mut last = self.last.lock().unwrap();
             let diff = diff_session_state(
@@ -243,13 +290,29 @@ impl Poller {
             );
             for id in &last.ids {
                 if !diff.ids.contains(id) {
+                    let status = self.sink.last_status(id);
                     self.sink.drop_session(id);
+                    membership.closed.push((id.clone(), last.dirs.get(id).cloned().unwrap_or_default(), status));
                 }
             }
+            if last.seen_first {
+                for s in &sessions {
+                    if !last.ids.contains(&s.id) {
+                        let dir = panes.get(&s.id).map(|p| p.cwd.clone()).unwrap_or_else(|| s.dir.clone());
+                        membership.created.push((s.id.clone(), dir));
+                    }
+                }
+            }
+            last.seen_first = true;
+            last.dirs = sessions
+                .iter()
+                .map(|s| (s.id.clone(), panes.get(&s.id).map(|p| p.cwd.clone()).unwrap_or_else(|| s.dir.clone())))
+                .collect();
             last.ids = diff.ids;
             last.titles = diff.titles;
             diff.changed
         };
+        self.publish_membership(membership);
         if changed {
             self.bus.publish(DaemonEvent::SessionsChanged);
         }
@@ -332,6 +395,8 @@ pub(crate) mod fakes {
         pub applied: Mutex<Vec<(String, String)>>,
         pub dropped: Mutex<Vec<String>>,
         pub metas: Mutex<Vec<(String, String, String, String)>>,
+        /// What `last_status` answers, by id.
+        pub statuses: Mutex<HashMap<String, String>>,
     }
 
     #[async_trait]
@@ -345,6 +410,9 @@ pub(crate) mod fakes {
         fn drop_session(&self, id: &str) {
             self.dropped.lock().unwrap().push(id.into());
         }
+        fn last_status(&self, id: &str) -> Option<String> {
+            self.statuses.lock().unwrap().get(id).cloned()
+        }
         async fn upsert_session_meta(&self, id: &str, c: &str, w: &str, l: &str) {
             self.metas
                 .lock()
@@ -353,17 +421,25 @@ pub(crate) mod fakes {
         }
     }
 
+    /// One `create` call: (id, dir, command, args, env).
+    pub type Created = (String, std::path::PathBuf, String, Vec<String>, Vec<(String, String)>);
+
     pub struct FakeBackend {
         pub sessions: Mutex<Vec<BackendSession>>,
         pub panes: Mutex<HashMap<String, PaneInfo>>,
+        /// While set, `list` fails like a backend that cannot be reached.
+        pub fail_list: std::sync::atomic::AtomicBool,
+        /// Every `create` call, in order: (id, dir, command, args, env).
+        pub created: Mutex<Vec<Created>>,
+        /// `mark_plugin_pane` calls: session id to plugin.
+        pub pane_tags: Mutex<HashMap<String, String>>,
+        /// How many times `has` was asked.
+        pub has_calls: std::sync::atomic::AtomicUsize,
     }
 
     impl FakeBackend {
         pub fn new() -> Self {
-            Self {
-                sessions: Mutex::new(vec![]),
-                panes: Mutex::new(HashMap::new()),
-            }
+            Self { sessions: Mutex::new(vec![]), panes: Mutex::new(HashMap::new()), fail_list: Default::default(), created: Mutex::default(), pane_tags: Mutex::default(), has_calls: Default::default() }
         }
         pub fn set(&self, id: &str, dir: &str, pid: Option<u32>, title: &str) {
             let mut s = self.sessions.lock().unwrap();
@@ -383,6 +459,11 @@ pub(crate) mod fakes {
                 },
             );
         }
+        /// A session as `create` + `mark_plugin_pane` leave it.
+        pub fn set_pane(&self, id: &str, plugin: &str) {
+            self.set(id, "/x", None, "");
+            self.pane_tags.lock().unwrap().insert(id.into(), plugin.into());
+        }
         pub fn remove(&self, id: &str) {
             self.sessions.lock().unwrap().retain(|x| x.id != id);
             self.panes.lock().unwrap().remove(id);
@@ -395,23 +476,29 @@ pub(crate) mod fakes {
             Ok(())
         }
         async fn list(&self) -> anyhow::Result<Vec<BackendSession>> {
+            if self.fail_list.load(std::sync::atomic::Ordering::SeqCst) {
+                anyhow::bail!("tmux unreachable");
+            }
             Ok(self.sessions.lock().unwrap().clone())
         }
         async fn panes(&self) -> anyhow::Result<HashMap<String, PaneInfo>> {
             Ok(self.panes.lock().unwrap().clone())
         }
         async fn has(&self, id: &str) -> anyhow::Result<bool> {
+            self.has_calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             Ok(self.sessions.lock().unwrap().iter().any(|s| s.id == id))
         }
         async fn create(
             &self,
-            _: &str,
-            _: &std::path::Path,
-            _: &str,
-            _: &[String],
-            _: &[(String, String)],
+            id: &str,
+            dir: &std::path::Path,
+            cmd: &str,
+            args: &[String],
+            env: &[(String, String)],
         ) -> anyhow::Result<()> {
-            unimplemented!()
+            self.created.lock().unwrap().push((id.into(), dir.into(), cmd.into(), args.to_vec(), env.to_vec()));
+            self.set(id, &dir.to_string_lossy(), None, "");
+            Ok(())
         }
         async fn respawn(
             &self,
@@ -423,8 +510,24 @@ pub(crate) mod fakes {
         ) -> anyhow::Result<()> {
             unimplemented!()
         }
-        async fn kill(&self, _: &str) -> anyhow::Result<()> {
-            unimplemented!()
+        async fn kill(&self, id: &str) -> anyhow::Result<()> {
+            self.remove(id);
+            Ok(())
+        }
+        async fn mark_plugin_pane(&self, id: &str, plugin: &str) -> anyhow::Result<()> {
+            self.pane_tags.lock().unwrap().insert(id.into(), plugin.into());
+            Ok(())
+        }
+        async fn plugin_pane_sessions(&self) -> anyhow::Result<Vec<String>> {
+            let tags = self.pane_tags.lock().unwrap();
+            Ok(self
+                .sessions
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|s| crate::plugins::panes::parse_pane_session(&s.id).is_some_and(|(plugin, _)| tags.get(&s.id).is_some_and(|t| t == plugin)))
+                .map(|s| s.id.clone())
+                .collect())
         }
         async fn rename(&self, _: &str, _: &str) -> anyhow::Result<()> {
             unimplemented!()
@@ -433,7 +536,7 @@ pub(crate) mod fakes {
             unimplemented!()
         }
         fn attach_spec(&self, _: &str) -> garage_protocol::AttachSpec {
-            unimplemented!()
+            garage_protocol::AttachSpec::Tmux { socket: Some("fake".into()) }
         }
     }
 
@@ -600,12 +703,18 @@ mod tests {
         }
     }
 
+    /// `SessionsChanged` events only; the typed membership events have their
+    /// own tests (`membership_*`).
     fn drain(rx: &mut tokio::sync::broadcast::Receiver<DaemonEvent>) -> usize {
-        let mut n = 0;
-        while rx.try_recv().is_ok() {
-            n += 1;
+        drain_all(rx).iter().filter(|e| **e == DaemonEvent::SessionsChanged).count()
+    }
+
+    fn drain_all(rx: &mut tokio::sync::broadcast::Receiver<DaemonEvent>) -> Vec<DaemonEvent> {
+        let mut out = vec![];
+        while let Ok(e) = rx.try_recv() {
+            out.push(e);
         }
-        n
+        out
     }
 
     #[tokio::test]
@@ -744,6 +853,108 @@ mod tests {
             "timeout means no agents"
         );
         drain(&mut r.rx);
+    }
+
+    // ---- p24: typed membership events ----
+
+    fn typed(events: Vec<DaemonEvent>) -> Vec<DaemonEvent> {
+        events.into_iter().filter(|e| !matches!(e, DaemonEvent::SessionsChanged)).collect()
+    }
+
+    #[tokio::test]
+    async fn sessions_present_at_daemon_start_are_not_created_but_later_ones_are() {
+        let mut r = rig();
+        r.backend.set("garage/ws/a", "/a", Some(1), "");
+        r.poller.poll_once().await;
+        assert!(typed(drain_all(&mut r.rx)).is_empty(), "the first poll only learns the world");
+        r.backend.set("garage/ws/b", "/b", Some(2), "");
+        r.poller.poll_once().await;
+        assert_eq!(
+            typed(drain_all(&mut r.rx)),
+            [DaemonEvent::SessionCreated { id: "garage/ws/b".into(), dir: "/b".into(), workspace: "ws".into() }]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_vanished_session_is_a_crash_unless_a_close_marker_says_otherwise() {
+        let intents = ClosingIntents::default();
+        let r = rig();
+        let bus = EventBus::default();
+        let mut rx = bus.subscribe();
+        let poller = Poller::new(r.backend.clone(), r.agents.clone(), r.sink.clone(), bus).with_intents(intents.clone());
+        for id in ["garage/ws/crashed", "garage/ws/closed", "garage/ws/restarted", "garage/ws/renamed"] {
+            r.backend.set(id, "/d", Some(1), "");
+        }
+        poller.poll_once().await;
+        drain_all(&mut rx);
+        intents.mark("garage/ws/closed", CloseReason::User);
+        intents.mark("garage/ws/restarted", CloseReason::DaemonRestart);
+        intents.mark_renamed("garage/ws/renamed");
+        for id in ["garage/ws/crashed", "garage/ws/closed", "garage/ws/restarted", "garage/ws/renamed"] {
+            r.backend.remove(id);
+        }
+        r.backend.set("garage/ws/survivor", "/s", Some(9), "");
+        poller.poll_once().await;
+        let mut closed: Vec<(String, &str)> = typed(drain_all(&mut rx))
+            .into_iter()
+            .filter_map(|e| match e {
+                DaemonEvent::SessionClosed { id, reason, dir, workspace, .. } => {
+                    assert_eq!((dir.as_str(), workspace.as_str()), ("/d", "ws"));
+                    Some((id, reason.as_str()))
+                }
+                _ => None,
+            })
+            .collect();
+        closed.sort();
+        assert_eq!(
+            closed,
+            [
+                ("garage/ws/closed".to_string(), "user"),
+                ("garage/ws/crashed".to_string(), "crash"),
+                ("garage/ws/restarted".to_string(), "daemon-restart"),
+            ],
+            "the renamed session emits neither close nor create"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_failing_backend_listing_closes_nothing_and_remembers_what_it_knew() {
+        use std::sync::atomic::Ordering;
+        let mut r = rig();
+        r.backend.set("garage/ws/a", "/a", Some(1), "");
+        r.backend.set("garage/ws/b", "/b", Some(2), "");
+        r.poller.poll_once().await;
+        drain_all(&mut r.rx);
+        r.backend.fail_list.store(true, Ordering::SeqCst);
+        for _ in 0..3 {
+            r.poller.poll_once().await;
+        }
+        assert!(typed(drain_all(&mut r.rx)).is_empty(), "no close, no create, no sessions-changed");
+        assert!(r.sink.dropped.lock().unwrap().is_empty(), "statuses are not dropped");
+        // tmux comes back with the same sessions: nothing changed
+        r.backend.fail_list.store(false, Ordering::SeqCst);
+        r.poller.poll_once().await;
+        assert!(typed(drain_all(&mut r.rx)).is_empty(), "the memory survived the outage");
+        // and a real vanish afterwards is still seen, exactly once
+        r.backend.remove("garage/ws/b");
+        r.poller.poll_once().await;
+        let closed: Vec<_> = typed(drain_all(&mut r.rx)).into_iter().filter(|e| matches!(e, DaemonEvent::SessionClosed { .. })).collect();
+        assert_eq!(closed.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn the_last_session_vanishing_still_reports_its_close_with_the_last_known_status() {
+        let mut r = rig();
+        r.backend.set(ID, "/work", Some(1), "");
+        r.sink.statuses.lock().unwrap().insert(ID.into(), "working".into());
+        r.poller.poll_once().await;
+        drain_all(&mut r.rx);
+        r.backend.remove(ID);
+        r.poller.poll_once().await; // the empty-list path
+        let ev = typed(drain_all(&mut r.rx));
+        assert_eq!(ev.len(), 1, "{ev:?}");
+        assert!(matches!(&ev[0], DaemonEvent::SessionClosed { id, dir, reason: CloseReason::Crash, last_status: Some(s), .. }
+            if id == ID && dir == "/work" && s == "working"), "{ev:?}");
     }
 
     // ---- start(): tick + control wake-ups (paused clock, fakes) ----

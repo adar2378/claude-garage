@@ -117,7 +117,7 @@ pub fn handle_overlay_key(
         }
         // Routed by `App::handle_key` to [`handle_worktree_finish_key`]: the
         // armed discard needs the clock, which this router never sees.
-        OverlayKind::WorktreeFinish => {}
+        OverlayKind::WorktreeFinish | OverlayKind::PluginPane => {}
     }
     (effects, notice)
 }
@@ -166,7 +166,16 @@ pub(super) fn overlay_action(
                 .get((*queue_selection).min(rows.len().saturating_sub(1)))
                 .map(|s| s.id.clone());
             if let Some(id) = target {
+                // The jump focuses and engages; a plugin's request keeps
+                // the focus but never the typing (dispatch tells the user).
                 store.jump_to_session(&id);
+                if let crate::actions::ActionSource::Plugin { plugin, .. } = &ctx.source {
+                    store.disengage();
+                    return (
+                        true,
+                        Some(format!("plugin {plugin} tried to put you into a session — press Enter to engage")),
+                    );
+                }
             }
         }
         ids::OVERLAY_VIEW_PICKER_PICK => {

@@ -17,6 +17,7 @@ use crate::backend::SessionBackend;
 use crate::bus::EventBus;
 use crate::config::Config;
 use crate::os::Os;
+use crate::plugins::PluginHost;
 use crate::poller::{AgentSource, CommandAgents, Poller};
 
 pub use crate::api::sessions::ClaudeCmd;
@@ -51,6 +52,10 @@ pub struct AppState {
     pub visibility: Visibility,
     /// Lane F: shutdown signal and successor command for daemon restart.
     pub lifecycle: Lifecycle,
+    /// p24: the plugin host (registry, runner, widget store).
+    pub plugins: PluginHost,
+    /// p24: why a session is about to leave the backend (`session.closed`).
+    pub closing: crate::closing::ClosingIntents,
 }
 
 impl AppState {
@@ -83,6 +88,13 @@ impl AppState {
             agents: agents.clone(),
         };
         let telemetry = Telemetry::new(claude_home, Arc::new(deps));
+        let lookup = Arc::new(crate::plugins::context::StateLookup {
+            backend: backend.clone(),
+            status: status.clone(),
+            registry: registry.clone(),
+        });
+        let plugins = PluginHost::new(&config, bus.clone(), lookup);
+        plugins.set_backend(backend.clone());
         Self {
             config: Arc::new(config),
             bus,
@@ -97,7 +109,21 @@ impl AppState {
             shutdown: Arc::new(watch::channel(false).0),
             visibility: Visibility::default(),
             lifecycle: Lifecycle::default(),
+            plugins,
+            closing: Default::default(),
         }
+    }
+
+    /// Swap the plugin runner (tests use a recorder instead of real processes).
+    pub fn with_plugin_runner(mut self, runner: Arc<dyn crate::plugins::runner::Runner>) -> Self {
+        let lookup = Arc::new(crate::plugins::context::StateLookup {
+            backend: self.backend.clone(),
+            status: self.status.clone(),
+            registry: self.registry.clone(),
+        });
+        self.plugins = PluginHost::with_runner(&self.config, self.bus.clone(), lookup, runner);
+        self.plugins.set_backend(self.backend.clone());
+        self
     }
 
     /// Tell long-lived responses to finish; call before awaiting the server.
@@ -130,11 +156,6 @@ impl AppState {
             context: self.telemetry.context.clone(),
             transcripts: self.telemetry.transcripts.clone(),
         };
-        Arc::new(Poller::new(
-            self.backend.clone(),
-            agents,
-            Arc::new(sink),
-            self.bus.clone(),
-        ))
+        Arc::new(Poller::new(self.backend.clone(), agents, Arc::new(sink), self.bus.clone()).with_intents(self.closing.clone()))
     }
 }

@@ -3,6 +3,13 @@
 //! Frames: `: connected` first, `event: status` (`{id, status, since}`) on
 //! every transition, `event: sessions` (`{}`) when the session set or a pane
 //! title changes (and after a restart), `: keepalive` every 15 s.
+//!
+//! Plugin host frames (p24, additive; older clients ignore them):
+//! `session.created`, `session.closed` (with `reason`), `session.turn`,
+//! `worktree.created`, `workspace.added`, `workspace.removed` carry the same
+//! payload a plugin event hook gets; `widgets` (`{plugin, rev}`), `plugins`
+//! (`{}`), `plugin_run_failed`, `plugin_notice`, `ui_action` (a plugin asks the
+//! TUI to run an action) and `pane` (a plugin pane opened or closed) serve the TUI.
 
 use std::convert::Infallible;
 use std::time::Duration;
@@ -25,6 +32,33 @@ fn frame(event: &DaemonEvent) -> Event {
             .event("status")
             .data(json!({"id": id, "status": to, "since": since}).to_string()),
         DaemonEvent::SessionsChanged => Event::default().event("sessions").data("{}"),
+        DaemonEvent::PluginRunFailed { plugin, action, reason } => Event::default()
+            .event("plugin_run_failed")
+            .data(json!({"plugin": plugin, "action": action, "reason": reason}).to_string()),
+        DaemonEvent::PluginNotice { plugin, message } => {
+            Event::default().event("plugin_notice").data(json!({"plugin": plugin, "message": message}).to_string())
+        }
+        DaemonEvent::WidgetsChanged { plugin, rev } => {
+            Event::default().event("widgets").data(json!({"plugin": plugin, "rev": rev}).to_string())
+        }
+        DaemonEvent::PluginsChanged => Event::default().event("plugins").data("{}"),
+        DaemonEvent::UiAction { plugin, action, args, target } => Event::default().event("ui_action").data(
+            serde_json::to_string(&garage_protocol::plugins::UiActionFrame {
+                plugin: plugin.clone(),
+                action: action.clone(),
+                args: args.clone(),
+                target: target.clone(),
+            })
+            .unwrap_or_else(|_| "{}".into()),
+        ),
+        DaemonEvent::PaneChanged { plugin, pane, session, open } => Event::default()
+            .event("pane")
+            .data(json!({"plugin": plugin, "pane": pane, "session": session, "open": open}).to_string()),
+        // The typed events keep their plugin-visible names (`session.closed`, ...).
+        typed => match typed.plugin_event() {
+            Some((name, data)) => Event::default().event(name).data(data.to_string()),
+            None => Event::default().comment("unknown"),
+        },
     }
 }
 
@@ -94,6 +128,65 @@ mod tests {
             bus.publish(DaemonEvent::SessionsChanged);
         }
         assert_eq!(next_text(&mut body).await, "event: sessions\ndata: {}\n\n");
+    }
+
+    #[tokio::test]
+    async fn plugin_host_events_become_additive_frames_older_clients_ignore() {
+        use crate::closing::CloseReason;
+        let bus = EventBus::default();
+        let (_tx, sd) = watch::channel(false);
+        let mut body = Sse::new(events(bus.subscribe(), sd)).into_response().into_body();
+        assert_eq!(next_text(&mut body).await, ": connected\n\n");
+        let cases = [
+            (DaemonEvent::WidgetsChanged { plugin: "usage-bar".into(), rev: 42 }, "widgets", json!({"plugin": "usage-bar", "rev": 42})),
+            (DaemonEvent::PluginsChanged, "plugins", json!({})),
+            (
+                DaemonEvent::PluginRunFailed { plugin: "p".into(), action: "p:go".into(), reason: "exited with code 3".into() },
+                "plugin_run_failed",
+                json!({"plugin": "p", "action": "p:go", "reason": "exited with code 3"}),
+            ),
+            (DaemonEvent::PluginNotice { plugin: "p".into(), message: "hi".into() }, "plugin_notice", json!({"plugin": "p", "message": "hi"})),
+            (
+                DaemonEvent::UiAction {
+                    plugin: "p".into(),
+                    action: "session.close".into(),
+                    args: Some(json!({"k": 1})),
+                    target: garage_protocol::plugins::UiTarget { session: Some("garage/w/a".into()), workspace: None },
+                },
+                "ui_action",
+                json!({"plugin": "p", "action": "session.close", "args": {"k": 1}, "target": {"session": "garage/w/a"}}),
+            ),
+            (
+                DaemonEvent::PaneChanged { plugin: "p".into(), pane: "d".into(), session: "plugin/p/d".into(), open: true },
+                "pane",
+                json!({"plugin": "p", "pane": "d", "session": "plugin/p/d", "open": true}),
+            ),
+            (
+                DaemonEvent::SessionClosed {
+                    id: "garage/w/a".into(),
+                    dir: "/d".into(),
+                    workspace: "w".into(),
+                    reason: CloseReason::DaemonRestart,
+                    last_status: Some("idle".into()),
+                },
+                "session.closed",
+                json!({"id": "garage/w/a", "dir": "/d", "workspace": "w", "reason": "daemon-restart", "last_status": "idle"}),
+            ),
+            (
+                DaemonEvent::SessionTurn { id: "garage/w/a".into(), workspace: "w".into(), at: 5, transcript_offset: None },
+                "session.turn",
+                json!({"id": "garage/w/a", "workspace": "w", "at": 5, "transcript_offset": null}),
+            ),
+            (DaemonEvent::WorkspaceAdded { name: "w".into() }, "workspace.added", json!({"name": "w"})),
+        ];
+        for (ev, name, data) in cases {
+            bus.publish(ev);
+            let text = next_text(&mut body).await;
+            let (head, tail) = text.split_once('\n').unwrap();
+            assert_eq!(head, format!("event: {name}"));
+            let payload: serde_json::Value = serde_json::from_str(tail.trim().strip_prefix("data: ").unwrap()).unwrap();
+            assert_eq!(payload, data, "{name}");
+        }
     }
 
     #[tokio::test]
