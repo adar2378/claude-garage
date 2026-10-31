@@ -375,7 +375,11 @@ impl PluginHost {
                     session: session.clone(),
                     event: Some(json!({"name": name, "at": crate::state::status::now_ms(), "data": data})),
                     fallback: fallback.clone(),
-                    workspace: data.get("workspace").and_then(Value::as_str).map(str::to_owned),
+                    workspace: data
+                        .get("workspace")
+                        .and_then(Value::as_str)
+                        .map(str::to_owned)
+                        .or_else(|| session.as_deref().map(|id| crate::backend::tmux::split_session_id(id).0)),
                     ..Default::default()
                 };
                 req.action = Some(format!("event:{name}"));

@@ -90,6 +90,7 @@ pub struct Rig {
     pub backend: Arc<FakeBackend>,
     pub runner: Arc<FakeRunner>,
     pub rx: tokio::sync::broadcast::Receiver<DaemonEvent>,
+    _claude_home: tempfile::TempDir,
 }
 
 impl Rig {
@@ -120,8 +121,7 @@ impl Rig {
             st = st.with_plugin_runner(runner.clone());
         }
         let rx = st.bus.subscribe();
-        std::mem::forget(claude_home); // lives as long as the test process; tiny
-        Self { garage, src: tempfile::tempdir().unwrap(), st, backend, runner, rx }
+        Self { garage, src: tempfile::tempdir().unwrap(), st, backend, runner, rx, _claude_home: claude_home }
     }
 
     pub fn paths(&self) -> Paths {
@@ -226,9 +226,16 @@ impl Rig {
             Arc::new(FakeAgents(Default::default())),
             claude_home.path().to_path_buf(),
         );
-        std::mem::forget(claude_home);
         let rx = st.bus.subscribe();
-        Self { garage, src: tempfile::tempdir().unwrap(), st, backend: Arc::new(FakeBackend::new()), runner: Arc::new(FakeRunner::default()), rx }
+        Self {
+            garage,
+            src: tempfile::tempdir().unwrap(),
+            st,
+            backend: Arc::new(FakeBackend::new()),
+            runner: Arc::new(FakeRunner::default()),
+            rx,
+            _claude_home: claude_home,
+        }
     }
 
     /// Scale timer intervals (5 "seconds" become `5 * unit`).

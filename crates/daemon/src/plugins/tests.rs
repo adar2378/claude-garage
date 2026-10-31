@@ -443,6 +443,17 @@ async fn workspace_added_and_removed_events_fire_once_per_change() {
     assert_eq!(names, ["added repo", "removed repo"]);
 }
 
+#[tokio::test]
+async fn a_status_hook_gets_the_workspace_derived_from_the_session_id() {
+    let r = Rig::new();
+    r.install("watch", &manifest("watch", &[], &hook("session.status_changed")));
+    let _loop = r.st.plugins.start();
+    r.st.status.set("garage/ws/a", garage_protocol::SessionStatus::Working, None);
+    wait_for(|| r.runner.count() == 1).await;
+    let ctx = r.runner.call(0).ctx();
+    assert_eq!((ctx["focus"]["workspace"].as_str(), ctx["event"]["data"]["to"].as_str()), (Some("ws"), Some("working")));
+}
+
 // ---------------------------------------------------------------------
 // Real processes
 // ---------------------------------------------------------------------
