@@ -20,3 +20,4 @@ GAP.md
 
 # cargo workspace output
 /target
+wall/target/

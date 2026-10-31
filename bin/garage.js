@@ -295,7 +295,7 @@ function newestMtimeUnder(dir) {
   return newest;
 }
 
-// p11 staleness guard: true when anything under wall/src, or wall/Cargo.toml
+// p11 staleness guard: true when anything under wall/src or crates/, or wall/Cargo.toml
 // / the root Cargo.lock, has an mtime newer than the built binary — i.e. the
 // checkout has source changes the binary predates (the "invisible picker"
 // report's root cause: a stale binary silently missing a fix). Source-file
@@ -308,7 +308,12 @@ function wallSourcesNewerThan(rustBinary) {
   for (const full of [path.join(wallDir, "Cargo.toml"), path.join(ROOT, "Cargo.lock")]) {
     if (existsSync(full) && statSync(full).mtimeMs > binaryMtime) return true;
   }
-  return newestMtimeUnder(path.join(wallDir, "src")) > binaryMtime;
+  // crates/ too: wall depends on garage-protocol (and the daemon crate ships
+  // in the same binary), so a change there makes the wall binary stale.
+  return (
+    newestMtimeUnder(path.join(wallDir, "src")) > binaryMtime ||
+    newestMtimeUnder(path.join(ROOT, "crates")) > binaryMtime
+  );
 }
 
 // Binary lookup order (p9-ratatui-port "TUI binary availability"):
