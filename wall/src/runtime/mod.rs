@@ -201,12 +201,6 @@ fn xorshift_next(state: &mut u64) -> f64 {
     (x >> 11) as f64 * (1.0 / (1u64 << 53) as f64)
 }
 
-// ── Strip notices ─────────────────────────────────────────────────────────
-
-// ── Effects (the caller-side of store-declined commands) ─────────────────
-
-// ── Garage-layer router ──────────────────────────────────────────────────
-
 // ── Key-event reduction ──────────────────────────────────────────────────
 
 /// Reduce a crossterm key event to the garage layer's string form (the
@@ -283,8 +277,6 @@ impl KeyLog {
         }
     }
 }
-
-// ── Effect execution ─────────────────────────────────────────────────────
 
 /// Where a bracketed paste goes (see [`App::handle_paste`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

@@ -7,15 +7,15 @@
 
 ## 1. Split without behaviour change (`wall/src/runtime.rs`, `wall/src/state/store.rs`)
 
-- [ ] 1.1 Move effects: `Effect`, `run_effect`, notice helpers → `runtime/effects.rs`
-- [ ] 1.2 Move background tasks: `spawn_*_task`, `fetch_and_send` → `runtime/tasks.rs`
-- [ ] 1.3 Move `GarageRouter`, `Notices`, `NoticeKind` → `runtime/router.rs`
-- [ ] 1.4 Move overlay key and click handlers → `runtime/overlays.rs`
-- [ ] 1.5 Move mouse handling (`handle_mouse`, `handle_click`, `handle_wheel`, `tile_at`) → `runtime/mouse.rs`
-- [ ] 1.6 Move `draw_frame`, `draw_tile` → `runtime/draw.rs`
-- [ ] 1.7 Split `runtime.rs` tests per area under `runtime/tests/`
-- [ ] 1.8 Move pure reconcile helpers out of `store.rs` → `state/reconcile.rs`
-- [ ] 1.9 After each step: tests and snapshots green, one commit per step
+- [x] 1.1 Move effects: `Effect`, `run_effect`, notice helpers → `runtime/effects.rs`
+- [x] 1.2 Move background tasks: `spawn_*_task`, `fetch_and_send` → `runtime/tasks.rs`
+- [x] 1.3 Move `GarageRouter`, `Notices`, `NoticeKind` → `runtime/router.rs`
+- [x] 1.4 Move overlay key and click handlers → `runtime/overlays.rs`
+- [x] 1.5 Move mouse handling (`handle_mouse`, `handle_click`, `handle_wheel`, `tile_at`) → `runtime/mouse.rs`
+- [x] 1.6 Move `draw_frame`, `draw_tile` → `runtime/draw.rs`
+- [x] 1.7 Split `runtime.rs` tests per area under `runtime/tests/`
+- [x] 1.8 Move pure reconcile helpers out of `store.rs` → `state/reconcile.rs`
+- [x] 1.9 After each step: tests and snapshots green, one commit per step
 
 ## 2. Actions and keymap
 
@@ -47,6 +47,6 @@
 ## 6. Verification
 
 - [ ] 6.1 `cd wall && cargo test --lib --bins` green, same or higher count; `cargo clippy --all-targets` clean; snapshots unchanged
-- [ ] 6.2 No file under `wall/src/runtime/` or `wall/src/state/` over ~1,200 lines
+- [x] 6.2 No file under `wall/src/runtime/` or `wall/src/state/` over ~1,200 lines
 - [ ] 6.3 Live check on the user's wall (user relaunches with `GARAGE_TUI_BIN` on the branch build; main session only, ask first): keys `1`-`9`, `[` `]`, `a`, `A`, `n`, `x x`, `X X`, `X K`, `r r`, `r a`, `?`, `m`, `d`, `D`, `Tab`; clicks on tiles, rail rows, triage rows; pet clicks
 - [ ] 6.4 Record results in `verification.md`
