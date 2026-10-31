@@ -1795,7 +1795,7 @@ mod tests {
 
         // the poller's close event (a tick later) must not wipe the id
         let recorder = crate::closed::spawn(&h.st.bus, h.st.registry.clone(), h.st.backend.clone());
-        h.st.bus.publish(DaemonEvent::SessionClosed {
+        h.st.bus.publish(DaemonEvent::SessionClosing {
             id: "garage/ws/a".into(),
             dir: dir.clone(),
             workspace: "ws".into(),
@@ -1922,7 +1922,7 @@ mod tests {
                 .await
                 .unwrap()
                 .closed_at;
-        h.st.bus.publish(DaemonEvent::SessionClosed {
+        h.st.bus.publish(DaemonEvent::SessionClosing {
             id: "garage/ws/w".into(),
             dir: wt.clone(),
             workspace: "ws".into(),

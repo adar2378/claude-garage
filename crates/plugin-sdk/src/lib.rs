@@ -119,6 +119,11 @@ impl Context {
             .unwrap_or_default()
     }
 
+    /// The plugin's own writable directory.
+    pub fn state_dir(&self) -> Option<&str> {
+        self.text("/plugin/state_dir")
+    }
+
     /// The caller's working directory of a CLI run.
     pub fn cwd(&self) -> Option<&str> {
         self.text("/focus/dir")

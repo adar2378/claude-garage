@@ -731,6 +731,8 @@ async fn session_closed_reaches_hooks_once_with_the_real_reason() {
     let r = Rig::new();
     r.install("closer", &manifest("closer", &[], &hook("session.closed")));
     let _loop = r.st.plugins.start();
+    // the daemon publishes session.closed through the closed-record recorder
+    let _recorder = crate::closed::spawn(&r.st.bus, r.st.registry.clone(), r.st.backend.clone());
     let poller = r.st.shared_poller();
     r.backend.set("garage/ws/user", "/proj", Some(1), "");
     r.backend.set("garage/ws/crash", "/proj2", Some(2), "");

@@ -3,7 +3,7 @@
 //! (`rail.extra_rows`) and offers a recent list on `H`.
 
 use std::collections::BTreeMap;
-use std::time::Duration;
+use std::path::Path;
 
 use garage_plugin_sdk::tui::{self, Picker};
 use garage_plugin_sdk::{Api, Error, Segment, Style, Value, WidgetItem, WidgetPut, json};
@@ -154,21 +154,60 @@ pub fn fetch(api: &Api) -> Result<BTreeMap<String, Vec<Closed>>, Error> {
     Ok(out)
 }
 
-/// Rebuild the rows. With `expect` (the id a `session.closed` event named)
-/// the fetch is repeated up to five times until that record exists: the
-/// registry writes it concurrently with the event.
-pub fn sync(api: &Api, expect: Option<&str>, pause: Duration) -> Result<(), Error> {
-    let mut records = fetch(api)?;
-    if let Some(id) = expect {
-        for _ in 0..5 {
-            if records.values().flatten().any(|r| r.id == id) {
-                break;
-            }
-            std::thread::sleep(pause);
-            records = fetch(api)?;
-        }
-    }
-    api.put_widget("rows", &put(&records)).map(|_| ())
+/// Rebuild the rows from the daemon's closed records. The daemon writes the
+/// record before it announces `session.closed`, so one fetch is enough.
+pub fn sync(api: &Api) -> Result<(), Error> {
+    api.put_widget("rows", &put(&fetch(api)?)).map(|_| ())
+}
+
+/// What [`sync_serialized`] did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Synced {
+    /// This run rebuilt the rows.
+    Done,
+    /// A newer sync started while this one waited; that one rebuilds the rows.
+    Superseded,
+}
+
+/// Event hooks run as separate processes, several at once when chats close
+/// together, and the last widget push wins. Left alone, a slow older fetch can
+/// overwrite a newer one with stale rows. So syncs go one at a time (a lock
+/// file in `state_dir`), and a sync that waited behind a newer one gives way:
+/// every run first writes its ticket, and only the run holding the latest
+/// ticket does the work.
+pub fn sync_serialized(api: &Api, state_dir: &Path) -> Result<Synced, Error> {
+    use fs4::FileExt;
+    let io = |e: std::io::Error| Error::Context(format!("{}: {e}", state_dir.display()));
+    std::fs::create_dir_all(state_dir).map_err(io)?;
+    static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let ticket = format!(
+        "{}-{}-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0),
+        std::process::id(),
+        SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    );
+    let ticket_file = state_dir.join("sync.ticket");
+    let tmp = state_dir.join(format!("sync.ticket.{ticket}.tmp"));
+    std::fs::write(&tmp, &ticket).map_err(io)?;
+    std::fs::rename(&tmp, &ticket_file).map_err(io)?;
+
+    let lock = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(state_dir.join("sync.lock"))
+        .map_err(io)?;
+    FileExt::lock(&lock).map_err(io)?;
+    let outcome = if std::fs::read_to_string(&ticket_file).is_ok_and(|t| t == ticket) {
+        sync(api).map(|()| Synced::Done)
+    } else {
+        Ok(Synced::Superseded)
+    };
+    let _ = FileExt::unlock(&lock);
+    outcome
 }
 
 /// The picker lines, newest first, with the matching records.
@@ -245,6 +284,7 @@ mod tests {
     use garage_plugin_sdk::testing::FakeDaemon;
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::time::Duration;
 
     fn rec(id: &str, reason: &str, at: i64) -> Closed {
         Closed {
@@ -330,39 +370,37 @@ mod tests {
         assert!(lines[1].starts_with("a/old  closed  16m ago"), "{lines:?}");
     }
 
-    fn daemon_with(closed_after: usize) -> (FakeDaemon, Arc<AtomicUsize>) {
-        // the record appears on the Nth fetch of /closed, as a registry write racing the event
-        let fetches = Arc::new(AtomicUsize::new(0));
-        let f = fetches.clone();
+    fn daemon_with_record(pause: Duration) -> (FakeDaemon, Arc<AtomicUsize>) {
+        let live = Arc::new(AtomicUsize::new(0));
+        let (inflight, peak) = (live.clone(), Arc::new(AtomicUsize::new(0)));
+        let p = peak.clone();
         let d = FakeDaemon::start(move |req| match req.path.as_str() {
             "/api/workspaces" => (200, r#"[{"name":"app","dir":"/a"}]"#.into()),
             "/api/workspaces/app/closed" => {
-                let n = f.fetch_add(1, Ordering::SeqCst);
-                if n >= closed_after {
-                    (200, r#"[{"id":"garage/app/main","workspace":"app","closedAt":5,"reason":"user"}]"#.into())
-                } else {
-                    (200, "[]".into())
-                }
+                let n = inflight.fetch_add(1, Ordering::SeqCst) + 1;
+                p.fetch_max(n, Ordering::SeqCst);
+                std::thread::sleep(pause);
+                inflight.fetch_sub(1, Ordering::SeqCst);
+                (
+                    200,
+                    r#"[{"id":"garage/app/main","workspace":"app","closedAt":5,"reason":"user"}]"#
+                        .into(),
+                )
             }
             "/api/plugins/closed-chats/widgets/rows" => (200, r#"{"ok":true,"rev":1}"#.into()),
             _ => (404, "{}".into()),
         });
-        (d, fetches)
+        (d, peak)
     }
 
     #[test]
-    fn sync_waits_for_the_record_the_close_event_named_then_pushes_the_rows() {
-        let (d, fetches) = daemon_with(2);
-        sync(
-            &d.api("closed-chats"),
-            Some("garage/app/main"),
-            Duration::from_millis(1),
-        )
-        .unwrap();
+    fn sync_fetches_once_and_pushes_the_rows() {
+        let (d, _) = daemon_with_record(Duration::ZERO);
+        sync(&d.api("closed-chats")).unwrap();
         assert_eq!(
-            fetches.load(Ordering::SeqCst),
-            3,
-            "two empty fetches, then the record"
+            d.log().iter().filter(|l| l.ends_with("/closed")).count(),
+            1,
+            "no waiting for the record: the daemon wrote it before announcing the close"
         );
         let put = d
             .requests()
@@ -379,24 +417,55 @@ mod tests {
     }
 
     #[test]
-    fn sync_gives_up_waiting_after_five_tries_and_still_pushes() {
-        let (d, fetches) = daemon_with(usize::MAX);
-        sync(
-            &d.api("closed-chats"),
-            Some("garage/app/main"),
-            Duration::from_millis(1),
-        )
-        .unwrap();
-        assert_eq!(fetches.load(Ordering::SeqCst), 6);
-        let put = d
-            .requests()
-            .into_iter()
-            .find(|r| r.method == "PUT")
-            .unwrap();
+    fn syncs_started_together_run_one_at_a_time() {
+        let (d, peak) = daemon_with_record(Duration::from_millis(60));
+        let state = tempfile::tempdir().unwrap();
+        let handles: Vec<_> = (0..4)
+            .map(|_| {
+                let (api, dir) = (d.api("closed-chats"), state.path().to_path_buf());
+                std::thread::spawn(move || sync_serialized(&api, &dir).unwrap())
+            })
+            .collect();
+        let outcomes: Vec<Synced> = handles.into_iter().map(|h| h.join().unwrap()).collect();
+        assert_eq!(peak.load(Ordering::SeqCst), 1, "never two fetches at once");
+        assert!(outcomes.contains(&Synced::Done), "{outcomes:?}");
+        let puts = d.requests().iter().filter(|r| r.method == "PUT").count();
         assert_eq!(
-            put.body["scopes"],
-            json!({}),
-            "no rows, and the widget is emptied"
+            puts,
+            outcomes.iter().filter(|o| **o == Synced::Done).count()
+        );
+    }
+
+    #[test]
+    fn a_sync_that_waited_behind_a_newer_one_gives_way_to_it() {
+        use fs4::FileExt;
+        let (d, _) = daemon_with_record(Duration::ZERO);
+        let state = tempfile::tempdir().unwrap();
+        // someone is mid-sync: hold the lock
+        let held = std::fs::File::create(state.path().join("sync.lock")).unwrap();
+        FileExt::lock(&held).unwrap();
+        let ticket = state.path().join("sync.ticket");
+        let spawn = || {
+            let (api, dir) = (d.api("closed-chats"), state.path().to_path_buf());
+            std::thread::spawn(move || sync_serialized(&api, &dir).unwrap())
+        };
+        let first = spawn();
+        while !ticket.exists() {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        let seen = std::fs::read_to_string(&ticket).unwrap();
+        let second = spawn();
+        while std::fs::read_to_string(&ticket).unwrap() == seen {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        FileExt::unlock(&held).unwrap();
+        let mut got = [first.join().unwrap(), second.join().unwrap()];
+        got.sort_by_key(|o| *o == Synced::Done);
+        assert_eq!(got, [Synced::Superseded, Synced::Done]);
+        assert_eq!(
+            d.requests().iter().filter(|r| r.method == "PUT").count(),
+            1,
+            "only the newest sync pushed"
         );
     }
 

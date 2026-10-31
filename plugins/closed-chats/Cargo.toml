@@ -14,7 +14,9 @@ name = "closed-chats"
 path = "src/main.rs"
 
 [dependencies]
+fs4 = "1.1.0"
 garage-plugin-sdk = { path = "../../crates/plugin-sdk", features = ["tui"] }
 
 [dev-dependencies]
+tempfile = "3"
 garage-plugin-sdk = { path = "../../crates/plugin-sdk", features = ["tui", "testing"] }

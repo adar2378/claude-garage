@@ -25,8 +25,21 @@ pub enum DaemonEvent {
         dir: String,
         workspace: String,
     },
-    /// A session left the backend. `last_status` is what the status store
-    /// held just before it was dropped.
+    /// Internal: the poller saw a session leave the backend. The closed-record
+    /// recorder writes the record and only then publishes [`SessionClosed`],
+    /// so whoever hears `session.closed` can already read the record.
+    /// Plugins and SSE clients never see this one.
+    ///
+    /// [`SessionClosed`]: DaemonEvent::SessionClosed
+    SessionClosing {
+        id: String,
+        dir: String,
+        workspace: String,
+        reason: CloseReason,
+        last_status: Option<String>,
+    },
+    /// A session left the backend and its closed record is written.
+    /// `last_status` is what the status store held just before it was dropped.
     SessionClosed {
         id: String,
         dir: String,

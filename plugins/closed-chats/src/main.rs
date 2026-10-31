@@ -18,16 +18,10 @@ fn main() {
 fn run_sync() -> Result<(), String> {
     let ctx = Context::read().map_err(|e| e.to_string())?;
     let api = Api::from_env().map_err(|e| e.to_string())?;
-    // The close event can beat the closed record to the daemon's registry.
-    let expect = (ctx.event_name() == Some("session.closed"))
-        .then(|| ctx.event_data()["id"].as_str().map(str::to_owned))
-        .flatten();
-    garage_plugin_closed_chats::sync(
-        &api,
-        expect.as_deref(),
-        std::time::Duration::from_millis(150),
-    )
-    .map_err(|e| e.to_string())
+    let state_dir = ctx.state_dir().ok_or("the run context has no state_dir")?;
+    garage_plugin_closed_chats::sync_serialized(&api, std::path::Path::new(state_dir))
+        .map(|_| ())
+        .map_err(|e| e.to_string())
 }
 
 fn run_recent() -> Result<(), String> {
