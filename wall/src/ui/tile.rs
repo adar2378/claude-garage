@@ -23,7 +23,7 @@ use tui_term::widget::{Cursor, PseudoTerminal};
 
 use crate::slots::{self, ClickTarget, SlotClickRegion, SlotCtx, SlotId, SlotItem, SlotRegistry};
 use crate::state::wall_state::WallSession;
-use crate::ui::theme::{colors, elapsed_for, glyph_for, status_color};
+use crate::ui::theme::{colors, elapsed_for, glyph_for, status_color, status_color_fading};
 
 /// Everything the tile render needs besides the terminal screen itself.
 pub struct TileView<'a> {
@@ -38,6 +38,11 @@ pub struct TileView<'a> {
     /// arrived since freezing).
     pub frozen_new_lines: Option<i64>,
     pub now_ms: i64,
+    /// Motion on: `done` fades over its 2 minutes instead of switching off.
+    pub fade_done: bool,
+    /// Motion on: the throbber frame for the attaching / restoring
+    /// placeholders. `None` keeps the static `…` / `⟳` markers.
+    pub spinner: Option<String>,
     /// The slot registry the title bar asks for its right-hand items.
     pub slots: &'a SlotRegistry,
     /// `tile.gutter` markers for this session and where the view sits in the
@@ -195,7 +200,11 @@ pub fn title_parts(
 ) -> (Line<'static>, Vec<(std::ops::Range<u16>, ClickTarget)>) {
     let s = v.session;
     let blocked = s.needs_input();
-    let glyph_color = status_color(&s.status, s.since, v.now_ms);
+    let glyph_color = if v.fade_done {
+        status_color_fading(&s.status, s.since, v.now_ms)
+    } else {
+        status_color(&s.status, s.since, v.now_ms)
+    };
     let name_color = if blocked {
         colors::AMBER
     } else if v.engaged || v.focused {
@@ -288,7 +297,11 @@ pub fn placeholder_for(v: &TileView, has_client: bool) -> Option<(String, String
         // placeholder"). While a restore call is in flight the placeholder
         // says so (optimistic; the refetch settles the real status).
         if v.restoring {
-            return Some(("⟳ restoring…".into(), "resuming the conversation".into()));
+            let head = match &v.spinner {
+                Some(spin) => format!("{spin} restoring…"),
+                None => "⟳ restoring…".to_owned(),
+            };
+            return Some((head, "resuming the conversation".into()));
         }
         return Some((
             "⟳ restorable".into(),
@@ -299,7 +312,11 @@ pub fn placeholder_for(v: &TileView, has_client: bool) -> Option<(String, String
         return Some(("✕ attach dead".into(), reason.to_owned()));
     }
     if !has_client {
-        return Some(("… attaching".into(), String::new()));
+        let head = match &v.spinner {
+            Some(spin) => format!("{spin} attaching"),
+            None => "… attaching".to_owned(),
+        };
+        return Some((head, String::new()));
     }
     None
 }
@@ -430,9 +447,55 @@ mod tests {
             dead_reason: None,
             frozen_new_lines: None,
             now_ms: 65_000,
+            fade_done: false,
+            spinner: None,
             slots: test_slots(),
             gutter: None,
         }
+    }
+
+    #[test]
+    fn attaching_and_restoring_markers_are_static_without_a_spinner() {
+        let s = session("working");
+        let v = view(&s);
+        assert_eq!(placeholder_for(&v, false).unwrap().0, "… attaching");
+        let r = session("restorable");
+        let mut v = view(&r);
+        v.restoring = true;
+        assert_eq!(placeholder_for(&v, false).unwrap().0, "⟳ restoring…");
+    }
+
+    #[test]
+    fn a_spinner_replaces_only_the_leading_marker() {
+        let s = session("working");
+        let mut v = view(&s);
+        v.spinner = Some("⠷".into());
+        assert_eq!(placeholder_for(&v, false).unwrap().0, "⠷ attaching");
+        let r = session("restorable");
+        let mut v = view(&r);
+        v.restoring = true;
+        v.spinner = Some("⠯".into());
+        assert_eq!(placeholder_for(&v, false).unwrap().0, "⠯ restoring…");
+        // The restorable (idle) placeholder never spins.
+        v.restoring = false;
+        assert_eq!(placeholder_for(&v, false).unwrap().0, "⟳ restorable");
+    }
+
+    #[test]
+    fn fade_done_only_changes_the_done_glyph() {
+        let done = session("done");
+        let mut v = view(&done);
+        v.now_ms = 60_000;
+        let hard = title_line(&v, 40).spans[0].style.fg;
+        v.fade_done = true;
+        let faded = title_line(&v, 40).spans[0].style.fg;
+        assert_eq!(hard, Some(colors::GREEN));
+        assert!(matches!(faded, Some(Color::Rgb(..))), "mid-fade is a stepped tone");
+        let working = session("working");
+        let mut w = view(&working);
+        let before = title_line(&w, 40);
+        w.fade_done = true;
+        assert_eq!(title_line(&w, 40), before);
     }
 
     #[test]

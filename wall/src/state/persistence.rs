@@ -50,13 +50,23 @@ pub struct WallFile {
     pub pet: Option<String>,
 }
 
+/// `$GARAGE_DIR`, else `~/.garage` (shared by `wall.json` and `config.toml`).
+pub fn garage_dir() -> PathBuf {
+    garage_dir_from(std::env::var("GARAGE_DIR").ok().as_deref(), std::env::var("HOME").ok().as_deref())
+}
+
 /// `$GARAGE_DIR/wall.json`, else `~/.garage/wall.json` — mirrors the
 /// daemon's `registry.js` GARAGE_DIR convention (same override, same
 /// fallback), so a scratch `GARAGE_DIR` used for daemon testing also
 /// isolates the wall's own state file.
 pub fn wall_json_path() -> PathBuf {
-    garage_dir_from(std::env::var("GARAGE_DIR").ok().as_deref(), std::env::var("HOME").ok().as_deref())
-        .join("wall.json")
+    garage_dir_from_env().join("wall.json")
+}
+
+/// `$GARAGE_DIR`, else `~/.garage` (`%USERPROFILE%` when `HOME` is unset).
+pub fn garage_dir_from_env() -> PathBuf {
+    let home = std::env::var("HOME").ok().filter(|h| !h.is_empty()).or_else(|| std::env::var("USERPROFILE").ok());
+    garage_dir_from(std::env::var("GARAGE_DIR").ok().as_deref(), home.as_deref())
 }
 
 /// Pure path-resolution logic, factored out of [`wall_json_path`] so it's

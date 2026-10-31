@@ -58,10 +58,16 @@ pub async fn post(State(state): State<AppState>, body: Bytes) -> Response {
         Ok(b) => b,
         Err(r) => return *r,
     };
-    let id = body.get("clientId").and_then(Value::as_str).filter(|s| !s.is_empty());
+    let id = body
+        .get("clientId")
+        .and_then(Value::as_str)
+        .filter(|s| !s.is_empty());
     let visible = body.get("visible").and_then(Value::as_bool);
     let (Some(id), Some(visible)) = (id, visible) else {
-        return error_response(StatusCode::BAD_REQUEST, "clientId (string) and visible (boolean) are required");
+        return error_response(
+            StatusCode::BAD_REQUEST,
+            "clientId (string) and visible (boolean) are required",
+        );
     };
     state.visibility.record(id, visible);
     Json(json!({"ok": true})).into_response()
@@ -78,10 +84,16 @@ mod tests {
         assert!(!v.any_visible_at(t0));
         v.record_at("tui", true, t0);
         assert!(v.any_visible_at(t0 + Duration::from_secs(10)));
-        assert!(v.any_visible_at(t0 + TTL), "exactly at the TTL still counts (JS `<=`)");
+        assert!(
+            v.any_visible_at(t0 + TTL),
+            "exactly at the TTL still counts (JS `<=`)"
+        );
         assert!(!v.any_visible_at(t0 + TTL + Duration::from_millis(1)));
         v.record_at("tui", false, t0 + Duration::from_secs(20));
-        assert!(!v.any_visible_at(t0 + Duration::from_secs(21)), "latest report wins");
+        assert!(
+            !v.any_visible_at(t0 + Duration::from_secs(21)),
+            "latest report wins"
+        );
     }
 
     #[test]

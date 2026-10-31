@@ -29,7 +29,8 @@ pub trait TelemetryDeps: Send + Sync {
     /// `Some(Some(m))` = text.
     fn set_status(&self, id: &str, state: SessionStatus, message: Option<Option<String>>);
     /// `resolveSessionIds({session_id, cwd})` from `session-resolve.js`.
-    async fn resolve_session_ids(&self, session_id: Option<&str>, cwd: Option<&str>) -> Vec<String>;
+    async fn resolve_session_ids(&self, session_id: Option<&str>, cwd: Option<&str>)
+        -> Vec<String>;
 }
 
 /// Default until the merge wires real stores: nothing resolves, and the token
@@ -95,7 +96,10 @@ fn normalize_limit(limit: Option<&Value>) -> Option<Limit> {
     let obj = limit?.as_object()?;
     let used_percentage = clamp_percentage(obj.get("used_percentage")?)?;
     let resets_at = obj.get("resets_at").cloned().unwrap_or(Value::Null);
-    Some(Limit { used_percentage, resets_at })
+    Some(Limit {
+        used_percentage,
+        resets_at,
+    })
 }
 
 #[derive(Default)]
@@ -111,7 +115,11 @@ pub struct ContextStore {
 
 impl ContextStore {
     pub fn set_context(&self, id: &str, used_percentage: f64) {
-        self.inner.lock().unwrap().contexts.insert(id.to_owned(), used_percentage);
+        self.inner
+            .lock()
+            .unwrap()
+            .contexts
+            .insert(id.to_owned(), used_percentage);
     }
 
     /// `{usedPercentage, source: "statusline"}` or `None`, the shape sessions.js
@@ -207,7 +215,10 @@ mod tests {
     fn set_context_round_trips_with_source_statusline() {
         let s = store();
         s.set_context("a", 42.0);
-        assert_eq!(s.statusline_context("a"), Some(json!({"usedPercentage": 42, "source": "statusline"})));
+        assert_eq!(
+            s.statusline_context("a"),
+            Some(json!({"usedPercentage": 42, "source": "statusline"}))
+        );
     }
 
     #[test]
@@ -220,7 +231,10 @@ mod tests {
 
     #[test]
     fn rate_limits_start_null() {
-        assert_eq!(store().rate_limits().to_json(), json!({"fiveHour": null, "sevenDay": null}));
+        assert_eq!(
+            store().rate_limits().to_json(),
+            json!({"fiveHour": null, "sevenDay": null})
+        );
     }
 
     #[test]
@@ -252,7 +266,11 @@ mod tests {
     #[test]
     fn set_rate_limits_ignores_malformed_input() {
         let s = store();
-        for bad in [json!(null), json!("not an object"), json!({"five_hour": {"used_percentage": "nope"}})] {
+        for bad in [
+            json!(null),
+            json!("not an object"),
+            json!({"five_hour": {"used_percentage": "nope"}}),
+        ] {
             s.set_rate_limits(&bad);
         }
         assert_eq!(s.rate_limits(), RateLimits::default());

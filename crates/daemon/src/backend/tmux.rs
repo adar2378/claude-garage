@@ -22,9 +22,15 @@ use super::{BackendSession, PaneInfo, SessionBackend};
 
 pub const GARAGE_PREFIX: &str = "garage/";
 
+/// Name of the control client's own session. Deliberately outside
+/// `GARAGE_PREFIX`, so `list`/`panes` and every garage listing skip it.
+pub const CONTROL_SESSION: &str = "garage-control";
+
 /// Workspace and session labels: `[a-z0-9-]+` (the JS `NAME_RE`).
 pub fn is_valid_name(s: &str) -> bool {
-    !s.is_empty() && s.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+    !s.is_empty()
+        && s.bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
 }
 
 /// `garage/<workspace>/<label>`.
@@ -37,7 +43,10 @@ pub fn session_id(workspace: &str, label: &str) -> String {
 pub fn split_session_id(id: &str) -> (String, String) {
     let mut parts = id.split('/');
     parts.next();
-    (parts.next().unwrap_or("").to_string(), parts.next().unwrap_or("").to_string())
+    (
+        parts.next().unwrap_or("").to_string(),
+        parts.next().unwrap_or("").to_string(),
+    )
 }
 
 /// `=` forces exact-name matching; a bare `-t` does prefix matching.
@@ -60,7 +69,9 @@ pub fn parse_pane_line(line: &str) -> (String, String, String) {
 /// hostname (full or short), or a bare shell name. Anything else is a title
 /// something set (e.g. Claude Code's OSC updates) and is returned trimmed.
 pub fn normalize_title(title: Option<&str>, hostname: Option<&str>) -> Option<String> {
-    const BARE: [&str; 9] = ["sh", "bash", "zsh", "fish", "-sh", "-bash", "-zsh", "-fish", "tmux"];
+    const BARE: [&str; 9] = [
+        "sh", "bash", "zsh", "fish", "-sh", "-bash", "-zsh", "-fish", "tmux",
+    ];
     let trimmed = title?.trim();
     if trimmed.is_empty() {
         return None;
@@ -84,11 +95,17 @@ pub struct TmuxBackend {
     socket: Option<String>,
     /// Extra environment for the tmux child processes (tests: `TMUX_TMPDIR`).
     child_env: Vec<(String, String)>,
+    /// `tmux -V`, parsed once (`None` inside: unknown or unparsable).
+    version: std::sync::Arc<tokio::sync::OnceCell<Option<(u32, u32)>>>,
 }
 
 impl TmuxBackend {
     pub fn new(socket: Option<String>) -> Self {
-        Self { socket, child_env: Vec::new() }
+        Self {
+            socket,
+            child_env: Vec::new(),
+            version: Default::default(),
+        }
     }
 
     /// Also set `key=value` in every tmux child process's environment.
@@ -135,7 +152,13 @@ impl TmuxBackend {
             Ok(String::from_utf8_lossy(&out.stdout).into_owned())
         } else {
             let stderr = String::from_utf8_lossy(&out.stderr);
-            Err(anyhow!("tmux {}: {}", args.get(self.prefix().len()).map(String::as_str).unwrap_or(""), stderr.trim()))
+            Err(anyhow!(
+                "tmux {}: {}",
+                args.get(self.prefix().len())
+                    .map(String::as_str)
+                    .unwrap_or(""),
+                stderr.trim()
+            ))
         }
     }
 
@@ -154,18 +177,131 @@ impl TmuxBackend {
     }
 
     async fn ensure_extended_keys_inner(&self) -> Result<()> {
-        self.run_args(&["set-option", "-s", "extended-keys", "on"]).await?;
-        let _ = self.run_args(&["set-option", "-s", "extended-keys-format", "csi-u"]).await;
-        let shown = self.run_args(&["show-options", "-s", "terminal-features"]).await.unwrap_or_default();
+        self.run_args(&["set-option", "-s", "extended-keys", "on"])
+            .await?;
+        let _ = self
+            .run_args(&["set-option", "-s", "extended-keys-format", "csi-u"])
+            .await;
+        let shown = self
+            .run_args(&["show-options", "-s", "terminal-features"])
+            .await
+            .unwrap_or_default();
         if !has_extkeys_feature(&shown) {
-            self.run_args(&["set-option", "-as", "terminal-features", "xterm*:extkeys"]).await?;
+            self.run_args(&["set-option", "-as", "terminal-features", "xterm*:extkeys"])
+                .await?;
         }
         Ok(())
     }
 
-    fn env_args(env: &[(String, String)]) -> Vec<String> {
-        env.iter().flat_map(|(k, v)| ["-e".to_string(), format!("{k}={v}")]).collect()
+    /// True when a tmux server answers on this backend's socket.
+    pub async fn server_running(&self) -> bool {
+        self.run_args(&["list-sessions", "-F", "#{session_name}"])
+            .await
+            .is_ok()
     }
+
+    /// tmux's `(major, minor)`, detected once per backend. `None` when it
+    /// cannot be determined; callers then take the conservative path.
+    pub async fn version(&self) -> Option<(u32, u32)> {
+        *self
+            .version
+            .get_or_init(|| async {
+                let out = self.run(&["-V".to_string()]).await.ok()?;
+                parse_version(&out)
+            })
+            .await
+    }
+
+    /// Make sure the control session exists without ever letting this call
+    /// start a server. Returns false when it could not be ensured (no server,
+    /// tmux error): the caller just skips this connection attempt.
+    ///
+    /// The old `server_running()` check followed by `new-session -A` left a
+    /// window in which the server could die and the control command would
+    /// start a fresh one, loading the user's tmux.conf as a side effect. Now:
+    /// tmux >= 3.4 gets the global `-N` ("do not start the server even if the
+    /// command normally would"), so create-or-fail is atomic. Older tmux has
+    /// no `-N`; there the (millisecond-wide) race remains, but the create runs
+    /// with `-f /dev/null` so a server born from it loads no user config.
+    /// Only the create path gets that; every later command is unchanged. The
+    /// client itself is `attach-session`, which never starts a server.
+    pub async fn ensure_control_session(&self) -> bool {
+        let mut argv = self.prefix();
+        match self.version().await {
+            Some(v) if v >= (3, 4) => argv.push("-N".into()),
+            _ if self.socket.is_none() => argv.extend(["-f".into(), "/dev/null".into()]),
+            _ => {}
+        }
+        argv.extend(["new-session", "-d", "-s", CONTROL_SESSION, "cat"].map(String::from));
+        // A duplicate-session error (another client already made it) is fine.
+        let _ = self.run(&argv).await;
+        self.run_args(&["has-session", "-t", &exact(CONTROL_SESSION)])
+            .await
+            .is_ok()
+    }
+
+    /// The control-mode client, attached to the session
+    /// `ensure_control_session` made: `tmux [-L s -f /dev/null] -C
+    /// attach-session -t =garage-control [-f no-output,ignore-size]`. The
+    /// session has no `garage/` prefix (so no listing shows it), has its
+    /// status line off, and is destroyed when the last client goes away, so a
+    /// stopped daemon leaves nothing behind. `no-output` (the pane runs `cat`,
+    /// so there is none anyway) and `ignore-size` (it must never resize other
+    /// clients) need tmux 3.2; on older or unknown versions they are skipped.
+    /// stdin and stdout are piped and the child dies with the handle.
+    pub async fn control_command(&self) -> Command {
+        let target = exact(CONTROL_SESSION);
+        let mut argv = self.prefix();
+        argv.extend(["-C", "attach-session", "-t", &target].map(String::from));
+        if self.version().await.is_some_and(|v| v >= (3, 2)) {
+            argv.extend(["-f", "no-output,ignore-size"].map(String::from));
+        }
+        argv.extend(
+            [
+                ";",
+                "set-option",
+                "-t",
+                CONTROL_SESSION,
+                "destroy-unattached",
+                "on",
+                ";",
+                "set-option",
+                "-t",
+                CONTROL_SESSION,
+                "status",
+                "off",
+            ]
+            .map(String::from),
+        );
+        let mut cmd = self.command(&argv);
+        cmd.stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null());
+        cmd
+    }
+
+    fn env_args(env: &[(String, String)]) -> Vec<String> {
+        env.iter()
+            .flat_map(|(k, v)| ["-e".to_string(), format!("{k}={v}")])
+            .collect()
+    }
+}
+
+/// `tmux 3.7b` -> (3, 7); `tmux next-3.5` -> (3, 5). `master` and anything
+/// else unparsable is `None` (callers treat unknown as old).
+pub fn parse_version(out: &str) -> Option<(u32, u32)> {
+    let v = out
+        .trim()
+        .strip_prefix("tmux ")?
+        .trim_start_matches("next-");
+    let mut parts = v.split('.');
+    let major = parts.next()?.parse().ok()?;
+    let minor: String = parts
+        .next()?
+        .chars()
+        .take_while(char::is_ascii_digit)
+        .collect();
+    Some((major, minor.parse().ok()?))
 }
 
 /// tmux's message for "there is no server (so no sessions)", across versions:
@@ -178,7 +314,10 @@ fn is_no_server(message: &str) -> bool {
 
 /// The JS `/xterm\*?[^\n]*extkeys/` test, line by line.
 fn has_extkeys_feature(shown: &str) -> bool {
-    shown.lines().any(|l| l.find("xterm").is_some_and(|i| l[i + 5..].contains("extkeys")))
+    shown.lines().any(|l| {
+        l.find("xterm")
+            .is_some_and(|i| l[i + 5..].contains("extkeys"))
+    })
 }
 
 #[async_trait]
@@ -219,7 +358,12 @@ impl SessionBackend for TmuxBackend {
                     .and_then(|c| c.parse::<f64>().ok())
                     .map(|s| (s * 1000.0) as i64)
                     .filter(|ms| *ms > 0);
-                BackendSession { id, dir, attached, created_at }
+                BackendSession {
+                    id,
+                    dir,
+                    attached,
+                    created_at,
+                }
             })
             .collect())
     }
@@ -229,7 +373,12 @@ impl SessionBackend for TmuxBackend {
     /// first pane seen per session is kept.
     async fn panes(&self) -> Result<HashMap<String, PaneInfo>> {
         let Ok(out) = self
-            .run_args(&["list-panes", "-a", "-F", "#{session_name}\t#{pane_current_path}\t#{pane_pid}\t#{pane_title}"])
+            .run_args(&[
+                "list-panes",
+                "-a",
+                "-F",
+                "#{session_name}\t#{pane_current_path}\t#{pane_pid}\t#{pane_title}",
+            ])
             .await
         else {
             return Ok(HashMap::new());
@@ -247,10 +396,20 @@ impl SessionBackend for TmuxBackend {
     }
 
     async fn has(&self, id: &str) -> Result<bool> {
-        Ok(self.run_args(&["has-session", "-t", &exact(id)]).await.is_ok())
+        Ok(self
+            .run_args(&["has-session", "-t", &exact(id)])
+            .await
+            .is_ok())
     }
 
-    async fn create(&self, id: &str, dir: &Path, cmd: &str, args: &[String], env: &[(String, String)]) -> Result<()> {
+    async fn create(
+        &self,
+        id: &str,
+        dir: &Path,
+        cmd: &str,
+        args: &[String],
+        env: &[(String, String)],
+    ) -> Result<()> {
         let dir = dir.to_string_lossy();
         let mut argv = self.argv(&["new-session", "-d", "-s", id, "-c", &dir]);
         argv.extend(Self::env_args(env));
@@ -261,14 +420,23 @@ impl SessionBackend for TmuxBackend {
         self.ensure_extended_keys().await;
         // The wall draws its own title bars; tmux's status line is noise.
         // set-option rejects the `=` prefix; the fresh full name is unambiguous.
-        let _ = self.run_args(&["set-option", "-t", id, "status", "off"]).await;
+        let _ = self
+            .run_args(&["set-option", "-t", id, "status", "off"])
+            .await;
         Ok(())
     }
 
     /// In-place restart: `respawn-pane -k` keeps the tmux session identity.
     /// `-t` targets a PANE, so `=<id>:` (trailing colon) is required to mean
     /// "this session's active window's active pane".
-    async fn respawn(&self, id: &str, dir: &Path, cmd: &str, args: &[String], env: &[(String, String)]) -> Result<()> {
+    async fn respawn(
+        &self,
+        id: &str,
+        dir: &Path,
+        cmd: &str,
+        args: &[String],
+        env: &[(String, String)],
+    ) -> Result<()> {
         let dir = dir.to_string_lossy();
         let mut argv = self.argv(&["respawn-pane", "-k", "-c", &dir]);
         argv.extend(Self::env_args(env));
@@ -280,17 +448,29 @@ impl SessionBackend for TmuxBackend {
     }
 
     async fn kill(&self, id: &str) -> Result<()> {
-        self.run_args(&["kill-session", "-t", &exact(id)]).await.map(|_| ())
+        self.run_args(&["kill-session", "-t", &exact(id)])
+            .await
+            .map(|_| ())
     }
 
     async fn rename(&self, from: &str, to: &str) -> Result<()> {
-        self.run_args(&["rename-session", "-t", &exact(from), to]).await.map(|_| ())
+        self.run_args(&["rename-session", "-t", &exact(from), to])
+            .await
+            .map(|_| ())
     }
 
     /// Last `lines` lines of the session's visible pane plus scrollback.
     async fn capture(&self, id: &str, lines: usize) -> Result<String> {
         let start = format!("-{lines}");
-        self.run_args(&["capture-pane", "-p", "-t", &format!("{}:", exact(id)), "-S", &start]).await
+        self.run_args(&[
+            "capture-pane",
+            "-p",
+            "-t",
+            &format!("{}:", exact(id)),
+            "-S",
+            &start,
+        ])
+        .await
     }
 
     /// `send-keys -l` types the text literally (no key-name parsing), then a
@@ -302,23 +482,24 @@ impl SessionBackend for TmuxBackend {
         self.run_args(&["send-keys", "-t", &target, "Enter"]).await.map(|_| ())
     }
 
-    fn attach_spec(&self, id: &str) -> AttachSpec {
-        // Attaching needs a running server, so `-f` is never relevant here.
-        let base = |rest: &[&str]| {
-            let mut v = vec!["tmux".to_string()];
-            if let Some(s) = &self.socket {
-                v.extend(["-L".to_string(), s.clone()]);
-            }
-            v.extend(rest.iter().map(|s| s.to_string()));
-            v
-        };
-        let attach = format!("={id}");
-        AttachSpec::Tmux { argv: base(&["attach", "-t", &attach]), detach_argv: base(&["detach-client", "-t"]) }
+    fn attach_spec(&self, _id: &str) -> AttachSpec {
+        AttachSpec::Tmux { socket: self.socket.clone() }
     }
 }
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn parses_tmux_versions() {
+        use super::parse_version;
+        assert_eq!(parse_version("tmux 3.7b\n"), Some((3, 7)));
+        assert_eq!(parse_version("tmux 3.2a"), Some((3, 2)));
+        assert_eq!(parse_version("tmux next-3.5"), Some((3, 5)));
+        assert_eq!(parse_version("tmux 2.9"), Some((2, 9)));
+        assert_eq!(parse_version("tmux master"), None);
+        assert_eq!(parse_version("garbage"), None);
+    }
+
     use super::*;
     use crate::test_support::TestTmux;
 
@@ -326,23 +507,24 @@ mod tests {
 
     #[test]
     fn attach_spec_carries_the_isolated_socket() {
-        let AttachSpec::Tmux { argv, detach_argv } = TmuxBackend::new(Some("t1".into())).attach_spec("garage/ws/a") else {
-            panic!("tmux backend must yield a Tmux spec");
-        };
-        assert_eq!(argv, ["tmux", "-L", "t1", "attach", "-t", "=garage/ws/a"]);
-        assert_eq!(detach_argv, ["tmux", "-L", "t1", "detach-client", "-t"]);
+        assert_eq!(
+            TmuxBackend::new(Some("t1".into())).attach_spec("garage/ws/a"),
+            AttachSpec::Tmux { socket: Some("t1".into()) }
+        );
     }
 
     #[test]
     fn attach_spec_uses_default_server_without_socket() {
-        let AttachSpec::Tmux { argv, .. } = TmuxBackend::new(None).attach_spec("s") else { panic!() };
-        assert_eq!(argv, ["tmux", "attach", "-t", "=s"]);
+        assert_eq!(TmuxBackend::new(None).attach_spec("s"), AttachSpec::Tmux { socket: None });
     }
 
     #[test]
     fn argv_is_unchanged_without_a_socket_and_isolated_with_one() {
         assert_eq!(TmuxBackend::new(None).argv(&["ls"]), ["ls"]);
-        assert_eq!(TmuxBackend::new(Some("s".into())).argv(&["ls"]), ["-L", "s", "-f", "/dev/null", "ls"]);
+        assert_eq!(
+            TmuxBackend::new(Some("s".into())).argv(&["ls"]),
+            ["-L", "s", "-f", "/dev/null", "ls"]
+        );
     }
 
     // parsePaneLine splits the three fixed fields
@@ -350,7 +532,11 @@ mod tests {
     fn parse_pane_line_splits_the_three_fixed_fields() {
         assert_eq!(
             parse_pane_line("garage/ws/one\t/Users/me/repo\t✳ Refactoring the poller"),
-            ("garage/ws/one".into(), "/Users/me/repo".into(), "✳ Refactoring the poller".into())
+            (
+                "garage/ws/one".into(),
+                "/Users/me/repo".into(),
+                "✳ Refactoring the poller".into()
+            )
         );
     }
 
@@ -359,7 +545,11 @@ mod tests {
     fn parse_pane_line_rejoins_an_embedded_separator_into_the_title() {
         assert_eq!(
             parse_pane_line("garage/ws/one\t/Users/me/repo\tbefore\tafter"),
-            ("garage/ws/one".into(), "/Users/me/repo".into(), "before\tafter".into())
+            (
+                "garage/ws/one".into(),
+                "/Users/me/repo".into(),
+                "before\tafter".into()
+            )
         );
     }
 
@@ -368,7 +558,11 @@ mod tests {
     fn parse_pane_line_handles_an_empty_title() {
         assert_eq!(
             parse_pane_line("garage/ws/one\t/Users/me/repo\t"),
-            ("garage/ws/one".into(), "/Users/me/repo".into(), String::new())
+            (
+                "garage/ws/one".into(),
+                "/Users/me/repo".into(),
+                String::new()
+            )
         );
     }
 
@@ -393,43 +587,72 @@ mod tests {
     fn normalize_title_short_hostname_is_none() {
         assert_eq!(normalize_title(Some("my-mac"), Some("my-mac.local")), None);
         assert_eq!(normalize_title(Some("MY-MAC"), Some("my-mac.local")), None);
-        assert_eq!(normalize_title(Some("my-mac.local"), Some("my-mac.local")), None);
+        assert_eq!(
+            normalize_title(Some("my-mac.local"), Some("my-mac.local")),
+            None
+        );
     }
 
     // normalizeTitle: bare shell/process names are null
     #[test]
     fn normalize_title_bare_shell_names_are_none() {
-        for name in ["zsh", "bash", "sh", "fish", "-zsh", "-bash", "-sh", "-fish", "tmux"] {
+        for name in [
+            "zsh", "bash", "sh", "fish", "-zsh", "-bash", "-sh", "-fish", "tmux",
+        ] {
             assert_eq!(normalize_title(Some(name), Some("my-mac")), None, "{name}");
-            assert_eq!(normalize_title(Some(&name.to_uppercase()), Some("my-mac")), None, "{name} upper");
+            assert_eq!(
+                normalize_title(Some(&name.to_uppercase()), Some("my-mac")),
+                None,
+                "{name} upper"
+            );
         }
     }
 
     // normalizeTitle: a real title is returned trimmed
     #[test]
     fn normalize_title_real_title_is_trimmed() {
-        assert_eq!(normalize_title(Some("✳ Refactoring the poller"), Some("my-mac")).as_deref(), Some("✳ Refactoring the poller"));
-        assert_eq!(normalize_title(Some("  ✳ Refactoring the poller  "), Some("my-mac")).as_deref(), Some("✳ Refactoring the poller"));
+        assert_eq!(
+            normalize_title(Some("✳ Refactoring the poller"), Some("my-mac")).as_deref(),
+            Some("✳ Refactoring the poller")
+        );
+        assert_eq!(
+            normalize_title(Some("  ✳ Refactoring the poller  "), Some("my-mac")).as_deref(),
+            Some("✳ Refactoring the poller")
+        );
     }
 
     // normalizeTitle: a title that merely contains the hostname is kept
     #[test]
     fn normalize_title_hostname_substring_is_kept() {
-        assert_eq!(normalize_title(Some("ssh my-mac"), Some("my-mac")).as_deref(), Some("ssh my-mac"));
+        assert_eq!(
+            normalize_title(Some("ssh my-mac"), Some("my-mac")).as_deref(),
+            Some("ssh my-mac")
+        );
     }
 
     // normalizeTitle: works with no hostname supplied
     #[test]
     fn normalize_title_without_hostname_skips_that_check() {
-        assert_eq!(normalize_title(Some("some title"), None).as_deref(), Some("some title"));
+        assert_eq!(
+            normalize_title(Some("some title"), None).as_deref(),
+            Some("some title")
+        );
         assert_eq!(normalize_title(Some("zsh"), None), None);
     }
 
     #[test]
     fn session_id_helpers() {
         assert_eq!(session_id("ws", "one"), "garage/ws/one");
-        assert_eq!(split_session_id("garage/ws/one"), ("ws".into(), "one".into()));
-        assert!(is_valid_name("a-b-1") && !is_valid_name("A") && !is_valid_name("a b") && !is_valid_name(""));
+        assert_eq!(
+            split_session_id("garage/ws/one"),
+            ("ws".into(), "one".into())
+        );
+        assert!(
+            is_valid_name("a-b-1")
+                && !is_valid_name("A")
+                && !is_valid_name("a b")
+                && !is_valid_name("")
+        );
     }
 
     #[test]
@@ -448,9 +671,13 @@ mod tests {
 
     #[test]
     fn extkeys_detection_matches_the_js_regex() {
-        assert!(has_extkeys_feature("terminal-features[0] xterm*:clipboard\nterminal-features[1] xterm*:extkeys"));
+        assert!(has_extkeys_feature(
+            "terminal-features[0] xterm*:clipboard\nterminal-features[1] xterm*:extkeys"
+        ));
         assert!(has_extkeys_feature("xterm-256color:extkeys"));
-        assert!(!has_extkeys_feature("terminal-features[0] xterm*:clipboard"));
+        assert!(!has_extkeys_feature(
+            "terminal-features[0] xterm*:clipboard"
+        ));
         assert!(!has_extkeys_feature("extkeys only\nxterm on another line"));
     }
 
@@ -464,17 +691,25 @@ mod tests {
     async fn lifecycle_create_list_has_rename_kill() {
         let t = TestTmux::new();
         let b = t.backend();
-        assert!(b.list().await.unwrap().is_empty(), "no server yet means no sessions");
+        assert!(
+            b.list().await.unwrap().is_empty(),
+            "no server yet means no sessions"
+        );
         assert!(!b.has("garage/ws/a").await.unwrap());
 
-        b.create("garage/ws/a", t.dir(), "sleep", &sleeper(), &[]).await.unwrap();
+        b.create("garage/ws/a", t.dir(), "sleep", &sleeper(), &[])
+            .await
+            .unwrap();
         // A non-garage session on the same server must not be listed.
         t.tmux(&["new-session", "-d", "-s", "other", "sleep", "60"]);
 
         let list = b.list().await.unwrap();
         assert_eq!(list.len(), 1);
         assert_eq!(list[0].id, "garage/ws/a");
-        assert_eq!(Path::new(&list[0].dir).canonicalize().unwrap(), t.dir().canonicalize().unwrap());
+        assert_eq!(
+            Path::new(&list[0].dir).canonicalize().unwrap(),
+            t.dir().canonicalize().unwrap()
+        );
         assert!(!list[0].attached);
         assert!(list[0].created_at.is_some_and(|c| c > 1_600_000_000_000));
         assert!(b.has("garage/ws/a").await.unwrap());
@@ -494,12 +729,27 @@ mod tests {
     async fn create_turns_status_off_and_enables_extended_keys() {
         let t = TestTmux::new();
         let b = t.backend();
-        b.create("garage/ws/a", t.dir(), "sleep", &sleeper(), &[]).await.unwrap();
-        assert_eq!(t.tmux(&["show-options", "-t", "garage/ws/a", "-v", "status"]).trim(), "off");
-        assert_eq!(t.tmux(&["show-options", "-sv", "extended-keys"]).trim(), "on");
-        assert!(has_extkeys_feature(&t.tmux(&["show-options", "-s", "terminal-features"])));
+        b.create("garage/ws/a", t.dir(), "sleep", &sleeper(), &[])
+            .await
+            .unwrap();
+        assert_eq!(
+            t.tmux(&["show-options", "-t", "garage/ws/a", "-v", "status"])
+                .trim(),
+            "off"
+        );
+        assert_eq!(
+            t.tmux(&["show-options", "-sv", "extended-keys"]).trim(),
+            "on"
+        );
+        assert!(has_extkeys_feature(&t.tmux(&[
+            "show-options",
+            "-s",
+            "terminal-features"
+        ])));
         // Idempotent: a second create does not append another feature.
-        b.create("garage/ws/b", t.dir(), "sleep", &sleeper(), &[]).await.unwrap();
+        b.create("garage/ws/b", t.dir(), "sleep", &sleeper(), &[])
+            .await
+            .unwrap();
         let feats = t.tmux(&["show-options", "-s", "terminal-features"]);
         assert_eq!(feats.matches("extkeys").count(), 1, "{feats}");
     }
@@ -508,10 +758,23 @@ mod tests {
     async fn create_passes_env_and_args_to_the_pane() {
         let t = TestTmux::new();
         let b = t.backend();
-        let args = vec!["-c".to_string(), "echo $GARAGE_T $0 > out.txt; sleep 60".to_string(), "x".to_string()];
-        b.create("garage/ws/e", t.dir(), "sh", &args, &[("GARAGE_T".into(), "hello".into())]).await.unwrap();
+        let args = vec![
+            "-c".to_string(),
+            "echo $GARAGE_T $0 > out.txt; sleep 60".to_string(),
+            "x".to_string(),
+        ];
+        b.create(
+            "garage/ws/e",
+            t.dir(),
+            "sh",
+            &args,
+            &[("GARAGE_T".into(), "hello".into())],
+        )
+        .await
+        .unwrap();
         let out = t.dir().join("out.txt");
-        t.wait_for(|| std::fs::read_to_string(&out).is_ok_and(|s| !s.is_empty())).await;
+        t.wait_for(|| std::fs::read_to_string(&out).is_ok_and(|s| !s.is_empty()))
+            .await;
         assert_eq!(std::fs::read_to_string(&out).unwrap().trim(), "hello x");
     }
 
@@ -519,8 +782,13 @@ mod tests {
     async fn create_fails_loudly_on_a_duplicate_name() {
         let t = TestTmux::new();
         let b = t.backend();
-        b.create("garage/ws/a", t.dir(), "sleep", &sleeper(), &[]).await.unwrap();
-        let e = b.create("garage/ws/a", t.dir(), "sleep", &sleeper(), &[]).await.unwrap_err();
+        b.create("garage/ws/a", t.dir(), "sleep", &sleeper(), &[])
+            .await
+            .unwrap();
+        let e = b
+            .create("garage/ws/a", t.dir(), "sleep", &sleeper(), &[])
+            .await
+            .unwrap_err();
         assert!(e.to_string().contains("duplicate"), "{e}");
     }
 
@@ -528,15 +796,26 @@ mod tests {
     async fn respawn_keeps_the_session_and_swaps_the_process() {
         let t = TestTmux::new();
         let b = t.backend();
-        b.create("garage/ws/r", t.dir(), "sleep", &sleeper(), &[]).await.unwrap();
+        b.create("garage/ws/r", t.dir(), "sleep", &sleeper(), &[])
+            .await
+            .unwrap();
         let before = b.panes().await.unwrap()["garage/ws/r"].pid.unwrap();
         let created = b.list().await.unwrap()[0].created_at;
         assert!(created.is_some());
-        b.respawn("garage/ws/r", t.dir(), "sleep", &["61".into()], &[]).await.unwrap();
+        b.respawn("garage/ws/r", t.dir(), "sleep", &["61".into()], &[])
+            .await
+            .unwrap();
         let after = b.panes().await.unwrap()["garage/ws/r"].pid.unwrap();
         assert_ne!(before, after, "a new process runs in the same pane");
-        assert_eq!(b.list().await.unwrap()[0].created_at, created, "same tmux session");
-        assert!(b.respawn("garage/ws/missing", t.dir(), "sleep", &sleeper(), &[]).await.is_err());
+        assert_eq!(
+            b.list().await.unwrap()[0].created_at,
+            created,
+            "same tmux session"
+        );
+        assert!(b
+            .respawn("garage/ws/missing", t.dir(), "sleep", &sleeper(), &[])
+            .await
+            .is_err());
     }
 
     #[tokio::test]
@@ -559,12 +838,17 @@ mod tests {
         let t = TestTmux::new();
         let b = t.backend();
         assert!(b.panes().await.unwrap().is_empty());
-        b.create("garage/ws/p", t.dir(), "sleep", &sleeper(), &[]).await.unwrap();
+        b.create("garage/ws/p", t.dir(), "sleep", &sleeper(), &[])
+            .await
+            .unwrap();
         t.tmux(&["new-session", "-d", "-s", "other", "sleep", "60"]);
         let panes = b.panes().await.unwrap();
         assert_eq!(panes.len(), 1);
         let p = &panes["garage/ws/p"];
-        assert_eq!(Path::new(&p.cwd).canonicalize().unwrap(), t.dir().canonicalize().unwrap());
+        assert_eq!(
+            Path::new(&p.cwd).canonicalize().unwrap(),
+            t.dir().canonicalize().unwrap()
+        );
         assert!(p.pid.is_some_and(|p| p > 1));
     }
 
@@ -576,13 +860,28 @@ mod tests {
         let second = t.dir().join("second");
         std::fs::create_dir_all(&first).unwrap();
         std::fs::create_dir_all(&second).unwrap();
-        b.create("garage/ws/two", &first, "sleep", &sleeper(), &[]).await.unwrap();
+        b.create("garage/ws/two", &first, "sleep", &sleeper(), &[])
+            .await
+            .unwrap();
         let before = b.panes().await.unwrap()["garage/ws/two"].clone();
-        t.tmux(&["split-window", "-d", "-t", "garage/ws/two:", "-c", second.to_str().unwrap(), "sleep", "60"]);
+        t.tmux(&[
+            "split-window",
+            "-d",
+            "-t",
+            "garage/ws/two:",
+            "-c",
+            second.to_str().unwrap(),
+            "sleep",
+            "60",
+        ]);
         let panes = b.panes().await.unwrap();
         assert_eq!(panes.len(), 1);
         let p = &panes["garage/ws/two"];
-        assert_eq!(Path::new(&p.cwd).canonicalize().unwrap(), first.canonicalize().unwrap(), "first pane, not the split");
+        assert_eq!(
+            Path::new(&p.cwd).canonicalize().unwrap(),
+            first.canonicalize().unwrap(),
+            "first pane, not the split"
+        );
         assert_eq!(p.pid, before.pid);
     }
 
@@ -590,8 +889,21 @@ mod tests {
     async fn capture_returns_pane_text() {
         let t = TestTmux::new();
         let b = t.backend();
-        b.create("garage/ws/c", t.dir(), "sh", &["-c".into(), "echo marker-xyz; sleep 60".into()], &[]).await.unwrap();
-        t.wait_for_async(|| async { b.capture("garage/ws/c", 50).await.is_ok_and(|s| s.contains("marker-xyz")) }).await;
+        b.create(
+            "garage/ws/c",
+            t.dir(),
+            "sh",
+            &["-c".into(), "echo marker-xyz; sleep 60".into()],
+            &[],
+        )
+        .await
+        .unwrap();
+        t.wait_for_async(|| async {
+            b.capture("garage/ws/c", 50)
+                .await
+                .is_ok_and(|s| s.contains("marker-xyz"))
+        })
+        .await;
         assert!(b.capture("garage/ws/none", 5).await.is_err());
     }
 
@@ -601,19 +913,38 @@ mod tests {
     async fn live_session_set_pane_title_surfaces_normalized() {
         let t = TestTmux::new();
         let b = t.backend();
-        b.create("garage/ws/live", t.dir(), "sleep", &sleeper(), &[]).await.unwrap();
-        t.tmux(&["select-pane", "-t", "garage/ws/live", "-T", "  ✳ Refactoring the poller  "]);
+        b.create("garage/ws/live", t.dir(), "sleep", &sleeper(), &[])
+            .await
+            .unwrap();
+        t.tmux(&[
+            "select-pane",
+            "-t",
+            "garage/ws/live",
+            "-T",
+            "  ✳ Refactoring the poller  ",
+        ]);
         let title = b.panes().await.unwrap()["garage/ws/live"].title.clone();
-        assert_eq!(normalize_title(Some(&title), Some("my-mac")).as_deref(), Some("✳ Refactoring the poller"));
+        assert_eq!(
+            normalize_title(Some(&title), Some("my-mac")).as_deref(),
+            Some("✳ Refactoring the poller")
+        );
     }
 
     #[tokio::test]
     async fn live_session_with_default_title_normalizes_to_none() {
         let t = TestTmux::new();
         let b = t.backend();
-        b.create("garage/ws/default-title", t.dir(), "sleep", &sleeper(), &[]).await.unwrap();
-        let title = b.panes().await.unwrap()["garage/ws/default-title"].title.clone();
+        b.create("garage/ws/default-title", t.dir(), "sleep", &sleeper(), &[])
+            .await
+            .unwrap();
+        let title = b.panes().await.unwrap()["garage/ws/default-title"]
+            .title
+            .clone();
         let host = gethostname::gethostname().to_string_lossy().into_owned();
-        assert_eq!(normalize_title(Some(&title), Some(&host)), None, "default title {title:?}");
+        assert_eq!(
+            normalize_title(Some(&title), Some(&host)),
+            None,
+            "default title {title:?}"
+        );
     }
 }

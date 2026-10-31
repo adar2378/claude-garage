@@ -49,7 +49,9 @@ impl Lifecycle {
         // Under `cargo test` current_exe() is the test binary: re-running it
         // detached would re-run the suite.
         if cfg!(test) {
-            return Err(std::io::Error::other("no successor command configured in tests"));
+            return Err(std::io::Error::other(
+                "no successor command configured in tests",
+            ));
         }
         Ok((std::env::current_exe()?, default_successor_args(port)))
     }
@@ -64,9 +66,17 @@ pub fn default_successor_args(port: u16) -> Vec<String> {
 /// Starts the successor detached and returns its pid. Same `daemon.log` as the
 /// launcher's detached start; honours `GARAGE_DIR` via `garage_dir` so a
 /// scratch run never writes into the real `~/.garage`.
-pub fn spawn_successor(exe: &Path, args: &[String], garage_dir: &Path, predecessor_pid: u32) -> std::io::Result<u32> {
+pub fn spawn_successor(
+    exe: &Path,
+    args: &[String],
+    garage_dir: &Path,
+    predecessor_pid: u32,
+) -> std::io::Result<u32> {
     std::fs::create_dir_all(garage_dir)?;
-    let log = std::fs::OpenOptions::new().create(true).append(true).open(garage_dir.join("daemon.log"))?;
+    let log = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(garage_dir.join("daemon.log"))?;
     let mut cmd = std::process::Command::new(exe);
     cmd.args(args)
         .env("GARAGE_PREDECESSOR_PID", predecessor_pid.to_string())
@@ -101,10 +111,9 @@ pub fn spawn_successor(exe: &Path, args: &[String], garage_dir: &Path, predecess
 
 pub async fn restart(State(state): State<AppState>) -> Response {
     let port = state.config.port;
-    let spawned = state
-        .lifecycle
-        .successor_cmd(port)
-        .and_then(|(exe, args)| spawn_successor(&exe, &args, &state.config.garage_dir, std::process::id()));
+    let spawned = state.lifecycle.successor_cmd(port).and_then(|(exe, args)| {
+        spawn_successor(&exe, &args, &state.config.garage_dir, std::process::id())
+    });
     let pid = match spawned {
         Ok(pid) => pid,
         Err(e) => return internal(e.into()),
@@ -125,15 +134,26 @@ pub async fn restart(State(state): State<AppState>) -> Response {
 /// instead of an HTTP client dependency.
 pub async fn default_probe(port: u16) -> bool {
     let attempt = async {
-        let mut s = tokio::net::TcpStream::connect(("127.0.0.1", port)).await.ok()?;
-        s.write_all(b"GET /api/health HTTP/1.0\r\nHost: 127.0.0.1\r\n\r\n").await.ok()?;
+        let mut s = tokio::net::TcpStream::connect(("127.0.0.1", port))
+            .await
+            .ok()?;
+        s.write_all(format!("GET /api/health HTTP/1.0\r\nHost: 127.0.0.1:{port}\r\n\r\n").as_bytes())
+            .await
+            .ok()?;
         // Only the status line matters; never wait for the body or EOF.
         let mut line = String::new();
-        tokio::io::BufReader::new(s.take(1024)).read_line(&mut line).await.ok()?;
+        tokio::io::BufReader::new(s.take(1024))
+            .read_line(&mut line)
+            .await
+            .ok()?;
         let status = line.split_whitespace().nth(1)?;
         Some(status.starts_with('2'))
     };
-    tokio::time::timeout(Duration::from_millis(500), attempt).await.ok().flatten().unwrap_or(false)
+    tokio::time::timeout(Duration::from_millis(500), attempt)
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or(false)
 }
 
 /// Polls until `probe()` says the predecessor is gone (port free, safe to
@@ -164,7 +184,9 @@ where
         sleep(POLL_INTERVAL_MS).await;
     }
     let who = pid.map_or("unknown pid".to_owned(), |p| format!("pid {p}"));
-    Err(format!("predecessor daemon ({who}) did not release port {port} within {deadline_ms}ms"))
+    Err(format!(
+        "predecessor daemon ({who}) did not release port {port} within {deadline_ms}ms"
+    ))
 }
 
 /// Boot-time handoff with real time and the real probe.

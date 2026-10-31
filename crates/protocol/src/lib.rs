@@ -400,18 +400,30 @@ impl Event {
 }
 
 /// How a client attaches a terminal to a session: the seam between the TUI's
-/// PTY tiles and the session backend. `wall` does not consume it yet.
+/// How the TUI attaches to a session. Deliberately data, not a command line:
+/// the TUI builds the fixed command itself, so whatever answers on the daemon
+/// port can never make it run an arbitrary program or dial an arbitrary host.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum AttachSpec {
-    /// Spawn `argv` in a PTY (a `tmux attach` client). To detach one client
-    /// cleanly, run `detach_argv` followed by that client's tty.
+    /// `tmux [-L <socket>] attach -t =<session>` in a PTY. `socket` matches
+    /// `^[A-Za-z0-9_-]{1,64}$` or the TUI refuses it.
     #[serde(rename_all = "camelCase")]
-    Tmux { argv: Vec<String>, detach_argv: Vec<String> },
-    /// Placeholder for the Windows host-process backend (p26): connect to
-    /// `addr` and authenticate with `token`.
+    Tmux {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        socket: Option<String>,
+    },
+    /// The session runs in a host process registered as `hosts/<id>.json` in
+    /// the garage dir (user-private); the TUI reads address and token there.
+    /// The token is never sent over HTTP. An empty `id` means "no such host".
     #[serde(rename_all = "camelCase")]
-    Socket { addr: String, token: String },
+    Host { id: String },
+}
+
+/// The tmux socket-name rule shared by the daemon (what it may advertise) and
+/// the TUI (what it will pass to `tmux -L`).
+pub fn is_valid_tmux_socket(name: &str) -> bool {
+    (1..=64).contains(&name.len()) && name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
 }
 
 #[cfg(test)]
@@ -421,12 +433,19 @@ mod tests {
 
     #[test]
     fn attach_spec_wire_shape() {
-        roundtrip::<AttachSpec>(json!({
-            "kind": "tmux",
-            "argv": ["tmux", "attach", "-t", "=s"],
-            "detachArgv": ["tmux", "detach-client", "-t"]
-        }));
-        roundtrip::<AttachSpec>(json!({"kind": "socket", "addr": "127.0.0.1:9", "token": "t"}));
+        roundtrip::<AttachSpec>(json!({"kind": "tmux"}));
+        roundtrip::<AttachSpec>(json!({"kind": "tmux", "socket": "t1"}));
+        roundtrip::<AttachSpec>(json!({"kind": "host", "id": "garage/ws/a"}));
+    }
+
+    #[test]
+    fn tmux_socket_names_are_a_strict_charset() {
+        for ok in ["t1", "gt123-0-abc", "A_b-9", &"a".repeat(64)] {
+            assert!(is_valid_tmux_socket(ok), "{ok}");
+        }
+        for bad in ["", "a b", "../x", "/tmp/s", "a;rm", "é", "a\nb", &"a".repeat(65)] {
+            assert!(!is_valid_tmux_socket(bad), "{bad:?}");
+        }
     }
 
     /// Round-trip a JSON literal through `T` and require the exact same JSON

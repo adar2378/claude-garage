@@ -137,7 +137,9 @@ impl AppState {
     /// `AppState` (later calls return the first), so the restart route polls
     /// through the same diff state the background tick uses.
     pub fn poller(&self, agents: Arc<dyn AgentSource>) -> Arc<Poller> {
-        self.poller_cell.get_or_init(|| self.build_poller(agents)).clone()
+        self.poller_cell
+            .get_or_init(|| self.build_poller(agents))
+            .clone()
     }
 
     /// The shared poller over this state's own agent source.

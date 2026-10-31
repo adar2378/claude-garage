@@ -14,7 +14,8 @@ use super::{spawn_detached, Os, OsError};
 
 /// Browsers never expose absolute paths, so the "add workspace" picker runs
 /// daemon-side.
-pub const PICKER_SCRIPT: &str = r#"POSIX path of (choose folder with prompt "Add claude-garage workspace")"#;
+pub const PICKER_SCRIPT: &str =
+    r#"POSIX path of (choose folder with prompt "Add claude-garage workspace")"#;
 
 /// osascript blocks while the dialog is open (the user may leave it sitting
 /// there); a generous timeout instead of failing an interaction in progress.
@@ -22,9 +23,21 @@ pub const PICKER_TIMEOUT: Duration = Duration::from_secs(120);
 
 /// terminal-notifier when installed (`brew install terminal-notifier`),
 /// osascript's `display notification` otherwise. Neither opens anything on click.
-pub fn notification_command(has_terminal_notifier: bool, title: &str, body: &str) -> (String, Vec<String>) {
+pub fn notification_command(
+    has_terminal_notifier: bool,
+    title: &str,
+    body: &str,
+) -> (String, Vec<String>) {
     if has_terminal_notifier {
-        ("terminal-notifier".into(), vec!["-title".into(), title.into(), "-message".into(), body.into()])
+        (
+            "terminal-notifier".into(),
+            vec![
+                "-title".into(),
+                title.into(),
+                "-message".into(),
+                body.into(),
+            ],
+        )
     } else {
         // JSON string syntax doubles as AppleScript string syntax (JS used JSON.stringify).
         let script = format!(
@@ -39,7 +52,11 @@ pub fn notification_command(has_terminal_notifier: bool, title: &str, body: &str
 /// Reads the outcome of the picker's osascript run. A dismissed dialog exits 1
 /// with "User canceled" in stderr: a normal outcome, not an error. On success
 /// the trailing newline is dropped (the route strips the trailing `/`).
-pub fn interpret_picker(success: bool, stdout: &str, stderr: &str) -> Result<Option<PathBuf>, OsError> {
+pub fn interpret_picker(
+    success: bool,
+    stdout: &str,
+    stderr: &str,
+) -> Result<Option<PathBuf>, OsError> {
     if success {
         return Ok(Some(PathBuf::from(stdout.trim_end())));
     }
@@ -47,7 +64,11 @@ pub fn interpret_picker(success: bool, stdout: &str, stderr: &str) -> Result<Opt
         return Ok(None);
     }
     let detail = stderr.trim();
-    Err(OsError::Failed(if detail.is_empty() { "osascript failed".into() } else { detail.to_owned() }))
+    Err(OsError::Failed(if detail.is_empty() {
+        "osascript failed".into()
+    } else {
+        detail.to_owned()
+    }))
 }
 
 #[derive(Default)]
@@ -85,7 +106,11 @@ impl Os for MacOs {
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
             .kill_on_drop(true);
-        let run = async { cmd.status().await.map_err(|e| OsError::Failed(e.to_string())) };
+        let run = async {
+            cmd.status()
+                .await
+                .map_err(|e| OsError::Failed(e.to_string()))
+        };
         // A hung notifier must not pile up; JS had no bound, 10 s is generous.
         match tokio::time::timeout(Duration::from_secs(10), run).await {
             Ok(status) => status.map(|_| ()),
@@ -95,7 +120,9 @@ impl Os for MacOs {
 
     async fn pick_directory(&self) -> Result<Option<PathBuf>, OsError> {
         let mut cmd = Command::new("osascript");
-        cmd.args(["-e", PICKER_SCRIPT]).stdin(std::process::Stdio::null()).kill_on_drop(true);
+        cmd.args(["-e", PICKER_SCRIPT])
+            .stdin(std::process::Stdio::null())
+            .kill_on_drop(true);
         let out = match tokio::time::timeout(PICKER_TIMEOUT, cmd.output()).await {
             Ok(Ok(out)) => out,
             Ok(Err(e)) => return Err(OsError::Failed(format!("osascript failed: {e}"))),
@@ -126,7 +153,15 @@ mod tests {
     fn terminal_notifier_is_preferred_and_gets_title_and_message() {
         let (p, a) = notification_command(true, "claude-garage", "garage/ws/a needs input");
         assert_eq!(p, "terminal-notifier");
-        assert_eq!(a, ["-title", "claude-garage", "-message", "garage/ws/a needs input"]);
+        assert_eq!(
+            a,
+            [
+                "-title",
+                "claude-garage",
+                "-message",
+                "garage/ws/a needs input"
+            ]
+        );
     }
 
     #[test]
@@ -134,19 +169,26 @@ mod tests {
         let (p, a) = notification_command(false, "claude-garage", r#"garage/ws/a "q" needs input"#);
         assert_eq!(p, "osascript");
         assert_eq!(a[0], "-e");
-        assert_eq!(a[1], r#"display notification "garage/ws/a \"q\" needs input" with title "claude-garage""#);
+        assert_eq!(
+            a[1],
+            r#"display notification "garage/ws/a \"q\" needs input" with title "claude-garage""#
+        );
     }
 
     #[test]
     fn picker_script_is_the_choose_folder_prompt() {
-        assert_eq!(PICKER_SCRIPT, r#"POSIX path of (choose folder with prompt "Add claude-garage workspace")"#);
+        assert_eq!(
+            PICKER_SCRIPT,
+            r#"POSIX path of (choose folder with prompt "Add claude-garage workspace")"#
+        );
     }
 
     #[test]
     fn picker_success_trims_the_newline_and_user_canceled_is_not_an_error() {
         let ok = interpret_picker(true, "/Users/me/proj/\n", "").unwrap();
         assert_eq!(ok, Some(PathBuf::from("/Users/me/proj/")));
-        let cancelled = interpret_picker(false, "", "execution error: User canceled. (-128)").unwrap();
+        let cancelled =
+            interpret_picker(false, "", "execution error: User canceled. (-128)").unwrap();
         assert_eq!(cancelled, None);
     }
 

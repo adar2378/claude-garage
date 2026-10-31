@@ -11,7 +11,7 @@ use crate::state::views::ViewSummary;
 use crate::state::wall_state::{KeyLayer, OverlayKind};
 use crate::ui::help::render_help;
 use crate::ui::layout::{slot_geometry, tile_inner, wall_layout};
-use crate::ui::rail::render_rail;
+use crate::ui::rail::render_rail_fading;
 use crate::ui::strip::render_strip;
 use crate::ui::theme::colors;
 use crate::ui::tile::{Gutter, TileView, render_centered_lines, render_tile};
@@ -29,6 +29,13 @@ impl App {
         // which of them were drawn to decide whether to wake for animation.
         self.slots.begin_frame(now_ms);
         let area = frame.area();
+        // Motion (p23): advance the clock, then start the dissolve of any
+        // tile whose session just left the daemon's list.
+        self.motion.begin_frame(now_ms);
+        {
+            let state = self.store.state();
+            self.motion.closed(|id| state.session_by_id(Some(id)).is_some());
+        }
         let (ids, maximized_index) = {
             let state = self.store.state();
             let ids = state.gridded_session_ids.clone();
@@ -68,8 +75,14 @@ impl App {
 
         self.gutter_sessions.clear(); // refilled by the tiles drawn below
         let buf = frame.buffer_mut();
-        let mut slot_clicks =
-            render_rail(buf, layout.rail, self.store.state(), &self.slots, now_ms);
+        let mut slot_clicks = render_rail_fading(
+            buf,
+            layout.rail,
+            self.store.state(),
+            &self.slots,
+            now_ms,
+            self.motion.enabled(),
+        );
 
         if show_view_strip {
             let ranges = render_view_strip(buf, layout.view_strip, &views, &focused_view_name);
@@ -124,8 +137,18 @@ impl App {
                 if maximized_index.is_some() && maximized_index != Some(i) {
                     continue;
                 }
-                slot_clicks.extend(self.draw_tile(buf, layout.tiles[i], id, now_ms));
+                let (attached, blocked, spinning) = self.tile_motion_flags(id);
+                self.motion.tile_drawn(id, layout.tiles[i], attached, blocked);
+                if spinning {
+                    self.motion.spinner_shown();
+                }
+                slot_clicks.extend(self.draw_tile(buf, layout.tiles[i], id, now_ms, spinning));
             }
+        }
+        // Effects run over the finished tiles, under the strip and overlays.
+        self.motion.apply(buf);
+        if self.motion.strip_spinner_active(self.store.state().daemon_live, now_ms) {
+            self.motion.spinner_shown();
         }
 
         if let Some(pet) = &self.pet {
@@ -187,12 +210,28 @@ impl App {
         self.router.mark_prompt_drawn(now_ms);
     }
 
+    /// `(attached, needs-input, spinner showing)` for one tile — what the
+    /// motion layer keys its edges and its redraw clock on.
+    fn tile_motion_flags(&self, id: &str) -> (bool, bool, bool) {
+        let state = self.store.state();
+        let Some(session) = state.session_by_id(Some(id)) else {
+            return (false, false, false);
+        };
+        let has_screen = self.registry.frozen(id).is_some() || self.registry.client(id).is_some();
+        let dead = self.registry.dead_reason(id).is_some();
+        let attached = session.live() && !dead && has_screen;
+        let attaching = session.live() && !dead && !has_screen;
+        let restoring = !session.live() && self.router.restoring().contains(id);
+        (attached, session.needs_input(), attaching || restoring)
+    }
+
     pub(super) fn draw_tile(
         &mut self,
         buf: &mut ratatui::buffer::Buffer,
         rect: Rect,
         id: &str,
         now_ms: i64,
+        spinning: bool,
     ) -> Vec<SlotClickRegion> {
         let state = self.store.state();
         let Some(session) = state.session_by_id(Some(id)) else {
@@ -225,6 +264,8 @@ impl App {
             dead_reason: self.registry.dead_reason(id),
             frozen_new_lines: frozen.map(|f| f.new_lines),
             now_ms,
+            fade_done: self.motion.enabled(),
+            spinner: if spinning { self.motion.tile_spinner(now_ms) } else { None },
             slots: &self.slots,
             gutter,
         };

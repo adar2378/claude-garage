@@ -118,7 +118,7 @@ impl Rig {
     fn build(fake: bool) -> Self {
         let garage = tempfile::tempdir().unwrap();
         let backend = Arc::new(FakeBackend::new());
-        let config = Config { port: 4747, garage_dir: garage.path().to_path_buf(), tmux_socket: None, ui_origins: vec![] };
+        let config = Config { port: 4747, garage_dir: garage.path().to_path_buf(), tmux_socket: None, tmux_control: false, ui_origins: vec![] };
         let claude_home = tempfile::tempdir().unwrap();
         let mut st = AppState::with_agents(
             config,
@@ -274,6 +274,7 @@ impl Rig {
             port: 4747,
             garage_dir: garage.path().to_path_buf(),
             tmux_socket: Some(tmux.socket().to_owned()),
+            tmux_control: false,
             ui_origins: vec![],
         };
         let claude_home = tempfile::tempdir().unwrap();

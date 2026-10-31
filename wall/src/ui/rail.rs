@@ -18,7 +18,7 @@ use ratatui::widgets::{Block, Borders, Paragraph, Widget};
 use crate::slots::{self, ClickTarget, SlotClickRegion, SlotCtx, SlotId, SlotItem, SlotRegistry};
 use crate::state::salience::WorkspaceGroup;
 use crate::state::wall_state::{WallSession, WallState};
-use crate::ui::theme::{colors, elapsed_for, glyph_for, status_color};
+use crate::ui::theme::{colors, elapsed_for, glyph_for, status_color, status_color_fading};
 
 /// A clickable slot item on one rail row: `cols` are rail-local columns.
 #[derive(Debug, PartialEq, Eq)]
@@ -42,7 +42,18 @@ pub struct RailExtras {
 /// One rendered line per rail row: each group's optional family label, its
 /// header, then its sessions — the exact rows `rail_target_at` maps clicks against.
 pub fn rail_lines(state: &WallState, slots: &SlotRegistry, now_ms: i64) -> Vec<Line<'static>> {
-    rail_render(state, slots, now_ms).0
+    rail_render(state, slots, now_ms, false).0
+}
+
+/// [`rail_lines`] with the `done` glyph fading across its 2 minutes when
+/// `fade_done` (motion on).
+pub fn rail_lines_fading(
+    state: &WallState,
+    slots: &SlotRegistry,
+    now_ms: i64,
+    fade_done: bool,
+) -> Vec<Line<'static>> {
+    rail_render(state, slots, now_ms, fade_done).0
 }
 
 /// The rail's lines plus the clickable slot items painted on them.
@@ -50,6 +61,7 @@ pub fn rail_render(
     state: &WallState,
     slots: &SlotRegistry,
     now_ms: i64,
+    fade_done: bool,
 ) -> (Vec<Line<'static>>, RailExtras) {
     let mut extras = RailExtras::default();
     let clicks = &mut extras.clicks;
@@ -83,6 +95,7 @@ pub fn rail_render(
                 focused_ws && gridded.contains(s.id.as_str()),
                 focused_ws && state.focused_session_id.as_deref() == Some(s.id.as_str()),
                 now_ms,
+                fade_done,
             );
             // `rail.row`: plugin items appended after the elapsed time. No
             // provider, no change to the line.
@@ -197,14 +210,22 @@ fn workspace_row(group: &WorkspaceGroup, index: usize, focused: bool) -> Line<'s
     Line::from(spans)
 }
 
-fn session_row(s: &WallSession, gridded: bool, focused: bool, now_ms: i64) -> Line<'static> {
+fn session_row(
+    s: &WallSession,
+    gridded: bool,
+    focused: bool,
+    now_ms: i64,
+    fade_done: bool,
+) -> Line<'static> {
     // Amber row exclusively for needs-input; everything else follows the
     // status ladder, dimmed further when the session has no tile. The
     // focused session carries a `▸` marker plus a bright/bold label — never
     // amber (amber stays exclusive to needs-input, whose label keeps its hue
     // and just gains bold). The marker column is always reserved so rows
     // never shift as focus moves.
-    let glyph_color = if gridded {
+    let glyph_color = if gridded && fade_done {
+        status_color_fading(&s.status, s.since, now_ms)
+    } else if gridded {
         status_color(&s.status, s.since, now_ms)
     } else {
         colors::FAINT
@@ -261,12 +282,24 @@ pub fn render_rail(
     slots: &SlotRegistry,
     now_ms: i64,
 ) -> Vec<SlotClickRegion> {
+    render_rail_fading(buf, rect, state, slots, now_ms, false)
+}
+
+/// [`render_rail`] with the `done` fade (motion on).
+pub fn render_rail_fading(
+    buf: &mut Buffer,
+    rect: Rect,
+    state: &WallState,
+    slots: &SlotRegistry,
+    now_ms: i64,
+    fade_done: bool,
+) -> Vec<SlotClickRegion> {
     let block = Block::default()
         .borders(Borders::RIGHT)
         .border_style(Style::default().fg(colors::FAINT));
     let inner = block.inner(rect);
     block.render(rect, buf);
-    let (lines, extras) = rail_render(state, slots, now_ms);
+    let (lines, extras) = rail_render(state, slots, now_ms, fade_done);
     Paragraph::new(lines).render(inner, buf);
     for (row, style) in extras.row_styles {
         if row < inner.height {

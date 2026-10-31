@@ -30,6 +30,8 @@ name = "pty_hold"
 path = "src/bin/pty_hold.rs"
 
 [dependencies]
+garage-protocol = { path = "../crates/protocol" }
+garage-host = { path = "../crates/host" }
 # TUI stack — pinned per the spike (all gates passed on these exact crates).
 ratatui = "0.30.2"
 crossterm = "0.29.0"
@@ -47,5 +49,15 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync"
 ureq = { version = "2.12.1", default-features = false }
 serde_json = "1.0"
 
+# Motion (p23, spec tui-motion). All three sit behind ui/motion.rs.
+tachyonfx = { version = "=0.25.2", default-features = false, features = ["std"] }
+throbber-widgets-tui = "=0.11.1"
+tui-big-text = "=0.8.10"
+
+# Startup hand-off liveness check (kill(pid, 0)); unix only.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [dev-dependencies]
 insta = "1"
+tempfile = "3"

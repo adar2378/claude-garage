@@ -18,6 +18,7 @@
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
+use crate::attach::{AttachResolver, Target, TmuxOnly};
 use crate::pty::TileClient;
 use crate::runtime::{AppEvent, EventSender};
 use crate::ui::scroll::ScrollModel;
@@ -103,6 +104,9 @@ struct Entry {
     /// row of a live tail view's top row. Refreshed only while a
     /// `tile.gutter` marker is showing for this tile.
     history: Option<i64>,
+    /// What the last (re)attach used; scrollback and the `+N lines` counter
+    /// query the same backend through it.
+    spec: Option<Target>,
 }
 
 pub struct TileRegistry {
@@ -111,11 +115,19 @@ pub struct TileRegistry {
     next_attach_at: Instant,
     stagger: Duration,
     scrollback: usize,
+    resolver: Box<dyn AttachResolver>,
 }
 
 impl TileRegistry {
+    /// Tmux on the default server, no daemon asked (tests, tools).
     pub fn new(tx: EventSender) -> TileRegistry {
+        Self::with_resolver(tx, Box::new(TmuxOnly))
+    }
+
+    /// Attach each tile the way `resolver` (normally the daemon) says.
+    pub fn with_resolver(tx: EventSender, resolver: Box<dyn AttachResolver>) -> TileRegistry {
         TileRegistry {
+            resolver,
             entries: HashMap::new(),
             tx,
             next_attach_at: Instant::now(),
@@ -146,6 +158,7 @@ impl TileRegistry {
                     size: (80, 24),
                     frozen: None,
                     history: None,
+                    spec: None,
                 },
             );
         }
@@ -174,10 +187,17 @@ impl TileRegistry {
                     entry.started_at = now;
                     let (cols, rows) = entry.size;
                     let tx = self.tx.clone();
-                    match TileClient::new(id, cols, rows, self.scrollback, move || {
-                        let _ = tx.send(AppEvent::TileOutput);
-                    }) {
-                        Ok(client) => entry.slot = Slot::Attached(client),
+                    let attached = self.resolver.resolve(id).map_err(std::io::Error::other).and_then(|spec| {
+                        let client = TileClient::new(id, &spec, cols, rows, self.scrollback, move || {
+                            let _ = tx.send(AppEvent::TileOutput);
+                        })?;
+                        Ok((spec, client))
+                    });
+                    match attached {
+                        Ok((spec, client)) => {
+                            entry.spec = Some(spec);
+                            entry.slot = Slot::Attached(client);
+                        }
                         Err(e) => {
                             entry.slot = next_slot(
                                 &mut entry.policy,
@@ -261,6 +281,11 @@ impl TileRegistry {
         }
     }
 
+    /// The spec the tile's current attach used (for scrollback queries).
+    pub fn spec(&self, id: &str) -> Option<&Target> {
+        self.entries.get(id).and_then(|e| e.spec.as_ref())
+    }
+
     pub fn frozen(&self, id: &str) -> Option<&FrozenTile> {
         self.entries.get(id).and_then(|e| e.frozen.as_ref())
     }
@@ -300,7 +325,8 @@ impl TileRegistry {
                 continue;
             }
             frozen.counted_at = now;
-            if let Some(hist) = crate::ui::scroll::tmux_history_size(id) {
+            let Some(spec) = entry.spec.as_ref() else { continue };
+            if let Some(hist) = crate::ui::scroll::history_size(spec, id) {
                 let n = frozen.model.new_lines(hist);
                 if n != frozen.new_lines {
                     frozen.new_lines = n;

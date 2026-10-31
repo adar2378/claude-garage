@@ -7,6 +7,7 @@ description = "claude-garage daemon: HTTP API over tmux-owned Claude Code sessio
 [dependencies]
 garage-protocol = { path = "../protocol" }
 garage-plugin = { path = "../plugin" }
+garage-host = { path = "../host" }
 anyhow = "1"
 libc = "0.2"
 getrandom = "0.3"
@@ -23,6 +24,7 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "sync",
 test-support = []
 
 [dev-dependencies]
+tokio = { version = "1", features = ["test-util"] }
 tempfile = "3"
 http-body-util = "0.1"
 tower = { version = "0.5", features = ["util"] }

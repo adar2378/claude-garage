@@ -106,5 +106,6 @@ mod dispatch;
 mod draw;
 mod layers;
 mod plugin_gate;
+mod motion;
 mod router;
 mod worktree;

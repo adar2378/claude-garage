@@ -2,12 +2,17 @@
 //! that differs per operating system, behind one trait. A feature an OS lacks
 //! returns `OsError::Unsupported`, which the routes map to 501. `macos` holds
 //! today's darwin-only behaviour (osascript, terminal-notifier); `other` is
-//! every other OS. Cross-platform crates (notify-rust, rfd) come with p26.
+//! every other OS. `linux` (notify-send, zenity/kdialog) and `windows`
+//! (PowerShell toast and folder dialog) are compiled everywhere so their pure
+//! pieces are tested on every CI OS; `platform()` picks one. Anything an OS
+//! cannot do stays `Unsupported`.
 
+pub mod linux;
 pub mod macos;
 pub mod notify;
 pub mod other;
 pub mod process;
+pub mod windows;
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -39,7 +44,15 @@ pub fn platform() -> Arc<dyn Os> {
     {
         Arc::new(macos::MacOs::default())
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "linux")]
+    {
+        Arc::new(linux::LinuxOs)
+    }
+    #[cfg(windows)]
+    {
+        Arc::new(windows::WindowsOs)
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
     {
         Arc::new(other::OtherOs)
     }
@@ -51,9 +64,16 @@ pub fn platform() -> Arc<dyn Os> {
 /// is enough here (the daemon itself runs session-less). tokio reaps the child
 /// when it exits.
 pub async fn spawn_detached(cmd: &[String]) -> Result<(), OsError> {
-    let Some((program, args)) = cmd.split_first() else {
+    if cmd.is_empty() {
         return Err(OsError::Failed("empty command".into()));
-    };
+    }
+    // Windows tools are often `.cmd` shims (code.cmd) that CreateProcess
+    // cannot start by bare name; resolve them the way the session host does.
+    #[cfg(windows)]
+    let resolved = garage_host::server::resolve_command(cmd);
+    #[cfg(windows)]
+    let cmd = &resolved[..];
+    let (program, args) = cmd.split_first().expect("checked non-empty");
     let mut c = tokio::process::Command::new(program);
     c.args(args)
         .stdin(std::process::Stdio::null())
@@ -62,6 +82,11 @@ pub async fn spawn_detached(cmd: &[String]) -> Result<(), OsError> {
         .kill_on_drop(false);
     #[cfg(unix)]
     c.process_group(0);
+    #[cfg(windows)]
+    {
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        c.creation_flags(CREATE_NO_WINDOW);
+    }
     match c.spawn() {
         Ok(_child) => Ok(()),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Err(OsError::NotFound),
@@ -160,7 +185,10 @@ pub mod fake {
     #[async_trait]
     impl Os for FakeOs {
         async fn notify(&self, title: &str, body: &str) -> Result<(), OsError> {
-            self.notified.lock().unwrap().push((title.into(), body.into()));
+            self.notified
+                .lock()
+                .unwrap()
+                .push((title.into(), body.into()));
             self.check()
         }
         async fn pick_directory(&self) -> Result<Option<PathBuf>, OsError> {
@@ -191,7 +219,9 @@ mod tests {
 
     #[tokio::test]
     async fn spawn_detached_reports_a_missing_program_as_not_found() {
-        let e = spawn_detached(&["/nonexistent/garage-editor-for-tests".into()]).await.unwrap_err();
+        let e = spawn_detached(&["/nonexistent/garage-editor-for-tests".into()])
+            .await
+            .unwrap_err();
         assert!(matches!(e, OsError::NotFound), "{e:?}");
         assert!(matches!(spawn_detached(&[]).await, Err(OsError::Failed(_))));
     }

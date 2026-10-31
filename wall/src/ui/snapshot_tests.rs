@@ -207,6 +207,18 @@ fn session(status: &str) -> WallSession {
 }
 
 fn tile_dump(s: &WallSession, focused: bool, engaged: bool, w: u16) -> String {
+    tile_dump_at(s, focused, engaged, w, 125_000, false, None)
+}
+
+fn tile_dump_at(
+    s: &WallSession,
+    focused: bool,
+    engaged: bool,
+    w: u16,
+    now_ms: i64,
+    fade_done: bool,
+    spinner: Option<&str>,
+) -> String {
     let slots = SlotRegistry::core();
     let v = TileView {
         session: s,
@@ -215,7 +227,9 @@ fn tile_dump(s: &WallSession, focused: bool, engaged: bool, w: u16) -> String {
         restoring: false,
         dead_reason: None,
         frozen_new_lines: None,
-        now_ms: 125_000,
+        now_ms,
+        fade_done,
+        spinner: spinner.map(str::to_owned),
         slots: &slots,
         gutter: None,
     };
@@ -254,5 +268,23 @@ fn tile_title_branch_title_and_context_meter() {
         source: "transcript".into(),
     });
     out.push_str(&format!("## cool meter\n{}\n", tile_dump(&s, false, false, 70)));
+    insta::assert_snapshot!(out);
+}
+
+/// p23 task 3.3: the `done` glyph colour at 0, 60 and 120 seconds with
+/// motion on — green, a mid step, then the same faint grey the hard switch
+/// ends on. The unfaded (motion off) tile is covered by
+/// `tile_titles_for_each_status`.
+#[test]
+fn done_fade_at_0_60_and_120_seconds() {
+    let s = session("done"); // since = 5_000
+    let mut out = String::new();
+    for secs in [0, 60, 120] {
+        let now = 5_000 + secs * 1000;
+        out.push_str(&format!(
+            "## done +{secs}s\n{}\n",
+            tile_dump_at(&s, false, false, 40, now, true, None)
+        ));
+    }
     insta::assert_snapshot!(out);
 }

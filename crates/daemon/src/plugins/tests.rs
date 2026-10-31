@@ -947,7 +947,7 @@ async fn the_ui_token_is_a_private_per_install_file_distinct_from_plugin_tokens(
     }
     // stable across daemon restarts (a new host over the same directory)
     let again = crate::AppState::new(
-        crate::Config { port: 1, garage_dir: r.garage.path().to_path_buf(), tmux_socket: None, ui_origins: vec![] },
+        crate::Config { port: 1, garage_dir: r.garage.path().to_path_buf(), tmux_socket: None, tmux_control: false, ui_origins: vec![] },
         r.backend.clone(),
         std::sync::Arc::new(crate::os::UnsupportedOs),
     );

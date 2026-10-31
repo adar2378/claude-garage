@@ -33,8 +33,17 @@ mod tests {
     #[tokio::test]
     async fn notifications_picker_and_clipboard_are_unsupported() {
         let os = OtherOs;
-        assert!(matches!(os.notify("t", "b").await, Err(OsError::Unsupported)));
-        assert!(matches!(os.pick_directory().await, Err(OsError::Unsupported)));
-        assert!(matches!(os.clipboard_text().await, Err(OsError::Unsupported)));
+        assert!(matches!(
+            os.notify("t", "b").await,
+            Err(OsError::Unsupported)
+        ));
+        assert!(matches!(
+            os.pick_directory().await,
+            Err(OsError::Unsupported)
+        ));
+        assert!(matches!(
+            os.clipboard_text().await,
+            Err(OsError::Unsupported)
+        ));
     }
 }

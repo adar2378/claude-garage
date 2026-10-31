@@ -78,7 +78,10 @@ pub struct Registry {
 
 impl Registry {
     pub fn new(garage_dir: impl AsRef<Path>) -> Self {
-        Self { path: Arc::new(garage_dir.as_ref().join("state.json")), lock: Arc::default() }
+        Self {
+            path: Arc::new(garage_dir.as_ref().join("state.json")),
+            lock: Arc::default(),
+        }
     }
 
     fn read(&self) -> Map<String, Value> {
@@ -136,9 +139,10 @@ impl Registry {
     pub async fn get_workspace(&self, name: &str) -> Option<Workspace> {
         let _g = self.lock.lock().await;
         let state = self.read();
-        state["workspaces"][name]
-            .as_object()
-            .map(|e| Workspace { name: name.into(), dir: e.get("dir").and_then(Value::as_str).map(str::to_owned) })
+        state["workspaces"][name].as_object().map(|e| Workspace {
+            name: name.into(),
+            dir: e.get("dir").and_then(Value::as_str).map(str::to_owned),
+        })
     }
 
     pub async fn upsert_workspace(&self, name: &str, dir: &str) -> std::io::Result<Workspace> {
@@ -146,7 +150,10 @@ impl Registry {
         let mut state = self.read();
         state["workspaces"][name] = json!({ "dir": dir });
         self.write(&state)?;
-        Ok(Workspace { name: name.into(), dir: Some(dir.into()) })
+        Ok(Workspace {
+            name: name.into(),
+            dir: Some(dir.into()),
+        })
     }
 
     /// Moves the workspace key and rewrites every resume-metadata key that
@@ -154,7 +161,11 @@ impl Registry {
     /// plus the meta's `workspace` field) in one atomic write. Trusts the
     /// caller to have validated that `new` is free. `None` when `old` is
     /// unknown.
-    pub async fn rename_workspace(&self, old: &str, new: &str) -> std::io::Result<Option<Workspace>> {
+    pub async fn rename_workspace(
+        &self,
+        old: &str,
+        new: &str,
+    ) -> std::io::Result<Option<Workspace>> {
         let _g = self.lock.lock().await;
         let mut state = self.read();
         let mut workspaces = obj_of(&mut state, "workspaces");
@@ -198,7 +209,10 @@ impl Registry {
             state.insert("closed".into(), Value::Object(closed));
         }
         self.write(&state)?;
-        Ok(Some(Workspace { name: new.into(), dir }))
+        Ok(Some(Workspace {
+            name: new.into(),
+            dir,
+        }))
     }
 
     pub async fn get_session_meta(&self, id: &str) -> Option<SessionMeta> {
@@ -210,14 +224,23 @@ impl Registry {
     pub async fn list_session_metas(&self) -> Vec<(String, SessionMeta)> {
         let _g = self.lock.lock().await;
         let state = self.read();
-        state["sessions"].as_object().unwrap().iter().map(|(id, m)| (id.clone(), meta_of(m))).collect()
+        state["sessions"]
+            .as_object()
+            .unwrap()
+            .iter()
+            .map(|(id, m)| (id.clone(), meta_of(m)))
+            .collect()
     }
 
     /// Field-level merge, not an overwrite: the poller writes
     /// `claudeSessionId`/`workspace`/`label`, session spawn writes
     /// `worktree`, and an absent field keeps what is on disk so neither
     /// clobbers the other. Writes only when the serialised record changed.
-    pub async fn upsert_session_meta(&self, id: &str, upd: MetaUpdate) -> std::io::Result<SessionMeta> {
+    pub async fn upsert_session_meta(
+        &self,
+        id: &str,
+        upd: MetaUpdate,
+    ) -> std::io::Result<SessionMeta> {
         let _g = self.lock.lock().await;
         let mut state = self.read();
         let existing = state["sessions"].get(id).cloned();
@@ -227,7 +250,9 @@ impl Registry {
             "claudeSessionId".into(),
             match upd.claude_session_id {
                 Some(v) => v.map(Value::String).unwrap_or(Value::Null),
-                None => ex("claudeSessionId").filter(|v| !v.is_null()).unwrap_or(Value::Null),
+                None => ex("claudeSessionId")
+                    .filter(|v| !v.is_null())
+                    .unwrap_or(Value::Null),
             },
         );
         for (k, v) in [("workspace", upd.workspace), ("label", upd.label)] {
@@ -238,8 +263,12 @@ impl Registry {
         next.insert(
             "worktree".into(),
             match upd.worktree {
-                Some(v) => v.map(|w| serde_json::to_value(w).unwrap()).unwrap_or(Value::Null),
-                None => ex("worktree").filter(|v| !v.is_null()).unwrap_or(Value::Null),
+                Some(v) => v
+                    .map(|w| serde_json::to_value(w).unwrap())
+                    .unwrap_or(Value::Null),
+                None => ex("worktree")
+                    .filter(|v| !v.is_null())
+                    .unwrap_or(Value::Null),
             },
         );
         let next = Value::Object(next);
@@ -257,7 +286,12 @@ impl Registry {
     pub async fn remove_session_meta(&self, id: &str) -> std::io::Result<()> {
         let _g = self.lock.lock().await;
         let mut state = self.read();
-        if state["sessions"].as_object_mut().unwrap().shift_remove(id).is_none() {
+        if state["sessions"]
+            .as_object_mut()
+            .unwrap()
+            .shift_remove(id)
+            .is_none()
+        {
             return Ok(());
         }
         self.write(&state)
@@ -334,7 +368,12 @@ impl Registry {
     pub async fn remove_workspace(&self, name: &str) -> std::io::Result<()> {
         let _g = self.lock.lock().await;
         let mut state = self.read();
-        if state["workspaces"].as_object_mut().unwrap().shift_remove(name).is_none() {
+        if state["workspaces"]
+            .as_object_mut()
+            .unwrap()
+            .shift_remove(name)
+            .is_none()
+        {
             return Ok(());
         }
         let prefix = format!("{GARAGE_PREFIX}{name}/");
@@ -351,7 +390,11 @@ impl Registry {
     pub async fn get_hook_token(&self) -> std::io::Result<String> {
         let _g = self.lock.lock().await;
         let mut state = self.read();
-        if let Some(t) = state.get("hookToken").and_then(Value::as_str).filter(|t| t.len() >= 32) {
+        if let Some(t) = state
+            .get("hookToken")
+            .and_then(Value::as_str)
+            .filter(|t| t.len() >= 32)
+        {
             return Ok(t.to_owned());
         }
         let mut bytes = [0u8; 32];
@@ -391,8 +434,11 @@ mod tests {
     impl Scratch {
         fn new() -> Self {
             static N: AtomicU64 = AtomicU64::new(0);
-            let p = std::env::temp_dir()
-                .join(format!("garage-reg-{}-{}", std::process::id(), N.fetch_add(1, Ordering::Relaxed)));
+            let p = std::env::temp_dir().join(format!(
+                "garage-reg-{}-{}",
+                std::process::id(),
+                N.fetch_add(1, Ordering::Relaxed)
+            ));
             let _ = std::fs::remove_dir_all(&p);
             Self(p)
         }
@@ -400,7 +446,8 @@ mod tests {
             Registry::new(&self.0)
         }
         fn raw(&self) -> Value {
-            serde_json::from_str(&std::fs::read_to_string(self.0.join("state.json")).unwrap()).unwrap()
+            serde_json::from_str(&std::fs::read_to_string(self.0.join("state.json")).unwrap())
+                .unwrap()
         }
     }
     impl Drop for Scratch {
@@ -411,7 +458,9 @@ mod tests {
 
     #[test]
     fn malformed_field_only_loses_that_field() {
-        let m = meta_of(&json!({"claudeSessionId": "c1", "workspace": "w", "label": 7, "worktree": {"path": 1}}));
+        let m = meta_of(
+            &json!({"claudeSessionId": "c1", "workspace": "w", "label": 7, "worktree": {"path": 1}}),
+        );
         assert_eq!(m.claude_session_id.as_deref(), Some("c1"));
         assert_eq!(m.workspace.as_deref(), Some("w"));
         assert_eq!(m.label, None);
@@ -426,8 +475,13 @@ mod tests {
         for i in 0..24 {
             let r = r.clone();
             tasks.push(tokio::spawn(async move {
-                let upd = MetaUpdate { label: Some(format!("l{i}")), ..Default::default() };
-                r.upsert_session_meta(&format!("garage/w/s{i}"), upd).await.unwrap();
+                let upd = MetaUpdate {
+                    label: Some(format!("l{i}")),
+                    ..Default::default()
+                };
+                r.upsert_session_meta(&format!("garage/w/s{i}"), upd)
+                    .await
+                    .unwrap();
             }));
         }
         for t in tasks {
@@ -438,7 +492,12 @@ mod tests {
     }
 
     fn wt() -> Worktree {
-        Worktree { path: "/w".into(), branch: "b".into(), repo_dir: "/r".into(), target: None }
+        Worktree {
+            path: "/w".into(),
+            branch: "b".into(),
+            repo_dir: "/r".into(),
+            target: None,
+        }
     }
 
     #[tokio::test]
@@ -459,9 +518,17 @@ mod tests {
         let r = s.reg();
         r.upsert_workspace("a", "/dir/a").await.unwrap();
         r.upsert_workspace("b", "/dir/b").await.unwrap();
-        assert_eq!(r.get_workspace("a").await.unwrap().dir.as_deref(), Some("/dir/a"));
+        assert_eq!(
+            r.get_workspace("a").await.unwrap().dir.as_deref(),
+            Some("/dir/a")
+        );
         assert_eq!(r.get_workspace("zzz").await, None);
-        let names: Vec<_> = r.list_workspaces().await.into_iter().map(|w| w.name).collect();
+        let names: Vec<_> = r
+            .list_workspaces()
+            .await
+            .into_iter()
+            .map(|w| w.name)
+            .collect();
         assert_eq!(names, ["a", "b"]);
         r.remove_workspace("a").await.unwrap();
         assert_eq!(r.get_workspace("a").await, None);
@@ -472,11 +539,16 @@ mod tests {
     async fn atomic_write_leaves_no_temp_files_and_pretty_prints_two_spaces() {
         let s = Scratch::new();
         s.reg().upsert_workspace("a", "/d").await.unwrap();
-        let names: Vec<_> =
-            std::fs::read_dir(&s.0).unwrap().map(|e| e.unwrap().file_name().into_string().unwrap()).collect();
+        let names: Vec<_> = std::fs::read_dir(&s.0)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().into_string().unwrap())
+            .collect();
         assert_eq!(names, ["state.json"]);
         let raw = std::fs::read_to_string(s.0.join("state.json")).unwrap();
-        assert!(raw.starts_with("{\n  \"workspaces\": {\n    \"a\": {\n      \"dir\": \"/d\""), "{raw}");
+        assert!(
+            raw.starts_with("{\n  \"workspaces\": {\n    \"a\": {\n      \"dir\": \"/d\""),
+            "{raw}"
+        );
     }
 
     #[tokio::test]
@@ -489,9 +561,15 @@ mod tests {
         )
         .unwrap();
         let r = s.reg();
-        r.upsert_session_meta("garage/a/x", MetaUpdate { workspace: Some("a".into()), ..Default::default() })
-            .await
-            .unwrap();
+        r.upsert_session_meta(
+            "garage/a/x",
+            MetaUpdate {
+                workspace: Some("a".into()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
         let raw = s.raw();
         assert_eq!(raw["hookToken"], "t");
         assert_eq!(raw["future"], json!([1]));
@@ -504,7 +582,15 @@ mod tests {
         let r = s.reg();
         let id = "garage/w/l";
         // spawn writes worktree only
-        r.upsert_session_meta(id, MetaUpdate { worktree: Some(Some(wt())), ..Default::default() }).await.unwrap();
+        r.upsert_session_meta(
+            id,
+            MetaUpdate {
+                worktree: Some(Some(wt())),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
         // poller writes the rest and never mentions worktree
         let m = r
             .upsert_session_meta(
@@ -521,7 +607,16 @@ mod tests {
         assert_eq!(m.worktree, Some(wt()));
         assert_eq!(m.claude_session_id.as_deref(), Some("cs-1"));
         // an explicit null clears
-        let m = r.upsert_session_meta(id, MetaUpdate { worktree: Some(None), ..Default::default() }).await.unwrap();
+        let m = r
+            .upsert_session_meta(
+                id,
+                MetaUpdate {
+                    worktree: Some(None),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
         assert_eq!(m.worktree, None);
         assert_eq!(s.raw()["sessions"][id]["worktree"], Value::Null);
         assert_eq!(s.raw()["sessions"][id]["claudeSessionId"], "cs-1");
@@ -530,8 +625,14 @@ mod tests {
     #[tokio::test]
     async fn fresh_record_defaults_claude_session_id_and_worktree_to_null_and_omits_unset_fields() {
         let s = Scratch::new();
-        s.reg().upsert_session_meta("garage/w/l", MetaUpdate::default()).await.unwrap();
-        assert_eq!(s.raw()["sessions"]["garage/w/l"], json!({"claudeSessionId": null, "worktree": null}));
+        s.reg()
+            .upsert_session_meta("garage/w/l", MetaUpdate::default())
+            .await
+            .unwrap();
+        assert_eq!(
+            s.raw()["sessions"]["garage/w/l"],
+            json!({"claudeSessionId": null, "worktree": null})
+        );
     }
 
     #[tokio::test]
@@ -557,10 +658,23 @@ mod tests {
     async fn get_list_remove_session_meta() {
         let s = Scratch::new();
         let r = s.reg();
-        r.upsert_session_meta("garage/w/a", MetaUpdate { label: Some("a".into()), ..Default::default() })
-            .await
-            .unwrap();
-        assert_eq!(r.get_session_meta("garage/w/a").await.unwrap().label.as_deref(), Some("a"));
+        r.upsert_session_meta(
+            "garage/w/a",
+            MetaUpdate {
+                label: Some("a".into()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            r.get_session_meta("garage/w/a")
+                .await
+                .unwrap()
+                .label
+                .as_deref(),
+            Some("a")
+        );
         assert_eq!(r.get_session_meta("garage/w/none").await, None);
         assert_eq!(r.list_session_metas().await.len(), 1);
         r.remove_session_meta("garage/w/a").await.unwrap();
@@ -575,10 +689,17 @@ mod tests {
         r.upsert_workspace("a", "/a").await.unwrap();
         r.upsert_workspace("ab", "/ab").await.unwrap();
         for id in ["garage/a/x", "garage/ab/x"] {
-            r.upsert_session_meta(id, MetaUpdate::default()).await.unwrap();
+            r.upsert_session_meta(id, MetaUpdate::default())
+                .await
+                .unwrap();
         }
         r.remove_workspace("a").await.unwrap();
-        let ids: Vec<_> = r.list_session_metas().await.into_iter().map(|(i, _)| i).collect();
+        let ids: Vec<_> = r
+            .list_session_metas()
+            .await
+            .into_iter()
+            .map(|(i, _)| i)
+            .collect();
         assert_eq!(ids, ["garage/ab/x"]);
     }
 
@@ -589,9 +710,15 @@ mod tests {
         r.upsert_workspace("old", "/d").await.unwrap();
         r.upsert_workspace("other", "/o").await.unwrap();
         for (id, ws) in [("garage/old/one", "old"), ("garage/other/two", "other")] {
-            r.upsert_session_meta(id, MetaUpdate { workspace: Some(ws.into()), ..Default::default() })
-                .await
-                .unwrap();
+            r.upsert_session_meta(
+                id,
+                MetaUpdate {
+                    workspace: Some(ws.into()),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
         }
         let w = r.rename_workspace("old", "new").await.unwrap().unwrap();
         assert_eq!((w.name.as_str(), w.dir.as_deref()), ("new", Some("/d")));
@@ -611,7 +738,7 @@ mod tests {
         assert_eq!(t.len(), 64);
         assert!(t.bytes().all(|b| b.is_ascii_hexdigit()));
         assert_eq!(s.reg().get_hook_token().await.unwrap(), t); // fresh handle, same file
-        // a short stored token is replaced
+                                                                // a short stored token is replaced
         let mut raw = s.raw();
         raw["hookToken"] = json!("short");
         std::fs::write(s.0.join("state.json"), raw.to_string()).unwrap();

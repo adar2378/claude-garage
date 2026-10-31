@@ -8,6 +8,7 @@ pub mod bus;
 pub mod closing;
 pub mod closed;
 pub mod config;
+pub mod control;
 pub mod error;
 pub mod git;
 pub mod install;
@@ -31,7 +32,6 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use axum::middleware;
-use backend::SessionBackend;
 
 pub use config::Config;
 pub use state::AppState;
@@ -39,16 +39,28 @@ pub use state::AppState;
 /// The full application: routes plus the origin guard.
 pub fn app(state: AppState) -> axum::Router {
     api::routes()
-        .layer(middleware::from_fn_with_state(state.clone(), security::origin_guard))
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            security::origin_guard,
+        ))
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            security::host_guard,
+        ))
         .with_state(state)
 }
 
 /// Bind 127.0.0.1 only. A taken port is an error naming the port and
 /// `GARAGE_PORT`.
 pub async fn bind(config: &Config) -> Result<tokio::net::TcpListener> {
-    tokio::net::TcpListener::bind(("127.0.0.1", config.port)).await.with_context(|| {
-        format!("cannot bind 127.0.0.1:{}; is it taken? set GARAGE_PORT to use another port", config.port)
-    })
+    tokio::net::TcpListener::bind(("127.0.0.1", config.port))
+        .await
+        .with_context(|| {
+            format!(
+                "cannot bind 127.0.0.1:{}; is it taken? set GARAGE_PORT to use another port",
+                config.port
+            )
+        })
 }
 
 /// How long open connections (SSE streams never drain) get after shutdown
@@ -60,23 +72,51 @@ pub async fn run(config: Config) -> Result<()> {
     // A successor spawned by the restart route carries GARAGE_PREDECESSOR_PID:
     // wait for that daemon's port to free before binding, failing loud if it
     // does not (no race for the port).
-    if let Some(raw) = std::env::var("GARAGE_PREDECESSOR_PID").ok().filter(|s| !s.is_empty()) {
+    if let Some(raw) = std::env::var("GARAGE_PREDECESSOR_PID")
+        .ok()
+        .filter(|s| !s.is_empty())
+    {
         // Not a daemon setting: keep it out of the environment tmux and the
         // sessions' children inherit.
         std::env::remove_var("GARAGE_PREDECESSOR_PID");
         let pid = raw.parse::<u32>().ok();
-        api::daemon_restart::wait_for_predecessor_real(config.port, pid).await.map_err(anyhow::Error::msg)?;
+        api::daemon_restart::wait_for_predecessor_real(config.port, pid)
+            .await
+            .map_err(anyhow::Error::msg)?;
     }
     let listener = bind(&config).await?;
-    let backend = Arc::new(backend::tmux::TmuxBackend::new(config.tmux_socket.clone()));
-    backend.init().await.context("initialising the tmux server")?;
+    // Chosen once, here: nothing else branches on the backend.
+    let kind = backend::Kind::from_env_value(std::env::var("GARAGE_BACKEND").ok().as_deref())?;
+    let control_on = config.tmux_control && kind == backend::Kind::Tmux;
+    let control_backend = backend::tmux::TmuxBackend::new(config.tmux_socket.clone());
+    let backend = backend::select(kind, &config)?;
+    backend
+        .init()
+        .await
+        .context("initialising the session backend")?;
     let agents: Arc<dyn poller::AgentSource> = Arc::new(poller::CommandAgents::default());
-    let state = AppState::with_agents(config, backend, os::platform(), agents.clone(), install::claude_home_from_env());
-    let poller = state.poller(agents).start();
+    let state = AppState::with_agents(
+        config,
+        backend.clone(),
+        os::platform(),
+        agents.clone(),
+        install::claude_home_from_env(),
+    );
+    let shared = state.poller(agents);
+    // tmux control mode wakes the poller on session changes; the tick stays
+    // as the fallback (and carries pane titles, which tmux does not announce).
+    // `GARAGE_TMUX_CONTROL=0` skips it: the plain tick runs alone. Only the
+    // tmux backend has a control-mode client.
+    let control = control_on.then(|| control::spawn(control_backend, shared.control_link()));
+    let poller = shared.start();
     let notifier = os::notify::spawn(&state.bus, state.os.clone(), state.visibility.clone());
     let plugin_host = state.plugins.start();
     let closed = closed::spawn(&state.bus, state.registry.clone(), state.backend.clone());
-    let (poller_stop, notifier_stop) = (poller.abort_handle(), notifier.abort_handle());
+    let (poller_stop, notifier_stop, control_stop) = (
+        poller.abort_handle(),
+        notifier.abort_handle(),
+        control.as_ref().map(|c| c.abort_handle()),
+    );
     let lifecycle = state.lifecycle.shutdown.clone();
     let (begin_tx, begin_rx) = tokio::sync::oneshot::channel::<()>();
     // One shutdown source: ctrl-c or the restart route. The poller and
@@ -89,6 +129,9 @@ pub async fn run(config: Config) -> Result<()> {
         }
         poller_stop.abort();
         notifier_stop.abort();
+        if let Some(c) = &control_stop {
+            c.abort();
+        }
         let _ = begin_tx.send(());
     };
     let serving = serve(listener, state, signal);
@@ -102,6 +145,9 @@ pub async fn run(config: Config) -> Result<()> {
     notifier.abort();
     plugin_host.abort();
     closed.abort();
+    if let Some(c) = &control {
+        c.abort();
+    }
     result
 }
 
@@ -135,29 +181,47 @@ mod tests {
             port: 0,
             garage_dir: "/nonexistent".into(),
             tmux_socket: None,
+            tmux_control: false,
             ui_origins: origins.iter().map(|s| s.to_string()).collect(),
         }
     }
 
     fn state(cfg: Config) -> AppState {
-        AppState::new(cfg, Arc::new(backend::tmux::TmuxBackend::new(None)), Arc::new(os::UnsupportedOs))
+        AppState::new(
+            cfg,
+            Arc::new(backend::tmux::TmuxBackend::new(None)),
+            Arc::new(os::UnsupportedOs),
+        )
     }
 
-    async fn call(cfg: &Config, method: &str, uri: &str, origin: Option<&str>) -> (StatusCode, Value) {
+    async fn call(
+        cfg: &Config,
+        method: &str,
+        uri: &str,
+        origin: Option<&str>,
+    ) -> (StatusCode, Value) {
         let mut req = Request::builder().method(method).uri(uri);
         if let Some(o) = origin {
             req = req.header("origin", o);
         }
-        let res = app(state(cfg.clone())).oneshot(req.body(Body::empty()).unwrap()).await.unwrap();
+        let res = app(state(cfg.clone()))
+            .oneshot(req.body(Body::empty()).unwrap())
+            .await
+            .unwrap();
         let status = res.status();
         let bytes = res.into_body().collect().await.unwrap().to_bytes();
-        (status, serde_json::from_slice(&bytes).unwrap_or(Value::Null))
+        (
+            status,
+            serde_json::from_slice(&bytes).unwrap_or(Value::Null),
+        )
     }
 
     #[tokio::test]
     async fn shutdown_ends_open_event_streams_and_serve_returns() {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
-        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .unwrap();
         let addr = listener.local_addr().unwrap();
         let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
         let server = tokio::spawn(serve(listener, state(config(&[])), async {
@@ -165,11 +229,14 @@ mod tests {
         }));
 
         let mut conn = tokio::net::TcpStream::connect(addr).await.unwrap();
-        conn.write_all(b"GET /api/events HTTP/1.1\r\nhost: x\r\nconnection: close\r\n\r\n").await.unwrap();
+        conn.write_all(b"GET /api/events HTTP/1.1\r\nhost: 127.0.0.1\r\nconnection: close\r\n\r\n").await.unwrap();
         let mut seen = String::new();
         let mut buf = [0u8; 1024];
         while !seen.contains(": connected") {
-            let n = tokio::time::timeout(std::time::Duration::from_secs(5), conn.read(&mut buf)).await.unwrap().unwrap();
+            let n = tokio::time::timeout(std::time::Duration::from_secs(5), conn.read(&mut buf))
+                .await
+                .unwrap()
+                .unwrap();
             assert!(n > 0, "closed before greeting: {seen}");
             seen.push_str(&String::from_utf8_lossy(&buf[..n]));
         }
@@ -200,16 +267,118 @@ mod tests {
     async fn foreign_origin_is_refused_on_writes_but_not_reads_or_headerless() {
         let c = config(&[]);
         let (s, body) = call(&c, "POST", "/api/sessions", Some("https://evil.example")).await;
-        assert_eq!((s, body), (StatusCode::FORBIDDEN, json!({"error": "origin not allowed"})));
+        assert_eq!(
+            (s, body),
+            (
+                StatusCode::FORBIDDEN,
+                json!({"error": "origin not allowed"})
+            )
+        );
         // GET is never guarded; a header-less write reaches the (stub) route.
-        assert_eq!(call(&c, "GET", "/api/health", Some("https://evil.example")).await.0, StatusCode::OK);
-        assert_eq!(call(&c, "POST", "/api/sessions", None).await.0, StatusCode::BAD_REQUEST);
+        assert_eq!(
+            call(&c, "GET", "/api/health", Some("https://evil.example"))
+                .await
+                .0,
+            StatusCode::OK
+        );
+        assert_eq!(
+            call(&c, "POST", "/api/sessions", None).await.0,
+            StatusCode::BAD_REQUEST
+        );
+    }
+
+    #[tokio::test]
+    async fn a_foreign_host_header_is_refused_on_every_route_and_loopback_passes() {
+        let mut c = config(&[]);
+        c.port = 4747;
+        for (m, u) in [("GET", "/api/health"), ("GET", "/api/attach?id=garage/a/b"), ("POST", "/api/sessions"), ("GET", "/nope")] {
+            let req = |host: Option<&str>| {
+                let mut r = Request::builder().method(m).uri(u);
+                if let Some(h) = host {
+                    r = r.header("host", h);
+                }
+                r.body(Body::empty()).unwrap()
+            };
+            let res = app(state(c.clone())).oneshot(req(Some("evil.example:4747"))).await.unwrap();
+            assert_eq!(res.status(), StatusCode::FORBIDDEN, "{m} {u}");
+            let bytes = res.into_body().collect().await.unwrap().to_bytes();
+            assert_eq!(serde_json::from_slice::<Value>(&bytes).unwrap(), json!({"error": "host not allowed"}));
+            let ok = app(state(c.clone())).oneshot(req(Some("127.0.0.1:4747"))).await.unwrap();
+            assert_ne!(ok.status(), StatusCode::FORBIDDEN, "{m} {u}");
+            let none = app(state(c.clone())).oneshot(req(None)).await.unwrap();
+            assert_ne!(none.status(), StatusCode::FORBIDDEN, "{m} {u} without a Host header");
+        }
+    }
+
+    /// The plugin host's routes sit behind the same Host and Origin guards as
+    /// every other route, and the UI-token routes still authenticate once a
+    /// loopback Host is presented.
+    #[tokio::test]
+    async fn plugin_routes_honour_the_host_and_origin_guards_and_ui_token_routes_work() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut c = config(&[]);
+        c.port = 4747;
+        c.garage_dir = dir.path().to_path_buf();
+        let st = state(c.clone());
+        let token = std::fs::read_to_string(dir.path().join("ui-token")).unwrap().trim().to_owned();
+        assert!(!token.is_empty(), "the plugin host writes the UI token at startup");
+
+        let routes = [
+            ("GET", "/api/plugin/features"),
+            ("POST", "/api/plugins/reload"),
+            ("PUT", "/api/plugins/ui/slots"),
+            ("PUT", "/api/plugins/p/widgets/w"),
+            ("DELETE", "/api/plugins/p/widgets/w"),
+            ("POST", "/api/plugins/p/actions/a/run"),
+            ("POST", "/api/sessions/input"),
+            ("GET", "/api/workspaces/ws/closed"),
+        ];
+        let send = |m: &str, u: &str, host: Option<&str>, origin: Option<&str>, bearer: Option<&str>| {
+            let mut r = Request::builder().method(m).uri(u);
+            if let Some(h) = host {
+                r = r.header("host", h);
+            }
+            if let Some(o) = origin {
+                r = r.header("origin", o);
+            }
+            if let Some(b) = bearer {
+                r = r.header("authorization", format!("Bearer {b}"));
+            }
+            let app = app(st.clone());
+            async move { app.oneshot(r.body(Body::empty()).unwrap()).await.unwrap() }
+        };
+        for (m, u) in routes {
+            // Foreign Host: refused before any token is looked at.
+            let res = send(m, u, Some("evil.example:4747"), None, Some(&token)).await;
+            assert_eq!(res.status(), StatusCode::FORBIDDEN, "{m} {u} foreign host");
+            let bytes = res.into_body().collect().await.unwrap().to_bytes();
+            assert_eq!(serde_json::from_slice::<Value>(&bytes).unwrap(), json!({"error": "host not allowed"}), "{m} {u}");
+            // Foreign Origin on a write: refused, even with the UI token.
+            if m != "GET" {
+                let res = send(m, u, Some("127.0.0.1:4747"), Some("https://evil.example"), Some(&token)).await;
+                let bytes = res.into_body().collect().await.unwrap().to_bytes();
+                assert_eq!(serde_json::from_slice::<Value>(&bytes).unwrap(), json!({"error": "origin not allowed"}), "{m} {u}");
+            }
+        }
+        // Loopback Host without a token: the route's own 401, not the guard's 403.
+        let res = send("POST", "/api/plugins/reload", Some("127.0.0.1:4747"), None, None).await;
+        assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
+        // Loopback Host with the UI token: the UI-token route runs.
+        let res = send("POST", "/api/plugins/reload", Some("127.0.0.1:4747"), None, Some(&token)).await;
+        assert_eq!(res.status(), StatusCode::OK);
+        let res = send("POST", "/api/plugins/reload", Some("localhost:4747"), None, Some(&token)).await;
+        assert_eq!(res.status(), StatusCode::OK);
     }
 
     #[tokio::test]
     async fn listed_origin_passes_the_guard() {
         let c = config(&["http://ok.test"]);
-        assert_eq!(call(&c, "DELETE", "/api/sessions/x", Some("http://ok.test")).await.0, StatusCode::FORBIDDEN);
+        assert_eq!(
+            call(&c, "DELETE", "/api/sessions/x", Some("http://ok.test"))
+                .await
+                .0,
+            StatusCode::FORBIDDEN
+        );
     }
 
     /// 405 means the path is registered (for another method); 404 means it is
@@ -219,16 +388,30 @@ mod tests {
     async fn registered_paths_answer_405_for_other_methods_and_removed_diff_route_is_404() {
         let c = config(&[]);
         for (m, u) in [
-            ("PUT", "/api/events"), ("PATCH", "/api/sessions"), ("GET", "/api/sessions/restore"),
-            ("GET", "/api/sessions/restart"), ("GET", "/api/sessions/x"), ("POST", "/api/workspaces/ws"),
-            ("GET", "/api/hooks/claude"), ("POST", "/api/usage"), ("GET", "/api/worktrees/finish"),
+            ("PUT", "/api/events"),
+            ("PATCH", "/api/sessions"),
+            ("GET", "/api/sessions/restore"),
+            ("GET", "/api/sessions/restart"),
+            ("GET", "/api/sessions/x"),
+            ("POST", "/api/workspaces/ws"),
+            ("GET", "/api/hooks/claude"),
+            ("POST", "/api/usage"),
+            ("GET", "/api/worktrees/finish"),
             ("GET", "/api/daemon/restart"),
         ] {
-            assert_eq!(call(&c, m, u, None).await.0, StatusCode::METHOD_NOT_ALLOWED, "{m} {u}");
+            assert_eq!(
+                call(&c, m, u, None).await.0,
+                StatusCode::METHOD_NOT_ALLOWED,
+                "{m} {u}"
+            );
         }
         for u in ["/api/diff/ws", "/api/sesions"] {
             let (s, body) = call(&c, "GET", u, None).await;
-            assert_eq!((s, body), (StatusCode::NOT_FOUND, json!({"error": "not found"})), "{u}");
+            assert_eq!(
+                (s, body),
+                (StatusCode::NOT_FOUND, json!({"error": "not found"})),
+                "{u}"
+            );
         }
     }
 
