@@ -31,7 +31,10 @@ fn main() -> ExitCode {
         println!("starting the claude-garage daemon…");
         match startup::wait_plain(&base_url, startup::START_DEADLINE, daemon_pid) {
             Outcome::TimedOut => {
-                eprintln!("{}", startup::timed_out_message(&base_url, log_hint().as_deref()));
+                eprintln!(
+                    "{}",
+                    startup::timed_out_message(&base_url, log_hint().as_deref())
+                );
                 return ExitCode::FAILURE;
             }
             Outcome::DaemonDied => {
@@ -58,7 +61,12 @@ fn main() -> ExitCode {
         }
     };
     if reveal {
-        match startup::reveal(&mut terminal, &base_url, startup::START_DEADLINE, daemon_pid) {
+        match startup::reveal(
+            &mut terminal,
+            &base_url,
+            startup::START_DEADLINE,
+            daemon_pid,
+        ) {
             Ok(Outcome::Ready) => {}
             Ok(Outcome::Aborted) => {
                 term::restore();
@@ -66,7 +74,10 @@ fn main() -> ExitCode {
             }
             Ok(Outcome::TimedOut) => {
                 term::restore();
-                eprintln!("{}", startup::timed_out_message(&base_url, log_hint().as_deref()));
+                eprintln!(
+                    "{}",
+                    startup::timed_out_message(&base_url, log_hint().as_deref())
+                );
                 return ExitCode::FAILURE;
             }
             Ok(Outcome::DaemonDied) => {

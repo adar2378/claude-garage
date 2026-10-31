@@ -3,7 +3,7 @@
 //! trusts only the ids from here, so this carries the focus and the trigger
 //! and nothing else. Never the UI token.
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use super::Need;
 use crate::actions::{ActionCtx, ActionSource};
@@ -37,7 +37,10 @@ pub fn run_body(ctx: &ActionCtx) -> Value {
 /// alone (never the focus, never `args`); a plugin action also gets the
 /// focus, since it runs with the user's context, and its `args`. `None` when
 /// no manifest or core id has that name.
-pub fn ui_action_ctx(state: &crate::state::wall_state::WallState, frame: &garage_protocol::plugins::UiActionFrame) -> Option<(crate::actions::ActionId, ActionCtx)> {
+pub fn ui_action_ctx(
+    state: &crate::state::wall_state::WallState,
+    frame: &garage_protocol::plugins::UiActionFrame,
+) -> Option<(crate::actions::ActionId, ActionCtx)> {
     let id = crate::actions::ActionId::lookup(&frame.action)?;
     let mut ctx = ActionCtx::from_focus(state, ActionSource::plugin(&frame.plugin));
     if !id.is_plugin() {
@@ -47,7 +50,10 @@ pub fn ui_action_ctx(state: &crate::state::wall_state::WallState, frame: &garage
     if let Some(session) = &frame.target.session {
         ctx.session = Some(session.clone());
         if frame.target.workspace.is_none() {
-            ctx.workspace = state.session_by_id(Some(session)).map(|s| s.workspace.clone()).or(ctx.workspace);
+            ctx.workspace = state
+                .session_by_id(Some(session))
+                .map(|s| s.workspace.clone())
+                .or(ctx.workspace);
         }
     }
     if let Some(ws) = &frame.target.workspace {
@@ -63,7 +69,9 @@ pub fn ui_action_ctx(state: &crate::state::wall_state::WallState, frame: &garage
 pub fn unmet(need: Need, title: &str, ctx: &ActionCtx) -> Option<String> {
     match need {
         Need::Session if ctx.session.is_none() => Some(format!("{title}: focus a session first")),
-        Need::Workspace if ctx.workspace.is_none() => Some(format!("{title}: focus a workspace first")),
+        Need::Workspace if ctx.workspace.is_none() => {
+            Some(format!("{title}: focus a workspace first"))
+        }
         _ => None,
     }
 }
@@ -91,12 +99,24 @@ mod tests {
     #[test]
     fn a_key_trigger_names_the_key_and_a_click_names_the_slot_and_carries_args() {
         let key = run_body(&ctx(ActionSource::Key("u".into())));
-        assert_eq!(key["trigger"], json!({"kind": "key", "key": "u", "slot": null, "args": {}}));
-        assert_eq!(key["focus"], json!({"workspace": "w", "session": {"id": "garage/w/a"}}));
-        let mut c = ctx(ActionSource::Widget { plugin: "p".into(), slot: SlotId::TileTitleRight });
+        assert_eq!(
+            key["trigger"],
+            json!({"kind": "key", "key": "u", "slot": null, "args": {}})
+        );
+        assert_eq!(
+            key["focus"],
+            json!({"workspace": "w", "session": {"id": "garage/w/a"}})
+        );
+        let mut c = ctx(ActionSource::Widget {
+            plugin: "p".into(),
+            slot: SlotId::TileTitleRight,
+        });
         c.args = Some(Arc::new(json!({"keep": 2})));
         let click = run_body(&c);
-        assert_eq!(click["trigger"], json!({"kind": "widget", "key": null, "slot": "tile.title.right", "args": {"keep": 2}}));
+        assert_eq!(
+            click["trigger"],
+            json!({"kind": "widget", "key": null, "slot": "tile.title.right", "args": {"keep": 2}})
+        );
     }
 
     #[test]
@@ -106,7 +126,10 @@ mod tests {
         c.session = None;
         let body = run_body(&c);
         assert_eq!(body["focus"], json!({"workspace": null, "session": null}));
-        assert_eq!(body["selection"], json!({"session": null, "index": null, "view": null}));
+        assert_eq!(
+            body["selection"],
+            json!({"session": null, "index": null, "view": null})
+        );
         assert!(!body.to_string().to_lowercase().contains("token"));
     }
 
@@ -115,9 +138,15 @@ mod tests {
         let mut c = ctx(ActionSource::Key("u".into()));
         assert_eq!(unmet(Need::Session, "Go", &c), None);
         c.session = None;
-        assert_eq!(unmet(Need::Session, "Go", &c).as_deref(), Some("Go: focus a session first"));
+        assert_eq!(
+            unmet(Need::Session, "Go", &c).as_deref(),
+            Some("Go: focus a session first")
+        );
         assert_eq!(unmet(Need::Global, "Go", &c), None);
         c.workspace = None;
-        assert_eq!(unmet(Need::Workspace, "Go", &c).as_deref(), Some("Go: focus a workspace first"));
+        assert_eq!(
+            unmet(Need::Workspace, "Go", &c).as_deref(),
+            Some("Go: focus a workspace first")
+        );
     }
 }

@@ -290,10 +290,7 @@ impl RestartResponse {
 /// One of the restart response's three lists: absent or `null` is an empty
 /// list (the daemon may omit a list it has nothing for), anything that is
 /// not an array of well-formed entries is a parse failure.
-fn parse_entries<T>(
-    value: Option<&Value>,
-    parse: impl Fn(&Value) -> Option<T>,
-) -> Option<Vec<T>> {
+fn parse_entries<T>(value: Option<&Value>, parse: impl Fn(&Value) -> Option<T>) -> Option<Vec<T>> {
     match value {
         None | Some(Value::Null) => Some(Vec::new()),
         Some(Value::Array(entries)) => entries.iter().map(parse).collect(),
@@ -498,10 +495,16 @@ mod tests {
         let v = json!({"restarted": [{"id": "i", "resumed": false}]});
         let r = RestartResponse::from_json(&v).unwrap();
         assert!(!r.restarted[0].resumed, "no conversation to resume");
-        assert_eq!(r, RestartResponse {
-            restarted: vec![RestartedEntry { id: "i".to_owned(), resumed: false }],
-            ..RestartResponse::default()
-        });
+        assert_eq!(
+            r,
+            RestartResponse {
+                restarted: vec![RestartedEntry {
+                    id: "i".to_owned(),
+                    resumed: false
+                }],
+                ..RestartResponse::default()
+            }
+        );
     }
 
     #[test]

@@ -118,16 +118,26 @@ pub fn hello(token: &str, mode: u8, cols: u16, rows: u16) -> Vec<u8> {
 /// on loopback, so anything else is a bad or hostile registry/spec value and
 /// must never be dialed (the hello carries the token).
 pub fn parse_loopback(addr: &str) -> std::io::Result<SocketAddr> {
-    let parsed: SocketAddr = addr.parse().map_err(|_| io_err(format!("bad host address {addr:?}")))?;
+    let parsed: SocketAddr = addr
+        .parse()
+        .map_err(|_| io_err(format!("bad host address {addr:?}")))?;
     if !parsed.ip().is_loopback() {
-        return Err(io_err(format!("refusing non-loopback host address {addr:?}")));
+        return Err(io_err(format!(
+            "refusing non-loopback host address {addr:?}"
+        )));
     }
     Ok(parsed)
 }
 
 /// Connect to `addr` (a loopback address, `127.0.0.1:<port>`) and complete the
 /// hello. A wrong token is only noticed by the host closing the connection.
-pub fn connect(addr: &str, token: &str, mode: u8, cols: u16, rows: u16) -> std::io::Result<TcpStream> {
+pub fn connect(
+    addr: &str,
+    token: &str,
+    mode: u8,
+    cols: u16,
+    rows: u16,
+) -> std::io::Result<TcpStream> {
     if token.len() != TOKEN_LEN {
         return Err(io_err("bad host token"));
     }
@@ -164,7 +174,13 @@ pub fn history_size(addr: &str, token: &str) -> Option<i64> {
 }
 
 /// `rows` formatted lines (with escapes, joined by `\n`) from absolute line `top_abs`.
-pub fn capture_formatted(addr: &str, token: &str, top_abs: i64, cols: u16, rows: u16) -> Option<Vec<u8>> {
+pub fn capture_formatted(
+    addr: &str,
+    token: &str,
+    top_abs: i64,
+    cols: u16,
+    rows: u16,
+) -> Option<Vec<u8>> {
     let mut p = Vec::with_capacity(12);
     p.extend_from_slice(&top_abs.to_le_bytes());
     p.extend_from_slice(&cols.to_le_bytes());
@@ -229,8 +245,15 @@ mod tests {
         send_text(&addr, &"t".repeat(TOKEN_LEN), "echo hi").unwrap();
         let (hello, frames) = host.join().unwrap();
         assert_eq!(hello[3 + TOKEN_LEN], MODE_ATTACH);
-        assert_eq!(&hello[36..40], &[0, 0, 0, 0], "size 0x0: the host must not resize its PTY");
-        assert_eq!(frames, vec![(F_INPUT, b"echo hi".to_vec()), (F_INPUT, b"\r".to_vec())]);
+        assert_eq!(
+            &hello[36..40],
+            &[0, 0, 0, 0],
+            "size 0x0: the host must not resize its PTY"
+        );
+        assert_eq!(
+            frames,
+            vec![(F_INPUT, b"echo hi".to_vec()), (F_INPUT, b"\r".to_vec())]
+        );
     }
 
     #[test]
@@ -238,12 +261,18 @@ mod tests {
         let mut buf = Vec::new();
         write_frame(&mut buf, F_RESIZE, &[1, 2, 3, 4]).unwrap();
         assert_eq!(buf, [1, 4, 0, 0, 0, 1, 2, 3, 4]);
-        assert_eq!(read_frame(&mut buf.as_slice()).unwrap(), (F_RESIZE, vec![1, 2, 3, 4]));
+        assert_eq!(
+            read_frame(&mut buf.as_slice()).unwrap(),
+            (F_RESIZE, vec![1, 2, 3, 4])
+        );
 
         let huge = [0u8, 0xff, 0xff, 0xff, 0xff];
         assert!(read_frame(&mut huge.as_slice()).is_err());
         assert!(read_reply(&mut [0xff, 0xff, 0xff, 0xff].as_slice()).is_err());
-        assert!(read_frame(&mut [0u8, 9].as_slice()).is_err(), "truncated header");
+        assert!(
+            read_frame(&mut [0u8, 9].as_slice()).is_err(),
+            "truncated header"
+        );
     }
 
     #[test]
@@ -277,7 +306,16 @@ mod tests {
         for ok in ["127.0.0.1:4000", "[::1]:4000", "127.5.5.5:1"] {
             assert!(parse_loopback(ok).is_ok(), "{ok}");
         }
-        for bad in ["10.0.0.1:80", "8.8.8.8:53", "0.0.0.0:80", "[::2]:1", "evil.example:80", "localhost:80", "127.0.0.1", "[fe80::1]:1"] {
+        for bad in [
+            "10.0.0.1:80",
+            "8.8.8.8:53",
+            "0.0.0.0:80",
+            "[::2]:1",
+            "evil.example:80",
+            "localhost:80",
+            "127.0.0.1",
+            "[fe80::1]:1",
+        ] {
             assert!(parse_loopback(bad).is_err(), "{bad}");
         }
         // The check happens before any dial: a public address fails at once.

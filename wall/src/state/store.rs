@@ -9,10 +9,7 @@ pub use crate::actions::GarageCommand;
 use crate::api::models::{SessionInfo, UsageInfo, WorkspaceInfo};
 use crate::state::armed_action::ArmedAction;
 use crate::state::salience::jump_target;
-use crate::state::views::{
-    derive_view_name, view_of, View, ViewsByWorkspace,
-    DEFAULT_VIEW,
-};
+use crate::state::views::{DEFAULT_VIEW, View, ViewsByWorkspace, derive_view_name, view_of};
 use crate::state::wall_state::{KeyLayer, OverlayKind, WallSession, WallState};
 
 /// The `r r` arming (p16-restart, spec restart "TUI chords"): the generic
@@ -354,7 +351,12 @@ impl WallStore {
             return false;
         };
         let workspace = session.workspace.clone();
-        let mut named = self.state.views.get(&workspace).cloned().unwrap_or_default();
+        let mut named = self
+            .state
+            .views
+            .get(&workspace)
+            .cloned()
+            .unwrap_or_default();
         let current_view = view_of(&named, &session_id);
         let current_view_size = self.state.view_session_ids(&workspace, &current_view).len();
 
@@ -369,7 +371,10 @@ impl WallStore {
             named.retain(|v| !v.session_ids.is_empty());
             let existing_names: Vec<String> = named.iter().map(|v| v.name.clone()).collect();
             let solo_name = derive_view_name(&session.label, &existing_names);
-            named.push(View { name: solo_name.clone(), session_ids: vec![session_id.clone()] });
+            named.push(View {
+                name: solo_name.clone(),
+                session_ids: vec![session_id.clone()],
+            });
             solo_name
         } else {
             // Alone already (in the default view or a solo view): rejoin
@@ -409,8 +414,12 @@ impl WallStore {
         let Some(workspace) = self.state.focused_workspace.clone() else {
             return;
         };
-        let names: Vec<String> =
-            self.state.views_for(&workspace).into_iter().map(|v| v.name).collect();
+        let names: Vec<String> = self
+            .state
+            .views_for(&workspace)
+            .into_iter()
+            .map(|v| v.name)
+            .collect();
         if names.is_empty() {
             return; // the workspace itself has no sessions — nothing to cycle to.
         }
@@ -424,7 +433,11 @@ impl WallStore {
         if target_view == current {
             return; // exactly one real view, already focused on it.
         }
-        let Some(first) = self.state.view_session_ids(&workspace, &target_view).into_iter().next()
+        let Some(first) = self
+            .state
+            .view_session_ids(&workspace, &target_view)
+            .into_iter()
+            .next()
         else {
             return; // unreachable: views_for never returns an empty view.
         };
@@ -444,7 +457,11 @@ impl WallStore {
         let Some(workspace) = self.state.focused_workspace.clone() else {
             return false;
         };
-        let Some(first) = self.state.view_session_ids(&workspace, view_name).into_iter().next()
+        let Some(first) = self
+            .state
+            .view_session_ids(&workspace, view_name)
+            .into_iter()
+            .next()
         else {
             return false;
         };
@@ -483,7 +500,12 @@ impl WallStore {
             return false;
         };
         let workspace = session.workspace.clone();
-        let mut named = self.state.views.get(&workspace).cloned().unwrap_or_default();
+        let mut named = self
+            .state
+            .views
+            .get(&workspace)
+            .cloned()
+            .unwrap_or_default();
         for v in named.iter_mut() {
             v.session_ids.retain(|id| id != &session_id);
         }

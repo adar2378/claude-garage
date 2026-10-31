@@ -37,8 +37,12 @@ impl ActionId {
             return Some(ActionId(existing));
         }
         let shaped = id.len() <= MAX_ID_LEN
-            && id.split_once(':').is_some_and(|(p, a)| !p.is_empty() && !a.is_empty())
-            && id.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b':' | b'_' | b'-' | b'.'));
+            && id
+                .split_once(':')
+                .is_some_and(|(p, a)| !p.is_empty() && !a.is_empty())
+            && id
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b':' | b'_' | b'-' | b'.'));
         if !shaped || set.len() >= ids::ALL.len() + MAX_DECLARED {
             return None;
         }
@@ -76,9 +80,7 @@ pub const MAX_DECLARED: usize = 1024;
 /// The interner, seeded with every core id so interning a core string hands
 /// back the core constant instead of leaking a duplicate.
 static INTERNER: std::sync::LazyLock<std::sync::Mutex<std::collections::HashSet<&'static str>>> =
-    std::sync::LazyLock::new(|| {
-        std::sync::Mutex::new(ids::ALL.iter().map(|id| id.0).collect())
-    });
+    std::sync::LazyLock::new(|| std::sync::Mutex::new(ids::ALL.iter().map(|id| id.0).collect()));
 
 /// The action id list. Group order follows design.md decision 1.
 pub mod ids {
@@ -179,7 +181,11 @@ pub struct ActionMeta {
 }
 
 const fn meta_row(id: ActionId, dangerous: bool, plugin_invocable: bool) -> ActionMeta {
-    ActionMeta { id, dangerous, plugin_invocable }
+    ActionMeta {
+        id,
+        dangerous,
+        plugin_invocable,
+    }
 }
 
 /// One row per core id (a test keeps it complete).
@@ -234,11 +240,17 @@ pub enum ActionSource {
     /// The key after the `r` prefix (the `RestartChord` layer). Only this
     /// source may run the restart actions.
     Chord(String),
-    Mouse { col: u16, row: u16 },
+    Mouse {
+        col: u16,
+        row: u16,
+    },
     /// A click on a plugin-provided slot item. Like `Plugin`, it may only
     /// ARM a dangerous action (p24 design.md Gap E); the confirming click is
     /// a `Mouse` event.
-    Widget { plugin: String, slot: SlotId },
+    Widget {
+        plugin: String,
+        slot: SlotId,
+    },
     /// A plugin's own request (`POST /api/plugins/ui/action`). `confirmed`
     /// is set only by the TUI's confirm path after a human key or click
     /// armed-then-confirmed a dangerous action; a plugin never builds it.
@@ -246,20 +258,30 @@ pub enum ActionSource {
     /// `confirmed` from a request body: it builds `ActionSource::plugin(..)`
     /// and nothing else. The gate also honours `confirmed: true` only with a
     /// one-shot token its own confirm path issued, so a forged value arms.
-    Plugin { plugin: String, confirmed: bool },
+    Plugin {
+        plugin: String,
+        confirmed: bool,
+    },
 }
 
 impl ActionSource {
     /// A plugin's request: never confirmed.
     pub fn plugin(plugin: &str) -> ActionSource {
-        ActionSource::Plugin { plugin: plugin.to_owned(), confirmed: false }
+        ActionSource::Plugin {
+            plugin: plugin.to_owned(),
+            confirmed: false,
+        }
     }
 
     /// True for the sources that may only arm a dangerous action.
     pub fn is_plugin_origin(&self) -> bool {
         matches!(
             self,
-            ActionSource::Widget { .. } | ActionSource::Plugin { confirmed: false, .. }
+            ActionSource::Widget { .. }
+                | ActionSource::Plugin {
+                    confirmed: false,
+                    ..
+                }
         )
     }
 }
@@ -355,7 +377,9 @@ pub enum GarageCommand {
     CycleFocus(i32),
     Jump,
     OpenQueue,
-    Spawn { worktree: bool },
+    Spawn {
+        worktree: bool,
+    },
     Engage,
     /// `m`: toggle the focused tile full-grid (spec tui-wall "Maximized tile").
     Maximize,
@@ -486,7 +510,11 @@ mod tests {
                 !handled_elsewhere.contains(id),
                 "{} is {} a command",
                 id.as_str(),
-                if has_command { "mapped to" } else { "missing from" }
+                if has_command {
+                    "mapped to"
+                } else {
+                    "missing from"
+                }
             );
         }
     }
@@ -494,7 +522,12 @@ mod tests {
     #[test]
     fn every_core_id_has_exactly_one_meta_row_and_plugin_ids_have_none() {
         for id in ids::ALL {
-            assert_eq!(META.iter().filter(|m| m.id == *id).count(), 1, "{}", id.as_str());
+            assert_eq!(
+                META.iter().filter(|m| m.id == *id).count(),
+                1,
+                "{}",
+                id.as_str()
+            );
             assert!(meta(*id).is_some());
         }
         assert_eq!(META.len(), ids::ALL.len(), "no stray rows");
@@ -503,7 +536,11 @@ mod tests {
 
     #[test]
     fn the_dangerous_and_invocable_sets_are_exactly_the_designed_ones() {
-        let dangerous: Vec<&str> = META.iter().filter(|m| m.dangerous).map(|m| m.id.as_str()).collect();
+        let dangerous: Vec<&str> = META
+            .iter()
+            .filter(|m| m.dangerous)
+            .map(|m| m.id.as_str())
+            .collect();
         assert_eq!(
             dangerous,
             [
@@ -518,7 +555,11 @@ mod tests {
                 "session.delete",
             ]
         );
-        let refused: Vec<&str> = META.iter().filter(|m| !m.plugin_invocable).map(|m| m.id.as_str()).collect();
+        let refused: Vec<&str> = META
+            .iter()
+            .filter(|m| !m.plugin_invocable)
+            .map(|m| m.id.as_str())
+            .collect();
         assert_eq!(
             refused,
             [
@@ -531,7 +572,10 @@ mod tests {
                 "chord.restart",
             ]
         );
-        assert!(META.iter().all(|m| m.plugin_invocable || !m.dangerous), "a refused id is never 'dangerous'");
+        assert!(
+            META.iter().all(|m| m.plugin_invocable || !m.dangerous),
+            "a refused id is never 'dangerous'"
+        );
     }
 
     #[test]
@@ -565,14 +609,29 @@ mod tests {
     #[test]
     fn only_declared_ids_are_interned_and_lookup_never_adds() {
         let before = INTERNER.lock().unwrap().len();
-        assert_eq!(ActionId::lookup("never:declared"), None, "a pushed string is not interned");
+        assert_eq!(
+            ActionId::lookup("never:declared"),
+            None,
+            "a pushed string is not interned"
+        );
         assert!(!INTERNER.lock().unwrap().contains("never:declared"));
         let declared = ActionId::declare("declaredplugin:go").unwrap();
         assert_eq!(ActionId::lookup("declaredplugin:go"), Some(declared));
-        assert_eq!(ActionId::lookup("session.close"), Some(ids::SESSION_CLOSE), "core ids resolve");
+        assert_eq!(
+            ActionId::lookup("session.close"),
+            Some(ids::SESSION_CLOSE),
+            "core ids resolve"
+        );
         assert!(INTERNER.lock().unwrap().len() >= before);
         // Malformed or oversized ids are refused and add nothing.
-        for bad in ["noprefix", ":x", "p:", "p:has space", "p:é", &format!("p:{}", "a".repeat(MAX_ID_LEN))] {
+        for bad in [
+            "noprefix",
+            ":x",
+            "p:",
+            "p:has space",
+            "p:é",
+            &format!("p:{}", "a".repeat(MAX_ID_LEN)),
+        ] {
             assert_eq!(ActionId::declare(bad), None, "{bad:?}");
             assert_eq!(ActionId::lookup(bad), None, "{bad:?}");
         }

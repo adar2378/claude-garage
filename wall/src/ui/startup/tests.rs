@@ -94,7 +94,14 @@ fn the_timeout_message_names_the_log_when_the_launcher_gave_one() {
 
 #[test]
 fn the_launcher_pid_is_parsed_and_junk_or_system_pids_are_ignored() {
-    for (value, want) in [("4242", Some(4242)), (" 77\n", Some(77)), ("1", None), ("0", None), ("abc", None), ("-5", None)] {
+    for (value, want) in [
+        ("4242", Some(4242)),
+        (" 77\n", Some(77)),
+        ("1", None),
+        ("0", None),
+        ("abc", None),
+        ("-5", None),
+    ] {
         assert_eq!(parse_daemon_pid(Some(value)), want, "{value:?}");
     }
     assert_eq!(parse_daemon_pid(None), None);
@@ -104,8 +111,13 @@ fn the_launcher_pid_is_parsed_and_junk_or_system_pids_are_ignored() {
 #[test]
 fn a_dead_pid_is_gone_a_live_pid_and_no_pid_are_not() {
     assert!(!daemon_gone(None));
-    assert!(!daemon_gone(Some(std::process::id())), "this process is alive");
-    let mut child = std::process::Command::new("true").spawn().expect("spawn true");
+    assert!(
+        !daemon_gone(Some(std::process::id())),
+        "this process is alive"
+    );
+    let mut child = std::process::Command::new("true")
+        .spawn()
+        .expect("spawn true");
     let pid = child.id();
     child.wait().expect("reap");
     assert!(daemon_gone(Some(pid)), "a reaped child no longer exists");

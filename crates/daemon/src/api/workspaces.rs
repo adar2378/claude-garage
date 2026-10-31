@@ -6,16 +6,16 @@
 
 use std::collections::HashMap;
 
+use axum::Json;
 use axum::body::Bytes;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use axum::Json;
 use garage_protocol::{IdError, RenamedSession};
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 
 use super::hooks::{internal, parse_body};
-use crate::backend::tmux::{is_valid_name, GARAGE_PREFIX};
+use crate::backend::tmux::{GARAGE_PREFIX, is_valid_name};
 use crate::error::error_response;
 use crate::git::resolve_branch;
 use crate::state::AppState;
@@ -81,7 +81,9 @@ pub async fn put(State(state): State<AppState>, body: Bytes) -> Response {
     match state.registry.upsert_workspace(name, dir.unwrap()).await {
         Ok(w) => {
             if !existed {
-                state.bus.publish(crate::bus::DaemonEvent::WorkspaceAdded { name: w.name.clone() });
+                state.bus.publish(crate::bus::DaemonEvent::WorkspaceAdded {
+                    name: w.name.clone(),
+                });
             }
             Json(json!({"name": w.name, "dir": w.dir})).into_response()
         }
@@ -145,7 +147,10 @@ pub async fn patch(
         state.closing.mark_renamed(&s.id);
         state.closing.mark_renamed(&new_id);
         match state.backend.rename(&s.id, &new_id).await {
-            Ok(()) => renamed.push(RenamedSession { from: s.id.clone(), to: new_id }),
+            Ok(()) => renamed.push(RenamedSession {
+                from: s.id.clone(),
+                to: new_id,
+            }),
             Err(e) => {
                 state.closing.clear(&s.id);
                 state.closing.clear(&new_id);
@@ -157,7 +162,7 @@ pub async fn patch(
     let workspace = match state.registry.rename_workspace(&old, new).await {
         Ok(Some(w)) => w,
         Ok(None) => {
-            return error_response(StatusCode::NOT_FOUND, format!("unknown workspace: {old}"))
+            return error_response(StatusCode::NOT_FOUND, format!("unknown workspace: {old}"));
         }
         Err(e) => return internal(e.into()),
     };
@@ -191,7 +196,9 @@ pub async fn delete(
     if query.get("sessions").map(String::as_str) != Some("kill") {
         return match state.registry.remove_workspace(&name).await {
             Ok(()) => {
-                state.bus.publish(crate::bus::DaemonEvent::WorkspaceRemoved { name: name.clone() });
+                state
+                    .bus
+                    .publish(crate::bus::DaemonEvent::WorkspaceRemoved { name: name.clone() });
                 StatusCode::NO_CONTENT.into_response()
             }
             Err(e) => internal(e.into()),
@@ -215,7 +222,9 @@ pub async fn delete(
     if let Err(e) = state.registry.remove_workspace(&name).await {
         return internal(e.into());
     }
-    state.bus.publish(crate::bus::DaemonEvent::WorkspaceRemoved { name: name.clone() });
+    state
+        .bus
+        .publish(crate::bus::DaemonEvent::WorkspaceRemoved { name: name.clone() });
     let mut out = Map::new();
     out.insert("removed".into(), json!(name));
     out.insert("killedSessions".into(), json!(killed));

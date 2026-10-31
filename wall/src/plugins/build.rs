@@ -2,7 +2,9 @@
 //! through the action interner, widths measured once.
 
 use garage_protocol::plugins::ButtonSummary;
-use garage_protocol::widgets::{sanitise, Click, Placement as WirePlacement, Segment, Style as WireStyle, WidgetItem};
+use garage_protocol::widgets::{
+    Click, Placement as WirePlacement, Segment, Style as WireStyle, WidgetItem, sanitise,
+};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::Span;
 
@@ -43,7 +45,10 @@ pub fn color(spec: &str) -> Option<Color> {
         hex if hex.len() == 7 && hex.starts_with('#') => {
             let n = u32::from_str_radix(&hex[1..], 16).ok()?;
             let rgb = ((n >> 16) as u8, (n >> 8) as u8, n as u8);
-            PALETTE.iter().min_by_key(|(_, p)| distance(*p, rgb)).map(|(c, _)| *c)
+            PALETTE
+                .iter()
+                .min_by_key(|(_, p)| distance(*p, rgb))
+                .map(|(c, _)| *c)
         }
         _ => None,
     }
@@ -58,7 +63,12 @@ pub fn style(s: Option<&WireStyle>) -> Style {
     if let Some(c) = s.bg.as_deref().and_then(color) {
         out = out.bg(c);
     }
-    for (on, m) in [(s.bold, Modifier::BOLD), (s.italic, Modifier::ITALIC), (s.underline, Modifier::UNDERLINED), (s.dim, Modifier::DIM)] {
+    for (on, m) in [
+        (s.bold, Modifier::BOLD),
+        (s.italic, Modifier::ITALIC),
+        (s.underline, Modifier::UNDERLINED),
+        (s.dim, Modifier::DIM),
+    ] {
         if on {
             out = out.add_modifier(m);
         }
@@ -100,7 +110,10 @@ fn priority(p: i32) -> i16 {
 fn placement(p: &WirePlacement) -> Placement {
     match p {
         WirePlacement::Flow => Placement::Flow,
-        WirePlacement::Filler { x, caption } => Placement::Filler { x: *x, caption: caption.as_ref().map(|c| sanitise(c)) },
+        WirePlacement::Filler { x, caption } => Placement::Filler {
+            x: *x,
+            caption: caption.as_ref().map(|c| sanitise(c)),
+        },
     }
 }
 
@@ -121,8 +134,15 @@ pub fn items(plugin: &str, slot: SlotId, item: &WidgetItem) -> Vec<SlotItem> {
         it
     };
     if let Some(frames) = &item.frames {
-        let spans: Vec<Vec<Span<'static>>> = frames.iter().map(|f| f.iter().map(span).collect()).collect();
-        let frame_click = frames.iter().flatten().find_map(|s| s.click.as_ref()).and_then(|c| resolve_click(plugin, c));
+        let spans: Vec<Vec<Span<'static>>> = frames
+            .iter()
+            .map(|f| f.iter().map(span).collect())
+            .collect();
+        let frame_click = frames
+            .iter()
+            .flatten()
+            .find_map(|s| s.click.as_ref())
+            .and_then(|c| resolve_click(plugin, c));
         let ms = item.frame_ms.unwrap_or(250).min(u32::from(u16::MAX)) as u16;
         return SlotItem::animated(spans, ms, priority(item.priority))
             .map(|it| finish(it, item_click.or(frame_click)))
@@ -135,7 +155,12 @@ pub fn items(plugin: &str, slot: SlotId, item: &WidgetItem) -> Vec<SlotItem> {
         && item.click.is_none()
         && segments.iter().any(|s| s.click.is_some());
     if !clickable_flow {
-        let click = item_click.or_else(|| segments.iter().find_map(|s| s.click.as_ref()).and_then(|c| resolve_click(plugin, c)));
+        let click = item_click.or_else(|| {
+            segments
+                .iter()
+                .find_map(|s| s.click.as_ref())
+                .and_then(|c| resolve_click(plugin, c))
+        });
         let text = segments.iter().map(span).collect();
         // A gutter marker with no text is just a click target: a blank column.
         return vec![finish(SlotItem::new(text, priority(item.priority)), click)];
@@ -163,7 +188,10 @@ pub fn items(plugin: &str, slot: SlotId, item: &WidgetItem) -> Vec<SlotItem> {
 
 /// A manifest button as a static flow item.
 pub fn button(plugin: &str, b: &ButtonSummary) -> Option<SlotItem> {
-    let click = Click { action: b.on_click.clone(), args: b.args.clone() };
+    let click = Click {
+        action: b.on_click.clone(),
+        args: b.args.clone(),
+    };
     let mut item = SlotItem::new(vec![Span::raw(sanitise(&b.label))], priority(b.priority));
     item.on_click = Some(resolve_click(plugin, &click)?);
     Some(item)
@@ -189,13 +217,25 @@ mod tests {
         assert_eq!(color("text"), Some(colors::FG));
         assert_eq!(color("error"), Some(colors::ERROR));
         let warn = color("warn").unwrap();
-        for forbidden in [colors::AMBER, Color::Yellow, Color::LightYellow, Color::Rgb(255, 255, 0)] {
+        for forbidden in [
+            colors::AMBER,
+            Color::Yellow,
+            Color::LightYellow,
+            Color::Rgb(255, 255, 0),
+        ] {
             assert_ne!(warn, forbidden, "warn must not look like needs-input");
         }
         // Not a near-miss of amber either.
-        let Color::Rgb(r, g, b) = warn else { panic!("warn is an RGB tone, not an ANSI name: {warn:?}") };
-        let Color::Rgb(ar, ag, ab) = colors::AMBER else { unreachable!() };
-        assert!(distance((r, g, b), (ar, ag, ab)) > 60 * 60, "warn is too close to amber");
+        let Color::Rgb(r, g, b) = warn else {
+            panic!("warn is an RGB tone, not an ANSI name: {warn:?}")
+        };
+        let Color::Rgb(ar, ag, ab) = colors::AMBER else {
+            unreachable!()
+        };
+        assert!(
+            distance((r, g, b), (ar, ag, ab)) > 60 * 60,
+            "warn is too close to amber"
+        );
         assert_eq!(color("puce"), None);
     }
 
@@ -213,24 +253,55 @@ mod tests {
     #[test]
     fn a_click_resolves_only_to_a_declared_or_core_id_and_never_interns() {
         declared();
-        let c = |a: &str| resolve_click("bt", &Click { action: a.into(), args: Some(json!({"k": 1})) });
+        let c = |a: &str| {
+            resolve_click(
+                "bt",
+                &Click {
+                    action: a.into(),
+                    args: Some(json!({"k": 1})),
+                },
+            )
+        };
         let t = c("bt:go").unwrap();
-        assert_eq!((t.action.as_str(), t.plugin.as_deref()), ("bt:go", Some("bt")));
+        assert_eq!(
+            (t.action.as_str(), t.plugin.as_deref()),
+            ("bt:go", Some("bt"))
+        );
         assert_eq!(t.args.as_deref(), Some(&json!({"k": 1})));
-        assert_eq!(c("go").unwrap().action.as_str(), "bt:go", "a bare id is this plugin's");
-        assert_eq!(c("session.close").unwrap().action, crate::actions::ids::SESSION_CLOSE);
+        assert_eq!(
+            c("go").unwrap().action.as_str(),
+            "bt:go",
+            "a bare id is this plugin's"
+        );
+        assert_eq!(
+            c("session.close").unwrap().action,
+            crate::actions::ids::SESSION_CLOSE
+        );
         assert!(c("bt:never-declared").is_none());
-        assert!(ActionId::lookup("bt:never-declared").is_none(), "resolving did not intern it");
-        assert!(c("evil:go").is_none(), "another plugin's id nobody declared");
+        assert!(
+            ActionId::lookup("bt:never-declared").is_none(),
+            "resolving did not intern it"
+        );
+        assert!(
+            c("evil:go").is_none(),
+            "another plugin's id nobody declared"
+        );
         ActionId::declare("victim:poke").unwrap();
-        assert!(c("victim:poke").is_none(), "another plugin's id, declared by that plugin, is still not ours to click");
+        assert!(
+            c("victim:poke").is_none(),
+            "another plugin's id, declared by that plugin, is still not ours to click"
+        );
     }
 
     #[test]
     fn a_cross_plugin_click_drops_the_target_but_keeps_the_item_visible() {
         declared();
         ActionId::declare("victim:poke").unwrap();
-        let it = &items("bt", SlotId::StripRight, &wire(json!({"segments": [{"text": "hi", "click": {"action": "victim:poke"}}]})))[0];
+        let it = &items(
+            "bt",
+            SlotId::StripRight,
+            &wire(json!({"segments": [{"text": "hi", "click": {"action": "victim:poke"}}]})),
+        )[0];
         assert_eq!(it.width(), 2);
         assert!(it.on_click.is_none());
         let b = ButtonSummary {
@@ -242,13 +313,20 @@ mod tests {
             confirm: false,
             priority: 0,
         };
-        assert!(button("bt", &b).is_none(), "a button on another plugin's action is not drawn");
+        assert!(
+            button("bt", &b).is_none(),
+            "a button on another plugin's action is not drawn"
+        );
     }
 
     #[test]
     fn an_undeclared_click_keeps_the_text_and_drops_the_click() {
         declared();
-        let it = &items("bt", SlotId::StripRight, &wire(json!({"segments": [{"text": "hi", "click": {"action": "bt:ghost"}}]})))[0];
+        let it = &items(
+            "bt",
+            SlotId::StripRight,
+            &wire(json!({"segments": [{"text": "hi", "click": {"action": "bt:ghost"}}]})),
+        )[0];
         assert_eq!(it.width(), 2);
         assert!(it.on_click.is_none());
     }
@@ -266,9 +344,23 @@ mod tests {
                 {"text": "other", "click": {"action": "bt:other"}},
             ]})),
         );
-        let shown: Vec<(String, Option<&str>)> =
-            out.iter().map(|i| (i.text.iter().map(|s| s.content.to_string()).collect(), i.on_click.as_ref().map(|c| c.action.as_str()))).collect();
-        assert_eq!(shown, [("a ".into(), None), ("gox".into(), Some("bt:go")), ("other".into(), Some("bt:other"))]);
+        let shown: Vec<(String, Option<&str>)> = out
+            .iter()
+            .map(|i| {
+                (
+                    i.text.iter().map(|s| s.content.to_string()).collect(),
+                    i.on_click.as_ref().map(|c| c.action.as_str()),
+                )
+            })
+            .collect();
+        assert_eq!(
+            shown,
+            [
+                ("a ".into(), None),
+                ("gox".into(), Some("bt:go")),
+                ("other".into(), Some("bt:other"))
+            ]
+        );
         assert!(out.iter().all(|i| i.priority == 4));
     }
 
@@ -278,28 +370,62 @@ mod tests {
         let row = &items(
             "bt",
             SlotId::RailExtraRows,
-            &wire(json!({"segments": [{"text": "closed one"}], "row_style": {"bg": "dim"}, "session": "garage/w/one", "click": {"action": "session.restore"}})),
+            &wire(
+                json!({"segments": [{"text": "closed one"}], "row_style": {"bg": "dim"}, "session": "garage/w/one", "click": {"action": "session.restore"}}),
+            ),
         )[0];
         assert!(row.row_style.is_some());
         let t = row.on_click.as_ref().unwrap();
-        assert_eq!(t.session.as_deref(), Some("garage/w/one"), "the row is about that session");
+        assert_eq!(
+            t.session.as_deref(),
+            Some("garage/w/one"),
+            "the row is about that session"
+        );
         assert!(t.args.is_none());
 
-        let g = &items("bt", SlotId::TileGutter, &wire(json!({"row": 42, "segments": [{"text": "|", "click": {"action": "bt:go"}}]})))[0];
+        let g = &items(
+            "bt",
+            SlotId::TileGutter,
+            &wire(json!({"row": 42, "segments": [{"text": "|", "click": {"action": "bt:go"}}]})),
+        )[0];
         assert_eq!(g.gutter_row, Some(42));
         assert!(g.on_click.is_some());
 
-        let f = &items("bt", SlotId::StripRight, &wire(json!({"placement": {"kind": "filler", "x": 3, "caption": "hi"}, "segments": [{"text": "p"}]})))[0];
-        assert_eq!(f.placement, Placement::Filler { x: 3, caption: Some("hi".into()) });
+        let f = &items(
+            "bt",
+            SlotId::StripRight,
+            &wire(
+                json!({"placement": {"kind": "filler", "x": 3, "caption": "hi"}, "segments": [{"text": "p"}]}),
+            ),
+        )[0];
+        assert_eq!(
+            f.placement,
+            Placement::Filler {
+                x: 3,
+                caption: Some("hi".into())
+            }
+        );
 
-        let a = &items("bt", SlotId::StripRight, &wire(json!({"frames": [[{"text": "1"}], [{"text": "2"}]], "frame_ms": 50})))[0];
+        let a = &items(
+            "bt",
+            SlotId::StripRight,
+            &wire(json!({"frames": [[{"text": "1"}], [{"text": "2"}]], "frame_ms": 50})),
+        )[0];
         let anim = a.animated.as_ref().unwrap();
-        assert_eq!((anim.frames.len(), anim.frame_ms), (2, 100), "clamped to the 100 ms floor");
+        assert_eq!(
+            (anim.frames.len(), anim.frame_ms),
+            (2, 100),
+            "clamped to the 100 ms floor"
+        );
     }
 
     #[test]
     fn text_is_cleaned_again_on_this_side() {
-        let it = &items("bt", SlotId::StripRight, &wire(json!({"segments": [{"text": "a\u{202e}b\nc"}]})))[0];
+        let it = &items(
+            "bt",
+            SlotId::StripRight,
+            &wire(json!({"segments": [{"text": "a\u{202e}b\nc"}]})),
+        )[0];
         assert_eq!(it.text[0].content, "abc");
     }
 
@@ -318,7 +444,13 @@ mod tests {
         let it = button("bt", &b).unwrap();
         assert_eq!((it.priority, it.width()), (7, 4));
         assert_eq!(it.on_click.unwrap().action.as_str(), "bt:go");
-        let ghost = ButtonSummary { on_click: "ghost".into(), ..b };
-        assert!(button("bt", &ghost).is_none(), "a button on an undeclared action is not drawn");
+        let ghost = ButtonSummary {
+            on_click: "ghost".into(),
+            ..b
+        };
+        assert!(
+            button("bt", &ghost).is_none(),
+            "a button on an undeclared action is not drawn"
+        );
     }
 }

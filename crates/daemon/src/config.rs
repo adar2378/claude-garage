@@ -103,8 +103,16 @@ mod tests {
 
     #[test]
     fn windows_home_comes_from_userprofile_and_home_wins_when_both_are_set() {
-        assert_eq!(cfg(&[("USERPROFILE", r"C:\Users\u")]).unwrap().garage_dir, PathBuf::from(r"C:\Users\u").join(".garage"));
-        assert_eq!(cfg(&[("HOME", "/h"), ("USERPROFILE", "/w")]).unwrap().garage_dir, PathBuf::from("/h/.garage"));
+        assert_eq!(
+            cfg(&[("USERPROFILE", r"C:\Users\u")]).unwrap().garage_dir,
+            PathBuf::from(r"C:\Users\u").join(".garage")
+        );
+        assert_eq!(
+            cfg(&[("HOME", "/h"), ("USERPROFILE", "/w")])
+                .unwrap()
+                .garage_dir,
+            PathBuf::from("/h/.garage")
+        );
         assert!(cfg(&[]).is_err());
     }
 

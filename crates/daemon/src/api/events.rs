@@ -18,7 +18,7 @@ use axum::extract::State;
 use axum::response::sse::{Event, KeepAlive, Sse};
 use futures_util::stream::{self, Stream};
 use serde_json::json;
-use tokio::sync::broadcast::{error::RecvError, Receiver};
+use tokio::sync::broadcast::{Receiver, error::RecvError};
 use tokio::sync::watch;
 
 use crate::bus::DaemonEvent;
@@ -32,17 +32,26 @@ fn frame(event: &DaemonEvent) -> Event {
             .event("status")
             .data(json!({"id": id, "status": to, "since": since}).to_string()),
         DaemonEvent::SessionsChanged => Event::default().event("sessions").data("{}"),
-        DaemonEvent::PluginRunFailed { plugin, action, reason } => Event::default()
+        DaemonEvent::PluginRunFailed {
+            plugin,
+            action,
+            reason,
+        } => Event::default()
             .event("plugin_run_failed")
             .data(json!({"plugin": plugin, "action": action, "reason": reason}).to_string()),
-        DaemonEvent::PluginNotice { plugin, message } => {
-            Event::default().event("plugin_notice").data(json!({"plugin": plugin, "message": message}).to_string())
-        }
-        DaemonEvent::WidgetsChanged { plugin, rev } => {
-            Event::default().event("widgets").data(json!({"plugin": plugin, "rev": rev}).to_string())
-        }
+        DaemonEvent::PluginNotice { plugin, message } => Event::default()
+            .event("plugin_notice")
+            .data(json!({"plugin": plugin, "message": message}).to_string()),
+        DaemonEvent::WidgetsChanged { plugin, rev } => Event::default()
+            .event("widgets")
+            .data(json!({"plugin": plugin, "rev": rev}).to_string()),
         DaemonEvent::PluginsChanged => Event::default().event("plugins").data("{}"),
-        DaemonEvent::UiAction { plugin, action, args, target } => Event::default().event("ui_action").data(
+        DaemonEvent::UiAction {
+            plugin,
+            action,
+            args,
+            target,
+        } => Event::default().event("ui_action").data(
             serde_json::to_string(&garage_protocol::plugins::UiActionFrame {
                 plugin: plugin.clone(),
                 action: action.clone(),
@@ -51,9 +60,14 @@ fn frame(event: &DaemonEvent) -> Event {
             })
             .unwrap_or_else(|_| "{}".into()),
         ),
-        DaemonEvent::PaneChanged { plugin, pane, session, open } => Event::default()
-            .event("pane")
-            .data(json!({"plugin": plugin, "pane": pane, "session": session, "open": open}).to_string()),
+        DaemonEvent::PaneChanged {
+            plugin,
+            pane,
+            session,
+            open,
+        } => Event::default().event("pane").data(
+            json!({"plugin": plugin, "pane": pane, "session": session, "open": open}).to_string(),
+        ),
         // The typed events keep their plugin-visible names (`session.closed`, ...).
         typed => match typed.plugin_event() {
             Some((name, data)) => Event::default().event(name).data(data.to_string()),
@@ -135,29 +149,57 @@ mod tests {
         use crate::closing::CloseReason;
         let bus = EventBus::default();
         let (_tx, sd) = watch::channel(false);
-        let mut body = Sse::new(events(bus.subscribe(), sd)).into_response().into_body();
+        let mut body = Sse::new(events(bus.subscribe(), sd))
+            .into_response()
+            .into_body();
         assert_eq!(next_text(&mut body).await, ": connected\n\n");
         let cases = [
-            (DaemonEvent::WidgetsChanged { plugin: "usage-bar".into(), rev: 42 }, "widgets", json!({"plugin": "usage-bar", "rev": 42})),
+            (
+                DaemonEvent::WidgetsChanged {
+                    plugin: "usage-bar".into(),
+                    rev: 42,
+                },
+                "widgets",
+                json!({"plugin": "usage-bar", "rev": 42}),
+            ),
             (DaemonEvent::PluginsChanged, "plugins", json!({})),
             (
-                DaemonEvent::PluginRunFailed { plugin: "p".into(), action: "p:go".into(), reason: "exited with code 3".into() },
+                DaemonEvent::PluginRunFailed {
+                    plugin: "p".into(),
+                    action: "p:go".into(),
+                    reason: "exited with code 3".into(),
+                },
                 "plugin_run_failed",
                 json!({"plugin": "p", "action": "p:go", "reason": "exited with code 3"}),
             ),
-            (DaemonEvent::PluginNotice { plugin: "p".into(), message: "hi".into() }, "plugin_notice", json!({"plugin": "p", "message": "hi"})),
+            (
+                DaemonEvent::PluginNotice {
+                    plugin: "p".into(),
+                    message: "hi".into(),
+                },
+                "plugin_notice",
+                json!({"plugin": "p", "message": "hi"}),
+            ),
             (
                 DaemonEvent::UiAction {
                     plugin: "p".into(),
                     action: "session.close".into(),
                     args: Some(json!({"k": 1})),
-                    target: garage_protocol::plugins::UiTarget { session: Some("garage/w/a".into()), workspace: None },
+                    target: garage_protocol::plugins::UiTarget {
+                        session: Some("garage/w/a".into()),
+                        workspace: None,
+                    },
                 },
                 "ui_action",
                 json!({"plugin": "p", "action": "session.close", "args": {"k": 1}, "target": {"session": "garage/w/a"}}),
             ),
             (
-                DaemonEvent::PaneChanged { plugin: "p".into(), pane: "d".into(), session: "plugin/p/d".into(), open: true },
+                DaemonEvent::PaneChanged {
+                    plugin: "p".into(),
+                    pane: "d".into(),
+                    session: "plugin/p/d".into(),
+                    open: true,
+                },
                 "pane",
                 json!({"plugin": "p", "pane": "d", "session": "plugin/p/d", "open": true}),
             ),
@@ -173,18 +215,28 @@ mod tests {
                 json!({"id": "garage/w/a", "dir": "/d", "workspace": "w", "reason": "daemon-restart", "last_status": "idle"}),
             ),
             (
-                DaemonEvent::SessionTurn { id: "garage/w/a".into(), workspace: "w".into(), at: 5, transcript_offset: None },
+                DaemonEvent::SessionTurn {
+                    id: "garage/w/a".into(),
+                    workspace: "w".into(),
+                    at: 5,
+                    transcript_offset: None,
+                },
                 "session.turn",
                 json!({"id": "garage/w/a", "workspace": "w", "at": 5, "transcript_offset": null}),
             ),
-            (DaemonEvent::WorkspaceAdded { name: "w".into() }, "workspace.added", json!({"name": "w"})),
+            (
+                DaemonEvent::WorkspaceAdded { name: "w".into() },
+                "workspace.added",
+                json!({"name": "w"}),
+            ),
         ];
         for (ev, name, data) in cases {
             bus.publish(ev);
             let text = next_text(&mut body).await;
             let (head, tail) = text.split_once('\n').unwrap();
             assert_eq!(head, format!("event: {name}"));
-            let payload: serde_json::Value = serde_json::from_str(tail.trim().strip_prefix("data: ").unwrap()).unwrap();
+            let payload: serde_json::Value =
+                serde_json::from_str(tail.trim().strip_prefix("data: ").unwrap()).unwrap();
             assert_eq!(payload, data, "{name}");
         }
     }

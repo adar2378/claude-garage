@@ -12,8 +12,8 @@ use crate::slots::SlotRegistry;
 use crate::state::store::WallStore;
 use crate::state::wall_state::WallSession;
 use crate::ui::rail::render_rail;
-use crate::ui::strip::{render_strip, STATUSLINE_HINT};
-use crate::ui::tile::{render_tile, TileView};
+use crate::ui::strip::{STATUSLINE_HINT, render_strip};
+use crate::ui::tile::{TileView, render_tile};
 
 /// Text rows, then one line per run of identically styled non-default cells.
 fn dump(buf: &Buffer) -> String {
@@ -78,7 +78,13 @@ fn si(workspace: &str, label: &str, status: &str, since: Option<i64>) -> Session
 fn render_rail_dump(store: &WallStore, w: u16, h: u16) -> String {
     let rect = Rect::new(0, 0, w, h);
     let mut buf = Buffer::empty(rect);
-    render_rail(&mut buf, rect, store.state(), &SlotRegistry::core(), 125_000);
+    render_rail(
+        &mut buf,
+        rect,
+        store.state(),
+        &SlotRegistry::core(),
+        125_000,
+    );
     dump(&buf)
 }
 
@@ -114,7 +120,11 @@ fn strip_dump(store: &WallStore, notice: Option<&str>, w: u16) -> String {
 
 fn strip_store() -> WallStore {
     let mut store = WallStore::new();
-    store.workspaces_fetched(vec![ws("alpha", "/r/alpha"), ws("beta", "/r/beta"), ws("gamma", "/r/gamma")]);
+    store.workspaces_fetched(vec![
+        ws("alpha", "/r/alpha"),
+        ws("beta", "/r/beta"),
+        ws("gamma", "/r/gamma"),
+    ]);
     store.sessions_fetched(vec![
         si("alpha", "one", "working", Some(0)),
         si("beta", "blocked", "needs-input", Some(0)),
@@ -132,8 +142,14 @@ fn strip_tabs_blocked_dots_and_no_chip() {
 fn strip_with_usage_chip_and_notice() {
     let mut store = strip_store();
     store.usage_fetched(UsageInfo {
-        five_hour: Some(UsageWindow { used_percentage: 24, resets_at: None }),
-        seven_day: Some(UsageWindow { used_percentage: 61, resets_at: None }),
+        five_hour: Some(UsageWindow {
+            used_percentage: 24,
+            resets_at: None,
+        }),
+        seven_day: Some(UsageWindow {
+            used_percentage: 61,
+            resets_at: None,
+        }),
     });
     insta::assert_snapshot!(strip_dump(&store, Some("restarted 2 sessions"), 130));
 }
@@ -147,7 +163,10 @@ fn strip_install_hint_is_dim() {
 fn strip_narrow_drops_right_side_content() {
     let mut store = strip_store();
     store.usage_fetched(UsageInfo {
-        five_hour: Some(UsageWindow { used_percentage: 98, resets_at: None }),
+        five_hour: Some(UsageWindow {
+            used_percentage: 98,
+            resets_at: None,
+        }),
         seven_day: None,
     });
     insta::assert_snapshot!(strip_dump(&store, Some("a notice"), 60));
@@ -160,7 +179,7 @@ fn strip_narrow_drops_right_side_content() {
 #[test]
 fn strip_with_the_pet_in_the_filler() {
     use crate::slots::{SlotCtx, SlotId};
-    use crate::ui::strip::{pet_slot_item, PetRender};
+    use crate::ui::strip::{PetRender, pet_slot_item};
     let store = strip_store();
     let mut out = String::new();
     let alert = PetRender {
@@ -183,7 +202,9 @@ fn strip_with_the_pet_in_the_filler() {
         let rect = Rect::new(0, 0, 110, 1);
         let mut buf = Buffer::empty(rect);
         let mut slots = SlotRegistry::core();
-        slots.register(SlotId::StripRight, move |_: &SlotCtx| vec![pet_slot_item(&pet)]);
+        slots.register(SlotId::StripRight, move |_: &SlotCtx| {
+            vec![pet_slot_item(&pet)]
+        });
         render_strip(&mut buf, rect, store.state(), &slots, None);
         out.push_str(&format!("## {name}\n{}\n", dump(&buf)));
     }
@@ -246,7 +267,10 @@ fn tile_titles_for_each_status() {
     let mut out = String::new();
     for status in ["needs-input", "working", "done", "idle", "restorable"] {
         let s = session(status);
-        out.push_str(&format!("## {status}\n{}\n", tile_dump(&s, false, false, 40)));
+        out.push_str(&format!(
+            "## {status}\n{}\n",
+            tile_dump(&s, false, false, 40)
+        ));
     }
     insta::assert_snapshot!(out);
 }
@@ -261,13 +285,22 @@ fn tile_title_branch_title_and_context_meter() {
         source: "statusline".into(),
     });
     let mut out = String::new();
-    out.push_str(&format!("## wide focused\n{}\n", tile_dump(&s, true, false, 70)));
-    out.push_str(&format!("## narrow engaged\n{}\n", tile_dump(&s, true, true, 36)));
+    out.push_str(&format!(
+        "## wide focused\n{}\n",
+        tile_dump(&s, true, false, 70)
+    ));
+    out.push_str(&format!(
+        "## narrow engaged\n{}\n",
+        tile_dump(&s, true, true, 36)
+    ));
     s.context = Some(crate::api::models::ContextInfo {
         used_percentage: 10,
         source: "transcript".into(),
     });
-    out.push_str(&format!("## cool meter\n{}\n", tile_dump(&s, false, false, 70)));
+    out.push_str(&format!(
+        "## cool meter\n{}\n",
+        tile_dump(&s, false, false, 70)
+    ));
     insta::assert_snapshot!(out);
 }
 

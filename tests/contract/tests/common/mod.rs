@@ -376,8 +376,15 @@ impl Daemon {
             self.port
         )
         .unwrap();
-        let mut ev = RawEvents { stream, buf: vec![] };
-        assert!(ev.wait_for(": connected\n\n", 10), "no connected frame: {}", ev.text());
+        let mut ev = RawEvents {
+            stream,
+            buf: vec![],
+        };
+        assert!(
+            ev.wait_for(": connected\n\n", 10),
+            "no connected frame: {}",
+            ev.text()
+        );
         ev
     }
 }

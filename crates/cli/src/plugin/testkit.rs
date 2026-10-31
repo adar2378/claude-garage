@@ -7,14 +7,16 @@ use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use garage_daemon::plugins::admin::{register, Registration};
-use garage_daemon::plugins::layout::{Entry, Paths, PluginsFile, Source, MANIFEST_FILE};
+use garage_daemon::plugins::admin::{Registration, register};
+use garage_daemon::plugins::layout::{Entry, MANIFEST_FILE, Paths, PluginsFile, Source};
 
 use super::fetch::{Builder, Fetch};
 use super::install::Ui;
 
 pub fn toml(id: &str, extra: &str) -> String {
-    format!("id = \"{id}\"\nname = \"{id}\"\nversion = \"1.0.0\"\napi_version = 1\nplatforms = [\"macos\",\"linux\",\"windows\"]\n{extra}\n")
+    format!(
+        "id = \"{id}\"\nname = \"{id}\"\nversion = \"1.0.0\"\napi_version = 1\nplatforms = [\"macos\",\"linux\",\"windows\"]\n{extra}\n"
+    )
 }
 
 /// Write a linked plugin's folder and register it (granted its own
@@ -23,10 +25,24 @@ pub fn link_plugin(paths: &Paths, root: &Path, id: &str, extra: &str, approved: 
     let dir = root.join("linked").join(id);
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join(MANIFEST_FILE), toml(id, extra)).unwrap();
-    let source = Source::Link { path: dir.to_string_lossy().into_owned() };
+    let source = Source::Link {
+        path: dir.to_string_lossy().into_owned(),
+    };
     if approved {
-        let granted = garage_plugin::parse(&toml(id, extra)).unwrap().permission_names();
-        register(paths, &Registration { id: id.into(), source, granted_permissions: granted, manifest_sha256: None, installed_at: None }).unwrap();
+        let granted = garage_plugin::parse(&toml(id, extra))
+            .unwrap()
+            .permission_names();
+        register(
+            paths,
+            &Registration {
+                id: id.into(),
+                source,
+                granted_permissions: granted,
+                manifest_sha256: None,
+                installed_at: None,
+            },
+        )
+        .unwrap();
     } else {
         PluginsFile::update(paths, |f| {
             f.plugins.push(Entry::new(id, source));
@@ -50,7 +66,13 @@ pub struct FakeUi {
 
 impl FakeUi {
     pub fn new(interactive: bool, answers: &[bool]) -> Self {
-        Self { out: String::new(), interactive, answers: answers.to_vec(), asked: vec![], on_confirm: None }
+        Self {
+            out: String::new(),
+            interactive,
+            answers: answers.to_vec(),
+            asked: vec![],
+            on_confirm: None,
+        }
     }
 }
 
@@ -84,14 +106,23 @@ pub struct FakeFetch {
 
 impl FakeFetch {
     pub fn new(files: &[(&str, &[u8])]) -> Self {
-        Self { files: files.iter().map(|(k, v)| (k.to_string(), v.to_vec())).collect(), calls: Mutex::new(vec![]) }
+        Self {
+            files: files
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_vec()))
+                .collect(),
+            calls: Mutex::new(vec![]),
+        }
     }
 }
 
 impl Fetch for FakeFetch {
     fn get(&self, url: &str, _max: usize) -> Result<Vec<u8>, String> {
         self.calls.lock().unwrap().push(url.to_owned());
-        self.files.get(url).cloned().ok_or_else(|| format!("404 {url}"))
+        self.files
+            .get(url)
+            .cloned()
+            .ok_or_else(|| format!("404 {url}"))
     }
 }
 
@@ -125,14 +156,27 @@ pub mod repo {
 
     pub fn git(dir: &Path, args: &[&str]) -> String {
         let out = Command::new("git")
-            .args(["-c", "user.name=t", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false", "-c", "init.defaultBranch=main"])
+            .args([
+                "-c",
+                "user.name=t",
+                "-c",
+                "user.email=t@example.com",
+                "-c",
+                "commit.gpgsign=false",
+                "-c",
+                "init.defaultBranch=main",
+            ])
             .args(args)
             .current_dir(dir)
             .env("GIT_CONFIG_GLOBAL", "/dev/null")
             .env("GIT_CONFIG_SYSTEM", "/dev/null")
             .output()
             .expect("git runs");
-        assert!(out.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&out.stderr));
+        assert!(
+            out.status.success(),
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
         String::from_utf8_lossy(&out.stdout).trim().to_owned()
     }
 

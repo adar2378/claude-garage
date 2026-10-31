@@ -6,7 +6,7 @@
 //! prompts, sleeping, the TUI exec) goes through the [`Host`] trait, so the
 //! tests drive the exact same logic against a scripted fake.
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 
 /// A fatal launcher error: the message goes to stderr, the process exits 1.
@@ -110,7 +110,12 @@ pub trait Host: Out {
 
 /// Poll `f` every `interval_ms` until `deadline_ms` of real elapsed time
 /// (probe time included, not just the sleeps) has passed.
-fn wait_for<T>(host: &dyn Host, deadline_ms: u64, interval_ms: u64, mut f: impl FnMut() -> Option<T>) -> Option<T> {
+fn wait_for<T>(
+    host: &dyn Host,
+    deadline_ms: u64,
+    interval_ms: u64,
+    mut f: impl FnMut() -> Option<T>,
+) -> Option<T> {
     let start = host.now_ms();
     while host.now_ms().saturating_sub(start) < deadline_ms {
         if let Some(v) = f() {
@@ -164,13 +169,20 @@ pub fn daemon_is_stale(health: &Value, launcher_version: &str) -> bool {
 
 /// Parse `lsof -t` output: exactly one distinct pid greater than 1, else `None`.
 pub fn parse_listener_pid(stdout: &str) -> Option<u32> {
-    let mut pids: Vec<&str> = stdout.lines().map(str::trim).filter(|s| !s.is_empty()).collect();
+    let mut pids: Vec<&str> = stdout
+        .lines()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .collect();
     pids.sort_unstable();
     pids.dedup();
     if pids.len() != 1 {
         return None;
     }
-    pids[0].parse::<u32>().ok().filter(|p| (MIN_PID..=MAX_PID).contains(p))
+    pids[0]
+        .parse::<u32>()
+        .ok()
+        .filter(|p| (MIN_PID..=MAX_PID).contains(p))
 }
 
 // ── prerequisites ───────────────────────────────────────────────────────
@@ -213,7 +225,10 @@ pub fn tmux_missing_message() -> &'static str {
 }
 
 pub fn check_prerequisites(host: &dyn Host) -> Result<(), Fail> {
-    if host.uses_tmux() && host.probe("tmux", &["-V"]) == Probe::Missing && !offer_tmux_install(host) {
+    if host.uses_tmux()
+        && host.probe("tmux", &["-V"]) == Probe::Missing
+        && !offer_tmux_install(host)
+    {
         return fail(tmux_missing_message());
     }
     require_binary(
@@ -228,7 +243,11 @@ pub fn check_prerequisites(host: &dyn Host) -> Result<(), Fail> {
 
 fn stop_stale_daemon(host: &dyn Host, health: &Value) -> Result<(), Fail> {
     let port = host.port();
-    let label = match health.get("version").and_then(Value::as_str).filter(|v| !v.is_empty()) {
+    let label = match health
+        .get("version")
+        .and_then(Value::as_str)
+        .filter(|v| !v.is_empty())
+    {
         Some(v) => format!("v{v}"),
         None => "with no version (pre-upgrade)".to_owned(),
     };
@@ -246,7 +265,9 @@ fn stop_stale_daemon(host: &dyn Host, health: &Value) -> Result<(), Fail> {
     match host.terminate(pid) {
         Terminate::Sent | Terminate::Gone => {} // Gone: the port check below settles it
         Terminate::Error(e) => {
-            return fail(format!("could not stop the stale daemon (pid {pid}): {e} — stop it yourself and re-run"))
+            return fail(format!(
+                "could not stop the stale daemon (pid {pid}): {e} — stop it yourself and re-run"
+            ));
         }
     }
     if !wait_for_port_free(host) {
@@ -268,21 +289,29 @@ pub fn tui_main(host: &dyn Host) -> Result<i32, Fail> {
 
     let port = host.port();
     let health = host.fetch_health(750);
-    let stale = health.as_ref().is_some_and(|h| daemon_is_stale(h, host.version()));
+    let stale = health
+        .as_ref()
+        .is_some_and(|h| daemon_is_stale(h, host.version()));
     if let (true, Some(h)) = (stale, &health) {
         stop_stale_daemon(host, h)?;
     }
     let mut starting = None;
     if health.is_none() || stale {
         if !stale {
-            host.say(&format!("no daemon on port {port} — starting one (it outlives the TUI)"));
+            host.say(&format!(
+                "no daemon on port {port} — starting one (it outlives the TUI)"
+            ));
         }
         // No wait here: the TUI waits for /api/health itself, behind its
         // startup reveal, with the same 15s budget and failure message.
         starting = Some(host.spawn_daemon().map_err(Fail)?);
     }
-    host.run_tui(&tui, starting.as_ref())
-        .map_err(|e| Fail(format!("failed to start TUI binary at {}: {e}", tui.display())))
+    host.run_tui(&tui, starting.as_ref()).map_err(|e| {
+        Fail(format!(
+            "failed to start TUI binary at {}: {e}",
+            tui.display()
+        ))
+    })
 }
 
 // ── `claude-garage restart` ─────────────────────────────────────────────
@@ -301,37 +330,68 @@ fn display(v: Option<&Value>) -> String {
 fn wait_for_health_changed(host: &dyn Host, previous: Option<&Value>) -> bool {
     wait_for(host, 15_000, 250, || {
         let h = host.fetch_health(500)?;
-        (h.get("version").and_then(Value::as_str) == Some(host.version()) && h.get("pid") != previous).then_some(())
+        (h.get("version").and_then(Value::as_str) == Some(host.version())
+            && h.get("pid") != previous)
+            .then_some(())
     })
     .is_some()
 }
 
 fn restart_sessions(host: &dyn Host, force: bool) -> Result<(), Fail> {
     let reply = host
-        .post("/api/sessions/restart", Some(&json!({ "all": true, "force": force })))
+        .post(
+            "/api/sessions/restart",
+            Some(&json!({ "all": true, "force": force })),
+        )
         .map_err(|e| Fail(format!("session restart failed: {e}")))?;
     let body = &reply.body;
     if !reply.ok() {
-        let msg = body.get("error").and_then(Value::as_str).filter(|s| !s.is_empty());
-        return fail(msg.map_or_else(|| format!("session restart failed ({})", reply.status), str::to_owned));
+        let msg = body
+            .get("error")
+            .and_then(Value::as_str)
+            .filter(|s| !s.is_empty());
+        return fail(msg.map_or_else(
+            || format!("session restart failed ({})", reply.status),
+            str::to_owned,
+        ));
     }
-    let list = |k: &str| body.get(k).and_then(Value::as_array).cloned().unwrap_or_default();
+    let list = |k: &str| {
+        body.get(k)
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default()
+    };
     let (restarted, skipped, failed) = (list("restarted"), list("skipped"), list("failed"));
     for r in &restarted {
         let id = display(r.get("id"));
         if r.get("resumed").and_then(Value::as_bool).unwrap_or(false) {
             host.say(&format!("restarted {id} (resumed)"));
         } else {
-            host.say(&format!("restarted {id} (fresh — no conversation to resume)"));
+            host.say(&format!(
+                "restarted {id} (fresh — no conversation to resume)"
+            ));
         }
     }
     for s in &skipped {
-        host.say(&format!("skipped {} — {} (use --all to include)", display(s.get("id")), display(s.get("status"))));
+        host.say(&format!(
+            "skipped {} — {} (use --all to include)",
+            display(s.get("id")),
+            display(s.get("status"))
+        ));
     }
     for f in &failed {
-        host.say(&format!("failed {} — {}", display(f.get("id")), display(f.get("error"))));
+        host.say(&format!(
+            "failed {} — {}",
+            display(f.get("id")),
+            display(f.get("error"))
+        ));
     }
-    host.say(&format!("{} restarted, {} skipped, {} failed", restarted.len(), skipped.len(), failed.len()));
+    host.say(&format!(
+        "{} restarted, {} skipped, {} failed",
+        restarted.len(),
+        skipped.len(),
+        failed.len()
+    ));
     Ok(())
 }
 
@@ -351,20 +411,26 @@ pub fn restart_main(host: &dyn Host, sessions: bool, all: bool) -> Result<(), Fa
                 ));
             }
             if !wait_for_health_changed(host, before.get("pid")) {
-                return fail(format!("garage daemon did not come back up on port {port} within 15s of restarting"));
+                return fail(format!(
+                    "garage daemon did not come back up on port {port} within 15s of restarting"
+                ));
             }
         }
         None => {
             host.say(&format!("no daemon on port {port} — starting one"));
             host.spawn_daemon().map_err(Fail)?;
             if !wait_for_health(host) {
-                return fail(format!("claude-garage daemon did not come up on port {port}"));
+                return fail(format!(
+                    "claude-garage daemon did not come up on port {port}"
+                ));
             }
         }
     }
 
     let Some(after) = host.fetch_health(750) else {
-        return fail(format!("garage daemon on port {port} stopped answering right after restarting"));
+        return fail(format!(
+            "garage daemon on port {port} stopped answering right after restarting"
+        ));
     };
     host.say(&format!(
         "garage daemon restarted → v{} (pid {})",
@@ -442,7 +508,11 @@ mod tests {
             }
         }
         fn called(&self, prefix: &str) -> usize {
-            self.calls.borrow().iter().filter(|c| c.starts_with(prefix)).count()
+            self.calls
+                .borrow()
+                .iter()
+                .filter(|c| c.starts_with(prefix))
+                .count()
         }
         fn log(&self) -> Vec<String> {
             self.calls.borrow().clone()
@@ -485,14 +555,22 @@ mod tests {
             self.daemon.borrow().clone()
         }
         fn post(&self, path: &str, body: Option<&Value>) -> Result<Reply, String> {
-            self.calls.borrow_mut().push(format!("post {path} {}", body.map(Value::to_string).unwrap_or_default()));
+            self.calls.borrow_mut().push(format!(
+                "post {path} {}",
+                body.map(Value::to_string).unwrap_or_default()
+            ));
             if path == "/api/daemon/restart" {
                 if self.restart_swaps && self.restart_status == 200 {
                     *self.daemon.borrow_mut() = Some(health(Some(V), Some(222)));
                 }
-                return Ok(Reply { status: self.restart_status, body: json!({}) });
+                return Ok(Reply {
+                    status: self.restart_status,
+                    body: json!({}),
+                });
             }
-            self.sessions_reply.clone().ok_or_else(|| "connection refused".to_owned())
+            self.sessions_reply
+                .clone()
+                .ok_or_else(|| "connection refused".to_owned())
         }
         fn probe(&self, bin: &str, _args: &[&str]) -> Probe {
             self.calls.borrow_mut().push(format!("probe {bin}"));
@@ -510,7 +588,9 @@ mod tests {
             self.answer.to_owned()
         }
         fn run_inherit(&self, bin: &str, args: &[&str]) -> bool {
-            self.calls.borrow_mut().push(format!("run {bin} {}", args.join(" ")));
+            self.calls
+                .borrow_mut()
+                .push(format!("run {bin} {}", args.join(" ")));
             self.brew_install_ok
         }
         fn uses_tmux(&self) -> bool {
@@ -533,7 +613,11 @@ mod tests {
             if self.spawn_brings_up {
                 *self.daemon.borrow_mut() = Some(health(Some(V), Some(111)));
             }
-            Ok(Starting { log: PathBuf::from("/fake/daemon.log"), pid: 111, port: 4747 })
+            Ok(Starting {
+                log: PathBuf::from("/fake/daemon.log"),
+                pid: 111,
+                port: 4747,
+            })
         }
         fn sleep_ms(&self, ms: u64) {
             *self.sleeps.borrow_mut() += ms;
@@ -549,10 +633,14 @@ mod tests {
             }
         }
         fn run_tui(&self, bin: &Path, starting: Option<&Starting>) -> Result<i32, String> {
-            self.calls.borrow_mut().push(format!("run_tui {}", bin.display()));
+            self.calls
+                .borrow_mut()
+                .push(format!("run_tui {}", bin.display()));
             if let Some(s) = starting {
                 let env: Vec<String> = s.env().iter().map(|(k, v)| format!("{k}={v}")).collect();
-                self.calls.borrow_mut().push(format!("tui_env {}", env.join(" ")));
+                self.calls
+                    .borrow_mut()
+                    .push(format!("tui_env {}", env.join(" ")));
             }
             Ok(self.tui_exit)
         }
@@ -575,7 +663,15 @@ mod tests {
     fn health_pid_accepts_only_real_pids() {
         assert_eq!(health_pid(&json!({"pid": 4242})), Some(4242));
         assert_eq!(health_pid(&json!({"pid": "4242"})), Some(4242)); // Number("4242")
-        for bad in [json!({}), json!({"pid": 0}), json!({"pid": 1}), json!({"pid": -5}), json!({"pid": 1.5}), json!({"pid": null}), json!({"pid": "abc"})] {
+        for bad in [
+            json!({}),
+            json!({"pid": 0}),
+            json!({"pid": 1}),
+            json!({"pid": -5}),
+            json!({"pid": 1.5}),
+            json!({"pid": null}),
+            json!({"pid": "abc"}),
+        ] {
             assert_eq!(health_pid(&bad), None, "{bad}");
         }
     }
@@ -596,8 +692,18 @@ mod tests {
             assert_eq!(health_pid(&bad), None, "{bad}");
         }
         assert_eq!(health_pid(&json!({"pid": 2})), Some(2));
-        assert_eq!(health_pid(&json!({"pid": 2147483647u64})), Some(i32::MAX as u32));
-        for bad in ["2147483648\n", "4294967295\n", "0\n", "1\n", "-1\n", "1234.5\n"] {
+        assert_eq!(
+            health_pid(&json!({"pid": 2147483647u64})),
+            Some(i32::MAX as u32)
+        );
+        for bad in [
+            "2147483648\n",
+            "4294967295\n",
+            "0\n",
+            "1\n",
+            "-1\n",
+            "1234.5\n",
+        ] {
             assert_eq!(parse_listener_pid(bad), None, "{bad:?}");
         }
         assert_eq!(parse_listener_pid("2147483647\n"), Some(i32::MAX as u32));
@@ -621,7 +727,11 @@ mod tests {
         f.fetch_cost_ms = 1_000;
         assert!(restart_main(&f, false, false).is_err());
         assert!(*f.sleeps.borrow() < 15_000, "slept {}", f.sleeps.borrow());
-        assert!(f.now_ms() >= 15_000 && f.now_ms() < 15_000 + 1_000 + 250 + 1_000, "{}", f.now_ms());
+        assert!(
+            f.now_ms() >= 15_000 && f.now_ms() < 15_000 + 1_000 + 250 + 1_000,
+            "{}",
+            f.now_ms()
+        );
     }
 
     #[test]
@@ -657,14 +767,24 @@ mod tests {
 
     #[test]
     fn missing_tmux_on_a_tty_installs_only_after_an_explicit_yes() {
-        for (answer, installs) in [("y\n", true), (" YES \n", true), ("n\n", false), ("\n", false), ("yeah", false)] {
+        for (answer, installs) in [
+            ("y\n", true),
+            (" YES \n", true),
+            ("n\n", false),
+            ("\n", false),
+            ("yeah", false),
+        ] {
             let mut f = Fake::new(None);
             f.probes.insert("tmux", Probe::Missing);
             f.probes.insert("brew", Probe::Ok);
             f.interactive = true;
             f.answer = answer;
             let r = tui_main(&f);
-            assert_eq!(f.called("run brew install tmux"), usize::from(installs), "answer {answer:?}");
+            assert_eq!(
+                f.called("run brew install tmux"),
+                usize::from(installs),
+                "answer {answer:?}"
+            );
             assert_eq!(r.is_ok(), installs, "answer {answer:?}");
         }
     }
@@ -692,7 +812,12 @@ mod tests {
         let mut f = Fake::new(None);
         f.probes.insert("claude", Probe::Missing);
         let err = tui_main(&f).unwrap_err();
-        assert!(err.0.starts_with("claude not found — install: see https://docs.claude.com"), "{}", err.0);
+        assert!(
+            err.0
+                .starts_with("claude not found — install: see https://docs.claude.com"),
+            "{}",
+            err.0
+        );
         assert_eq!(f.called("spawn_daemon"), 0);
 
         let mut f = Fake::new(Some(health(Some(V), Some(7))));
@@ -708,8 +833,15 @@ mod tests {
         let f = Fake::new(None);
         assert_eq!(tui_main(&f), Ok(0));
         let log = f.log();
-        let pos = |s: &str| log.iter().position(|c| c == s).unwrap_or_else(|| panic!("{s} missing in {log:?}"));
-        assert!(pos("resolve_tui") < pos("spawn_daemon"), "binary is resolved before any daemon starts");
+        let pos = |s: &str| {
+            log.iter()
+                .position(|c| c == s)
+                .unwrap_or_else(|| panic!("{s} missing in {log:?}"))
+        };
+        assert!(
+            pos("resolve_tui") < pos("spawn_daemon"),
+            "binary is resolved before any daemon starts"
+        );
         assert!(pos("spawn_daemon") < pos("run_tui /fake/garage-wall"));
         assert_eq!(f.called("terminate"), 0);
         assert!(f.said()[0].starts_with("no daemon on port 4747 — starting one"));
@@ -748,11 +880,24 @@ mod tests {
         let log = f.log();
         assert!(log.contains(&"terminate 4242".to_owned()));
         assert_eq!(f.called("terminate"), 1);
-        assert_eq!(f.called("listener_pid"), 0, "port lookup is only the fallback");
-        assert!(log.iter().position(|c| c == "terminate 4242") < log.iter().position(|c| c == "spawn_daemon"));
+        assert_eq!(
+            f.called("listener_pid"),
+            0,
+            "port lookup is only the fallback"
+        );
+        assert!(
+            log.iter().position(|c| c == "terminate 4242")
+                < log.iter().position(|c| c == "spawn_daemon")
+        );
         let said = f.said();
-        assert!(said[0].contains("v0.5.0 is stale (launcher v9.9.9)"), "{said:?}");
-        assert!(said.iter().all(|l| !l.contains("no daemon on port")), "stale path does not claim there was no daemon");
+        assert!(
+            said[0].contains("v0.5.0 is stale (launcher v9.9.9)"),
+            "{said:?}"
+        );
+        assert!(
+            said.iter().all(|l| !l.contains("no daemon on port")),
+            "stale path does not claim there was no daemon"
+        );
     }
 
     #[test]
@@ -777,7 +922,12 @@ mod tests {
     fn an_unknown_pid_stops_the_launch_and_signals_nobody() {
         let f = Fake::new(Some(health(None, None))); // no listener either
         let err = tui_main(&f).unwrap_err();
-        assert!(err.0.starts_with("could not determine the stale daemon's pid"), "{}", err.0);
+        assert!(
+            err.0
+                .starts_with("could not determine the stale daemon's pid"),
+            "{}",
+            err.0
+        );
         assert!(err.0.contains("lsof -ti tcp:4747"));
         assert_eq!(f.called("terminate"), 0);
         assert_eq!(f.called("spawn_daemon"), 0);
@@ -796,7 +946,12 @@ mod tests {
         let f = Fake::new(Some(health(Some("0.5.0"), Some(4242))));
         *f.terminate.borrow_mut() = Terminate::Error("Operation not permitted".into());
         let err = tui_main(&f).unwrap_err();
-        assert!(err.0.contains("could not stop the stale daemon (pid 4242): Operation not permitted"), "{}", err.0);
+        assert!(
+            err.0
+                .contains("could not stop the stale daemon (pid 4242): Operation not permitted"),
+            "{}",
+            err.0
+        );
         assert_eq!(f.called("spawn_daemon"), 0);
     }
 
@@ -805,7 +960,12 @@ mod tests {
         let mut f = Fake::new(Some(health(Some("0.5.0"), Some(4242))));
         f.terminate_frees_port = false;
         let err = tui_main(&f).unwrap_err();
-        assert!(err.0.contains("port 4747 did not free up after stopping daemon pid 4242"), "{}", err.0);
+        assert!(
+            err.0
+                .contains("port 4747 did not free up after stopping daemon pid 4242"),
+            "{}",
+            err.0
+        );
         assert_eq!(f.called("spawn_daemon"), 0);
         assert_eq!(*f.sleeps.borrow(), 10_000);
     }
@@ -817,7 +977,11 @@ mod tests {
         // wall owns the wait (and the failure message).
         f.spawn_brings_up = false;
         assert_eq!(tui_main(&f), Ok(0));
-        assert_eq!(*f.sleeps.borrow(), 0, "no wait_for_health on the spawn path");
+        assert_eq!(
+            *f.sleeps.borrow(),
+            0,
+            "no wait_for_health on the spawn path"
+        );
         assert_eq!(*f.fetches.borrow(), 1, "only the initial probe");
         assert_eq!(
             f.log().last().unwrap(),
@@ -850,7 +1014,12 @@ mod tests {
         let mut f = Fake::new(Some(health(Some(V), Some(111))));
         f.restart_swaps = false;
         let err = restart_main(&f, false, false).unwrap_err();
-        assert!(err.0.contains("did not come back up on port 4747 within 15s"), "{}", err.0);
+        assert!(
+            err.0
+                .contains("did not come back up on port 4747 within 15s"),
+            "{}",
+            err.0
+        );
         assert_eq!(*f.sleeps.borrow(), 15_000);
 
         // new pid but an old version (mid-handoff) also does not count
@@ -866,7 +1035,11 @@ mod tests {
         f.restart_status = 404;
         let err = restart_main(&f, true, false).unwrap_err();
         assert!(err.0.starts_with("daemon restart request failed (404) — the running daemon (v0.4.0, pid 111) may predate this endpoint"), "{}", err.0);
-        assert_eq!(f.called("post /api/sessions/restart"), 0, "no session restarts after a failed daemon restart");
+        assert_eq!(
+            f.called("post /api/sessions/restart"),
+            0,
+            "no session restarts after a failed daemon restart"
+        );
     }
 
     #[test]
@@ -892,10 +1065,16 @@ mod tests {
                 }),
             });
             restart_main(&f, true, force).unwrap();
-            let want = format!("post /api/sessions/restart {}", json!({"all": true, "force": force}));
+            let want = format!(
+                "post /api/sessions/restart {}",
+                json!({"all": true, "force": force})
+            );
             assert!(f.log().contains(&want), "{:?}", f.log());
             let said = f.said();
-            assert_eq!(said[1], "daemon restarted — refreshing session status before restarting sessions");
+            assert_eq!(
+                said[1],
+                "daemon restarted — refreshing session status before restarting sessions"
+            );
             assert_eq!(
                 &said[2..],
                 [
@@ -912,11 +1091,20 @@ mod tests {
     #[test]
     fn restart_sessions_reports_the_daemons_error_body_or_the_status() {
         let mut f = Fake::new(Some(health(Some(V), Some(111))));
-        f.sessions_reply = Some(Reply { status: 500, body: json!({"error": "tmux gone"}) });
+        f.sessions_reply = Some(Reply {
+            status: 500,
+            body: json!({"error": "tmux gone"}),
+        });
         assert_eq!(restart_main(&f, true, false).unwrap_err().0, "tmux gone");
 
         let mut f = Fake::new(Some(health(Some(V), Some(111))));
-        f.sessions_reply = Some(Reply { status: 502, body: json!({}) });
-        assert_eq!(restart_main(&f, true, false).unwrap_err().0, "session restart failed (502)");
+        f.sessions_reply = Some(Reply {
+            status: 502,
+            body: json!({}),
+        });
+        assert_eq!(
+            restart_main(&f, true, false).unwrap_err().0,
+            "session restart failed (502)"
+        );
     }
 }

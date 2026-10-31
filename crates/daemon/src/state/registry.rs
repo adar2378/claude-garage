@@ -9,12 +9,12 @@
 //! One async mutex serialises read-modify-write cycles within the process.
 
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use garage_protocol::Worktree;
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 use tokio::sync::Mutex;
 
 pub const GARAGE_PREFIX: &str = "garage/";
@@ -119,7 +119,8 @@ impl Registry {
         ));
         let body = serde_json::to_string_pretty(state).map_err(std::io::Error::other)?;
         // state.json holds the hook token: owner-only, however it was created.
-        let res = crate::plugins::layout::write_private(&tmp, &body).and_then(|_| std::fs::rename(&tmp, &*self.path));
+        let res = crate::plugins::layout::write_private(&tmp, &body)
+            .and_then(|_| std::fs::rename(&tmp, &*self.path));
         if res.is_err() {
             let _ = std::fs::remove_file(&tmp);
         }
@@ -277,9 +278,10 @@ impl Registry {
         );
         let next = Value::Object(next);
         if let Some(e) = &existing
-            && serde_json::to_string(e).ok() == serde_json::to_string(&next).ok() {
-                return Ok(meta_of(e));
-            }
+            && serde_json::to_string(e).ok() == serde_json::to_string(&next).ok()
+        {
+            return Ok(meta_of(e));
+        }
         let meta = meta_of(&next);
         state["sessions"][id] = next;
         self.write(&state)?;
@@ -324,7 +326,10 @@ impl Registry {
     pub async fn list_closed(&self, workspace: &str) -> Vec<ClosedRecord> {
         let _g = self.lock.lock().await;
         let state = self.read();
-        let list = state.get("closed").and_then(|c| c.get(workspace)).and_then(Value::as_array);
+        let list = state
+            .get("closed")
+            .and_then(|c| c.get(workspace))
+            .and_then(Value::as_array);
         list.into_iter()
             .flatten()
             .rev()
@@ -352,7 +357,9 @@ impl Registry {
         let mut state = self.read();
         let (workspace, _) = crate::backend::tmux::split_session_id(id);
         let mut all = obj_of(&mut state, "closed");
-        let Some(Value::Array(list)) = all.get_mut(&workspace) else { return Ok(false) };
+        let Some(Value::Array(list)) = all.get_mut(&workspace) else {
+            return Ok(false);
+        };
         let before = list.len();
         list.retain(|r| r.get("id").and_then(Value::as_str) != Some(id));
         if list.len() == before {
@@ -380,7 +387,10 @@ impl Registry {
             return Ok(());
         }
         let prefix = format!("{GARAGE_PREFIX}{name}/");
-        state["sessions"].as_object_mut().unwrap().retain(|id, _| !id.starts_with(&prefix));
+        state["sessions"]
+            .as_object_mut()
+            .unwrap()
+            .retain(|id, _| !id.starts_with(&prefix));
         if let Some(closed) = state.get_mut("closed").and_then(Value::as_object_mut) {
             closed.shift_remove(name);
         }
@@ -741,7 +751,7 @@ mod tests {
         assert_eq!(t.len(), 64);
         assert!(t.bytes().all(|b| b.is_ascii_hexdigit()));
         assert_eq!(s.reg().get_hook_token().await.unwrap(), t); // fresh handle, same file
-                                                                // a short stored token is replaced
+        // a short stored token is replaced
         let mut raw = s.raw();
         raw["hookToken"] = json!("short");
         std::fs::write(s.0.join("state.json"), raw.to_string()).unwrap();
@@ -771,10 +781,17 @@ mod tests {
         let r = s.reg();
         r.get_hook_token().await.unwrap();
         let p = s.0.join("state.json");
-        assert_eq!(std::fs::metadata(&p).unwrap().permissions().mode() & 0o777, 0o600);
+        assert_eq!(
+            std::fs::metadata(&p).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
         std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o644)).unwrap();
         r.upsert_workspace("w", "/w").await.unwrap();
-        assert_eq!(std::fs::metadata(&p).unwrap().permissions().mode() & 0o777, 0o600, "tightened on the next write");
+        assert_eq!(
+            std::fs::metadata(&p).unwrap().permissions().mode() & 0o777,
+            0o600,
+            "tightened on the next write"
+        );
     }
 
     #[tokio::test]
@@ -782,14 +799,31 @@ mod tests {
         let s = Scratch::new();
         let r = s.reg();
         r.record_closed(closed("garage/w/a", 1)).await.unwrap();
-        assert_eq!(r.get_closed("garage/w/a").await.unwrap().claude_session_id.as_deref(), Some("c1"));
+        assert_eq!(
+            r.get_closed("garage/w/a")
+                .await
+                .unwrap()
+                .claude_session_id
+                .as_deref(),
+            Some("c1")
+        );
         assert_eq!(s.raw()["closed"]["w"][0]["claudeSessionId"], "c1");
         assert!(r.get_closed("garage/w/zzz").await.is_none());
         let mut raw = s.raw();
-        raw["closed"]["w"][0].as_object_mut().unwrap().remove("claudeSessionId");
+        raw["closed"]["w"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("claudeSessionId");
         std::fs::write(s.0.join("state.json"), raw.to_string()).unwrap();
-        assert_eq!(r.get_closed("garage/w/a").await.unwrap().claude_session_id, None);
-        assert_eq!(r.list_closed("w").await.len(), 1, "a record from before the field still lists");
+        assert_eq!(
+            r.get_closed("garage/w/a").await.unwrap().claude_session_id,
+            None
+        );
+        assert_eq!(
+            r.list_closed("w").await.len(),
+            1,
+            "a record from before the field still lists"
+        );
     }
 
     #[tokio::test]
@@ -798,17 +832,30 @@ mod tests {
         let r = s.reg();
         assert!(r.list_closed("w").await.is_empty());
         for i in 0..(CLOSED_LIMIT as i64 + 5) {
-            r.record_closed(closed(&format!("garage/w/s{i}"), i)).await.unwrap();
+            r.record_closed(closed(&format!("garage/w/s{i}"), i))
+                .await
+                .unwrap();
         }
         r.record_closed(closed("garage/other/x", 1)).await.unwrap();
         let list = r.list_closed("w").await;
         assert_eq!(list.len(), CLOSED_LIMIT);
-        assert_eq!(list[0].id, format!("garage/w/s{}", CLOSED_LIMIT + 4), "newest first");
-        assert_eq!(list.last().unwrap().id, "garage/w/s5", "the five oldest were dropped");
+        assert_eq!(
+            list[0].id,
+            format!("garage/w/s{}", CLOSED_LIMIT + 4),
+            "newest first"
+        );
+        assert_eq!(
+            list.last().unwrap().id,
+            "garage/w/s5",
+            "the five oldest were dropped"
+        );
         // the same id again replaces the old record instead of duplicating it
         r.record_closed(closed("garage/w/s10", 999)).await.unwrap();
         let list = r.list_closed("w").await;
-        assert_eq!((list.len(), list[0].id.as_str(), list[0].closed_at), (CLOSED_LIMIT, "garage/w/s10", 999));
+        assert_eq!(
+            (list.len(), list[0].id.as_str(), list[0].closed_at),
+            (CLOSED_LIMIT, "garage/w/s10", 999)
+        );
         assert_eq!(r.list_closed("other").await.len(), 1);
     }
 
@@ -824,8 +871,15 @@ mod tests {
         assert!(!r.remove_closed("garage/none/z").await.unwrap());
         assert_eq!(r.list_closed("w").await.len(), 1);
         assert!(r.remove_closed("garage/w/b").await.unwrap());
-        assert!(s.raw()["closed"].as_object().unwrap().is_empty(), "an empty workspace entry is dropped");
-        assert_eq!(s.raw()["hookToken"].as_str().map(str::len), Some(64), "other keys untouched");
+        assert!(
+            s.raw()["closed"].as_object().unwrap().is_empty(),
+            "an empty workspace entry is dropped"
+        );
+        assert_eq!(
+            s.raw()["hookToken"].as_str().map(str::len),
+            Some(64),
+            "other keys untouched"
+        );
     }
 
     #[tokio::test]
@@ -838,7 +892,10 @@ mod tests {
         r.record_closed(closed("garage/gone/b", 1)).await.unwrap();
         r.rename_workspace("old", "new").await.unwrap();
         let moved = r.list_closed("new").await;
-        assert_eq!((moved[0].id.as_str(), moved[0].workspace.as_str()), ("garage/new/a", "new"));
+        assert_eq!(
+            (moved[0].id.as_str(), moved[0].workspace.as_str()),
+            ("garage/new/a", "new")
+        );
         assert!(r.list_closed("old").await.is_empty());
         r.remove_workspace("gone").await.unwrap();
         assert!(r.list_closed("gone").await.is_empty());

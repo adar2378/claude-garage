@@ -341,7 +341,10 @@ pub struct Release {
 /// Lowercase hex sha256, for `manifestSha256` in `plugins.json`.
 pub fn sha256_hex(bytes: &[u8]) -> String {
     use sha2::{Digest, Sha256};
-    Sha256::digest(bytes).iter().map(|b| format!("{b:02x}")).collect()
+    Sha256::digest(bytes)
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
 }
 
 pub const DEFAULT_ACTION_TIMEOUT_SECS: u32 = 30;
@@ -354,7 +357,10 @@ impl Manifest {
     }
 
     pub fn permission_names(&self) -> Vec<String> {
-        self.permissions.iter().map(|p| p.as_str().to_owned()).collect()
+        self.permissions
+            .iter()
+            .map(|p| p.as_str().to_owned())
+            .collect()
     }
 
     pub fn action(&self, id: &str) -> Option<&Action> {

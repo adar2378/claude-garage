@@ -156,6 +156,14 @@ impl AppState {
             context: self.telemetry.context.clone(),
             transcripts: self.telemetry.transcripts.clone(),
         };
-        Arc::new(Poller::new(self.backend.clone(), agents, Arc::new(sink), self.bus.clone()).with_intents(self.closing.clone()))
+        Arc::new(
+            Poller::new(
+                self.backend.clone(),
+                agents,
+                Arc::new(sink),
+                self.bus.clone(),
+            )
+            .with_intents(self.closing.clone()),
+        )
     }
 }

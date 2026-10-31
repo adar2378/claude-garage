@@ -33,16 +33,27 @@ pub(super) fn fetch_and_send(client: &GarageClient, tx: &EventSender) {
 /// frame, reconnect). The listing goes first: widget content of a plugin the
 /// listing does not call active is ignored.
 fn fetch_plugins_full(client: &GarageClient, tx: &EventSender, revs: &RefCell<RevTracker>) {
-    let Ok(list) = client.fetch_plugins() else { return };
+    let Ok(list) = client.fetch_plugins() else {
+        return;
+    };
     let _ = tx.send(AppEvent::Plugins(list));
     if let Ok(snapshot) = client.fetch_plugin_widgets(None) {
-        revs.borrow_mut().record_all(snapshot.plugins.iter().map(|(id, w)| (id.clone(), w.rev)));
-        let _ = tx.send(AppEvent::PluginWidgets { snapshot, full: true });
+        revs.borrow_mut()
+            .record_all(snapshot.plugins.iter().map(|(id, w)| (id.clone(), w.rev)));
+        let _ = tx.send(AppEvent::PluginWidgets {
+            snapshot,
+            full: true,
+        });
     }
 }
 
 /// The plugin-host SSE frames. Returns false for a frame it does not know.
-fn plugin_frame(event: &crate::api::sse::SseEvent, client: &GarageClient, tx: &EventSender, revs: &RefCell<RevTracker>) -> bool {
+fn plugin_frame(
+    event: &crate::api::sse::SseEvent,
+    client: &GarageClient,
+    tx: &EventSender,
+    revs: &RefCell<RevTracker>,
+) -> bool {
     let data: Value = serde_json::from_str(&event.data).unwrap_or(Value::Null);
     let text = |k: &str| data.get(k).and_then(Value::as_str).map(str::to_owned);
     match event.event.as_str() {
@@ -51,14 +62,24 @@ fn plugin_frame(event: &crate::api::sse::SseEvent, client: &GarageClient, tx: &E
             fetch_plugins_full(client, tx, revs);
         }
         "widgets" => {
-            let (Some(plugin), Some(rev)) = (text("plugin"), data.get("rev").and_then(Value::as_u64)) else { return true };
+            let (Some(plugin), Some(rev)) =
+                (text("plugin"), data.get("rev").and_then(Value::as_u64))
+            else {
+                return true;
+            };
             let news = revs.borrow().should_fetch(&plugin, rev);
             if news {
                 // The rev counts as held only once its content arrived; a failed
                 // fetch leaves it unseen so the next frame asks again.
                 if let Ok(snapshot) = client.fetch_plugin_widgets(Some(&plugin)) {
-                    revs.borrow_mut().fetched(&plugin, snapshot.plugins.get(&plugin).map_or(rev, |w| w.rev));
-                    let _ = tx.send(AppEvent::PluginWidgets { snapshot, full: false });
+                    revs.borrow_mut().fetched(
+                        &plugin,
+                        snapshot.plugins.get(&plugin).map_or(rev, |w| w.rev),
+                    );
+                    let _ = tx.send(AppEvent::PluginWidgets {
+                        snapshot,
+                        full: false,
+                    });
                 }
             }
         }
@@ -79,9 +100,15 @@ fn plugin_frame(event: &crate::api::sse::SseEvent, client: &GarageClient, tx: &E
             }
         }
         "pane" => {
-            let Some(session) = text("session") else { return true };
+            let Some(session) = text("session") else {
+                return true;
+            };
             if data.get("open").and_then(Value::as_bool) == Some(true) {
-                if let Some(pane) = client.fetch_plugin_panes().ok().and_then(|r| r.panes.into_iter().find(|p| p.session == session)) {
+                if let Some(pane) = client
+                    .fetch_plugin_panes()
+                    .ok()
+                    .and_then(|r| r.panes.into_iter().find(|p| p.session == session))
+                {
                     let _ = tx.send(AppEvent::PaneOpened(pane));
                 }
             } else {
@@ -95,7 +122,11 @@ fn plugin_frame(event: &crate::api::sse::SseEvent, client: &GarageClient, tx: &E
 
 /// Terminal input → channel. Poll-based so the `stop` flag is honored
 /// promptly at shutdown.
-pub(super) fn spawn_input_task(rt: &tokio::runtime::Runtime, tx: EventSender, stop: Arc<AtomicBool>) {
+pub(super) fn spawn_input_task(
+    rt: &tokio::runtime::Runtime,
+    tx: EventSender,
+    stop: Arc<AtomicBool>,
+) {
     rt.spawn_blocking(move || {
         while !stop.load(Ordering::Relaxed) {
             match crossterm::event::poll(Duration::from_millis(100)) {
@@ -196,27 +227,28 @@ pub(super) fn spawn_sse_task(
             move |event: crate::api::sse::SseEvent| match event.event.as_str() {
                 "status" => {
                     if let Ok(v) = serde_json::from_str::<Value>(&event.data)
-                        && let Some(id) = v.get("id").and_then(Value::as_str) {
-                            let status = v
-                                .get("status")
-                                .and_then(Value::as_str)
-                                .unwrap_or("idle")
-                                .to_owned();
-                            let needs_input = status == "needs-input";
-                            let _ = tx.send(AppEvent::Status {
-                                id: id.to_owned(),
-                                status,
-                                since: v.get("since").and_then(Value::as_i64),
-                            });
-                            // The status event carries no notification text;
-                            // a needs-input transition's `message` only
-                            // exists on the listing, so pull it — the triage
-                            // queue must show the daemon's question (spec
-                            // tui-triage "Question text shown").
-                            if needs_input {
-                                refetch(client);
-                            }
+                        && let Some(id) = v.get("id").and_then(Value::as_str)
+                    {
+                        let status = v
+                            .get("status")
+                            .and_then(Value::as_str)
+                            .unwrap_or("idle")
+                            .to_owned();
+                        let needs_input = status == "needs-input";
+                        let _ = tx.send(AppEvent::Status {
+                            id: id.to_owned(),
+                            status,
+                            since: v.get("since").and_then(Value::as_i64),
+                        });
+                        // The status event carries no notification text;
+                        // a needs-input transition's `message` only
+                        // exists on the listing, so pull it — the triage
+                        // queue must show the daemon's question (spec
+                        // tui-triage "Question text shown").
+                        if needs_input {
+                            refetch(client);
                         }
+                    }
                 }
                 "sessions" => refetch(client),
                 _ => {
@@ -288,10 +320,19 @@ mod tests {
         let client = GarageClient::new(Some("http://127.0.0.1:1".into()));
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
         let revs = RefCell::new(RevTracker::default());
-        let frame = SseEvent { event: "widgets".into(), data: r#"{"plugin":"bt","rev":3}"#.into() };
+        let frame = SseEvent {
+            event: "widgets".into(),
+            data: r#"{"plugin":"bt","rev":3}"#.into(),
+        };
         assert!(plugin_frame(&frame, &client, &tx, &revs));
-        assert!(rx.try_recv().is_err(), "nothing was fetched, so nothing is applied");
-        assert!(revs.borrow().should_fetch("bt", 3), "the rev is not remembered after a failed fetch");
+        assert!(
+            rx.try_recv().is_err(),
+            "nothing was fetched, so nothing is applied"
+        );
+        assert!(
+            revs.borrow().should_fetch("bt", 3),
+            "the rev is not remembered after a failed fetch"
+        );
         // Once the content really arrived the same rev is news no more.
         revs.borrow_mut().fetched("bt", 3);
         assert!(!revs.borrow().should_fetch("bt", 3));

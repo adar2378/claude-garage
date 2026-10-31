@@ -425,7 +425,10 @@ pub enum AttachSpec {
 /// The tmux socket-name rule shared by the daemon (what it may advertise) and
 /// the TUI (what it will pass to `tmux -L`).
 pub fn is_valid_tmux_socket(name: &str) -> bool {
-    (1..=64).contains(&name.len()) && name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
+    (1..=64).contains(&name.len())
+        && name
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
 }
 
 #[cfg(test)]
@@ -445,7 +448,16 @@ mod tests {
         for ok in ["t1", "gt123-0-abc", "A_b-9", &"a".repeat(64)] {
             assert!(is_valid_tmux_socket(ok), "{ok}");
         }
-        for bad in ["", "a b", "../x", "/tmp/s", "a;rm", "é", "a\nb", &"a".repeat(65)] {
+        for bad in [
+            "",
+            "a b",
+            "../x",
+            "/tmp/s",
+            "a;rm",
+            "é",
+            "a\nb",
+            &"a".repeat(65),
+        ] {
             assert!(!is_valid_tmux_socket(bad), "{bad:?}");
         }
     }
@@ -488,7 +500,9 @@ mod tests {
 
     #[test]
     fn delete_meta_response_keeps_meta_flag_only_when_set() {
-        roundtrip::<DeleteSessionResponse>(json!({"deleted": true, "meta": true, "worktree": null}));
+        roundtrip::<DeleteSessionResponse>(
+            json!({"deleted": true, "meta": true, "worktree": null}),
+        );
         roundtrip::<DeleteSessionResponse>(json!({
             "deleted": true,
             "worktree": {"path": "/g/worktrees/ws/fix", "branch": "garage/fix",

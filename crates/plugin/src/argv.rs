@@ -61,7 +61,12 @@ mod tests {
     use super::*;
 
     fn vars<'a>(dir: &'a Path, state: &'a Path) -> Vars<'a> {
-        Vars { plugin_id: "usage-bar", plugin_dir: dir, state_dir: state, platform: "macos-aarch64" }
+        Vars {
+            plugin_id: "usage-bar",
+            plugin_dir: dir,
+            state_dir: state,
+            platform: "macos-aarch64",
+        }
     }
 
     #[test]
@@ -96,7 +101,10 @@ mod tests {
     fn dot_slash_programs_resolve_into_the_plugin_dir_others_do_not() {
         let d = Path::new("/p/x");
         assert_eq!(resolve_program("./run.sh", d), PathBuf::from("/p/x/run.sh"));
-        assert_eq!(resolve_program("/usr/bin/env", d), PathBuf::from("/usr/bin/env"));
+        assert_eq!(
+            resolve_program("/usr/bin/env", d),
+            PathBuf::from("/usr/bin/env")
+        );
         assert_eq!(resolve_program("python3", d), PathBuf::from("python3"));
     }
 

@@ -114,7 +114,11 @@ fn disarming_the_restart_drops_the_force_bit_too() {
     armed.press(&id("a", "one"), true, 1000);
     armed.disarm();
     assert_eq!(armed.armed_id(), None);
-    assert_eq!(armed.press(&id("a", "one"), false, 1100), None, "from scratch");
+    assert_eq!(
+        armed.press(&id("a", "one"), false, 1100),
+        None,
+        "from scratch"
+    );
     assert_eq!(armed.press(&id("a", "one"), false, 1200), Some(false));
 }
 

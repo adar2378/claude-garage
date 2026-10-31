@@ -12,7 +12,7 @@ use crate::backend::SessionBackend;
 use crate::bus::DaemonEvent;
 use crate::poller::{AgentSource, CommandAgents};
 use crate::test_support::TestTmux;
-use crate::{app, AppState, Config};
+use crate::{AppState, Config, app};
 
 #[tokio::test]
 async fn notification_hook_flows_through_real_adapters() {

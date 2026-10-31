@@ -10,26 +10,50 @@ use std::time::Duration;
 use async_trait::async_trait;
 use tokio::process::Command;
 
-use super::{spawn_detached, Os, OsError};
+use super::{Os, OsError, spawn_detached};
 
 pub const PICKER_TIMEOUT: Duration = Duration::from_secs(120);
 const TITLE: &str = "Add claude-garage workspace";
 
 /// `notify-send <title> <body>`; `--` keeps a title starting with `-` a title.
 pub fn notify_args(title: &str, body: &str) -> Vec<String> {
-    vec!["--app-name=claude-garage".into(), "--".into(), title.into(), body.into()]
+    vec![
+        "--app-name=claude-garage".into(),
+        "--".into(),
+        title.into(),
+        body.into(),
+    ]
 }
 
 /// The pickers to try, in order: (program, args).
 pub fn picker_commands() -> Vec<(&'static str, Vec<String>)> {
     vec![
-        ("zenity", vec!["--file-selection".into(), "--directory".into(), format!("--title={TITLE}")]),
-        ("kdialog", vec!["--getexistingdirectory".into(), ".".into(), "--title".into(), TITLE.into()]),
+        (
+            "zenity",
+            vec![
+                "--file-selection".into(),
+                "--directory".into(),
+                format!("--title={TITLE}"),
+            ],
+        ),
+        (
+            "kdialog",
+            vec![
+                "--getexistingdirectory".into(),
+                ".".into(),
+                "--title".into(),
+                TITLE.into(),
+            ],
+        ),
     ]
 }
 
 /// Both pickers exit 0 with the path, and 1 with no output when cancelled.
-pub fn interpret_picker(code: Option<i32>, stdout: &str, stderr: &str) -> Result<Option<PathBuf>, OsError> {
+pub fn interpret_picker(
+    code: Option<i32>,
+    stdout: &str,
+    stderr: &str,
+) -> Result<Option<PathBuf>, OsError> {
     match code {
         Some(0) => {
             let dir = stdout.trim_end_matches(['\n', '\r']);
@@ -38,7 +62,11 @@ pub fn interpret_picker(code: Option<i32>, stdout: &str, stderr: &str) -> Result
         Some(1) if stderr.trim().is_empty() => Ok(None),
         _ => {
             let detail = stderr.trim();
-            Err(OsError::Failed(if detail.is_empty() { "folder picker failed".into() } else { detail.to_owned() }))
+            Err(OsError::Failed(if detail.is_empty() {
+                "folder picker failed".into()
+            } else {
+                detail.to_owned()
+            }))
         }
     }
 }
@@ -65,7 +93,9 @@ impl Os for LinuxOs {
     async fn pick_directory(&self) -> Result<Option<PathBuf>, OsError> {
         for (program, args) in picker_commands() {
             let mut cmd = Command::new(program);
-            cmd.args(args).stdin(std::process::Stdio::null()).kill_on_drop(true);
+            cmd.args(args)
+                .stdin(std::process::Stdio::null())
+                .kill_on_drop(true);
             let out = match tokio::time::timeout(PICKER_TIMEOUT, cmd.output()).await {
                 Ok(Ok(out)) => out,
                 Ok(Err(e)) if e.kind() == std::io::ErrorKind::NotFound => continue,
@@ -96,7 +126,10 @@ mod tests {
 
     #[test]
     fn notify_send_gets_title_and_body_after_a_double_dash() {
-        assert_eq!(notify_args("-t", "b"), ["--app-name=claude-garage", "--", "-t", "b"]);
+        assert_eq!(
+            notify_args("-t", "b"),
+            ["--app-name=claude-garage", "--", "-t", "b"]
+        );
     }
 
     #[test]
@@ -109,11 +142,22 @@ mod tests {
 
     #[test]
     fn picker_exit_codes_map_to_path_cancel_or_error() {
-        assert_eq!(interpret_picker(Some(0), "/home/me/proj\n", "").unwrap(), Some(PathBuf::from("/home/me/proj")));
+        assert_eq!(
+            interpret_picker(Some(0), "/home/me/proj\n", "").unwrap(),
+            Some(PathBuf::from("/home/me/proj"))
+        );
         assert_eq!(interpret_picker(Some(0), "\n", "").unwrap(), None);
         assert_eq!(interpret_picker(Some(1), "", "").unwrap(), None, "cancel");
-        assert!(matches!(interpret_picker(Some(1), "", "no display"), Err(OsError::Failed(m)) if m == "no display"));
-        assert!(matches!(interpret_picker(None, "", ""), Err(OsError::Failed(_))), "killed by a signal");
-        assert!(matches!(interpret_picker(Some(5), "", ""), Err(OsError::Failed(_))));
+        assert!(
+            matches!(interpret_picker(Some(1), "", "no display"), Err(OsError::Failed(m)) if m == "no display")
+        );
+        assert!(
+            matches!(interpret_picker(None, "", ""), Err(OsError::Failed(_))),
+            "killed by a signal"
+        );
+        assert!(matches!(
+            interpret_picker(Some(5), "", ""),
+            Err(OsError::Failed(_))
+        ));
     }
 }

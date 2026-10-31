@@ -9,7 +9,7 @@ use crate::runtime::{NoticeKind, Notices};
 use crate::slots::{SlotCtx, SlotItem, SlotProvider};
 use crate::state::wall_state::WallState;
 use crate::ui::pet::{self, PetClick};
-use crate::ui::strip::{pet_slot_item, PetRender};
+use crate::ui::strip::{PetRender, pet_slot_item};
 
 /// A tiny xorshift64 PRNG (the pet module takes time and randomness
 /// injected as `rng: &mut impl FnMut() -> f64`; this is the one concrete
@@ -166,9 +166,10 @@ impl PetHost {
     fn local_hour(&mut self, now: i64) -> u8 {
         let minute_bucket = now.div_euclid(60_000);
         if let Some((bucket, hour)) = self.local_hour_cache
-            && bucket == minute_bucket {
-                return hour;
-            }
+            && bucket == minute_bucket
+        {
+            return hour;
+        }
         let hour = std::process::Command::new("date")
             .arg("+%H")
             .output()
@@ -202,11 +203,14 @@ impl PetHost {
         }
         self.next_tick_ms = now + 300;
 
-        let usage_pct_max = [state.usage.five_hour.as_ref(), state.usage.seven_day.as_ref()]
-            .into_iter()
-            .flatten()
-            .map(|w| w.used_percentage.min(u32::from(u8::MAX)) as u8)
-            .max();
+        let usage_pct_max = [
+            state.usage.five_hour.as_ref(),
+            state.usage.seven_day.as_ref(),
+        ]
+        .into_iter()
+        .flatten()
+        .map(|w| w.used_percentage.min(u32::from(u8::MAX)) as u8)
+        .max();
         let (daemon_live, blocked, any_working, session_count) = (
             state.daemon_live,
             state.blocked_count(),
@@ -219,7 +223,11 @@ impl PetHost {
         // against a zero-width filler and hiding the pet before it's ever
         // been seen. Minus the strip's two gutter columns (see
         // `strip_line`), so the sim's clamp and the paint's clamp agree.
-        let filler_width = if strip_filler > 0 { strip_filler.saturating_sub(2) } else { 20 };
+        let filler_width = if strip_filler > 0 {
+            strip_filler.saturating_sub(2)
+        } else {
+            20
+        };
 
         let mut rng_state = self.rng;
         let mut rng = || xorshift_next(&mut rng_state);
@@ -235,7 +243,8 @@ impl PetHost {
         );
         self.rng = rng_state;
 
-        let just_celebrated = self.mood != pet::Mood::Celebrate && result.mood == pet::Mood::Celebrate;
+        let just_celebrated =
+            self.mood != pet::Mood::Celebrate && result.mood == pet::Mood::Celebrate;
         let just_back_live = !self.prev_daemon_live && daemon_live;
         self.mood = result.mood;
         self.prev_daemon_live = daemon_live;
@@ -270,9 +279,10 @@ impl PetHost {
         let line = self.chatter.next_line(species, &ctx, &mut rng);
         self.rng = rng_state;
         if let Some(line) = line
-            && notices.show_pet(line, 4000, now) {
-                dirty = true;
-            }
+            && notices.show_pet(line, 4000, now)
+        {
+            dirty = true;
+        }
 
         dirty
     }
@@ -318,9 +328,15 @@ mod tests {
         assert!(host.strip_render(&notices, 1_000).is_none());
 
         let on = store_with_blocked(Some("cat"));
-        assert!(host.tick(1_000, on.state(), &mut notices, 40), "first tick is dirty");
+        assert!(
+            host.tick(1_000, on.state(), &mut notices, 40),
+            "first tick is dirty"
+        );
         assert!(host.strip_render(&notices, 1_000).is_some());
-        assert!(!host.tick(1_100, on.state(), &mut notices, 40), "300 ms gate holds");
+        assert!(
+            !host.tick(1_100, on.state(), &mut notices, 40),
+            "300 ms gate holds"
+        );
 
         // Turning it off clears the render once, then stays quiet.
         assert!(host.tick(2_000, off.state(), &mut notices, 40));
@@ -334,35 +350,56 @@ mod tests {
         let on = store_with_blocked(Some("cat"));
         host.tick(1_000, on.state(), &mut notices, 40);
         // A blocked session makes the effective mood Alert.
-        assert_eq!(host.click(1_100, on.state(), &mut notices), PetClick::JumpToBlocked);
+        assert_eq!(
+            host.click(1_100, on.state(), &mut notices),
+            PetClick::JumpToBlocked
+        );
 
         let mut calm = PetHost::new(0).unwrap();
-        assert_eq!(calm.click(1_100, on.state(), &mut notices), PetClick::Handled);
+        assert_eq!(
+            calm.click(1_100, on.state(), &mut notices),
+            PetClick::Handled
+        );
         let off = store_with_blocked(None);
-        assert_eq!(calm.click(1_200, off.state(), &mut notices), PetClick::Handled);
+        assert_eq!(
+            calm.click(1_200, off.state(), &mut notices),
+            PetClick::Handled
+        );
     }
 
     #[test]
     fn the_published_frame_reaches_the_strip_through_the_slot_provider_with_a_click_range() {
-        use crate::slots::{SlotId, SlotRegistry};
         use crate::actions::ids;
+        use crate::slots::{SlotId, SlotRegistry};
         let mut host = PetHost::new(0).unwrap();
         let mut slots = SlotRegistry::core();
         slots.register(SlotId::StripRight, host.slot_provider().unwrap());
         let mut notices = Notices::default();
         let on = store_with_blocked(Some("cat"));
-        let strip = |slots: &SlotRegistry| crate::ui::strip::strip_line(on.state(), slots, None, 160);
+        let strip =
+            |slots: &SlotRegistry| crate::ui::strip::strip_line(on.state(), slots, None, 160);
 
         // Nothing published yet: no pet, no click range.
-        assert!(strip(&slots).slots.iter().all(|(_, t)| t.action != ids::PET_PET));
+        assert!(
+            strip(&slots)
+                .slots
+                .iter()
+                .all(|(_, t)| t.action != ids::PET_PET)
+        );
 
         host.tick(1_000, on.state(), &mut notices, 100);
         host.publish_frame(&notices, 1_000);
         let line = strip(&slots);
-        let (range, _) = line.slots.iter().find(|(_, t)| t.action == ids::PET_PET).expect("pet is clickable");
+        let (range, _) = line
+            .slots
+            .iter()
+            .find(|(_, t)| t.action == ids::PET_PET)
+            .expect("pet is clickable");
         assert_eq!(
             usize::from(range.end - range.start),
-            host.strip_render(&notices, 1_000).map(|p| p.text.chars().count() + if p.bang { 2 } else { 0 }).unwrap(),
+            host.strip_render(&notices, 1_000)
+                .map(|p| p.text.chars().count() + if p.bang { 2 } else { 0 })
+                .unwrap(),
             "the item is exactly as wide as the sprite plus its bang column"
         );
 
@@ -370,7 +407,12 @@ mod tests {
         let off = store_with_blocked(None);
         host.tick(2_000, off.state(), &mut notices, 100);
         host.publish_frame(&notices, 2_000);
-        assert!(strip(&slots).slots.iter().all(|(_, t)| t.action != ids::PET_PET));
+        assert!(
+            strip(&slots)
+                .slots
+                .iter()
+                .all(|(_, t)| t.action != ids::PET_PET)
+        );
     }
 
     #[test]

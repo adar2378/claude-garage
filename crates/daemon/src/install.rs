@@ -25,7 +25,11 @@ pub fn claude_home(garage_claude_home: Option<&str>, home: Option<&str>) -> Path
 pub fn claude_home_from_env() -> PathBuf {
     claude_home(
         std::env::var("GARAGE_CLAUDE_HOME").ok().as_deref(),
-        std::env::var("HOME").ok().filter(|h| !h.is_empty()).or_else(|| std::env::var("USERPROFILE").ok()).as_deref(),
+        std::env::var("HOME")
+            .ok()
+            .filter(|h| !h.is_empty())
+            .or_else(|| std::env::var("USERPROFILE").ok())
+            .as_deref(),
     )
 }
 
@@ -68,8 +72,11 @@ pub async fn read_settings_or_refuse(path: &Path) -> Result<Settings, InstallErr
             Ok(_) => {
                 return Err(InstallError::new(
                     422,
-                    format!("{} is not a JSON object — the file was left untouched", path.display()),
-                ))
+                    format!(
+                        "{} is not a JSON object — the file was left untouched",
+                        path.display()
+                    ),
+                ));
             }
             Err(_) => {
                 return Err(InstallError::new(
@@ -78,7 +85,7 @@ pub async fn read_settings_or_refuse(path: &Path) -> Result<Settings, InstallErr
                         "{} is not valid JSON — fix it (or remove it) and retry; the file was left untouched",
                         path.display()
                     ),
-                ))
+                ));
             }
         }
     }
@@ -247,14 +254,18 @@ mod tests {
             .await
             .unwrap();
 
-        assert!(std::fs::symlink_metadata(&link)
-            .unwrap()
-            .file_type()
-            .is_symlink());
+        assert!(
+            std::fs::symlink_metadata(&link)
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
         assert_eq!(std::fs::read_link(&link).unwrap(), target);
-        assert!(std::fs::read_to_string(&target)
-            .unwrap()
-            .contains("\"a\": 1"));
+        assert!(
+            std::fs::read_to_string(&target)
+                .unwrap()
+                .contains("\"a\": 1")
+        );
     }
 
     #[cfg(unix)]

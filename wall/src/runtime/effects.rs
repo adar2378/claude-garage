@@ -78,12 +78,21 @@ pub enum Effect {
     RestartDaemon,
     /// A plugin action: `POST /api/plugins/{plugin}/actions/{action}/run`
     /// with the UI token. `body` is the run context (focus and trigger).
-    RunPluginAction { plugin: String, action: String, body: serde_json::Value },
+    RunPluginAction {
+        plugin: String,
+        action: String,
+        body: serde_json::Value,
+    },
     /// An action that opens one of the plugin's panes. The pane itself
     /// arrives as an SSE `pane` frame.
     /// `human`: a person's key or click asked for it (so the pane it opens may
     /// take the screen); a plugin's own request opens it unseen.
-    OpenPluginPane { plugin: String, pane: String, body: serde_json::Value, human: bool },
+    OpenPluginPane {
+        plugin: String,
+        pane: String,
+        body: serde_json::Value,
+        human: bool,
+    },
     /// The user closed a plugin pane: `DELETE /api/plugins/{plugin}/panes/{pane}`.
     ClosePluginPane { plugin: String, pane: String },
 }
@@ -269,7 +278,11 @@ pub(super) fn run_effect(effect: Effect, tx: &EventSender, base_url: &str) {
                         Some("could not reach the daemon — try again or keep".to_owned())
                     }
                 };
-                let _ = tx.send(AppEvent::WorktreeFinishSettled { record, action, error });
+                let _ = tx.send(AppEvent::WorktreeFinishSettled {
+                    record,
+                    action,
+                    error,
+                });
             }
             Effect::OpenWindow { id, label } => match crate::ui::window_open::launch(&id) {
                 Ok(()) => send_notice(&tx, format!("opened {label} in a new window"), 3000),
@@ -312,19 +325,37 @@ pub(super) fn run_effect(effect: Effect, tx: &EventSender, base_url: &str) {
                 Ok(_pid) => {}
                 Err(e) => send_notice(&tx, failure_notice("daemon restart failed", &e), 5000),
             },
-            Effect::RunPluginAction { plugin, action, body } => {
+            Effect::RunPluginAction {
+                plugin,
+                action,
+                body,
+            } => {
                 if let Err(e) = client.run_plugin_action(&plugin, &action, &body) {
-                    send_notice(&tx, failure_notice(&format!("{plugin}: {action} failed"), &e), 5000);
+                    send_notice(
+                        &tx,
+                        failure_notice(&format!("{plugin}: {action} failed"), &e),
+                        5000,
+                    );
                 }
             }
-            Effect::OpenPluginPane { plugin, pane, body, .. } => {
+            Effect::OpenPluginPane {
+                plugin, pane, body, ..
+            } => {
                 if let Err(e) = client.open_plugin_pane(&plugin, &pane, &body) {
-                    send_notice(&tx, failure_notice(&format!("{plugin}: cannot open {pane}"), &e), 5000);
+                    send_notice(
+                        &tx,
+                        failure_notice(&format!("{plugin}: cannot open {pane}"), &e),
+                        5000,
+                    );
                 }
             }
             Effect::ClosePluginPane { plugin, pane } => {
                 if let Err(e) = client.close_plugin_pane(&plugin, &pane) {
-                    send_notice(&tx, failure_notice(&format!("{plugin}: cannot close {pane}"), &e), 4000);
+                    send_notice(
+                        &tx,
+                        failure_notice(&format!("{plugin}: cannot close {pane}"), &e),
+                        4000,
+                    );
                 }
             }
             Effect::Quit => unreachable!("Quit is handled by the state loop"),

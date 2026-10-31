@@ -103,7 +103,9 @@ impl WorktreeFinishState {
             return FinishChoice::Nothing;
         }
         self.advance();
-        FinishChoice::Kept { close: self.queue.is_empty() }
+        FinishChoice::Kept {
+            close: self.queue.is_empty(),
+        }
     }
 
     /// Any other key disarms a pending discard (the `x x` rule).
@@ -170,7 +172,10 @@ fn tail(s: &str, width: usize) -> String {
         return s.to_owned();
     }
     let keep = width.saturating_sub(1);
-    format!("…{}", chars[chars.len() - keep..].iter().collect::<String>())
+    format!(
+        "…{}",
+        chars[chars.len() - keep..].iter().collect::<String>()
+    )
 }
 
 /// Word-wrap every line of `text` to `width` chars, capped at `max` rows.
@@ -242,7 +247,10 @@ pub fn worktree_finish_lines(
             Span::styled(" → ", Style::default().fg(colors::DIM)),
             Span::styled(target.clone(), Style::default().fg(colors::FG)),
         ]),
-        Line::styled(tail(&record.path, width), Style::default().fg(colors::FAINT)),
+        Line::styled(
+            tail(&record.path, width),
+            Style::default().fg(colors::FAINT),
+        ),
         Line::raw(""),
         choice_line("m", format!("merge into {target}"), idle),
         choice_line("d d", "discard branch and worktree".to_owned(), idle),
@@ -260,7 +268,9 @@ pub fn worktree_finish_lines(
         // Red, not amber — amber is reserved for needs-input.
         status.push(Line::styled(
             format!("press d again to discard {}", record.branch),
-            Style::default().fg(colors::ERROR).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(colors::ERROR)
+                .add_modifier(Modifier::BOLD),
         ));
     }
     if let Some(error) = &state.error {
@@ -271,7 +281,10 @@ pub fn worktree_finish_lines(
     if state.waiting() > 0 {
         let n = state.waiting();
         status.push(Line::styled(
-            format!("{n} more worktree{} after this", if n == 1 { "" } else { "s" }),
+            format!(
+                "{n} more worktree{} after this",
+                if n == 1 { "" } else { "s" }
+            ),
             Style::default().fg(colors::FAINT),
         ));
     }
@@ -309,7 +322,10 @@ pub fn render_worktree_finish(
     let block = Block::bordered()
         .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(colors::DIM))
-        .title(Line::styled(" finish worktree ", Style::default().fg(colors::FG)));
+        .title(Line::styled(
+            " finish worktree ",
+            Style::default().fg(colors::FG),
+        ));
     let inner = block.inner(rect);
     block.render(rect, buf);
     let padded = Rect {
@@ -318,8 +334,12 @@ pub fn render_worktree_finish(
         width: inner.width.saturating_sub(4),
         height: inner.height.saturating_sub(2),
     };
-    Paragraph::new(worktree_finish_lines(state, now_ms, usize::from(padded.width)))
-        .render(padded, buf);
+    Paragraph::new(worktree_finish_lines(
+        state,
+        now_ms,
+        usize::from(padded.width),
+    ))
+    .render(padded, buf);
     rect
 }
 
@@ -329,7 +349,10 @@ mod tests {
 
     fn record(branch: &str, target: Option<&str>) -> WorktreeRecord {
         WorktreeRecord {
-            path: format!("/Users/me/.garage/worktrees/kowboy/{}", branch.trim_start_matches("garage/")),
+            path: format!(
+                "/Users/me/.garage/worktrees/kowboy/{}",
+                branch.trim_start_matches("garage/")
+            ),
             branch: branch.to_owned(),
             repo_dir: "/Users/me/dev/kowboy".to_owned(),
             target: target.map(str::to_owned),
@@ -366,7 +389,10 @@ mod tests {
         assert!(state.discard_armed(1001));
         assert_eq!(
             state.discard(2000),
-            FinishChoice::Run(record("garage/feature", Some("main")), FinishAction::Discard)
+            FinishChoice::Run(
+                record("garage/feature", Some("main")),
+                FinishAction::Discard
+            )
         );
     }
 
@@ -378,7 +404,11 @@ mod tests {
         assert!(!state.discard_armed(1001));
         assert_eq!(state.discard(1100), FinishChoice::Nothing, "re-arms");
         assert!(!state.discard_armed(5000), "expired arm stops prompting");
-        assert_eq!(state.discard(5000), FinishChoice::Nothing, "expired: re-arms");
+        assert_eq!(
+            state.discard(5000),
+            FinishChoice::Nothing,
+            "expired: re-arms"
+        );
         // Merge also disarms.
         state.merge();
         state.settled(Some("boom".to_owned()));
@@ -404,7 +434,10 @@ mod tests {
         assert_eq!(state.current().unwrap().branch, "garage/feature");
         let lines = text(&worktree_finish_lines(&state, 0, 50));
         assert!(lines.contains(&"worktree has uncommitted changes".to_owned()));
-        assert!(lines.iter().any(|l| l.starts_with("m   merge into main")), "still offered");
+        assert!(
+            lines.iter().any(|l| l.starts_with("m   merge into main")),
+            "still offered"
+        );
         // A retry clears the error.
         state.merge();
         assert_eq!(state.error, None);
@@ -449,7 +482,10 @@ mod tests {
 
         let mut unknown = WorktreeFinishState::default();
         unknown.push(record("garage/feature", None));
-        assert_eq!(text(&worktree_finish_lines(&unknown, 0, 58))[0], "garage/feature → current branch");
+        assert_eq!(
+            text(&worktree_finish_lines(&unknown, 0, 58))[0],
+            "garage/feature → current branch"
+        );
     }
 
     #[test]
@@ -527,7 +563,10 @@ mod tests {
             dump.push_str(&format!("── {name} ──\n{rendered}\n"));
         }
         println!("{dump}");
-        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/target/worktree_finish_overlay.txt");
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/target/worktree_finish_overlay.txt"
+        );
         let _ = std::fs::write(path, &dump);
     }
 }

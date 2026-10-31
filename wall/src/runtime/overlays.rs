@@ -149,7 +149,11 @@ pub(super) fn overlay_action(
             store.close_overlay();
         }
         ids::OVERLAY_SELECT_NEXT | ids::OVERLAY_SELECT_PREV => {
-            let delta = if id == ids::OVERLAY_SELECT_NEXT { 1 } else { -1 };
+            let delta = if id == ids::OVERLAY_SELECT_NEXT {
+                1
+            } else {
+                -1
+            };
             let len = triage_queue_rows(&store.state().sessions).len();
             *queue_selection = wrap_selection(*queue_selection, delta, len);
         }
@@ -173,7 +177,9 @@ pub(super) fn overlay_action(
                     store.disengage();
                     return (
                         true,
-                        Some(format!("plugin {plugin} tried to put you into a session — press Enter to engage")),
+                        Some(format!(
+                            "plugin {plugin} tried to put you into a session — press Enter to engage"
+                        )),
                     );
                 }
             }
@@ -222,8 +228,12 @@ pub(super) fn view_picker_entries(store: &WallStore) -> Vec<String> {
         return picker_entries(&[], "");
     };
     let current_view = store.state().focused_view_name(&workspace).to_owned();
-    let view_names: Vec<String> =
-        store.state().views_for(&workspace).into_iter().map(|v| v.name).collect();
+    let view_names: Vec<String> = store
+        .state()
+        .views_for(&workspace)
+        .into_iter()
+        .map(|v| v.name)
+        .collect();
     picker_entries(&view_names, &current_view)
 }
 

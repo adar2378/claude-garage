@@ -40,7 +40,10 @@ mod tests {
     fn only_a_moved_rev_is_fetched_and_a_reset_forgets() {
         let mut t = RevTracker::default();
         assert!(t.should_fetch("a", 1));
-        assert!(t.should_fetch("a", 1), "asking is not fetching: a failed fetch is tried again");
+        assert!(
+            t.should_fetch("a", 1),
+            "asking is not fetching: a failed fetch is tried again"
+        );
         t.fetched("a", 1);
         assert!(!t.should_fetch("a", 1), "same rev: nothing to fetch");
         assert!(t.should_fetch("a", 2));

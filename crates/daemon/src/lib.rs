@@ -5,8 +5,8 @@
 pub mod api;
 pub mod backend;
 pub mod bus;
-pub mod closing;
 pub mod closed;
+pub mod closing;
 pub mod config;
 pub mod control;
 pub mod error;
@@ -137,7 +137,12 @@ pub async fn run(config: Config) -> Result<()> {
     if let Some(root) = plugins::bundled::discover() {
         match plugins::bundled::seed(state.plugins.paths(), &root) {
             Ok(s) if !s.added.is_empty() || !s.refreshed.is_empty() => {
-                eprintln!("plugins: bundled from {}: added {:?}, refreshed {:?}", root.display(), s.added, s.refreshed);
+                eprintln!(
+                    "plugins: bundled from {}: added {:?}, refreshed {:?}",
+                    root.display(),
+                    s.added,
+                    s.refreshed
+                );
             }
             Ok(_) => {}
             Err(e) => eprintln!("plugins: cannot register the bundled plugins: {e}"),
@@ -206,7 +211,7 @@ mod tests {
     use axum::body::Body;
     use axum::http::{Request, StatusCode};
     use http_body_util::BodyExt;
-    use serde_json::{json, Value};
+    use serde_json::{Value, json};
     use tower::ServiceExt;
 
     fn config(origins: &[&str]) -> Config {
@@ -262,7 +267,9 @@ mod tests {
         }));
 
         let mut conn = tokio::net::TcpStream::connect(addr).await.unwrap();
-        conn.write_all(b"GET /api/events HTTP/1.1\r\nhost: 127.0.0.1\r\nconnection: close\r\n\r\n").await.unwrap();
+        conn.write_all(b"GET /api/events HTTP/1.1\r\nhost: 127.0.0.1\r\nconnection: close\r\n\r\n")
+            .await
+            .unwrap();
         let mut seen = String::new();
         let mut buf = [0u8; 1024];
         while !seen.contains(": connected") {
@@ -324,7 +331,12 @@ mod tests {
     async fn a_foreign_host_header_is_refused_on_every_route_and_loopback_passes() {
         let mut c = config(&[]);
         c.port = 4747;
-        for (m, u) in [("GET", "/api/health"), ("GET", "/api/attach?id=garage/a/b"), ("POST", "/api/sessions"), ("GET", "/nope")] {
+        for (m, u) in [
+            ("GET", "/api/health"),
+            ("GET", "/api/attach?id=garage/a/b"),
+            ("POST", "/api/sessions"),
+            ("GET", "/nope"),
+        ] {
             let req = |host: Option<&str>| {
                 let mut r = Request::builder().method(m).uri(u);
                 if let Some(h) = host {
@@ -332,14 +344,27 @@ mod tests {
                 }
                 r.body(Body::empty()).unwrap()
             };
-            let res = app(state(c.clone())).oneshot(req(Some("evil.example:4747"))).await.unwrap();
+            let res = app(state(c.clone()))
+                .oneshot(req(Some("evil.example:4747")))
+                .await
+                .unwrap();
             assert_eq!(res.status(), StatusCode::FORBIDDEN, "{m} {u}");
             let bytes = res.into_body().collect().await.unwrap().to_bytes();
-            assert_eq!(serde_json::from_slice::<Value>(&bytes).unwrap(), json!({"error": "host not allowed"}));
-            let ok = app(state(c.clone())).oneshot(req(Some("127.0.0.1:4747"))).await.unwrap();
+            assert_eq!(
+                serde_json::from_slice::<Value>(&bytes).unwrap(),
+                json!({"error": "host not allowed"})
+            );
+            let ok = app(state(c.clone()))
+                .oneshot(req(Some("127.0.0.1:4747")))
+                .await
+                .unwrap();
             assert_ne!(ok.status(), StatusCode::FORBIDDEN, "{m} {u}");
             let none = app(state(c.clone())).oneshot(req(None)).await.unwrap();
-            assert_ne!(none.status(), StatusCode::FORBIDDEN, "{m} {u} without a Host header");
+            assert_ne!(
+                none.status(),
+                StatusCode::FORBIDDEN,
+                "{m} {u} without a Host header"
+            );
         }
     }
 
@@ -353,8 +378,14 @@ mod tests {
         c.port = 4747;
         c.garage_dir = dir.path().to_path_buf();
         let st = state(c.clone());
-        let token = std::fs::read_to_string(dir.path().join("ui-token")).unwrap().trim().to_owned();
-        assert!(!token.is_empty(), "the plugin host writes the UI token at startup");
+        let token = std::fs::read_to_string(dir.path().join("ui-token"))
+            .unwrap()
+            .trim()
+            .to_owned();
+        assert!(
+            !token.is_empty(),
+            "the plugin host writes the UI token at startup"
+        );
 
         let routes = [
             ("GET", "/api/plugin/features"),
@@ -372,40 +403,77 @@ mod tests {
             ("POST", "/api/sessions/input"),
             ("GET", "/api/workspaces/ws/closed"),
         ];
-        let send = |m: &str, u: &str, host: Option<&str>, origin: Option<&str>, bearer: Option<&str>| {
-            let mut r = Request::builder().method(m).uri(u);
-            if let Some(h) = host {
-                r = r.header("host", h);
-            }
-            if let Some(o) = origin {
-                r = r.header("origin", o);
-            }
-            if let Some(b) = bearer {
-                r = r.header("authorization", format!("Bearer {b}"));
-            }
-            let app = app(st.clone());
-            async move { app.oneshot(r.body(Body::empty()).unwrap()).await.unwrap() }
-        };
+        let send =
+            |m: &str, u: &str, host: Option<&str>, origin: Option<&str>, bearer: Option<&str>| {
+                let mut r = Request::builder().method(m).uri(u);
+                if let Some(h) = host {
+                    r = r.header("host", h);
+                }
+                if let Some(o) = origin {
+                    r = r.header("origin", o);
+                }
+                if let Some(b) = bearer {
+                    r = r.header("authorization", format!("Bearer {b}"));
+                }
+                let app = app(st.clone());
+                async move { app.oneshot(r.body(Body::empty()).unwrap()).await.unwrap() }
+            };
         for (m, u) in routes {
             // Foreign Host: refused before any token is looked at.
             let res = send(m, u, Some("evil.example:4747"), None, Some(&token)).await;
             assert_eq!(res.status(), StatusCode::FORBIDDEN, "{m} {u} foreign host");
             let bytes = res.into_body().collect().await.unwrap().to_bytes();
-            assert_eq!(serde_json::from_slice::<Value>(&bytes).unwrap(), json!({"error": "host not allowed"}), "{m} {u}");
+            assert_eq!(
+                serde_json::from_slice::<Value>(&bytes).unwrap(),
+                json!({"error": "host not allowed"}),
+                "{m} {u}"
+            );
             // Foreign Origin on a write: refused, even with the UI token.
             if m != "GET" {
-                let res = send(m, u, Some("127.0.0.1:4747"), Some("https://evil.example"), Some(&token)).await;
+                let res = send(
+                    m,
+                    u,
+                    Some("127.0.0.1:4747"),
+                    Some("https://evil.example"),
+                    Some(&token),
+                )
+                .await;
                 let bytes = res.into_body().collect().await.unwrap().to_bytes();
-                assert_eq!(serde_json::from_slice::<Value>(&bytes).unwrap(), json!({"error": "origin not allowed"}), "{m} {u}");
+                assert_eq!(
+                    serde_json::from_slice::<Value>(&bytes).unwrap(),
+                    json!({"error": "origin not allowed"}),
+                    "{m} {u}"
+                );
             }
         }
         // Loopback Host without a token: the route's own 401, not the guard's 403.
-        let res = send("POST", "/api/plugins/reload", Some("127.0.0.1:4747"), None, None).await;
+        let res = send(
+            "POST",
+            "/api/plugins/reload",
+            Some("127.0.0.1:4747"),
+            None,
+            None,
+        )
+        .await;
         assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
         // Loopback Host with the UI token: the UI-token route runs.
-        let res = send("POST", "/api/plugins/reload", Some("127.0.0.1:4747"), None, Some(&token)).await;
+        let res = send(
+            "POST",
+            "/api/plugins/reload",
+            Some("127.0.0.1:4747"),
+            None,
+            Some(&token),
+        )
+        .await;
         assert_eq!(res.status(), StatusCode::OK);
-        let res = send("POST", "/api/plugins/reload", Some("localhost:4747"), None, Some(&token)).await;
+        let res = send(
+            "POST",
+            "/api/plugins/reload",
+            Some("localhost:4747"),
+            None,
+            Some(&token),
+        )
+        .await;
         assert_eq!(res.status(), StatusCode::OK);
     }
 

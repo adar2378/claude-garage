@@ -14,7 +14,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use portable_pty::{native_pty_system, ChildKiller, CommandBuilder, MasterPty, PtySize};
+use portable_pty::{ChildKiller, CommandBuilder, MasterPty, PtySize, native_pty_system};
 
 use crate::proto::*;
 use crate::registry::{self, Entry};
@@ -81,7 +81,10 @@ fn read_before(stream: &mut TcpStream, buf: &mut [u8], deadline: Instant) -> std
     while got < buf.len() {
         let left = deadline.saturating_duration_since(Instant::now());
         if left.is_zero() {
-            return Err(std::io::Error::new(std::io::ErrorKind::TimedOut, "hello deadline"));
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                "hello deadline",
+            ));
         }
         stream.set_read_timeout(Some(left))?;
         match stream.read(&mut buf[got..]) {
@@ -112,13 +115,25 @@ pub fn parse_args(args: &[String]) -> Result<Options, String> {
     let mut command = Vec::new();
     let mut i = 0;
     while i < args.len() {
-        let value = |i: usize| args.get(i + 1).cloned().ok_or_else(|| format!("{} needs a value", args[i]));
+        let value = |i: usize| {
+            args.get(i + 1)
+                .cloned()
+                .ok_or_else(|| format!("{} needs a value", args[i]))
+        };
         match args[i].as_str() {
             "--id" => id = Some(value(i)?),
             "--dir" => dir = Some(value(i)?),
             "--hosts-dir" => hosts_dir = Some(PathBuf::from(value(i)?)),
-            "--cols" => cols = value(i)?.parse().map_err(|_| "--cols must be a number".to_string())?,
-            "--rows" => rows = value(i)?.parse().map_err(|_| "--rows must be a number".to_string())?,
+            "--cols" => {
+                cols = value(i)?
+                    .parse()
+                    .map_err(|_| "--cols must be a number".to_string())?
+            }
+            "--rows" => {
+                rows = value(i)?
+                    .parse()
+                    .map_err(|_| "--rows must be a number".to_string())?
+            }
             "--" => {
                 command = args[i + 1..].to_vec();
                 break;
@@ -168,12 +183,20 @@ pub fn history_len<CB: vt100::Callbacks>(parser: &mut vt100::Parser<CB>) -> i64 
 /// Lines `top_abs..top_abs+rows` in absolute coordinates (0 = oldest retained
 /// history line; the live screen's top row sits at `history`), with escapes,
 /// joined by `\n`.
-pub fn formatted_window<CB: vt100::Callbacks>(parser: &mut vt100::Parser<CB>, top_abs: i64, cols: u16, rows: u16) -> Vec<u8> {
+pub fn formatted_window<CB: vt100::Callbacks>(
+    parser: &mut vt100::Parser<CB>,
+    top_abs: i64,
+    cols: u16,
+    rows: u16,
+) -> Vec<u8> {
     let hist = history_len(parser);
     let screen = parser.screen_mut();
     let cur = screen.scrollback();
     screen.set_scrollback((hist - top_abs).max(0) as usize);
-    let lines: Vec<Vec<u8>> = screen.rows_formatted(0, cols).take(usize::from(rows)).collect();
+    let lines: Vec<Vec<u8>> = screen
+        .rows_formatted(0, cols)
+        .take(usize::from(rows))
+        .collect();
     screen.set_scrollback(cur);
     lines.join(&b'\n')
 }
@@ -248,9 +271,21 @@ impl Ctx {
     }
 
     fn resize(&self, cols: u16, rows: u16) {
-        let Some((cols, rows)) = sane_size(cols, rows) else { return };
-        let _ = self.master.lock().unwrap().resize(PtySize { rows, cols, pixel_width: 0, pixel_height: 0 });
-        self.core.lock().unwrap().parser.screen_mut().set_size(rows, cols);
+        let Some((cols, rows)) = sane_size(cols, rows) else {
+            return;
+        };
+        let _ = self.master.lock().unwrap().resize(PtySize {
+            rows,
+            cols,
+            pixel_width: 0,
+            pixel_height: 0,
+        });
+        self.core
+            .lock()
+            .unwrap()
+            .parser
+            .screen_mut()
+            .set_size(rows, cols);
     }
 
     fn kill_command(&self) {
@@ -281,7 +316,8 @@ impl Ctx {
 /// token would be an open door, so the host refuses to start instead.
 fn random_token() -> std::io::Result<String> {
     let mut bytes = [0u8; TOKEN_LEN / 2];
-    getrandom::fill(&mut bytes).map_err(|e| io_err(format!("no secure randomness for the session token: {e}")))?;
+    getrandom::fill(&mut bytes)
+        .map_err(|e| io_err(format!("no secure randomness for the session token: {e}")))?;
     Ok(bytes.iter().map(|b| format!("{b:02x}")).collect())
 }
 
@@ -293,8 +329,12 @@ pub fn exe_candidates_in_shim(text: &str, shim_dir: &Path) -> Vec<PathBuf> {
         if !line.to_lowercase().contains(".exe\"") {
             continue;
         }
-        let Some(start) = line.find('"').map(|i| i + 1) else { continue };
-        let Some(len) = line[start..].find('"') else { continue };
+        let Some(start) = line.find('"').map(|i| i + 1) else {
+            continue;
+        };
+        let Some(len) = line[start..].find('"') else {
+            continue;
+        };
         let raw = line[start..start + len].replace("%dp0%", &shim_dir.to_string_lossy());
         out.push(PathBuf::from(raw.replace("\\\\", "\\")));
     }
@@ -312,11 +352,18 @@ pub fn resolve_command(command: &[String]) -> Vec<String> {
             let lower = found.to_string_lossy().to_lowercase();
             let mut out = if lower.ends_with(".cmd") || lower.ends_with(".bat") {
                 let exe = std::fs::read_to_string(&found).ok().and_then(|text| {
-                    exe_candidates_in_shim(&text, found.parent()?).into_iter().find(|c| c.is_file())
+                    exe_candidates_in_shim(&text, found.parent()?)
+                        .into_iter()
+                        .find(|c| c.is_file())
                 });
                 match exe {
                     Some(exe) => vec![exe.to_string_lossy().into_owned()],
-                    None => vec!["cmd.exe".into(), "/d".into(), "/c".into(), found.to_string_lossy().into_owned()],
+                    None => vec![
+                        "cmd.exe".into(),
+                        "/d".into(),
+                        "/c".into(),
+                        found.to_string_lossy().into_owned(),
+                    ],
                 }
             } else {
                 vec![found.to_string_lossy().into_owned()]
@@ -358,7 +405,8 @@ fn windows_which(name: &str) -> Option<PathBuf> {
 /// terminal is not attached while no TUI is watching).
 fn answer_queries(ctx: &Ctx, chunk: &[u8]) {
     let wants_cpr = chunk.windows(4).any(|w| w == b"\x1b[6n");
-    let wants_da = chunk.windows(3).any(|w| w == b"\x1b[c") || chunk.windows(4).any(|w| w == b"\x1b[0c");
+    let wants_da =
+        chunk.windows(3).any(|w| w == b"\x1b[c") || chunk.windows(4).any(|w| w == b"\x1b[0c");
     if !wants_cpr && !wants_da {
         return;
     }
@@ -381,7 +429,10 @@ fn handle_conn(ctx: Arc<Ctx>, mut stream: TcpStream, mut slot: Slot) -> std::io:
     if &hello[..3] != MAGIC {
         return Err(io_err("bad magic"));
     }
-    if !ct_eq(&hello[3..3 + TOKEN_LEN], ctx.meta.lock().unwrap().token.as_bytes()) {
+    if !ct_eq(
+        &hello[3..3 + TOKEN_LEN],
+        ctx.meta.lock().unwrap().token.as_bytes(),
+    ) {
         return Err(io_err("bad token"));
     }
     slot.release();
@@ -402,7 +453,11 @@ fn handle_conn(ctx: Arc<Ctx>, mut stream: TcpStream, mut slot: Slot) -> std::io:
             core.clients.push(out);
         }
         let result = attach_loop(&ctx, &mut stream);
-        ctx.core.lock().unwrap().clients.retain(|c| c.peer_addr().is_ok_and(|a| a != peer));
+        ctx.core
+            .lock()
+            .unwrap()
+            .clients
+            .retain(|c| c.peer_addr().is_ok_and(|a| a != peer));
         return result;
     }
 
@@ -460,7 +515,10 @@ fn attach_loop(ctx: &Arc<Ctx>, stream: &mut TcpStream) -> std::io::Result<()> {
                 w.flush()?;
             }
             F_RESIZE if payload.len() >= 4 => {
-                ctx.resize(u16::from_le_bytes([payload[0], payload[1]]), u16::from_le_bytes([payload[2], payload[3]]));
+                ctx.resize(
+                    u16::from_le_bytes([payload[0], payload[1]]),
+                    u16::from_le_bytes([payload[2], payload[3]]),
+                );
             }
             _ => {}
         }
@@ -482,7 +540,10 @@ fn kill_tree(pid: u32) {
 }
 
 fn now_ms() -> u64 {
-    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0)
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
 }
 
 /// Run one host to completion; returns the command's exit code. Blocks until
@@ -490,7 +551,12 @@ fn now_ms() -> u64 {
 pub fn run(opts: Options) -> std::io::Result<i32> {
     registry::ensure_dir(&opts.hosts_dir)?;
     let pair = native_pty_system()
-        .openpty(PtySize { rows: opts.rows, cols: opts.cols, pixel_width: 0, pixel_height: 0 })
+        .openpty(PtySize {
+            rows: opts.rows,
+            cols: opts.cols,
+            pixel_width: 0,
+            pixel_height: 0,
+        })
         .map_err(io_err)?;
 
     let argv = resolve_command(&opts.command);
@@ -515,7 +581,14 @@ pub fn run(opts: Options) -> std::io::Result<i32> {
 
     let ctx = Arc::new(Ctx {
         core: Mutex::new(Core {
-            parser: vt100::Parser::new_with_callbacks(opts.rows, opts.cols, SCROLLBACK, TitleCb { title: title.clone() }),
+            parser: vt100::Parser::new_with_callbacks(
+                opts.rows,
+                opts.cols,
+                SCROLLBACK,
+                TitleCb {
+                    title: title.clone(),
+                },
+            ),
             clients: Vec::new(),
         }),
         master: Mutex::new(pair.master),
@@ -549,13 +622,17 @@ pub fn run(opts: Options) -> std::io::Result<i32> {
                     Ok((stream, _)) => {
                         let _ = stream.set_nonblocking(false);
                         // Too many unauthenticated connections: drop this one now.
-                        let Some(slot) = ctx.pending.try_acquire(MAX_PENDING) else { continue };
+                        let Some(slot) = ctx.pending.try_acquire(MAX_PENDING) else {
+                            continue;
+                        };
                         let ctx = ctx.clone();
                         std::thread::spawn(move || {
                             let _ = handle_conn(ctx, stream, slot);
                         });
                     }
-                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => std::thread::sleep(Duration::from_millis(20)),
+                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                        std::thread::sleep(Duration::from_millis(20))
+                    }
                     Err(_) => break,
                 }
             }
@@ -619,21 +696,81 @@ mod tests {
 
     #[test]
     fn args_parse_with_defaults_and_everything_after_the_separator_is_the_command() {
-        let o = parse_args(&s(&["--id", "garage/w/a", "--dir", "/w", "--hosts-dir", "/h", "--", "claude", "--resume", "x"])).unwrap();
+        let o = parse_args(&s(&[
+            "--id",
+            "garage/w/a",
+            "--dir",
+            "/w",
+            "--hosts-dir",
+            "/h",
+            "--",
+            "claude",
+            "--resume",
+            "x",
+        ]))
+        .unwrap();
         assert_eq!(o.id, "garage/w/a");
         assert_eq!((o.cols, o.rows), (120, 40));
         assert_eq!(o.hosts_dir, PathBuf::from("/h"));
         assert_eq!(o.command, ["claude", "--resume", "x"]);
-        let o = parse_args(&s(&["--id", "i", "--dir", "d", "--hosts-dir", "h", "--cols", "80", "--rows", "24", "--", "x"])).unwrap();
+        let o = parse_args(&s(&[
+            "--id",
+            "i",
+            "--dir",
+            "d",
+            "--hosts-dir",
+            "h",
+            "--cols",
+            "80",
+            "--rows",
+            "24",
+            "--",
+            "x",
+        ]))
+        .unwrap();
         assert_eq!((o.cols, o.rows), (80, 24));
     }
 
     #[test]
     fn bad_args_are_usage_errors() {
-        assert!(parse_args(&s(&["--id", "i", "--dir", "d", "--hosts-dir", "h"])).is_err(), "no command");
-        assert!(parse_args(&s(&["--dir", "d", "--hosts-dir", "h", "--", "x"])).is_err(), "no id");
-        assert!(parse_args(&s(&["--id", "i", "--dir", "d", "--hosts-dir", "h", "--cols", "0", "--", "x"])).is_err());
-        assert!(parse_args(&s(&["--id", "i", "--dir", "d", "--hosts-dir", "h", "--cols", "wide", "--", "x"])).is_err());
+        assert!(
+            parse_args(&s(&["--id", "i", "--dir", "d", "--hosts-dir", "h"])).is_err(),
+            "no command"
+        );
+        assert!(
+            parse_args(&s(&["--dir", "d", "--hosts-dir", "h", "--", "x"])).is_err(),
+            "no id"
+        );
+        assert!(
+            parse_args(&s(&[
+                "--id",
+                "i",
+                "--dir",
+                "d",
+                "--hosts-dir",
+                "h",
+                "--cols",
+                "0",
+                "--",
+                "x"
+            ]))
+            .is_err()
+        );
+        assert!(
+            parse_args(&s(&[
+                "--id",
+                "i",
+                "--dir",
+                "d",
+                "--hosts-dir",
+                "h",
+                "--cols",
+                "wide",
+                "--",
+                "x"
+            ]))
+            .is_err()
+        );
         assert!(parse_args(&s(&["--bogus", "1", "--", "x"])).is_err());
         assert!(parse_args(&s(&["--id"])).is_err(), "flag without a value");
     }
@@ -642,7 +779,12 @@ mod tests {
     fn shim_parsing_finds_the_exe_and_expands_dp0() {
         let shim = "@ECHO off\r\nSETLOCAL\r\n\"%dp0%\\node_modules\\@anthropic-ai\\claude-code\\bin\\claude.exe\"   %*\r\n";
         let got = exe_candidates_in_shim(shim, Path::new("C:\\npm"));
-        assert_eq!(got, [PathBuf::from("C:\\npm\\node_modules\\@anthropic-ai\\claude-code\\bin\\claude.exe")]);
+        assert_eq!(
+            got,
+            [PathBuf::from(
+                "C:\\npm\\node_modules\\@anthropic-ai\\claude-code\\bin\\claude.exe"
+            )]
+        );
         assert!(exe_candidates_in_shim("@echo off\nnode x.js", Path::new("C:\\npm")).is_empty());
     }
 
@@ -652,7 +794,21 @@ mod tests {
         assert_eq!(sane_size(65535, 65535), Some((MAX_COLS, MAX_ROWS)));
         assert_eq!(sane_size(0, 24), None);
         assert_eq!(sane_size(80, 0), None);
-        assert!(parse_args(&s(&["--id", "i", "--dir", "d", "--hosts-dir", "h", "--cols", "5000", "--", "x"])).is_err());
+        assert!(
+            parse_args(&s(&[
+                "--id",
+                "i",
+                "--dir",
+                "d",
+                "--hosts-dir",
+                "h",
+                "--cols",
+                "5000",
+                "--",
+                "x"
+            ]))
+            .is_err()
+        );
     }
 
     #[test]
@@ -667,9 +823,15 @@ mod tests {
     #[test]
     fn unauthenticated_slots_are_capped_and_freed() {
         let p = Pending::default();
-        let mut held: Vec<Slot> = (0..3).map(|_| p.try_acquire(3).expect("under the cap")).collect();
+        let mut held: Vec<Slot> = (0..3)
+            .map(|_| p.try_acquire(3).expect("under the cap"))
+            .collect();
         assert!(p.try_acquire(3).is_none(), "the 4th is refused");
-        assert_eq!(p.0.load(Ordering::SeqCst), 3, "a refusal does not leak a count");
+        assert_eq!(
+            p.0.load(Ordering::SeqCst),
+            3,
+            "a refusal does not leak a count"
+        );
         held[0].release();
         held[0].release(); // idempotent
         assert_eq!(p.0.load(Ordering::SeqCst), 2);
@@ -698,9 +860,23 @@ mod tests {
         let (mut srv, _) = l.accept().unwrap();
         let started = Instant::now();
         let mut buf = [0u8; 40];
-        let err = read_before(&mut srv, &mut buf, Instant::now() + Duration::from_millis(300)).unwrap_err();
-        assert!(matches!(err.kind(), std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock), "{err:?}");
-        assert!(started.elapsed() < Duration::from_millis(900), "gave up at the deadline, not per read");
+        let err = read_before(
+            &mut srv,
+            &mut buf,
+            Instant::now() + Duration::from_millis(300),
+        )
+        .unwrap_err();
+        assert!(
+            matches!(
+                err.kind(),
+                std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock
+            ),
+            "{err:?}"
+        );
+        assert!(
+            started.elapsed() < Duration::from_millis(900),
+            "gave up at the deadline, not per read"
+        );
         drop(srv);
         writer.join().unwrap();
     }
@@ -734,7 +910,13 @@ mod tests {
             p.process(format!("line {i}\r\n").as_bytes());
         }
         // 10 lines were printed on a 4-row screen: 7 in history (+ blank cursor row).
-        assert_eq!(text_tail(&mut p, 100), (0..10).map(|i| format!("line {i}")).collect::<Vec<_>>().join("\n"));
+        assert_eq!(
+            text_tail(&mut p, 100),
+            (0..10)
+                .map(|i| format!("line {i}"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        );
         assert_eq!(text_tail(&mut p, 3), "line 7\nline 8\nline 9");
         assert_eq!(text_tail(&mut p, 0), "");
         assert!(history_len(&mut p) > 0);
@@ -756,7 +938,10 @@ mod tests {
         let hist = history_len(&mut p);
         let top = formatted_window(&mut p, 0, 20, 2);
         let text = String::from_utf8_lossy(&top).into_owned();
-        assert!(text.contains("line 0") && text.contains("line 1") && !text.contains("line 2"), "{text:?}");
+        assert!(
+            text.contains("line 0") && text.contains("line 1") && !text.contains("line 2"),
+            "{text:?}"
+        );
         // The window at `hist` is the live screen's top row.
         let live = String::from_utf8_lossy(&formatted_window(&mut p, hist, 20, 1)).into_owned();
         assert!(live.contains(&format!("line {hist}")), "{live:?}");

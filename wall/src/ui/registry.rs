@@ -86,7 +86,9 @@ pub struct FrozenTile {
 
 enum Slot {
     /// Scheduled attach (initial stagger or a retry delay).
-    Pending { at: Instant },
+    Pending {
+        at: Instant,
+    },
     Attached(TileClient),
     /// Reattach budget exhausted — the placeholder names the reason.
     Dead(String),
@@ -145,7 +147,8 @@ impl TileRegistry {
     /// must not be passed in — they render placeholders, no PTY is ever
     /// spawned for them.
     pub fn sync(&mut self, live_gridded_ids: &[String]) {
-        self.entries.retain(|id, _| live_gridded_ids.contains(id) || self.pinned.contains(id));
+        self.entries
+            .retain(|id, _| live_gridded_ids.contains(id) || self.pinned.contains(id));
         for id in live_gridded_ids {
             self.insert_pending(id);
         }
@@ -206,12 +209,23 @@ impl TileRegistry {
                     entry.started_at = now;
                     let (cols, rows) = entry.size;
                     let tx = self.tx.clone();
-                    let attached = self.resolver.resolve(id).map_err(std::io::Error::other).and_then(|spec| {
-                        let client = TileClient::new(id, &spec, cols, rows, self.scrollback, move || {
-                            let _ = tx.send(AppEvent::TileOutput);
-                        })?;
-                        Ok((spec, client))
-                    });
+                    let attached = self
+                        .resolver
+                        .resolve(id)
+                        .map_err(std::io::Error::other)
+                        .and_then(|spec| {
+                            let client = TileClient::new(
+                                id,
+                                &spec,
+                                cols,
+                                rows,
+                                self.scrollback,
+                                move || {
+                                    let _ = tx.send(AppEvent::TileOutput);
+                                },
+                            )?;
+                            Ok((spec, client))
+                        });
                     match attached {
                         Ok((spec, client)) => {
                             entry.spec = Some(spec);
@@ -344,7 +358,9 @@ impl TileRegistry {
                 continue;
             }
             frozen.counted_at = now;
-            let Some(spec) = entry.spec.as_ref() else { continue };
+            let Some(spec) = entry.spec.as_ref() else {
+                continue;
+            };
             if let Some(hist) = crate::ui::scroll::history_size(spec, id) {
                 let n = frozen.model.new_lines(hist);
                 if n != frozen.new_lines {

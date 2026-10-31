@@ -131,10 +131,7 @@ fn arrange_families(groups: Vec<WorkspaceGroup>) -> Vec<WorkspaceGroup> {
     out
 }
 
-pub fn build_groups(
-    workspaces: &[WorkspaceInfo],
-    sessions: &[WallSession],
-) -> Vec<WorkspaceGroup> {
+pub fn build_groups(workspaces: &[WorkspaceInfo], sessions: &[WallSession]) -> Vec<WorkspaceGroup> {
     // Insertion-ordered, like groups.js's Map: registered workspaces first in
     // registry order, synthesized groups after in discovery order.
     let mut order: Vec<String> = Vec::new();
@@ -198,9 +195,10 @@ pub fn jump_target(sessions: &[WallSession]) -> Option<&WallSession> {
             None => best = Some(s),
             Some(incumbent) => {
                 if let Some(candidate) = s.since
-                    && incumbent.since.is_none_or(|i| candidate < i) {
-                        best = Some(s);
-                    }
+                    && incumbent.since.is_none_or(|i| candidate < i)
+                {
+                    best = Some(s);
+                }
             }
         }
     }
@@ -225,12 +223,7 @@ mod tests {
         session_with(workspace, label, "working", None)
     }
 
-    fn session_with(
-        workspace: &str,
-        label: &str,
-        status: &str,
-        since: Option<i64>,
-    ) -> WallSession {
+    fn session_with(workspace: &str, label: &str, status: &str, since: Option<i64>) -> WallSession {
         WallSession {
             id: format!("garage/{workspace}/{label}"),
             workspace: workspace.to_owned(),
@@ -298,7 +291,11 @@ mod tests {
             ],
         );
         assert_eq!(groups.len(), 1);
-        let labels: Vec<&str> = groups[0].sessions.iter().map(|s| s.label.as_str()).collect();
+        let labels: Vec<&str> = groups[0]
+            .sessions
+            .iter()
+            .map(|s| s.label.as_str())
+            .collect();
         assert_eq!(labels, ["two", "four", "one", "three"]);
     }
 
@@ -313,7 +310,11 @@ mod tests {
             ],
         );
         assert_eq!(groups.len(), 1);
-        let labels: Vec<&str> = groups[0].sessions.iter().map(|s| s.label.as_str()).collect();
+        let labels: Vec<&str> = groups[0]
+            .sessions
+            .iter()
+            .map(|s| s.label.as_str())
+            .collect();
         assert_eq!(labels, ["one", "two", "three"]);
     }
 
@@ -371,12 +372,34 @@ mod tests {
     fn real_registry() -> Vec<WorkspaceInfo> {
         let b = "/Users/saifulislam";
         vec![
-            wsd("cto-playground", Some(&format!("{b}/development/devmonks/cto-playground"))),
-            wsd("et-mobile-app", Some(&format!("{b}/development/devmonks/elite-traders/et-mobile-app"))),
-            wsd("mobile-apps", Some(&format!("{b}/development/personal/mobile-apps"))),
-            wsd("et-backend", Some(&format!("{b}/development/devmonks/elite-traders/et-backend"))),
-            wsd("et-admin", Some(&format!("{b}/Development/devmonks/elite-traders/et-admin"))),
-            wsd("diary-app", Some(&format!("{b}/Development/personal/diary-app"))),
+            wsd(
+                "cto-playground",
+                Some(&format!("{b}/development/devmonks/cto-playground")),
+            ),
+            wsd(
+                "et-mobile-app",
+                Some(&format!(
+                    "{b}/development/devmonks/elite-traders/et-mobile-app"
+                )),
+            ),
+            wsd(
+                "mobile-apps",
+                Some(&format!("{b}/development/personal/mobile-apps")),
+            ),
+            wsd(
+                "et-backend",
+                Some(&format!(
+                    "{b}/development/devmonks/elite-traders/et-backend"
+                )),
+            ),
+            wsd(
+                "et-admin",
+                Some(&format!("{b}/Development/devmonks/elite-traders/et-admin")),
+            ),
+            wsd(
+                "diary-app",
+                Some(&format!("{b}/Development/personal/diary-app")),
+            ),
         ]
     }
 
@@ -385,24 +408,63 @@ mod tests {
         let groups = build_groups(&real_registry(), &[]);
         assert_eq!(
             names(&groups),
-            ["cto-playground", "et-mobile-app", "et-backend", "et-admin", "mobile-apps", "diary-app"]
+            [
+                "cto-playground",
+                "et-mobile-app",
+                "et-backend",
+                "et-admin",
+                "mobile-apps",
+                "diary-app"
+            ]
         );
         assert_eq!(
             labels(&groups),
-            [None, Some("elite-traders"), None, None, Some("personal"), None]
+            [
+                None,
+                Some("elite-traders"),
+                None,
+                None,
+                Some("personal"),
+                None
+            ]
         );
     }
 
     fn elite_registry() -> Vec<WorkspaceInfo> {
         let b = "/Users/saifulislam";
         vec![
-            wsd("cto-playground", Some(&format!("{b}/development/devmonks/cto-playground"))),
-            wsd("icon-monks", Some(&format!("{b}/development/devmonks/icon-monks"))),
-            wsd("et-backend", Some(&format!("{b}/Development/devmonks/elite-traders/et-backend"))),
-            wsd("kowoby-statistics", Some(&format!("{b}/development/devmonks/kowoby-statistics"))),
-            wsd("et-mobile-app", Some(&format!("{b}/Development/devmonks/elite-traders/et-mobile-app"))),
-            wsd("elite-traders", Some(&format!("{b}/development/devmonks/elite-traders"))),
-            wsd("et-admin", Some(&format!("{b}/Development/devmonks/elite-traders/et-admin"))),
+            wsd(
+                "cto-playground",
+                Some(&format!("{b}/development/devmonks/cto-playground")),
+            ),
+            wsd(
+                "icon-monks",
+                Some(&format!("{b}/development/devmonks/icon-monks")),
+            ),
+            wsd(
+                "et-backend",
+                Some(&format!(
+                    "{b}/Development/devmonks/elite-traders/et-backend"
+                )),
+            ),
+            wsd(
+                "kowoby-statistics",
+                Some(&format!("{b}/development/devmonks/kowoby-statistics")),
+            ),
+            wsd(
+                "et-mobile-app",
+                Some(&format!(
+                    "{b}/Development/devmonks/elite-traders/et-mobile-app"
+                )),
+            ),
+            wsd(
+                "elite-traders",
+                Some(&format!("{b}/development/devmonks/elite-traders")),
+            ),
+            wsd(
+                "et-admin",
+                Some(&format!("{b}/Development/devmonks/elite-traders/et-admin")),
+            ),
         ]
     }
 
@@ -412,13 +474,26 @@ mod tests {
         assert_eq!(
             names(&groups),
             [
-                "cto-playground", "icon-monks", "kowoby-statistics",
-                "elite-traders", "et-backend", "et-mobile-app", "et-admin",
+                "cto-playground",
+                "icon-monks",
+                "kowoby-statistics",
+                "elite-traders",
+                "et-backend",
+                "et-mobile-app",
+                "et-admin",
             ]
         );
         assert_eq!(
             labels(&groups),
-            [Some("devmonks"), None, None, Some("elite-traders"), None, None, None]
+            [
+                Some("devmonks"),
+                None,
+                None,
+                Some("elite-traders"),
+                None,
+                None,
+                None
+            ]
         );
     }
 
@@ -456,7 +531,10 @@ mod tests {
     #[test]
     fn a_head_with_a_trailing_slash_still_merges() {
         let groups = build_groups(
-            &[wsd("kid", Some("/d/Head/kid")), wsd("Head", Some("/D/Head/"))],
+            &[
+                wsd("kid", Some("/d/Head/kid")),
+                wsd("Head", Some("/D/Head/")),
+            ],
             &[],
         );
         assert_eq!(names(&groups), ["Head", "kid"]);
@@ -466,7 +544,11 @@ mod tests {
     #[test]
     fn nesting_does_not_chain_a_middle_head_owns_its_family() {
         let groups = build_groups(
-            &[wsd("a", Some("/a")), wsd("b", Some("/a/b")), wsd("c", Some("/a/b/c"))],
+            &[
+                wsd("a", Some("/a")),
+                wsd("b", Some("/a/b")),
+                wsd("c", Some("/a/b/c")),
+            ],
             &[],
         );
         // b heads {b, c}; a is a head too, but its only child (b) left for
@@ -497,7 +579,11 @@ mod tests {
     #[test]
     fn a_family_floats_when_one_member_is_blocked() {
         let groups = build_groups(
-            &[wsd("x", Some("/r/x")), wsd("f1", Some("/p/f/f1")), wsd("f2", Some("/p/f/f2"))],
+            &[
+                wsd("x", Some("/r/x")),
+                wsd("f1", Some("/p/f/f1")),
+                wsd("f2", Some("/p/f/f2")),
+            ],
             &[session_with("f2", "s", "needs-input", None)],
         );
         // blocked member leads its family, the family leads the rail
@@ -527,7 +613,10 @@ mod tests {
             session_with("b", "old", "needs-input", Some(1000)),
             session_with("a", "busy", "working", Some(500)),
         ];
-        assert_eq!(jump_target(&sessions).map(|s| s.label.as_str()), Some("old"));
+        assert_eq!(
+            jump_target(&sessions).map(|s| s.label.as_str()),
+            Some("old")
+        );
     }
 
     #[test]
@@ -546,12 +635,18 @@ mod tests {
             session_with("a", "unknown", "needs-input", None),
             session_with("a", "known", "needs-input", Some(99)),
         ];
-        assert_eq!(jump_target(&sessions).map(|s| s.label.as_str()), Some("known"));
+        assert_eq!(
+            jump_target(&sessions).map(|s| s.label.as_str()),
+            Some("known")
+        );
 
         let sessions = [
             session_with("a", "first", "needs-input", None),
             session_with("a", "second", "needs-input", None),
         ];
-        assert_eq!(jump_target(&sessions).map(|s| s.label.as_str()), Some("first"));
+        assert_eq!(
+            jump_target(&sessions).map(|s| s.label.as_str()),
+            Some("first")
+        );
     }
 }

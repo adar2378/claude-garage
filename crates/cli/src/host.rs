@@ -1,7 +1,9 @@
 //! The real [`Host`]: ureq, libc, `std::process`. Not unit-tested (it is the
 //! system); every decision it feeds lives in `launcher` / `tui_bin`.
 
-use crate::launcher::{checked_pid, parse_listener_pid, Fail, Host, Out, Probe, Reply, Starting, Terminate};
+use crate::launcher::{
+    Fail, Host, Out, Probe, Reply, Starting, Terminate, checked_pid, parse_listener_pid,
+};
 use crate::tui_bin::{self, Builder};
 use serde_json::Value;
 use std::io::{BufRead, IsTerminal, Write};
@@ -60,11 +62,17 @@ fn terminate_pid(pid: i32) -> Terminate {
 #[cfg(windows)]
 fn terminate_pid(pid: i32) -> Terminate {
     let mut cmd = Command::new("taskkill");
-    cmd.args(["/PID", &pid.to_string(), "/F"]).stdin(Stdio::null());
+    cmd.args(["/PID", &pid.to_string(), "/F"])
+        .stdin(Stdio::null());
     hide_console(&mut cmd);
     match cmd.output() {
         Ok(o) if o.status.success() => Terminate::Sent,
-        Ok(o) if taskkill_says_gone(&String::from_utf8_lossy(&o.stdout), &String::from_utf8_lossy(&o.stderr)) => {
+        Ok(o)
+            if taskkill_says_gone(
+                &String::from_utf8_lossy(&o.stdout),
+                &String::from_utf8_lossy(&o.stderr),
+            ) =>
+        {
             Terminate::Gone
         }
         Ok(o) => Terminate::Error(String::from_utf8_lossy(&o.stderr).trim().to_owned()),
@@ -75,7 +83,9 @@ fn terminate_pid(pid: i32) -> Terminate {
 /// taskkill reports a vanished process as "ERROR: The process "N" not found."
 #[cfg_attr(not(windows), allow(dead_code))]
 pub fn taskkill_says_gone(stdout: &str, stderr: &str) -> bool {
-    format!("{stdout}{stderr}").to_lowercase().contains("not found")
+    format!("{stdout}{stderr}")
+        .to_lowercase()
+        .contains("not found")
 }
 
 /// The pid listening on `port` in `netstat -ano -p TCP` output (rows like
@@ -93,8 +103,11 @@ pub fn parse_netstat_listener(netstat: &str, port: u16) -> Option<u32> {
         .lines()
         .filter_map(|l| {
             let f: Vec<&str> = l.split_whitespace().collect();
-            (f.len() == 5 && f[0].eq_ignore_ascii_case("TCP") && f[1].ends_with(&suffix) && f[2].ends_with(":0"))
-                .then(|| f[4].to_owned())
+            (f.len() == 5
+                && f[0].eq_ignore_ascii_case("TCP")
+                && f[1].ends_with(&suffix)
+                && f[2].ends_with(":0"))
+            .then(|| f[4].to_owned())
         })
         .collect();
     parse_listener_pid(&pids.join("\n"))
@@ -163,7 +176,12 @@ fn url(port: u16, path: &str) -> String {
 fn reply_of(res: Result<ureq::http::Response<ureq::Body>, ureq::Error>) -> Result<Reply, String> {
     let mut r = res.map_err(|e| e.to_string())?;
     let status = r.status().as_u16();
-    let body = r.body_mut().read_to_string().ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or(Value::Object(Default::default()));
+    let body = r
+        .body_mut()
+        .read_to_string()
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or(Value::Object(Default::default()));
     Ok(Reply { status, body })
 }
 
@@ -184,13 +202,30 @@ impl Host for RealHost {
         env!("CARGO_PKG_VERSION")
     }
     fn fetch_health(&self, timeout_ms: u64) -> Option<Value> {
-        let mut r = ureq::get(&url(self.port, "/api/health")).config().timeout_global(Some(Duration::from_millis(timeout_ms))).build().call().ok()?;
-        Some(r.body_mut().read_to_string().ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or(Value::Object(Default::default())))
+        let mut r = ureq::get(&url(self.port, "/api/health"))
+            .config()
+            .timeout_global(Some(Duration::from_millis(timeout_ms)))
+            .build()
+            .call()
+            .ok()?;
+        Some(
+            r.body_mut()
+                .read_to_string()
+                .ok()
+                .and_then(|s| serde_json::from_str(&s).ok())
+                .unwrap_or(Value::Object(Default::default())),
+        )
     }
     fn post(&self, path: &str, body: Option<&Value>) -> Result<Reply, String> {
-        let req = ureq::post(&url(self.port, path)).config().timeout_global(Some(Duration::from_secs(300))).http_status_as_error(false).build();
+        let req = ureq::post(&url(self.port, path))
+            .config()
+            .timeout_global(Some(Duration::from_secs(300)))
+            .http_status_as_error(false)
+            .build();
         reply_of(match body {
-            Some(b) => req.header("content-type", "application/json").send(b.to_string()),
+            Some(b) => req
+                .header("content-type", "application/json")
+                .send(b.to_string()),
             None => req.send_empty(),
         })
     }
@@ -213,11 +248,15 @@ impl Host for RealHost {
         line
     }
     fn run_inherit(&self, bin: &str, args: &[&str]) -> bool {
-        Command::new(bin).args(args).status().is_ok_and(|s| s.success())
+        Command::new(bin)
+            .args(args)
+            .status()
+            .is_ok_and(|s| s.success())
     }
     fn uses_tmux(&self) -> bool {
         use garage_daemon::backend::Kind;
-        Kind::from_env_value(std::env::var("GARAGE_BACKEND").ok().as_deref()).map_or(true, |k| k == Kind::Tmux)
+        Kind::from_env_value(std::env::var("GARAGE_BACKEND").ok().as_deref())
+            .map_or(true, |k| k == Kind::Tmux)
     }
     #[cfg(windows)]
     fn listener_pid(&self) -> Option<u32> {
@@ -225,7 +264,10 @@ impl Host for RealHost {
         cmd.args(["-ano", "-p", "TCP"]).stdin(Stdio::null());
         hide_console(&mut cmd);
         let out = cmd.output().ok()?;
-        out.status.success().then(|| parse_netstat_listener(&String::from_utf8_lossy(&out.stdout), self.port)).flatten()
+        out.status
+            .success()
+            .then(|| parse_netstat_listener(&String::from_utf8_lossy(&out.stdout), self.port))
+            .flatten()
     }
     #[cfg(not(windows))]
     fn listener_pid(&self) -> Option<u32> {
@@ -234,7 +276,10 @@ impl Host for RealHost {
             .stdin(Stdio::null())
             .output()
             .ok()?;
-        out.status.success().then(|| parse_listener_pid(&String::from_utf8_lossy(&out.stdout))).flatten()
+        out.status
+            .success()
+            .then(|| parse_listener_pid(&String::from_utf8_lossy(&out.stdout)))
+            .flatten()
     }
     fn terminate(&self, pid: u32) -> Terminate {
         let pid = match checked_pid(pid) {
@@ -245,38 +290,50 @@ impl Host for RealHost {
     }
     fn spawn_daemon(&self) -> Result<Starting, String> {
         let dir = log_dir(|k| std::env::var(k).ok()).ok_or("HOME is not set; set GARAGE_DIR")?;
-        std::fs::create_dir_all(&dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
+        std::fs::create_dir_all(&dir)
+            .map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
         let log_path = dir.join("daemon.log");
         let log = std::fs::OpenOptions::new()
             .create(true)
             .append(true)
             .open(&log_path)
             .map_err(|e| format!("cannot open {}: {e}", log_path.display()))?;
-        let exe = std::env::current_exe().map_err(|e| format!("cannot locate claude-garage: {e}"))?;
+        let exe =
+            std::env::current_exe().map_err(|e| format!("cannot locate claude-garage: {e}"))?;
         let mut cmd = Command::new(exe);
         cmd.arg("daemon")
             .stdin(Stdio::null())
             .stdout(log.try_clone().map_err(|e| e.to_string())?)
             .stderr(log);
         detach(&mut cmd);
-        let mut child = cmd.spawn().map_err(|e| format!("failed to start the daemon: {e}"))?;
+        let mut child = cmd
+            .spawn()
+            .map_err(|e| format!("failed to start the daemon: {e}"))?;
         let pid = child.id();
         // Reap it if it dies while we are alive: an unreaped child stays a
         // zombie, and the wall's liveness check would pass.
         std::thread::spawn(move || {
             let _ = child.wait();
         });
-        Ok(Starting { log: log_path, pid, port: self.port })
+        Ok(Starting {
+            log: log_path,
+            pid,
+            port: self.port,
+        })
     }
     fn sleep_ms(&self, ms: u64) {
         std::thread::sleep(Duration::from_millis(ms));
     }
     fn now_ms(&self) -> u64 {
         static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
-        START.get_or_init(std::time::Instant::now).elapsed().as_millis() as u64
+        START
+            .get_or_init(std::time::Instant::now)
+            .elapsed()
+            .as_millis() as u64
     }
     fn resolve_tui(&self) -> Result<PathBuf, Fail> {
-        let exe = std::env::current_exe().map_err(|e| Fail(format!("cannot locate claude-garage: {e}")))?;
+        let exe = std::env::current_exe()
+            .map_err(|e| Fail(format!("cannot locate claude-garage: {e}")))?;
         // npm/homebrew expose a bin symlink; resolve it to the real package.
         let exe = exe.canonicalize().unwrap_or(exe);
         let inputs = tui_bin::Inputs {
@@ -319,9 +376,19 @@ mod tests {
   TCP    127.0.0.1:47470        0.0.0.0:0              LISTENING       7777
 ";
         assert_eq!(parse_netstat_listener(out, 4747), Some(4242));
-        assert_eq!(parse_netstat_listener(out, 4748), None, "nothing listens there");
-        let two = format!("{out}  TCP    0.0.0.0:4747           0.0.0.0:0              LISTENING       9999\n");
-        assert_eq!(parse_netstat_listener(&two, 4747), None, "ambiguous: never guess");
+        assert_eq!(
+            parse_netstat_listener(out, 4748),
+            None,
+            "nothing listens there"
+        );
+        let two = format!(
+            "{out}  TCP    0.0.0.0:4747           0.0.0.0:0              LISTENING       9999\n"
+        );
+        assert_eq!(
+            parse_netstat_listener(&two, 4747),
+            None,
+            "ambiguous: never guess"
+        );
         assert_eq!(parse_netstat_listener("", 4747), None);
         // A German Windows prints the state as ABHÖREN; the pid is still found.
         let de = "  TCP    127.0.0.1:4747         0.0.0.0:0              ABHÖREN         4242\n  TCP    127.0.0.1:4747         127.0.0.1:50000        HERGESTELLT     5555\n";
@@ -330,7 +397,10 @@ mod tests {
 
     #[test]
     fn taskkill_not_found_means_the_process_is_already_gone() {
-        assert!(taskkill_says_gone("", "ERROR: The process \"4242\" not found."));
+        assert!(taskkill_says_gone(
+            "",
+            "ERROR: The process \"4242\" not found."
+        ));
         assert!(!taskkill_says_gone("", "ERROR: Access is denied."));
     }
 

@@ -34,14 +34,16 @@ impl App {
         let was_engaged = self.store.state().layer == KeyLayer::Engaged;
         let effects = self.dispatch_action_inner(id, ctx, now);
         if let Some(plugin) = plugin
-            && !was_engaged && self.store.state().layer == KeyLayer::Engaged {
-                self.store.disengage();
-                self.router.notices.show(
-                    format!("plugin {plugin} tried to put you into a session — press Enter to engage"),
-                    4000,
-                    now,
-                );
-            }
+            && !was_engaged
+            && self.store.state().layer == KeyLayer::Engaged
+        {
+            self.store.disengage();
+            self.router.notices.show(
+                format!("plugin {plugin} tried to put you into a session — press Enter to engage"),
+                4000,
+                now,
+            );
+        }
         effects
     }
 
@@ -89,9 +91,10 @@ impl App {
         self.router
             .run_action(&mut self.store, id, ctx, now, &mut effects);
         if self.store.state().pet != pet_before
-            && let Some(pet) = &mut self.pet {
-                pet.reset_sim();
-            }
+            && let Some(pet) = &mut self.pet
+        {
+            pet.reset_sim();
+        }
         effects
     }
 }

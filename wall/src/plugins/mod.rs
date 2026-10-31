@@ -116,8 +116,13 @@ impl PluginStore {
         self.actions.clear();
         for p in list.plugins.iter().filter(|p| p.active) {
             for a in &p.actions {
-                let Some(id) = ActionId::declare(&a.id) else { continue };
-                let local = a.id.split_once(':').map_or(a.id.as_str(), |(_, l)| l).to_owned();
+                let Some(id) = ActionId::declare(&a.id) else {
+                    continue;
+                };
+                let local =
+                    a.id.split_once(':')
+                        .map_or(a.id.as_str(), |(_, l)| l)
+                        .to_owned();
                 let need = if a.contexts.iter().any(|c| c == "session") {
                     Need::Session
                 } else if a.contexts.iter().any(|c| c == "workspace") {
@@ -140,7 +145,13 @@ impl PluginStore {
             }
         }
         self.list = list;
-        let active: Vec<String> = self.list.plugins.iter().filter(|p| p.active).map(|p| p.id.clone()).collect();
+        let active: Vec<String> = self
+            .list
+            .plugins
+            .iter()
+            .filter(|p| p.active)
+            .map(|p| p.id.clone())
+            .collect();
         self.built.retain(|id, _| active.contains(id));
         self.revs.retain(|id, _| active.contains(id));
         self.rebuild_buttons();
@@ -180,7 +191,11 @@ impl PluginStore {
     }
 
     fn order_of(&self, plugin: &str) -> usize {
-        self.list.plugins.iter().position(|p| p.id == plugin).unwrap_or(usize::MAX)
+        self.list
+            .plugins
+            .iter()
+            .position(|p| p.id == plugin)
+            .unwrap_or(usize::MAX)
     }
 
     fn rebuild_buttons(&mut self) {
@@ -188,7 +203,11 @@ impl PluginStore {
         for p in self.list.plugins.iter().filter(|p| p.active) {
             for b in &p.buttons {
                 if let Some(item) = build::button(&p.id, b) {
-                    buttons.entry(slot_of(b.slot)).or_default().push((b.priority, self.order_of(&p.id), item));
+                    buttons.entry(slot_of(b.slot)).or_default().push((
+                        b.priority,
+                        self.order_of(&p.id),
+                        item,
+                    ));
                 }
             }
         }
@@ -201,7 +220,11 @@ impl PluginStore {
         for (plugin, items) in &self.built {
             let order = self.order_of(plugin);
             for (slot, scope, priority, item) in items {
-                index.entry((*slot, scope.clone())).or_default().push((*priority, order, item.clone()));
+                index.entry((*slot, scope.clone())).or_default().push((
+                    *priority,
+                    order,
+                    item.clone(),
+                ));
             }
         }
         self.index = index;
@@ -211,7 +234,11 @@ impl PluginStore {
     /// (priority descending, install order). Widgets of one plugin keep the
     /// order the plugin pushed them in (the sort is stable).
     pub fn items_for(&self, slot: SlotId, scope: &str) -> Vec<SlotItem> {
-        let widgets = self.index.get(&(slot, scope.to_owned())).map(Vec::as_slice).unwrap_or(&[]);
+        let widgets = self
+            .index
+            .get(&(slot, scope.to_owned()))
+            .map(Vec::as_slice)
+            .unwrap_or(&[]);
         let buttons = self.buttons.get(&slot).map(Vec::as_slice).unwrap_or(&[]);
         let mut all: Vec<&(i32, usize, SlotItem)> = widgets.iter().chain(buttons).collect();
         all.sort_by_key(|(priority, order, _)| (std::cmp::Reverse(*priority), *order));
@@ -228,7 +255,9 @@ impl PluginStore {
 fn scope_for(slot: SlotId, ctx: &SlotCtx) -> Option<String> {
     match slot {
         SlotId::StripRight => Some(GLOBAL_SCOPE.to_owned()),
-        SlotId::TileTitleRight | SlotId::TileGutter | SlotId::RailRow => ctx.session.map(|s| s.id.clone()),
+        SlotId::TileTitleRight | SlotId::TileGutter | SlotId::RailRow => {
+            ctx.session.map(|s| s.id.clone())
+        }
         SlotId::RailHeader | SlotId::RailExtraRows => ctx.group.map(|g| g.name.clone()),
         SlotId::Overlay | SlotId::ContextMenu => None,
     }

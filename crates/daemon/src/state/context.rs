@@ -10,10 +10,10 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use garage_protocol::SessionStatus;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::transcript::TranscriptCache;
 
@@ -30,7 +30,7 @@ pub trait TelemetryDeps: Send + Sync {
     fn set_status(&self, id: &str, state: SessionStatus, message: Option<Option<String>>);
     /// `resolveSessionIds({session_id, cwd})` from `session-resolve.js`.
     async fn resolve_session_ids(&self, session_id: Option<&str>, cwd: Option<&str>)
-        -> Vec<String>;
+    -> Vec<String>;
 }
 
 /// Default until the merge wires real stores: nothing resolves, and the token

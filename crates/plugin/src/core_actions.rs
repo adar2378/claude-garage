@@ -65,11 +65,20 @@ const NEVER: &[&str] = &[
 
 /// `None` when `id` is not a core id at all.
 pub fn lookup(id: &str) -> Option<CoreAction> {
-    let invocable = INVOCABLE.contains(&id) || INVOCABLE_PREFIXES.iter().any(|p| id.starts_with(p) && id.len() > p.len());
+    let invocable = INVOCABLE.contains(&id)
+        || INVOCABLE_PREFIXES
+            .iter()
+            .any(|p| id.starts_with(p) && id.len() > p.len());
     if invocable {
-        return Some(CoreAction { dangerous: DANGEROUS.contains(&id), plugin_invocable: true });
+        return Some(CoreAction {
+            dangerous: DANGEROUS.contains(&id),
+            plugin_invocable: true,
+        });
     }
-    NEVER.contains(&id).then_some(CoreAction { dangerous: false, plugin_invocable: false })
+    NEVER.contains(&id).then_some(CoreAction {
+        dangerous: false,
+        plugin_invocable: false,
+    })
 }
 
 /// The invocable exact ids, for `/api/plugin/features`.
@@ -88,10 +97,26 @@ mod tests {
             assert!(a.dangerous && a.plugin_invocable, "{id}");
         }
         for id in NEVER {
-            assert_eq!(lookup(id), Some(CoreAction { dangerous: false, plugin_invocable: false }), "{id}");
+            assert_eq!(
+                lookup(id),
+                Some(CoreAction {
+                    dangerous: false,
+                    plugin_invocable: false
+                }),
+                "{id}"
+            );
         }
-        assert_eq!(lookup("session.focus"), Some(CoreAction { dangerous: false, plugin_invocable: true }));
-        assert_eq!(lookup("overlay.open.anything").map(|a| a.plugin_invocable), Some(true));
+        assert_eq!(
+            lookup("session.focus"),
+            Some(CoreAction {
+                dangerous: false,
+                plugin_invocable: true
+            })
+        );
+        assert_eq!(
+            lookup("overlay.open.anything").map(|a| a.plugin_invocable),
+            Some(true)
+        );
         assert_eq!(lookup("overlay.open."), None);
         assert_eq!(lookup("no.such.action"), None);
         assert_eq!(lookup("usage-bar:details"), None);

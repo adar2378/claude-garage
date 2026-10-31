@@ -18,7 +18,7 @@ use tokio::process::Command;
 use tokio::task::JoinHandle;
 
 use crate::backend::tmux::{normalize_title, split_session_id};
-use crate::backend::{BackendSession, PaneInfo, SessionBackend, COMMAND_TIMEOUT};
+use crate::backend::{BackendSession, COMMAND_TIMEOUT, PaneInfo, SessionBackend};
 use crate::bus::{DaemonEvent, EventBus};
 use crate::closing::{CloseReason, ClosingIntents, Intent};
 use crate::control::ControlLink;
@@ -211,7 +211,16 @@ impl Poller {
         bus: EventBus,
     ) -> Self {
         let hostname = gethostname::gethostname().to_str().map(str::to_string);
-        Self { backend, agents, sink, bus, hostname, last: Mutex::new(Last::default()), intents: ClosingIntents::default(), control: Arc::default() }
+        Self {
+            backend,
+            agents,
+            sink,
+            bus,
+            hostname,
+            last: Mutex::new(Last::default()),
+            intents: ClosingIntents::default(),
+            control: Arc::default(),
+        }
     }
 
     /// Override the hostname used to filter default pane titles.
@@ -237,14 +246,21 @@ impl Poller {
                 None => CloseReason::Crash,
             };
             let (workspace, _) = split_session_id(&id);
-            self.bus.publish(DaemonEvent::SessionClosed { id, dir, workspace, reason, last_status });
+            self.bus.publish(DaemonEvent::SessionClosed {
+                id,
+                dir,
+                workspace,
+                reason,
+                last_status,
+            });
         }
         for (id, dir) in m.created {
             if self.intents.take(&id) == Some(Intent::Renamed) {
                 continue;
             }
             let (workspace, _) = split_session_id(&id);
-            self.bus.publish(DaemonEvent::SessionCreated { id, dir, workspace });
+            self.bus
+                .publish(DaemonEvent::SessionCreated { id, dir, workspace });
         }
     }
 
@@ -254,7 +270,9 @@ impl Poller {
         // socket). Treating it as "no sessions" would close everything, fire
         // hooks and write crash records for sessions that are fine: skip the
         // tick and keep what we knew.
-        let Ok(sessions) = self.backend.list().await else { return };
+        let Ok(sessions) = self.backend.list().await else {
+            return;
+        };
 
         if sessions.is_empty() {
             let mut membership = Membership::default();
@@ -265,7 +283,11 @@ impl Poller {
                 for id in &prev.ids {
                     let status = self.sink.last_status(id);
                     self.sink.drop_session(id);
-                    membership.closed.push((id.clone(), prev.dirs.get(id).cloned().unwrap_or_default(), status));
+                    membership.closed.push((
+                        id.clone(),
+                        prev.dirs.get(id).cloned().unwrap_or_default(),
+                        status,
+                    ));
                 }
                 !prev.ids.is_empty()
             };
@@ -277,7 +299,9 @@ impl Poller {
         }
 
         // One list-panes per tick daemon-wide: pid join and title diff share it.
-        let (agents, panes) = tokio::join!(self.agents.agents(), async { self.backend.panes().await.unwrap_or_default() });
+        let (agents, panes) = tokio::join!(self.agents.agents(), async {
+            self.backend.panes().await.unwrap_or_default()
+        });
         let mut membership = Membership::default();
         let changed = {
             let mut last = self.last.lock().unwrap();
@@ -292,13 +316,20 @@ impl Poller {
                 if !diff.ids.contains(id) {
                     let status = self.sink.last_status(id);
                     self.sink.drop_session(id);
-                    membership.closed.push((id.clone(), last.dirs.get(id).cloned().unwrap_or_default(), status));
+                    membership.closed.push((
+                        id.clone(),
+                        last.dirs.get(id).cloned().unwrap_or_default(),
+                        status,
+                    ));
                 }
             }
             if last.seen_first {
                 for s in &sessions {
                     if !last.ids.contains(&s.id) {
-                        let dir = panes.get(&s.id).map(|p| p.cwd.clone()).unwrap_or_else(|| s.dir.clone());
+                        let dir = panes
+                            .get(&s.id)
+                            .map(|p| p.cwd.clone())
+                            .unwrap_or_else(|| s.dir.clone());
                         membership.created.push((s.id.clone(), dir));
                     }
                 }
@@ -306,7 +337,15 @@ impl Poller {
             last.seen_first = true;
             last.dirs = sessions
                 .iter()
-                .map(|s| (s.id.clone(), panes.get(&s.id).map(|p| p.cwd.clone()).unwrap_or_else(|| s.dir.clone())))
+                .map(|s| {
+                    (
+                        s.id.clone(),
+                        panes
+                            .get(&s.id)
+                            .map(|p| p.cwd.clone())
+                            .unwrap_or_else(|| s.dir.clone()),
+                    )
+                })
                 .collect();
             last.ids = diff.ids;
             last.titles = diff.titles;
@@ -422,7 +461,13 @@ pub(crate) mod fakes {
     }
 
     /// One `create` call: (id, dir, command, args, env).
-    pub type Created = (String, std::path::PathBuf, String, Vec<String>, Vec<(String, String)>);
+    pub type Created = (
+        String,
+        std::path::PathBuf,
+        String,
+        Vec<String>,
+        Vec<(String, String)>,
+    );
 
     pub struct FakeBackend {
         pub sessions: Mutex<Vec<BackendSession>>,
@@ -439,7 +484,14 @@ pub(crate) mod fakes {
 
     impl FakeBackend {
         pub fn new() -> Self {
-            Self { sessions: Mutex::new(vec![]), panes: Mutex::new(HashMap::new()), fail_list: Default::default(), created: Mutex::default(), pane_tags: Mutex::default(), has_calls: Default::default() }
+            Self {
+                sessions: Mutex::new(vec![]),
+                panes: Mutex::new(HashMap::new()),
+                fail_list: Default::default(),
+                created: Mutex::default(),
+                pane_tags: Mutex::default(),
+                has_calls: Default::default(),
+            }
         }
         pub fn set(&self, id: &str, dir: &str, pid: Option<u32>, title: &str) {
             let mut s = self.sessions.lock().unwrap();
@@ -462,7 +514,10 @@ pub(crate) mod fakes {
         /// A session as `create` + `mark_plugin_pane` leave it.
         pub fn set_pane(&self, id: &str, plugin: &str) {
             self.set(id, "/x", None, "");
-            self.pane_tags.lock().unwrap().insert(id.into(), plugin.into());
+            self.pane_tags
+                .lock()
+                .unwrap()
+                .insert(id.into(), plugin.into());
         }
         pub fn remove(&self, id: &str) {
             self.sessions.lock().unwrap().retain(|x| x.id != id);
@@ -485,7 +540,8 @@ pub(crate) mod fakes {
             Ok(self.panes.lock().unwrap().clone())
         }
         async fn has(&self, id: &str) -> anyhow::Result<bool> {
-            self.has_calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            self.has_calls
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             Ok(self.sessions.lock().unwrap().iter().any(|s| s.id == id))
         }
         async fn create(
@@ -496,7 +552,13 @@ pub(crate) mod fakes {
             args: &[String],
             env: &[(String, String)],
         ) -> anyhow::Result<()> {
-            self.created.lock().unwrap().push((id.into(), dir.into(), cmd.into(), args.to_vec(), env.to_vec()));
+            self.created.lock().unwrap().push((
+                id.into(),
+                dir.into(),
+                cmd.into(),
+                args.to_vec(),
+                env.to_vec(),
+            ));
             self.set(id, &dir.to_string_lossy(), None, "");
             Ok(())
         }
@@ -515,7 +577,10 @@ pub(crate) mod fakes {
             Ok(())
         }
         async fn mark_plugin_pane(&self, id: &str, plugin: &str) -> anyhow::Result<()> {
-            self.pane_tags.lock().unwrap().insert(id.into(), plugin.into());
+            self.pane_tags
+                .lock()
+                .unwrap()
+                .insert(id.into(), plugin.into());
             Ok(())
         }
         async fn plugin_pane_sessions(&self) -> anyhow::Result<Vec<String>> {
@@ -525,7 +590,10 @@ pub(crate) mod fakes {
                 .lock()
                 .unwrap()
                 .iter()
-                .filter(|s| crate::plugins::panes::parse_pane_session(&s.id).is_some_and(|(plugin, _)| tags.get(&s.id).is_some_and(|t| t == plugin)))
+                .filter(|s| {
+                    crate::plugins::panes::parse_pane_session(&s.id)
+                        .is_some_and(|(plugin, _)| tags.get(&s.id).is_some_and(|t| t == plugin))
+                })
                 .map(|s| s.id.clone())
                 .collect())
         }
@@ -536,7 +604,9 @@ pub(crate) mod fakes {
             unimplemented!()
         }
         fn attach_spec(&self, _: &str) -> garage_protocol::AttachSpec {
-            garage_protocol::AttachSpec::Tmux { socket: Some("fake".into()) }
+            garage_protocol::AttachSpec::Tmux {
+                socket: Some("fake".into()),
+            }
         }
     }
 
@@ -706,7 +776,10 @@ mod tests {
     /// `SessionsChanged` events only; the typed membership events have their
     /// own tests (`membership_*`).
     fn drain(rx: &mut tokio::sync::broadcast::Receiver<DaemonEvent>) -> usize {
-        drain_all(rx).iter().filter(|e| **e == DaemonEvent::SessionsChanged).count()
+        drain_all(rx)
+            .iter()
+            .filter(|e| **e == DaemonEvent::SessionsChanged)
+            .count()
     }
 
     fn drain_all(rx: &mut tokio::sync::broadcast::Receiver<DaemonEvent>) -> Vec<DaemonEvent> {
@@ -858,7 +931,10 @@ mod tests {
     // ---- p24: typed membership events ----
 
     fn typed(events: Vec<DaemonEvent>) -> Vec<DaemonEvent> {
-        events.into_iter().filter(|e| !matches!(e, DaemonEvent::SessionsChanged)).collect()
+        events
+            .into_iter()
+            .filter(|e| !matches!(e, DaemonEvent::SessionsChanged))
+            .collect()
     }
 
     #[tokio::test]
@@ -866,12 +942,19 @@ mod tests {
         let mut r = rig();
         r.backend.set("garage/ws/a", "/a", Some(1), "");
         r.poller.poll_once().await;
-        assert!(typed(drain_all(&mut r.rx)).is_empty(), "the first poll only learns the world");
+        assert!(
+            typed(drain_all(&mut r.rx)).is_empty(),
+            "the first poll only learns the world"
+        );
         r.backend.set("garage/ws/b", "/b", Some(2), "");
         r.poller.poll_once().await;
         assert_eq!(
             typed(drain_all(&mut r.rx)),
-            [DaemonEvent::SessionCreated { id: "garage/ws/b".into(), dir: "/b".into(), workspace: "ws".into() }]
+            [DaemonEvent::SessionCreated {
+                id: "garage/ws/b".into(),
+                dir: "/b".into(),
+                workspace: "ws".into()
+            }]
         );
     }
 
@@ -881,8 +964,14 @@ mod tests {
         let r = rig();
         let bus = EventBus::default();
         let mut rx = bus.subscribe();
-        let poller = Poller::new(r.backend.clone(), r.agents.clone(), r.sink.clone(), bus).with_intents(intents.clone());
-        for id in ["garage/ws/crashed", "garage/ws/closed", "garage/ws/restarted", "garage/ws/renamed"] {
+        let poller = Poller::new(r.backend.clone(), r.agents.clone(), r.sink.clone(), bus)
+            .with_intents(intents.clone());
+        for id in [
+            "garage/ws/crashed",
+            "garage/ws/closed",
+            "garage/ws/restarted",
+            "garage/ws/renamed",
+        ] {
             r.backend.set(id, "/d", Some(1), "");
         }
         poller.poll_once().await;
@@ -890,7 +979,12 @@ mod tests {
         intents.mark("garage/ws/closed", CloseReason::User);
         intents.mark("garage/ws/restarted", CloseReason::DaemonRestart);
         intents.mark_renamed("garage/ws/renamed");
-        for id in ["garage/ws/crashed", "garage/ws/closed", "garage/ws/restarted", "garage/ws/renamed"] {
+        for id in [
+            "garage/ws/crashed",
+            "garage/ws/closed",
+            "garage/ws/restarted",
+            "garage/ws/renamed",
+        ] {
             r.backend.remove(id);
         }
         r.backend.set("garage/ws/survivor", "/s", Some(9), "");
@@ -898,7 +992,13 @@ mod tests {
         let mut closed: Vec<(String, &str)> = typed(drain_all(&mut rx))
             .into_iter()
             .filter_map(|e| match e {
-                DaemonEvent::SessionClosed { id, reason, dir, workspace, .. } => {
+                DaemonEvent::SessionClosed {
+                    id,
+                    reason,
+                    dir,
+                    workspace,
+                    ..
+                } => {
                     assert_eq!((dir.as_str(), workspace.as_str()), ("/d", "ws"));
                     Some((id, reason.as_str()))
                 }
@@ -929,16 +1029,28 @@ mod tests {
         for _ in 0..3 {
             r.poller.poll_once().await;
         }
-        assert!(typed(drain_all(&mut r.rx)).is_empty(), "no close, no create, no sessions-changed");
-        assert!(r.sink.dropped.lock().unwrap().is_empty(), "statuses are not dropped");
+        assert!(
+            typed(drain_all(&mut r.rx)).is_empty(),
+            "no close, no create, no sessions-changed"
+        );
+        assert!(
+            r.sink.dropped.lock().unwrap().is_empty(),
+            "statuses are not dropped"
+        );
         // tmux comes back with the same sessions: nothing changed
         r.backend.fail_list.store(false, Ordering::SeqCst);
         r.poller.poll_once().await;
-        assert!(typed(drain_all(&mut r.rx)).is_empty(), "the memory survived the outage");
+        assert!(
+            typed(drain_all(&mut r.rx)).is_empty(),
+            "the memory survived the outage"
+        );
         // and a real vanish afterwards is still seen, exactly once
         r.backend.remove("garage/ws/b");
         r.poller.poll_once().await;
-        let closed: Vec<_> = typed(drain_all(&mut r.rx)).into_iter().filter(|e| matches!(e, DaemonEvent::SessionClosed { .. })).collect();
+        let closed: Vec<_> = typed(drain_all(&mut r.rx))
+            .into_iter()
+            .filter(|e| matches!(e, DaemonEvent::SessionClosed { .. }))
+            .collect();
         assert_eq!(closed.len(), 1);
     }
 
@@ -946,15 +1058,22 @@ mod tests {
     async fn the_last_session_vanishing_still_reports_its_close_with_the_last_known_status() {
         let mut r = rig();
         r.backend.set(ID, "/work", Some(1), "");
-        r.sink.statuses.lock().unwrap().insert(ID.into(), "working".into());
+        r.sink
+            .statuses
+            .lock()
+            .unwrap()
+            .insert(ID.into(), "working".into());
         r.poller.poll_once().await;
         drain_all(&mut r.rx);
         r.backend.remove(ID);
         r.poller.poll_once().await; // the empty-list path
         let ev = typed(drain_all(&mut r.rx));
         assert_eq!(ev.len(), 1, "{ev:?}");
-        assert!(matches!(&ev[0], DaemonEvent::SessionClosed { id, dir, reason: CloseReason::Crash, last_status: Some(s), .. }
-            if id == ID && dir == "/work" && s == "working"), "{ev:?}");
+        assert!(
+            matches!(&ev[0], DaemonEvent::SessionClosed { id, dir, reason: CloseReason::Crash, last_status: Some(s), .. }
+            if id == ID && dir == "/work" && s == "working"),
+            "{ev:?}"
+        );
     }
 
     // ---- start(): tick + control wake-ups (paused clock, fakes) ----

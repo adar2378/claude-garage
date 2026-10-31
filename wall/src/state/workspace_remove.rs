@@ -89,7 +89,10 @@ mod tests {
     fn k_confirms_the_armed_workspace_within_the_window_and_consumes_the_arm() {
         let mut armed = ArmedAction::default();
         assert!(!armed.press("proj", 1000)); // X arms
-        assert_eq!(confirm_kill_target(&mut armed, 2500).as_deref(), Some("proj"));
+        assert_eq!(
+            confirm_kill_target(&mut armed, 2500).as_deref(),
+            Some("proj")
+        );
         assert_eq!(armed.armed_id(), None, "confirm consumes the arm");
         assert_eq!(
             confirm_kill_target(&mut armed, 2600),
@@ -102,7 +105,11 @@ mod tests {
     fn an_expired_arm_never_confirms_and_k_never_re_arms_it() {
         let mut armed = ArmedAction::new(Duration::from_secs(3));
         armed.press("proj", 1000);
-        assert_eq!(confirm_kill_target(&mut armed, 4001), None, "window expired");
+        assert_eq!(
+            confirm_kill_target(&mut armed, 4001),
+            None,
+            "window expired"
+        );
         assert_eq!(
             armed.armed_id(),
             None,
@@ -131,7 +138,11 @@ mod tests {
     fn k_outside_an_arm_maps_to_no_garage_command_typing_hint_path() {
         let k = Keymap::defaults().resolve(Layer::Garage, "K").unwrap();
         assert_eq!(k.action, ids::WORKSPACE_REMOVE_KILL);
-        assert_eq!(command_for_action(k.action, k.index), None, "K is a router branch, not a command");
+        assert_eq!(
+            command_for_action(k.action, k.index),
+            None,
+            "K is a router branch, not a command"
+        );
     }
 
     // ── removeArmNotice wording ─────────────────────────────────────────

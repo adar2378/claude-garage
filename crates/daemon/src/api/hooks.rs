@@ -1,15 +1,15 @@
 //! Port of `daemon/src/hooks.js`: Claude Code hook intake, snippet and install routes.
 
+use axum::Json;
 use axum::body::Bytes;
 use axum::extract::{Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use axum::Json;
 use garage_protocol::SessionStatus;
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 
 use crate::error::error_response;
-use crate::install::{read_settings_or_refuse, write_settings_atomic, InstallError};
+use crate::install::{InstallError, read_settings_or_refuse, write_settings_atomic};
 use crate::security::token_matches;
 use crate::state::AppState;
 
@@ -249,7 +249,9 @@ fn validate_hook_shapes(settings: &Map<String, Value>) -> Result<(), InstallErro
     let refuse = |what: &str, want: &str| {
         Err(InstallError {
             status: 422,
-            message: format!("settings.json: `{what}` is not {want} — fix it and retry; the file was left untouched"),
+            message: format!(
+                "settings.json: `{what}` is not {want} — fix it and retry; the file was left untouched"
+            ),
         })
     };
     if let Some(hooks) = settings.get("hooks") {
@@ -303,10 +305,10 @@ pub(crate) mod test_support {
     use tower::ServiceExt;
 
     use super::*;
+    use crate::Config;
     use crate::backend::tmux::TmuxBackend;
     use crate::os::UnsupportedOs;
     use crate::state::context::{Telemetry, TelemetryDeps};
-    use crate::Config;
 
     pub const TOKEN: &str = "0123456789abcdef0123456789abcdef0123456789abcdef";
 
@@ -631,9 +633,11 @@ mod tests {
         let (_, body) = h.call("POST", "/api/hooks/install", None).await;
         assert_eq!(body["alreadyInstalled"], false);
         let backup = body["backup"].as_str().unwrap();
-        assert!(std::fs::read_to_string(backup)
-            .unwrap()
-            .contains("echo mine"));
+        assert!(
+            std::fs::read_to_string(backup)
+                .unwrap()
+                .contains("echo mine")
+        );
         let merged: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
         assert_eq!(merged["model"], "opus");
         assert_eq!(merged["hooks"]["Stop"].as_array().unwrap().len(), 2);

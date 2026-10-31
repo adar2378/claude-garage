@@ -75,7 +75,12 @@ impl ScrollModel {
 
 fn tmux(spec: &Target, args: &[&str]) -> Option<std::process::Output> {
     let base = spec.tmux_base();
-    Command::new(&base[0]).args(&base[1..]).args(args).env_remove("TMUX").output().ok()
+    Command::new(&base[0])
+        .args(&base[1..])
+        .args(args)
+        .env_remove("TMUX")
+        .output()
+        .ok()
 }
 
 /// Current history size of a session (absolute line 0 = oldest retained
@@ -87,7 +92,14 @@ pub fn history_size(spec: &Target, session: &str) -> Option<i64> {
     }
     let out = tmux(
         spec,
-        &["display-message", "-p", "-t", &format!("={session}:"), "-F", "#{history_size}"],
+        &[
+            "display-message",
+            "-p",
+            "-t",
+            &format!("={session}:"),
+            "-F",
+            "#{history_size}",
+        ],
     )?;
     String::from_utf8_lossy(&out.stdout).trim().parse().ok()
 }
@@ -98,12 +110,18 @@ pub fn history_size(spec: &Target, session: &str) -> Option<i64> {
 /// history size, recomputed per call — the absolute window stays fixed, so a
 /// re-capture under live load renders identical content. A host serves
 /// absolute coordinates directly.
-pub fn capture_frozen(spec: &Target, session: &str, top_abs: i64, cols: u16, rows: u16) -> Option<vt100::Parser> {
+pub fn capture_frozen(
+    spec: &Target,
+    session: &str,
+    top_abs: i64,
+    cols: u16,
+    rows: u16,
+) -> Option<vt100::Parser> {
     let text = match spec {
-        Target::Socket { addr, token } => {
-            String::from_utf8_lossy(&garage_host::proto::capture_formatted(addr, token, top_abs, cols, rows)?)
-                .into_owned()
-        }
+        Target::Socket { addr, token } => String::from_utf8_lossy(
+            &garage_host::proto::capture_formatted(addr, token, top_abs, cols, rows)?,
+        )
+        .into_owned(),
         Target::Tmux { .. } => {
             let hist = history_size(spec, session)?;
             let s_rel = top_abs - hist; // <= 0 reaches into history
@@ -165,7 +183,11 @@ mod tests {
     fn freezing_with_no_history_stays_live() {
         assert_eq!(ScrollModel::freeze(0, 23), None);
         assert_eq!(ScrollModel::freeze(-5, 23), None);
-        assert_eq!(ScrollModel::freeze(100, 0), None, "scroll by zero is a no-op");
+        assert_eq!(
+            ScrollModel::freeze(100, 0),
+            None,
+            "scroll by zero is a no-op"
+        );
     }
 
     #[test]

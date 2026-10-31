@@ -64,16 +64,23 @@ impl Target {
 pub fn target_from(spec: AttachSpec, session: &str, hosts_dir: &Path) -> Result<Target, String> {
     match spec {
         AttachSpec::Tmux { socket: None } => Ok(Target::Tmux { socket: None }),
-        AttachSpec::Tmux { socket: Some(s) } if is_valid_tmux_socket(&s) => Ok(Target::Tmux { socket: Some(s) }),
+        AttachSpec::Tmux { socket: Some(s) } if is_valid_tmux_socket(&s) => {
+            Ok(Target::Tmux { socket: Some(s) })
+        }
         AttachSpec::Tmux { socket: Some(s) } => Err(format!("refusing tmux socket name {s:?}")),
         AttachSpec::Host { id } if id.is_empty() => Err("no running session".into()),
-        AttachSpec::Host { id } if id != session => Err(format!("refusing a host reply for {id:?} (asked about {session:?})")),
+        AttachSpec::Host { id } if id != session => Err(format!(
+            "refusing a host reply for {id:?} (asked about {session:?})"
+        )),
         AttachSpec::Host { .. } => {
             let e = registry::read(hosts_dir, session)
                 .ok_or_else(|| format!("no session host registered for {session}"))?;
             let addr = e.addr();
             garage_host::proto::parse_loopback(&addr).map_err(|e| e.to_string())?;
-            Ok(Target::Socket { addr, token: e.token })
+            Ok(Target::Socket {
+                addr,
+                token: e.token,
+            })
         }
     }
 }
@@ -105,13 +112,20 @@ pub struct DaemonResolver {
 
 impl DaemonResolver {
     pub fn new(base_url: &str) -> DaemonResolver {
-        DaemonResolver { client: GarageClient::new(Some(base_url.to_owned())), hosts_dir: garage_dir().join("hosts") }
+        DaemonResolver {
+            client: GarageClient::new(Some(base_url.to_owned())),
+            hosts_dir: garage_dir().join("hosts"),
+        }
     }
 }
 
 impl AttachResolver for DaemonResolver {
     fn resolve(&self, session: &str) -> Result<Target, String> {
-        decide(self.client.fetch_attach_spec(session), session, &self.hosts_dir)
+        decide(
+            self.client.fetch_attach_spec(session),
+            session,
+            &self.hosts_dir,
+        )
     }
 }
 
@@ -120,12 +134,21 @@ impl AttachResolver for DaemonResolver {
 /// exist). Every other failure (daemon down, 5xx, a refused spec, "no running
 /// session") is an attach error: guessing the default tmux server could attach
 /// to a different server than the daemon uses.
-pub fn decide(answer: Result<AttachSpec, ApiError>, session: &str, hosts_dir: &Path) -> Result<Target, String> {
+pub fn decide(
+    answer: Result<AttachSpec, ApiError>,
+    session: &str,
+    hosts_dir: &Path,
+) -> Result<Target, String> {
     match answer {
         Ok(spec) => target_from(spec, session, hosts_dir),
-        Err(ApiError::Status { status: 404, message }) if message.contains("no running session") => Err(message),
+        Err(ApiError::Status {
+            status: 404,
+            message,
+        }) if message.contains("no running session") => Err(message),
         Err(ApiError::Status { status: 404, .. }) => Ok(Target::tmux_default()),
-        Err(e) => Err(format!("cannot ask the daemon where this session lives: {e}")),
+        Err(e) => Err(format!(
+            "cannot ask the daemon where this session lives: {e}"
+        )),
     }
 }
 
@@ -134,21 +157,37 @@ mod tests {
     use super::*;
 
     fn tmux(socket: Option<&str>) -> AttachSpec {
-        AttachSpec::Tmux { socket: socket.map(String::from) }
+        AttachSpec::Tmux {
+            socket: socket.map(String::from),
+        }
     }
 
     #[test]
     fn tmux_argv_is_exactly_what_the_wall_ran_before_specs() {
-        assert_eq!(Target::tmux_default().attach_argv("garage/ws/a"), ["tmux", "attach", "-t", "=garage/ws/a"]);
+        assert_eq!(
+            Target::tmux_default().attach_argv("garage/ws/a"),
+            ["tmux", "attach", "-t", "=garage/ws/a"]
+        );
         let t = target_from(tmux(Some("t1")), "s", Path::new("/nope")).unwrap();
-        assert_eq!(t.attach_argv("garage/ws/a"), ["tmux", "-L", "t1", "attach", "-t", "=garage/ws/a"]);
+        assert_eq!(
+            t.attach_argv("garage/ws/a"),
+            ["tmux", "-L", "t1", "attach", "-t", "=garage/ws/a"]
+        );
         assert_eq!(t.tmux_base(), ["tmux", "-L", "t1"]);
         assert_eq!(Target::tmux_default().tmux_base(), ["tmux"]);
     }
 
     #[test]
     fn a_bad_socket_name_is_refused_not_passed_to_tmux() {
-        for bad in ["", "a b", "../x", "-f/etc/passwd x", "a;b", "x\ny", &"a".repeat(65)] {
+        for bad in [
+            "",
+            "a b",
+            "../x",
+            "-f/etc/passwd x",
+            "a;b",
+            "x\ny",
+            &"a".repeat(65),
+        ] {
             let e = target_from(tmux(Some(bad)), "s", Path::new("/nope"));
             assert!(e.is_err(), "{bad:?} must be refused");
         }
@@ -158,7 +197,13 @@ mod tests {
         registry::write(
             dir,
             &registry::Entry {
-                id: id.into(), pid: 1, child_pid: 2, port, token: "t".repeat(32), dir: "/w".into(), created_at: 1,
+                id: id.into(),
+                pid: 1,
+                child_pid: 2,
+                port,
+                token: "t".repeat(32),
+                dir: "/w".into(),
+                created_at: 1,
                 title: String::new(),
             },
         )
@@ -169,10 +214,39 @@ mod tests {
     fn a_host_spec_is_resolved_from_the_registry_file_never_from_the_wire() {
         let d = tempfile::tempdir().unwrap();
         write_host(d.path(), "garage/ws/a", 4321);
-        let t = target_from(AttachSpec::Host { id: "garage/ws/a".into() }, "garage/ws/a", d.path()).unwrap();
-        assert_eq!(t, Target::Socket { addr: "127.0.0.1:4321".into(), token: "t".repeat(32) });
-        assert!(target_from(AttachSpec::Host { id: "garage/ws/none".into() }, "garage/ws/none", d.path()).is_err());
-        assert!(target_from(AttachSpec::Host { id: String::new() }, "garage/ws/a", d.path()).is_err());
+        let t = target_from(
+            AttachSpec::Host {
+                id: "garage/ws/a".into(),
+            },
+            "garage/ws/a",
+            d.path(),
+        )
+        .unwrap();
+        assert_eq!(
+            t,
+            Target::Socket {
+                addr: "127.0.0.1:4321".into(),
+                token: "t".repeat(32)
+            }
+        );
+        assert!(
+            target_from(
+                AttachSpec::Host {
+                    id: "garage/ws/none".into()
+                },
+                "garage/ws/none",
+                d.path()
+            )
+            .is_err()
+        );
+        assert!(
+            target_from(
+                AttachSpec::Host { id: String::new() },
+                "garage/ws/a",
+                d.path()
+            )
+            .is_err()
+        );
     }
 
     #[test]
@@ -181,10 +255,25 @@ mod tests {
         write_host(d.path(), "garage/ws/a", 4321);
         write_host(d.path(), "garage/ws/b", 4322);
         // Asked about a, the reply says b: never follow it to b's host.
-        let e = target_from(AttachSpec::Host { id: "garage/ws/b".into() }, "garage/ws/a", d.path()).unwrap_err();
+        let e = target_from(
+            AttachSpec::Host {
+                id: "garage/ws/b".into(),
+            },
+            "garage/ws/a",
+            d.path(),
+        )
+        .unwrap_err();
         assert!(e.contains("refusing"), "{e}");
         for evil in ["../../etc/passwd", "garage/ws/a/../b", "C:\\x"] {
-            assert!(target_from(AttachSpec::Host { id: evil.into() }, "garage/ws/a", d.path()).is_err(), "{evil}");
+            assert!(
+                target_from(
+                    AttachSpec::Host { id: evil.into() },
+                    "garage/ws/a",
+                    d.path()
+                )
+                .is_err(),
+                "{evil}"
+            );
         }
         // Asking about a traversal id reads nothing outside the dir.
         assert!(target_from(AttachSpec::Host { id: "../x".into() }, "../x", d.path()).is_err());
@@ -198,24 +287,48 @@ mod tests {
         // addr() is always 127.0.0.1:<port>, so the loopback check is the backstop for the
         // address string; prove the backstop itself.
         assert!(garage_host::proto::parse_loopback("203.0.113.9:80").is_err());
-        let t = target_from(AttachSpec::Host { id: "garage/ws/x".into() }, "garage/ws/x", d.path()).unwrap();
+        let t = target_from(
+            AttachSpec::Host {
+                id: "garage/ws/x".into(),
+            },
+            "garage/ws/x",
+            d.path(),
+        )
+        .unwrap();
         assert!(matches!(t, Target::Socket { ref addr, .. } if addr == "127.0.0.1:80"));
     }
 
     #[test]
     fn only_a_missing_session_or_a_refused_spec_is_an_error() {
         let d = Path::new("/nope");
-        assert_eq!(decide(Ok(tmux(Some("t1"))), "s", d), Ok(Target::Tmux { socket: Some("t1".into()) }));
-        let gone = ApiError::Status { status: 404, message: "no running session garage/ws/a".into() };
+        assert_eq!(
+            decide(Ok(tmux(Some("t1"))), "s", d),
+            Ok(Target::Tmux {
+                socket: Some("t1".into())
+            })
+        );
+        let gone = ApiError::Status {
+            status: 404,
+            message: "no running session garage/ws/a".into(),
+        };
         assert!(decide(Err(gone), "s", d).is_err());
-        assert!(decide(Ok(tmux(Some("bad name"))), "s", d).is_err(), "a hostile spec never falls back");
+        assert!(
+            decide(Ok(tmux(Some("bad name"))), "s", d).is_err(),
+            "a hostile spec never falls back"
+        );
         // An older daemon has no such route: its 404 says "not found".
-        let old = ApiError::Status { status: 404, message: "not found".into() };
+        let old = ApiError::Status {
+            status: 404,
+            message: "not found".into(),
+        };
         assert_eq!(decide(Err(old), "s", d), Ok(Target::tmux_default()));
         // Anything else is an attach error, never a guess at the default tmux server.
         let e = decide(Err(ApiError::Transport("refused".into())), "s", d).unwrap_err();
         assert!(e.contains("refused"), "{e}");
-        let five = ApiError::Status { status: 500, message: "boom".into() };
+        let five = ApiError::Status {
+            status: 500,
+            message: "boom".into(),
+        };
         assert!(decide(Err(five), "s", d).is_err());
     }
 }

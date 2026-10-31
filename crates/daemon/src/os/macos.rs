@@ -10,7 +10,7 @@ use async_trait::async_trait;
 use tokio::process::Command;
 use tokio::sync::OnceCell;
 
-use super::{spawn_detached, Os, OsError};
+use super::{Os, OsError, spawn_detached};
 
 /// Browsers never expose absolute paths, so the "add workspace" picker runs
 /// daemon-side.

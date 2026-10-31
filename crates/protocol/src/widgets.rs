@@ -87,7 +87,9 @@ impl WidgetSlot {
 
     pub fn scope(self) -> ScopeKind {
         match self {
-            WidgetSlot::TileTitleRight | WidgetSlot::TileGutter | WidgetSlot::RailRow => ScopeKind::Session,
+            WidgetSlot::TileTitleRight | WidgetSlot::TileGutter | WidgetSlot::RailRow => {
+                ScopeKind::Session
+            }
             WidgetSlot::RailHeader | WidgetSlot::RailExtraRows => ScopeKind::Workspace,
             WidgetSlot::StripRight => ScopeKind::Global,
         }
@@ -96,7 +98,10 @@ impl WidgetSlot {
     fn item_limit(self) -> (usize, &'static str) {
         match self {
             WidgetSlot::TileGutter => (limits::GUTTER_ITEMS_PER_SCOPE, "64 gutter items per scope"),
-            WidgetSlot::RailExtraRows => (limits::EXTRA_ROWS_PER_WORKSPACE, "8 extra rows per workspace"),
+            WidgetSlot::RailExtraRows => (
+                limits::EXTRA_ROWS_PER_WORKSPACE,
+                "8 extra rows per workspace",
+            ),
             _ => (limits::ITEMS_PER_SCOPE, "16 items per scope"),
         }
     }
@@ -238,17 +243,26 @@ impl std::fmt::Display for LimitError {
 }
 
 fn too_big(message: impl Into<String>) -> LimitError {
-    LimitError { status: 413, message: message.into() }
+    LimitError {
+        status: 413,
+        message: message.into(),
+    }
 }
 
 fn bad(message: impl Into<String>) -> LimitError {
-    LimitError { status: 422, message: message.into() }
+    LimitError {
+        status: 422,
+        message: message.into(),
+    }
 }
 
 /// The request body size limit (checked before parsing).
 pub fn check_body_len(len: usize) -> Result<(), LimitError> {
     if len > limits::BODY_BYTES {
-        return Err(too_big(format!("body is {len} bytes; limit is {} bytes (16 KiB)", limits::BODY_BYTES)));
+        return Err(too_big(format!(
+            "body is {len} bytes; limit is {} bytes (16 KiB)",
+            limits::BODY_BYTES
+        )));
     }
     Ok(())
 }
@@ -264,13 +278,18 @@ fn is_invisible_format(c: char) -> bool {
 /// Control characters, newlines and invisible bidi/zero-width characters are
 /// dropped.
 pub fn sanitise(text: &str) -> String {
-    text.chars().filter(|c| !c.is_control() && !is_invisible_format(*c)).collect()
+    text.chars()
+        .filter(|c| !c.is_control() && !is_invisible_format(*c))
+        .collect()
 }
 
 fn geometry_cols(path: &str, v: &Value) -> Result<u64, LimitError> {
     match v.as_u64() {
         Some(n) if n <= limits::GEOMETRY_COLS_MAX => Ok(n),
-        _ => Err(bad(format!("{path}: must be a whole number of columns, 0..={}", limits::GEOMETRY_COLS_MAX))),
+        _ => Err(bad(format!(
+            "{path}: must be a whole number of columns, 0..={}",
+            limits::GEOMETRY_COLS_MAX
+        ))),
     }
 }
 
@@ -297,17 +316,25 @@ pub fn validate_slot_geometry(v: &Value) -> Result<(), LimitError> {
                     geometry_cols(&at, val)?;
                 }
                 "filler" => {
-                    let Some(f) = val.as_object() else { return Err(bad(format!("{at}: must be an object {{x0, x1}}"))) };
+                    let Some(f) = val.as_object() else {
+                        return Err(bad(format!("{at}: must be an object {{x0, x1}}")));
+                    };
                     if let Some(extra) = f.keys().find(|k| *k != "x0" && *k != "x1") {
                         return Err(bad(format!("{at}.{extra}: unknown field")));
                     }
-                    let x0 = geometry_cols(&format!("{at}.x0"), f.get("x0").unwrap_or(&Value::Null))?;
-                    let x1 = geometry_cols(&format!("{at}.x1"), f.get("x1").unwrap_or(&Value::Null))?;
+                    let x0 =
+                        geometry_cols(&format!("{at}.x0"), f.get("x0").unwrap_or(&Value::Null))?;
+                    let x1 =
+                        geometry_cols(&format!("{at}.x1"), f.get("x1").unwrap_or(&Value::Null))?;
                     if x0 > x1 {
                         return Err(bad(format!("{at}: x0 ({x0}) is after x1 ({x1})")));
                     }
                 }
-                _ => return Err(bad(format!("{at}: unknown field (allowed: width, max_cols, filler)"))),
+                _ => {
+                    return Err(bad(format!(
+                        "{at}: unknown field (allowed: width, max_cols, filler)"
+                    )));
+                }
             }
         }
     }
@@ -317,9 +344,12 @@ pub fn validate_slot_geometry(v: &Value) -> Result<(), LimitError> {
 fn check_style(path: &str, style: &Style) -> Result<(), LimitError> {
     for (name, c) in [("fg", &style.fg), ("bg", &style.bg)] {
         if let Some(c) = c
-            && !color_ok(c) {
-                return Err(bad(format!("{path}.{name}: {c:?} is neither a theme token nor #rrggbb")));
-            }
+            && !color_ok(c)
+        {
+            return Err(bad(format!(
+                "{path}.{name}: {c:?} is neither a theme token nor #rrggbb"
+            )));
+        }
     }
     Ok(())
 }
@@ -327,12 +357,20 @@ fn check_style(path: &str, style: &Style) -> Result<(), LimitError> {
 fn check_click(path: &str, click: &Click) -> Result<(), LimitError> {
     let a = &click.action;
     if a.is_empty() || a.len() > limits::ACTION_LEN || a.chars().any(char::is_control) {
-        return Err(bad(format!("{path}.action: must be 1..={} characters, no control characters", limits::ACTION_LEN)));
+        return Err(bad(format!(
+            "{path}.action: must be 1..={} characters, no control characters",
+            limits::ACTION_LEN
+        )));
     }
     if let Some(args) = &click.args {
-        let n = serde_json::to_vec(args).map(|v| v.len()).unwrap_or(usize::MAX);
+        let n = serde_json::to_vec(args)
+            .map(|v| v.len())
+            .unwrap_or(usize::MAX);
         if n > limits::CLICK_ARGS_BYTES {
-            return Err(too_big(format!("{path}.args: {n} bytes; limit is {} bytes", limits::CLICK_ARGS_BYTES)));
+            return Err(too_big(format!(
+                "{path}.args: {n} bytes; limit is {} bytes",
+                limits::CLICK_ARGS_BYTES
+            )));
         }
     }
     Ok(())
@@ -340,7 +378,11 @@ fn check_click(path: &str, click: &Click) -> Result<(), LimitError> {
 
 fn clean_segments(path: &str, segs: &mut [Segment]) -> Result<(), LimitError> {
     if segs.len() > limits::SEGMENTS_PER_ITEM {
-        return Err(too_big(format!("{path}: {} segments; limit is {} per item", segs.len(), limits::SEGMENTS_PER_ITEM)));
+        return Err(too_big(format!(
+            "{path}: {} segments; limit is {} per item",
+            segs.len(),
+            limits::SEGMENTS_PER_ITEM
+        )));
     }
     let mut cols = 0;
     for (i, s) in segs.iter_mut().enumerate() {
@@ -354,7 +396,10 @@ fn clean_segments(path: &str, segs: &mut [Segment]) -> Result<(), LimitError> {
         }
     }
     if cols > limits::COLS_PER_ITEM {
-        return Err(too_big(format!("{path}: {cols} display columns of text; limit is {} per item", limits::COLS_PER_ITEM)));
+        return Err(too_big(format!(
+            "{path}: {cols} display columns of text; limit is {} per item",
+            limits::COLS_PER_ITEM
+        )));
     }
     Ok(())
 }
@@ -363,14 +408,21 @@ fn clean_segments(path: &str, segs: &mut [Segment]) -> Result<(), LimitError> {
 /// copy (text sanitised, `frame_ms` clamped) that the store keeps.
 pub fn validate_put(slot: WidgetSlot, mut put: WidgetPut) -> Result<WidgetPut, LimitError> {
     if put.scopes.len() > limits::SCOPES_PER_WIDGET {
-        return Err(too_big(format!("{} scopes; limit is {} per widget", put.scopes.len(), limits::SCOPES_PER_WIDGET)));
+        return Err(too_big(format!(
+            "{} scopes; limit is {} per widget",
+            put.scopes.len(),
+            limits::SCOPES_PER_WIDGET
+        )));
     }
     if let Some(t) = put.ttl_secs {
         if t == 0 {
             return Err(bad("ttl_secs: must be at least 1"));
         }
         if t > limits::TTL_SECS_MAX {
-            return Err(bad(format!("ttl_secs: {t}; limit is {} (re-push to keep a widget alive longer)", limits::TTL_SECS_MAX)));
+            return Err(bad(format!(
+                "ttl_secs: {t}; limit is {} (re-push to keep a widget alive longer)",
+                limits::TTL_SECS_MAX
+            )));
         }
     }
     let (max_items, limit_name) = slot.item_limit();
@@ -379,17 +431,28 @@ pub fn validate_put(slot: WidgetSlot, mut put: WidgetPut) -> Result<WidgetPut, L
             return Err(bad("scopes: empty scope key"));
         }
         if slot.scope() == ScopeKind::Global && scope != GLOBAL_SCOPE {
-            return Err(bad(format!("scopes[{scope:?}]: {} has no scope; use the key \"*\"", slot.as_str())));
+            return Err(bad(format!(
+                "scopes[{scope:?}]: {} has no scope; use the key \"*\"",
+                slot.as_str()
+            )));
         }
         if items.len() > max_items {
-            return Err(too_big(format!("scopes[{scope:?}]: {} items; limit is {limit_name}", items.len())));
+            return Err(too_big(format!(
+                "scopes[{scope:?}]: {} items; limit is {limit_name}",
+                items.len()
+            )));
         }
         for (i, item) in items.iter_mut().enumerate() {
             let at = format!("scopes[{scope:?}][{i}]");
             if item.placement.is_filler() && slot != WidgetSlot::StripRight {
-                return Err(bad(format!("{at}.placement: filler is only valid in strip.right")));
+                return Err(bad(format!(
+                    "{at}.placement: filler is only valid in strip.right"
+                )));
             }
-            if let Placement::Filler { caption: Some(c), .. } = &mut item.placement {
+            if let Placement::Filler {
+                caption: Some(c), ..
+            } = &mut item.placement
+            {
                 *c = sanitise(c);
             }
             if let Some(session) = &item.session {
@@ -397,15 +460,26 @@ pub fn validate_put(slot: WidgetSlot, mut put: WidgetPut) -> Result<WidgetPut, L
                 if slot != WidgetSlot::RailExtraRows {
                     return Err(bad(format!("{at}.session: only valid in rail.extra_rows")));
                 }
-                if !session.starts_with(&own) || session.len() == own.len() || session.chars().any(char::is_control) {
-                    return Err(bad(format!("{at}.session: must be a session of workspace {scope:?} (garage/{scope}/<label>)")));
+                if !session.starts_with(&own)
+                    || session.len() == own.len()
+                    || session.chars().any(char::is_control)
+                {
+                    return Err(bad(format!(
+                        "{at}.session: must be a session of workspace {scope:?} (garage/{scope}/<label>)"
+                    )));
                 }
             }
             if slot == WidgetSlot::TileGutter && item.row.is_none() && item.turn.is_none() {
-                return Err(bad(format!("{at}: a tile.gutter item needs `row` or `turn`")));
+                return Err(bad(format!(
+                    "{at}: a tile.gutter item needs `row` or `turn`"
+                )));
             }
             match (&mut item.segments, &mut item.frames) {
-                (Some(_), Some(_)) => return Err(bad(format!("{at}: `segments` and `frames` are mutually exclusive"))),
+                (Some(_), Some(_)) => {
+                    return Err(bad(format!(
+                        "{at}: `segments` and `frames` are mutually exclusive"
+                    )));
+                }
                 (Some(segs), None) => clean_segments(&format!("{at}.segments"), segs)?,
                 (None, Some(frames)) => {
                     if frames.is_empty() {
@@ -422,7 +496,9 @@ pub fn validate_put(slot: WidgetSlot, mut put: WidgetPut) -> Result<WidgetPut, L
                         clean_segments(&format!("{at}.frames[{f}]"), frame)?;
                     }
                     item.frame_ms = Some(
-                        item.frame_ms.unwrap_or(limits::FRAME_MS_DEFAULT).clamp(limits::FRAME_MS_MIN, limits::FRAME_MS_MAX),
+                        item.frame_ms
+                            .unwrap_or(limits::FRAME_MS_DEFAULT)
+                            .clamp(limits::FRAME_MS_MIN, limits::FRAME_MS_MAX),
                     );
                 }
                 (None, None) if slot == WidgetSlot::TileGutter => {}
@@ -451,8 +527,11 @@ pub fn click_actions(put: &WidgetPut) -> Vec<&Click> {
     for items in put.scopes.values() {
         for item in items {
             out.extend(item.click.iter());
-            let frames: Vec<&Vec<Segment>> =
-                item.segments.iter().chain(item.frames.iter().flatten()).collect();
+            let frames: Vec<&Vec<Segment>> = item
+                .segments
+                .iter()
+                .chain(item.frames.iter().flatten())
+                .collect();
             for f in frames {
                 out.extend(f.iter().filter_map(|s| s.click.as_ref()));
             }
@@ -476,7 +555,9 @@ mod tests {
 
     #[test]
     fn an_extra_row_names_a_session_of_its_own_workspace_and_nothing_else_may() {
-        let row = |session: &str| put(json!({"scopes": {"ws": [{"segments": [seg("x")], "session": session}]}}));
+        let row = |session: &str| {
+            put(json!({"scopes": {"ws": [{"segments": [seg("x")], "session": session}]}}))
+        };
         assert!(validate_put(WidgetSlot::RailExtraRows, row("garage/ws/one")).is_ok());
         for bad_session in ["garage/other/one", "garage/ws/", "one", "garage/ws/a\nb"] {
             let e = validate_put(WidgetSlot::RailExtraRows, row(bad_session)).unwrap_err();
@@ -484,7 +565,11 @@ mod tests {
             assert!(e.message.contains(".session"), "{}", e.message);
         }
         let e = validate_put(WidgetSlot::RailRow, row("garage/ws/one")).unwrap_err();
-        assert!(e.message.contains("only valid in rail.extra_rows"), "{}", e.message);
+        assert!(
+            e.message.contains("only valid in rail.extra_rows"),
+            "{}",
+            e.message
+        );
     }
 
     #[test]
@@ -506,9 +591,17 @@ mod tests {
 
     #[test]
     fn filler_animated_gutter_and_extra_row_forms_round_trip() {
-        let filler: WidgetItem =
-            serde_json::from_value(json!({"placement": {"kind": "filler", "x": 2, "caption": "hi"}, "segments": []})).unwrap();
-        assert_eq!(filler.placement, Placement::Filler { x: 2, caption: Some("hi".into()) });
+        let filler: WidgetItem = serde_json::from_value(
+            json!({"placement": {"kind": "filler", "x": 2, "caption": "hi"}, "segments": []}),
+        )
+        .unwrap();
+        assert_eq!(
+            filler.placement,
+            Placement::Filler {
+                x: 2,
+                caption: Some("hi".into())
+            }
+        );
         let item: WidgetItem = serde_json::from_value(json!({
             "frames": [[{"text": "a"}], [{"text": "b"}]], "frame_ms": 250,
             "row": 120, "kind": "marker", "row_style": {"bg": "#112233"}, "click": {"action": "x:y"}
@@ -516,7 +609,8 @@ mod tests {
         .unwrap();
         assert_eq!(item.frames.as_ref().unwrap().len(), 2);
         assert_eq!(item.row, Some(120));
-        let back: WidgetItem = serde_json::from_value(serde_json::to_value(&item).unwrap()).unwrap();
+        let back: WidgetItem =
+            serde_json::from_value(serde_json::to_value(&item).unwrap()).unwrap();
         assert_eq!(back, item);
     }
 
@@ -530,11 +624,21 @@ mod tests {
         assert_eq!(p.scopes["*"][0].segments.as_ref().unwrap()[0].text, "abc");
         // 33 double-width characters = 66 columns, but only 33 chars.
         let wide = "漢".repeat(33);
-        let e = validate_put(WidgetSlot::StripRight, put(json!({"scopes": {"*": [{"segments": [seg(&wide)]}]}}))).unwrap_err();
+        let e = validate_put(
+            WidgetSlot::StripRight,
+            put(json!({"scopes": {"*": [{"segments": [seg(&wide)]}]}})),
+        )
+        .unwrap_err();
         assert_eq!(e.status, 413);
         assert!(e.message.contains("64"), "{}", e.message);
         let ok = "漢".repeat(32);
-        assert!(validate_put(WidgetSlot::StripRight, put(json!({"scopes": {"*": [{"segments": [seg(&ok)]}]}}))).is_ok());
+        assert!(
+            validate_put(
+                WidgetSlot::StripRight,
+                put(json!({"scopes": {"*": [{"segments": [seg(&ok)]}]}}))
+            )
+            .is_ok()
+        );
     }
 
     #[test]
@@ -542,19 +646,37 @@ mod tests {
         let nasty = "a\u{200B}b\u{200F}c\u{202E}d\u{202A}e\u{2066}f\u{2069}g\u{FEFF}h\u{202C}i";
         assert_eq!(sanitise(nasty), "abcdefghi");
         assert_eq!(sanitise("漢字 \u{1F600} café"), "漢字 \u{1F600} café");
-        let p = validate_put(WidgetSlot::StripRight, put(json!({"scopes": {"*": [{"segments": [seg(nasty)]}]}}))).unwrap();
-        assert_eq!(p.scopes["*"][0].segments.as_ref().unwrap()[0].text, "abcdefghi");
+        let p = validate_put(
+            WidgetSlot::StripRight,
+            put(json!({"scopes": {"*": [{"segments": [seg(nasty)]}]}})),
+        )
+        .unwrap();
+        assert_eq!(
+            p.scopes["*"][0].segments.as_ref().unwrap()[0].text,
+            "abcdefghi"
+        );
         let caption = validate_put(
             WidgetSlot::StripRight,
             put(json!({"scopes": {"*": [{"placement": {"kind": "filler", "x": 1, "caption": "p\u{202E}et"}, "segments": []}]}})),
         )
         .unwrap();
-        assert_eq!(caption.scopes["*"][0].placement, Placement::Filler { x: 1, caption: Some("pet".into()) });
+        assert_eq!(
+            caption.scopes["*"][0].placement,
+            Placement::Filler {
+                x: 1,
+                caption: Some("pet".into())
+            }
+        );
     }
 
     #[test]
     fn ttl_is_capped_at_an_hour() {
-        let with = |t: u32| validate_put(WidgetSlot::StripRight, put(json!({"scopes": {"*": []}, "ttl_secs": t})));
+        let with = |t: u32| {
+            validate_put(
+                WidgetSlot::StripRight,
+                put(json!({"scopes": {"*": []}, "ttl_secs": t})),
+            )
+        };
         assert!(with(limits::TTL_SECS_MAX).is_ok());
         let e = with(limits::TTL_SECS_MAX + 1).unwrap_err();
         assert_eq!(e.status, 422);
@@ -578,10 +700,19 @@ mod tests {
             (json!({"strip.right": {"width": 1.5}}), "columns"),
             (json!({"strip.right": {"width": 1001}}), "columns"),
             (json!({"strip.right": {"width": "wide"}}), "columns"),
-            (json!({"strip.right": {"junk": "x".repeat(8000)}}), "unknown field"),
-            (json!({"strip.right": {"filler": {"x0": 9, "x1": 3}}}), "after"),
+            (
+                json!({"strip.right": {"junk": "x".repeat(8000)}}),
+                "unknown field",
+            ),
+            (
+                json!({"strip.right": {"filler": {"x0": 9, "x1": 3}}}),
+                "after",
+            ),
             (json!({"strip.right": {"filler": {"x0": 1}}}), "columns"),
-            (json!({"strip.right": {"filler": {"x0": 1, "x1": 2, "y": 3}}}), "unknown field"),
+            (
+                json!({"strip.right": {"filler": {"x0": 1, "x1": 2, "y": 3}}}),
+                "unknown field",
+            ),
         ] {
             let e = validate_slot_geometry(&bad_body).expect_err(why);
             assert_eq!(e.status, 422);
@@ -595,10 +726,21 @@ mod tests {
         let item = json!({"segments": [seg("x")]});
         let err = |slot, p| validate_put(slot, p).unwrap_err();
 
-        let e = err(WidgetSlot::StripRight, strip(Value::Array(vec![item.clone(); 17])));
-        assert_eq!((e.status, e.message.contains("16 items")), (413, true), "{e}");
+        let e = err(
+            WidgetSlot::StripRight,
+            strip(Value::Array(vec![item.clone(); 17])),
+        );
+        assert_eq!(
+            (e.status, e.message.contains("16 items")),
+            (413, true),
+            "{e}"
+        );
         let many = json!({"segments": vec![seg("x"); 17]});
-        assert!(err(WidgetSlot::StripRight, strip(json!([many]))).message.contains("17 segments"));
+        assert!(
+            err(WidgetSlot::StripRight, strip(json!([many])))
+                .message
+                .contains("17 segments")
+        );
         let args = json!({"segments": [{"text": "x", "click": {"action": "a:b", "args": "y".repeat(600)}}]});
         let e = err(WidgetSlot::StripRight, strip(json!([args])));
         assert_eq!(e.status, 413);
@@ -617,17 +759,48 @@ mod tests {
     fn slot_specific_limits_scopes_and_filler_rules() {
         let rows = |n| put(json!({"scopes": {"w": vec![json!({"segments": [seg("r")]}); n]}}));
         assert!(validate_put(WidgetSlot::RailExtraRows, rows(8)).is_ok());
-        assert!(validate_put(WidgetSlot::RailExtraRows, rows(9)).unwrap_err().message.contains("8 extra rows"));
-        let gutter = |n| put(json!({"scopes": {"s": (0..n).map(|r| json!({"row": r, "kind": "marker"})).collect::<Vec<_>>()}}));
+        assert!(
+            validate_put(WidgetSlot::RailExtraRows, rows(9))
+                .unwrap_err()
+                .message
+                .contains("8 extra rows")
+        );
+        let gutter = |n| {
+            put(
+                json!({"scopes": {"s": (0..n).map(|r| json!({"row": r, "kind": "marker"})).collect::<Vec<_>>()}}),
+            )
+        };
         assert!(validate_put(WidgetSlot::TileGutter, gutter(64)).is_ok());
-        assert!(validate_put(WidgetSlot::TileGutter, gutter(65)).unwrap_err().message.contains("64 gutter"));
+        assert!(
+            validate_put(WidgetSlot::TileGutter, gutter(65))
+                .unwrap_err()
+                .message
+                .contains("64 gutter")
+        );
         let no_row = put(json!({"scopes": {"s": [{"kind": "marker"}]}}));
-        assert!(validate_put(WidgetSlot::TileGutter, no_row).unwrap_err().message.contains("row"));
+        assert!(
+            validate_put(WidgetSlot::TileGutter, no_row)
+                .unwrap_err()
+                .message
+                .contains("row")
+        );
         // strip.right takes only "*"; filler only lives in the strip
         let scoped = put(json!({"scopes": {"garage/a": [{"segments": []}]}}));
-        assert!(validate_put(WidgetSlot::StripRight, scoped).unwrap_err().message.contains("\"*\""));
-        let filler = put(json!({"scopes": {"s": [{"placement": {"kind": "filler", "x": 3}, "segments": []}]}}));
-        assert_eq!(validate_put(WidgetSlot::RailRow, filler).unwrap_err().status, 422);
+        assert!(
+            validate_put(WidgetSlot::StripRight, scoped)
+                .unwrap_err()
+                .message
+                .contains("\"*\"")
+        );
+        let filler = put(
+            json!({"scopes": {"s": [{"placement": {"kind": "filler", "x": 3}, "segments": []}]}}),
+        );
+        assert_eq!(
+            validate_put(WidgetSlot::RailRow, filler)
+                .unwrap_err()
+                .status,
+            422
+        );
     }
 
     #[test]
@@ -641,25 +814,55 @@ mod tests {
         assert_eq!(p.scopes["*"][0].frame_ms, Some(2000));
         let p = validate_put(WidgetSlot::StripRight, anim(Value::Null, 2)).unwrap();
         assert_eq!(p.scopes["*"][0].frame_ms, Some(250));
-        assert!(validate_put(WidgetSlot::StripRight, anim(json!(300), 17)).unwrap_err().message.contains("16"));
+        assert!(
+            validate_put(WidgetSlot::StripRight, anim(json!(300), 17))
+                .unwrap_err()
+                .message
+                .contains("16")
+        );
         let both = put(json!({"scopes": {"*": [{"segments": [], "frames": [[]]}]}}));
-        assert!(validate_put(WidgetSlot::StripRight, both).unwrap_err().message.contains("mutually exclusive"));
+        assert!(
+            validate_put(WidgetSlot::StripRight, both)
+                .unwrap_err()
+                .message
+                .contains("mutually exclusive")
+        );
         let neither = put(json!({"scopes": {"*": [{}]}}));
-        assert_eq!(validate_put(WidgetSlot::StripRight, neither).unwrap_err().status, 422);
+        assert_eq!(
+            validate_put(WidgetSlot::StripRight, neither)
+                .unwrap_err()
+                .status,
+            422
+        );
     }
 
     #[test]
     fn colors_must_be_tokens_or_hex_and_clicks_are_collected_from_every_form() {
-        let bad = put(json!({"scopes": {"*": [{"segments": [{"text": "x", "style": {"fg": "red"}}]}]}}));
-        assert!(validate_put(WidgetSlot::StripRight, bad).unwrap_err().message.contains("theme token"));
-        let good = put(json!({"scopes": {"*": [{"segments": [{"text": "x", "style": {"fg": "#a0B1c2", "bg": "ok"}}]}]}}));
+        let bad =
+            put(json!({"scopes": {"*": [{"segments": [{"text": "x", "style": {"fg": "red"}}]}]}}));
+        assert!(
+            validate_put(WidgetSlot::StripRight, bad)
+                .unwrap_err()
+                .message
+                .contains("theme token")
+        );
+        let good = put(
+            json!({"scopes": {"*": [{"segments": [{"text": "x", "style": {"fg": "#a0B1c2", "bg": "ok"}}]}]}}),
+        );
         assert!(validate_put(WidgetSlot::StripRight, good).is_ok());
 
         let p = put(json!({"scopes": {"w": [
             {"segments": [{"text": "a", "click": {"action": "session.close"}}]},
             {"frames": [[{"text": "b", "click": {"action": "p:q"}}]], "click": {"action": "local"}}
         ]}}));
-        let got: Vec<_> = click_actions(&p).into_iter().map(|c| (c.action.as_str(), c.is_core())).collect();
-        assert!(got.contains(&("session.close", true)) && got.contains(&("p:q", false)) && got.contains(&("local", false)));
+        let got: Vec<_> = click_actions(&p)
+            .into_iter()
+            .map(|c| (c.action.as_str(), c.is_core()))
+            .collect();
+        assert!(
+            got.contains(&("session.close", true))
+                && got.contains(&("p:q", false))
+                && got.contains(&("local", false))
+        );
     }
 }

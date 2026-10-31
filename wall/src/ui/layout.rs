@@ -78,11 +78,12 @@ pub fn wall_layout(
     view_strip: bool,
     framed: bool,
 ) -> WallLayout {
-    let [main, strip] =
-        Layout::vertical([Constraint::Fill(1), Constraint::Length(1)]).areas(area);
-    let [rail, grid_full] =
-        Layout::horizontal([Constraint::Length(RAIL_WIDTH.min(main.width)), Constraint::Fill(1)])
-            .areas(main);
+    let [main, strip] = Layout::vertical([Constraint::Fill(1), Constraint::Length(1)]).areas(area);
+    let [rail, grid_full] = Layout::horizontal([
+        Constraint::Length(RAIL_WIDTH.min(main.width)),
+        Constraint::Fill(1),
+    ])
+    .areas(main);
 
     let (view_strip_rect, grid_area) = if view_strip && grid_full.height > 0 {
         let [vs, rest] =
@@ -90,7 +91,12 @@ pub fn wall_layout(
         (vs, rest)
     } else {
         (
-            Rect { x: grid_full.x, y: grid_full.y, width: grid_full.width, height: 0 },
+            Rect {
+                x: grid_full.x,
+                y: grid_full.y,
+                width: grid_full.width,
+                height: 0,
+            },
             grid_full,
         )
     };
@@ -160,7 +166,9 @@ pub fn centered_rect(area: Rect, width: u16, height: u16) -> Rect {
 /// The triage/help/add-workspace modal width rule from the Dart overlays:
 /// full width minus 8, clamped to `[min, max]`.
 pub fn modal_width(area_width: u16, min: u16, max: u16) -> u16 {
-    (area_width.saturating_sub(8)).clamp(min, max).min(area_width)
+    (area_width.saturating_sub(8))
+        .clamp(min, max)
+        .min(area_width)
 }
 
 #[cfg(test)]
@@ -190,10 +198,16 @@ mod tests {
         let l = wall_layout(area(40, 20), 4, None, false, false);
         let g = slot_geometry(&l, &(40..40));
         assert_eq!(g.strip_width, 40);
-        assert_eq!(g.strip_filler, None, "tabs and the right cluster take it all");
+        assert_eq!(
+            g.strip_filler, None,
+            "tabs and the right cluster take it all"
+        );
         assert_eq!(g.rail_width, 27);
         // 12-wide grid, four tiles in 2 columns: 6 wide each.
-        assert_eq!(g.tile_title_max, 0, "6-wide tiles have no room beyond the fixed title parts");
+        assert_eq!(
+            g.tile_title_max, 0,
+            "6-wide tiles have no room beyond the fixed title parts"
+        );
         // Narrower than the rail: the rail shrinks with the terminal.
         let l = wall_layout(area(20, 10), 1, None, false, false);
         let g = slot_geometry(&l, &(5..8));
@@ -208,7 +222,11 @@ mod tests {
 
         let l = wall_layout(area(120, 40), 4, Some(1), false, false);
         let g = slot_geometry(&l, &(0..0));
-        assert_eq!(g.tile_title_max, 92 - TITLE_FIXED_COLS, "the maximized tile fills the grid");
+        assert_eq!(
+            g.tile_title_max,
+            92 - TITLE_FIXED_COLS,
+            "the maximized tile fills the grid"
+        );
     }
 
     #[test]
@@ -221,13 +239,19 @@ mod tests {
             rail_width: 27,
         };
         let json = g.to_json();
-        assert_eq!(json["strip.right"], serde_json::json!({"width": 38, "filler": {"x0": 4, "x1": 30}}));
+        assert_eq!(
+            json["strip.right"],
+            serde_json::json!({"width": 38, "filler": {"x0": 4, "x1": 30}})
+        );
         assert_eq!(json["tile.title.right"]["max_cols"], 20);
         assert_eq!(json["tile.gutter"]["max_cols"], 1);
         for slot in ["rail.row", "rail.extra_rows", "rail.header"] {
             assert_eq!(json[slot]["max_cols"], 27, "{slot}");
         }
-        let none = SlotGeometry { strip_filler: None, ..g };
+        let none = SlotGeometry {
+            strip_filler: None,
+            ..g
+        };
         assert!(none.to_json()["strip.right"]["filler"].is_null());
     }
 
@@ -272,7 +296,11 @@ mod tests {
     fn view_strip_reserves_one_row_above_the_grid() {
         let l = wall_layout(area(120, 40), 2, None, true, false);
         assert_eq!(l.view_strip, Rect::new(28, 0, 92, 1));
-        assert_eq!(l.grid, Rect::new(28, 1, 92, 38), "grid shifts down by one row");
+        assert_eq!(
+            l.grid,
+            Rect::new(28, 1, 92, 38),
+            "grid shifts down by one row"
+        );
         assert_eq!(l.strip, Rect::new(0, 39, 120, 1), "bottom strip untouched");
     }
 
@@ -289,7 +317,10 @@ mod tests {
         let unframed = wall_layout(area(120, 40), 2, None, false, false);
         let l = wall_layout(area(120, 40), 2, None, false, true);
         let frame = l.group_frame.expect("framed");
-        assert_eq!(frame, unframed.grid, "the frame border sits where the grid used to start");
+        assert_eq!(
+            frame, unframed.grid,
+            "the frame border sits where the grid used to start"
+        );
         assert_eq!(
             l.grid,
             Rect::new(frame.x + 1, frame.y + 1, frame.width - 2, frame.height - 2)
@@ -301,7 +332,11 @@ mod tests {
         let l = wall_layout(area(120, 40), 2, None, true, true);
         assert_eq!(l.view_strip, Rect::new(28, 0, 92, 1));
         let frame = l.group_frame.expect("framed");
-        assert_eq!(frame, Rect::new(28, 1, 92, 38), "frame sits below the view strip");
+        assert_eq!(
+            frame,
+            Rect::new(28, 1, 92, 38),
+            "frame sits below the view strip"
+        );
         assert_eq!(l.grid, Rect::new(29, 2, 90, 36));
     }
 
@@ -320,7 +355,10 @@ mod tests {
 
     #[test]
     fn centered_rect_centers_and_clamps() {
-        assert_eq!(centered_rect(area(100, 40), 60, 10), Rect::new(20, 15, 60, 10));
+        assert_eq!(
+            centered_rect(area(100, 40), 60, 10),
+            Rect::new(20, 15, 60, 10)
+        );
         assert_eq!(centered_rect(area(10, 4), 60, 10), Rect::new(0, 0, 10, 4));
     }
 

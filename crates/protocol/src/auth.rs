@@ -45,12 +45,17 @@ pub fn new_nonce() -> Result<String, String> {
 
 /// A nonce the daemon will answer: 16 to 128 lowercase hex digits.
 pub fn nonce_ok(n: &str) -> bool {
-    (16..=128).contains(&n.len()) && n.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    (16..=128).contains(&n.len())
+        && n.bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
 
 /// The answer of the daemon bound to `port` for `nonce`.
 pub fn proof_for(token: &str, port: u16, nonce: &str) -> String {
-    hmac_sha256_hex(token.trim().as_bytes(), format!("{DOMAIN}{port}:{nonce}").as_bytes())
+    hmac_sha256_hex(
+        token.trim().as_bytes(),
+        format!("{DOMAIN}{port}:{nonce}").as_bytes(),
+    )
 }
 
 /// Constant-time equality for equal-purpose hex strings.
@@ -64,8 +69,12 @@ pub fn verify_response(token: &str, port: u16, nonce: &str, body: &str) -> bool 
     if token.trim().is_empty() {
         return false;
     }
-    let Ok(Value::Object(o)) = serde_json::from_str::<Value>(body) else { return false };
-    o.get("proof").and_then(Value::as_str).is_some_and(|p| same(p, &proof_for(token, port, nonce)))
+    let Ok(Value::Object(o)) = serde_json::from_str::<Value>(body) else {
+        return false;
+    };
+    o.get("proof")
+        .and_then(Value::as_str)
+        .is_some_and(|p| same(p, &proof_for(token, port, nonce)))
 }
 
 #[cfg(test)]
@@ -83,7 +92,10 @@ mod tests {
             "5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843"
         );
         assert_eq!(
-            hmac_sha256_hex(&[0xaa; 131], b"Test Using Larger Than Block-Size Key - Hash Key First"),
+            hmac_sha256_hex(
+                &[0xaa; 131],
+                b"Test Using Larger Than Block-Size Key - Hash Key First"
+            ),
             "60e431591ee0b67f0d8a26aacbf5b77f8e0bc6213728c5140546040f0ee37f54"
         );
     }
@@ -93,12 +105,29 @@ mod tests {
         let n = new_nonce().unwrap();
         assert!(nonce_ok(&n) && n.len() == 64 && n != new_nonce().unwrap());
         let good = format!(r#"{{"proof":"{}"}}"#, proof_for("secret\n", 4747, &n));
-        assert!(verify_response("secret", 4747, &n, &good), "surrounding whitespace in the token file is ignored");
+        assert!(
+            verify_response("secret", 4747, &n, &good),
+            "surrounding whitespace in the token file is ignored"
+        );
         assert!(!verify_response("other", 4747, &n, &good));
-        assert!(!verify_response("secret", 4747, &new_nonce().unwrap(), &good), "a proof for another nonce is a replay");
-        assert!(!verify_response("secret", 4748, &n, &good), "a proof relayed from a daemon on another port is refused");
+        assert!(
+            !verify_response("secret", 4747, &new_nonce().unwrap(), &good),
+            "a proof for another nonce is a replay"
+        );
+        assert!(
+            !verify_response("secret", 4748, &n, &good),
+            "a proof relayed from a daemon on another port is refused"
+        );
         assert!(!verify_response("", 4747, &n, r#"{"proof":""}"#));
-        for bad in ["", "not json", "[]", r#"{"proof":1}"#, r#"{"ok":true}"#, &format!("<html>{good}</html>"), &format!("{good} trailing")] {
+        for bad in [
+            "",
+            "not json",
+            "[]",
+            r#"{"proof":1}"#,
+            r#"{"ok":true}"#,
+            &format!("<html>{good}</html>"),
+            &format!("{good} trailing"),
+        ] {
             assert!(!verify_response("secret", 4747, &n, bad), "{bad:?}");
         }
         assert!(!nonce_ok("short") && !nonce_ok(&"G".repeat(32)) && !nonce_ok(&"a".repeat(129)));

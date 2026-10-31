@@ -120,7 +120,10 @@ fn teardown_never_injects_bytes_into_attached_panes() {
     );
     std::thread::sleep(Duration::from_millis(500));
 
-    assert!(has_session(&shell), "idle shell session died on clean close");
+    assert!(
+        has_session(&shell),
+        "idle shell session died on clean close"
+    );
     assert!(has_session(&rec), "recorder session died on clean close");
     assert_eq!(
         capture(&shell),

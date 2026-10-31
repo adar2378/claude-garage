@@ -11,4 +11,4 @@ pub mod schema;
 pub mod validate;
 
 pub use manifest::*;
-pub use validate::{check_cli_conflicts, check_host, parse, CliConflict, Problem};
+pub use validate::{CliConflict, Problem, check_cli_conflicts, check_host, parse};

@@ -26,11 +26,11 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::{Margin, Rect};
 use ratatui::style::{Color, Style};
 use ratatui::text::Span;
-use tachyonfx::{fx, CellFilter, Effect, Interpolation};
-use throbber_widgets_tui::{Throbber, ThrobberState, BRAILLE_SIX};
+use tachyonfx::{CellFilter, Effect, Interpolation, fx};
+use throbber_widgets_tui::{BRAILLE_SIX, Throbber, ThrobberState};
 
 use crate::slots::{SlotCtx, SlotItem, SlotProvider};
-use crate::ui::theme::{colors, DONE_FADE_MS};
+use crate::ui::theme::{DONE_FADE_MS, colors};
 
 /// Redraw cadence while a tachyonfx effect runs (~30 fps).
 pub const FX_TICK: Duration = Duration::from_millis(33);
@@ -69,7 +69,9 @@ pub fn config_animations(text: &str) -> Option<bool> {
     let mut found = None;
     for line in text.lines() {
         let line = line.split('#').next().unwrap_or("").trim();
-        let Some((key, value)) = line.split_once('=') else { continue };
+        let Some((key, value)) = line.split_once('=') else {
+            continue;
+        };
         if key.trim() == "animations" {
             found = match value.trim().trim_matches(|c| c == '"' || c == '\'') {
                 "true" => Some(true),
@@ -97,7 +99,8 @@ pub fn motion_enabled(config: Option<&str>, env: &dyn Fn(&str) -> Option<String>
 /// [`motion_enabled`] against the process environment and
 /// `$GARAGE_DIR/config.toml` (else `~/.garage/config.toml`).
 pub fn load_enabled() -> bool {
-    let config = std::fs::read_to_string(crate::state::persistence::garage_dir().join("config.toml")).ok();
+    let config =
+        std::fs::read_to_string(crate::state::persistence::garage_dir().join("config.toml")).ok();
     motion_enabled(config.as_deref(), &|name| std::env::var(name).ok())
 }
 
@@ -138,7 +141,11 @@ const DONE_NEUTRAL: (u8, u8, u8) = (100, 100, 100);
 /// green to neutral across the 2 minutes. Never amber. Unknown `since`
 /// stays at the green end.
 pub fn done_fade_color(since_ms: Option<i64>, now_ms: i64) -> Color {
-    let step = since_ms.map_or(0, |since| ((now_ms - since).max(0) * DONE_FADE_STEPS) / DONE_FADE_MS).min(DONE_FADE_STEPS);
+    let step = since_ms
+        .map_or(0, |since| {
+            ((now_ms - since).max(0) * DONE_FADE_STEPS) / DONE_FADE_MS
+        })
+        .min(DONE_FADE_STEPS);
     let lerp = |a: u8, b: u8| (a as i64 + (b as i64 - a as i64) * step / DONE_FADE_STEPS) as u8;
     Color::Rgb(
         lerp(DONE_GREEN.0, DONE_NEUTRAL.0),
@@ -184,11 +191,16 @@ fn fx_duration(ms: i64) -> tachyonfx::Duration {
 
 fn new_effect(kind: FxKind) -> Effect {
     match kind {
-        FxKind::FadeIn => fx::fade_from_fg(Color::Rgb(40, 40, 40), (FADE_IN_MS, Interpolation::QuadOut)),
+        FxKind::FadeIn => {
+            fx::fade_from_fg(Color::Rgb(40, 40, 40), (FADE_IN_MS, Interpolation::QuadOut))
+        }
         // A light flash that settles into the border's own amber; only the
         // frame (border + title row) is touched, never the terminal body.
-        FxKind::Pulse => fx::fade_from_fg(Color::Rgb(255, 236, 179), (PULSE_MS, Interpolation::SineOut))
-            .with_filter(CellFilter::Outer(Margin::new(1, 1))),
+        FxKind::Pulse => fx::fade_from_fg(
+            Color::Rgb(255, 236, 179),
+            (PULSE_MS, Interpolation::SineOut),
+        )
+        .with_filter(CellFilter::Outer(Margin::new(1, 1))),
     }
 }
 
@@ -275,7 +287,9 @@ impl Motion {
         if !self.enabled {
             return;
         }
-        self.step_ms = self.last_ms.map_or(0, |last| (now_ms - last).clamp(0, MAX_STEP_MS));
+        self.step_ms = self
+            .last_ms
+            .map_or(0, |last| (now_ms - last).clamp(0, MAX_STEP_MS));
         self.last_ms = Some(now_ms);
         self.clock.set(now_ms);
         self.spinners = false;
@@ -385,13 +399,21 @@ impl Motion {
         self.effects.retain(|e| e.seen && !e.effect.done());
         let step = fx_duration(self.step_ms);
         for e in &mut self.effects {
-            let dt = if std::mem::take(&mut e.fresh) { tachyonfx::Duration::ZERO } else { step };
+            let dt = if std::mem::take(&mut e.fresh) {
+                tachyonfx::Duration::ZERO
+            } else {
+                step
+            };
             e.effect.process(dt, buf, e.rect);
         }
 
         self.ghosts.retain(|g| !g.effect.done());
         for g in &mut self.ghosts {
-            let dt = if std::mem::take(&mut g.fresh) { tachyonfx::Duration::ZERO } else { step };
+            let dt = if std::mem::take(&mut g.fresh) {
+                tachyonfx::Duration::ZERO
+            } else {
+                step
+            };
             let area = g.rect;
             g.effect.process(dt, &mut g.scratch, area);
             // Paint what has not dissolved yet; blanks stay transparent so
@@ -451,8 +473,13 @@ impl Motion {
     /// keeps ticking). The static "daemon down" caption does not tick.
     pub fn strip_spinner_active(&self, daemon_live: bool, now_ms: i64) -> bool {
         self.enabled
-            && strip_caption(daemon_live, self.restarting_since.get(), self.down_since.get(), now_ms)
-                .is_some_and(|c| c.spinning)
+            && strip_caption(
+                daemon_live,
+                self.restarting_since.get(),
+                self.down_since.get(),
+                now_ms,
+            )
+            .is_some_and(|c| c.spinning)
     }
 }
 
@@ -467,7 +494,12 @@ fn strip_caption(
     down_since: Option<i64>,
     now_ms: i64,
 ) -> Option<Caption> {
-    let spin = |text| Some(Caption { text, spinning: true });
+    let spin = |text| {
+        Some(Caption {
+            text,
+            spinning: true,
+        })
+    };
     if restarting_since.is_some_and(|since| now_ms - since < RESTART_GRACE_MS) {
         spin("daemon restarting…")
     } else if daemon_live {
@@ -475,7 +507,10 @@ fn strip_caption(
     } else if down_since.is_some_and(|since| now_ms - since < DOWN_SPIN_MS) {
         spin("reconnecting…")
     } else {
-        Some(Caption { text: "daemon down", spinning: false })
+        Some(Caption {
+            text: "daemon down",
+            spinning: false,
+        })
     }
 }
 
@@ -491,10 +526,19 @@ impl SlotProvider for StripSpinner {
     fn items(&self, ctx: &SlotCtx) -> Vec<SlotItem> {
         let live = ctx.state.is_none_or(|s| s.daemon_live);
         let now = self.clock.get();
-        let Some(caption) = strip_caption(live, self.restarting_since.get(), self.down_since.get(), now) else {
+        let Some(caption) = strip_caption(
+            live,
+            self.restarting_since.get(),
+            self.down_since.get(),
+            now,
+        ) else {
             return Vec::new();
         };
-        let glyph = if caption.spinning { spinner_symbol(now) } else { "◌".to_owned() };
+        let glyph = if caption.spinning {
+            spinner_symbol(now)
+        } else {
+            "◌".to_owned()
+        };
         vec![SlotItem::new(
             vec![
                 Span::styled(format!("{glyph} "), Style::default().fg(colors::DIM)),

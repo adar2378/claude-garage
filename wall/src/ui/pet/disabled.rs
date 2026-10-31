@@ -2,9 +2,9 @@
 //! no `cfg` of its own.
 
 use crate::runtime::Notices;
+use crate::slots::SlotProvider;
 use crate::state::wall_state::WallState;
 use crate::ui::pet::PetClick;
-use crate::slots::SlotProvider;
 
 pub struct PetHost;
 
@@ -14,7 +14,13 @@ impl PetHost {
         None
     }
 
-    pub fn tick(&mut self, _now: i64, _state: &WallState, _notices: &mut Notices, _filler: u16) -> bool {
+    pub fn tick(
+        &mut self,
+        _now: i64,
+        _state: &WallState,
+        _notices: &mut Notices,
+        _filler: u16,
+    ) -> bool {
         false
     }
 

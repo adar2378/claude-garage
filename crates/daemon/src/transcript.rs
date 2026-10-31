@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use tokio::io::{AsyncReadExt, AsyncSeekExt};
 
 const TAIL_BYTES: u64 = 256 * 1024;
@@ -73,11 +73,7 @@ fn num(v: Option<&Value>) -> f64 {
         Some(Value::Bool(true)) => 1.0,
         _ => 0.0,
     };
-    if n.is_finite() {
-        n
-    } else {
-        0.0
-    }
+    if n.is_finite() { n } else { 0.0 }
 }
 
 /// Scans `text` backward for the last assistant message carrying a `usage`
@@ -257,9 +253,10 @@ impl TranscriptCache {
             let mut cache = self.cache.lock().unwrap();
             let entry = cache.get(id);
             if let Some(e) = entry
-                && (e.pending || (self.clock)() - e.at < TTL_MS) {
-                    return;
-                }
+                && (e.pending || (self.clock)() - e.at < TTL_MS)
+            {
+                return;
+            }
             let (value, at) = entry.map(|e| (e.value.clone(), e.at)).unwrap_or((None, 0));
             cache.insert(
                 id.to_owned(),

@@ -243,14 +243,25 @@ pub struct GarageRouter {
 
 impl GarageRouter {
     /// Replace the declared plugin actions (a new listing arrived).
-    pub fn set_plugin_actions(&mut self, actions: std::collections::HashMap<ActionId, crate::plugins::PluginAction>) {
+    pub fn set_plugin_actions(
+        &mut self,
+        actions: std::collections::HashMap<ActionId, crate::plugins::PluginAction>,
+    ) {
         self.plugin_actions = actions;
     }
 
     /// A plugin action's effect: gated on its `contexts`, then either the
     /// run request or the pane open. An id no manifest declared does nothing.
-    pub(super) fn run_plugin_action(&mut self, id: ActionId, ctx: &ActionCtx, now_ms: i64, effects: &mut Vec<Effect>) {
-        let Some(action) = self.plugin_actions.get(&id) else { return };
+    pub(super) fn run_plugin_action(
+        &mut self,
+        id: ActionId,
+        ctx: &ActionCtx,
+        now_ms: i64,
+        effects: &mut Vec<Effect>,
+    ) {
+        let Some(action) = self.plugin_actions.get(&id) else {
+            return;
+        };
         if let Some(hint) = crate::plugins::context::unmet(action.need, &action.title, ctx) {
             self.notices.show(hint, 3000, now_ms);
             return;
@@ -263,7 +274,11 @@ impl GarageRouter {
                 body,
                 human: !matches!(ctx.source, ActionSource::Plugin { .. }),
             },
-            None => Effect::RunPluginAction { plugin: action.plugin.clone(), action: action.local.clone(), body },
+            None => Effect::RunPluginAction {
+                plugin: action.plugin.clone(),
+                action: action.local.clone(),
+                body,
+            },
         });
     }
 
@@ -310,7 +325,10 @@ impl GarageRouter {
             if key == "y" {
                 match self.plugin_confirm_key(now_ms) {
                     plugin_gate::ConfirmKey::Run(action) => {
-                        return KeyOutcome { effects, action: Some(*action) };
+                        return KeyOutcome {
+                            effects,
+                            action: Some(*action),
+                        };
                     }
                     // A racing `y` is swallowed; the prompt stays.
                     plugin_gate::ConfirmKey::TooSoon => return KeyOutcome::effects(effects),
@@ -319,7 +337,9 @@ impl GarageRouter {
             }
             // The same trigger again confirms a human-raised arm (that is its
             // confirm); any other key drops it.
-            let repeats = keymap.resolve(Layer::Garage, key).is_some_and(|r| self.human_arm_is(r.action));
+            let repeats = keymap
+                .resolve(Layer::Garage, key)
+                .is_some_and(|r| self.human_arm_is(r.action));
             if !repeats {
                 self.disarm_plugin();
             }
@@ -402,11 +422,14 @@ impl GarageRouter {
         if from_click && store.state().layer == KeyLayer::Engaged {
             store.disengage();
         }
-        if matches!(id, ids::SESSION_FOCUS | ids::SESSION_ENGAGE | ids::SESSION_RESTORE)
-            && let Some(session) = &ctx.session
-                && (from_click || store.state().focused_session_id.as_deref() != Some(session)) {
-                    store.focus_session(session);
-                }
+        if matches!(
+            id,
+            ids::SESSION_FOCUS | ids::SESSION_ENGAGE | ids::SESSION_RESTORE
+        ) && let Some(session) = &ctx.session
+            && (from_click || store.state().focused_session_id.as_deref() != Some(session))
+        {
+            store.focus_session(session);
+        }
         match id {
             _ if id.is_plugin() => self.run_plugin_action(id, ctx, now_ms, effects),
             // `P` (spec tui-pit-pet "Opt-in roster cycled by `P`"): not a
@@ -557,7 +580,8 @@ impl GarageRouter {
     /// the sim, the router doesn't).
     fn cycle_pet_pressed(&mut self, store: &mut WallStore, now_ms: i64) {
         let Some((next, text)) = PetHost::cycle_choice(store.state().pet.as_deref()) else {
-            self.notices.show("the pit pet is not in this build", 3000, now_ms);
+            self.notices
+                .show("the pit pet is not in this build", 3000, now_ms);
             return;
         };
         store.set_pet(next);
@@ -631,7 +655,8 @@ impl GarageRouter {
         }
         let Some(session) = session else { return };
         if store.state().focused_view_name(&session.workspace) != views::DEFAULT_VIEW {
-            self.notices.show(format!("detached {}", session.label), 2000, now_ms);
+            self.notices
+                .show(format!("detached {}", session.label), 2000, now_ms);
         }
     }
 
@@ -741,7 +766,8 @@ impl GarageRouter {
         if !session.live() {
             // A restorable placeholder has no tmux pane to respawn — Enter
             // restores it instead.
-            self.notices.show("no live session to restart", 2000, now_ms);
+            self.notices
+                .show("no live session to restart", 2000, now_ms);
             return;
         }
         let busy = session.status == "working" || session.needs_input();

@@ -90,7 +90,9 @@ fn shift_x_arm_notice_carries_the_k_clause_with_live_sessions() {
     assert_eq!(key_at(&mut router, &mut store, "X", 1000), vec![]);
     assert_eq!(
         router.notices.current(1001),
-        Some("press X again to remove proj (sessions keep running) · K to also kill its 2 sessions")
+        Some(
+            "press X again to remove proj (sessions keep running) · K to also kill its 2 sessions"
+        )
     );
 }
 
@@ -154,10 +156,12 @@ fn k_after_the_window_expired_confirms_nothing_and_never_re_arms() {
     assert_eq!(key_at(&mut router, &mut store, "K", 4001), vec![]);
     // The stale arm is gone: an X now re-arms from scratch.
     assert_eq!(key_at(&mut router, &mut store, "X", 4100), vec![]);
-    assert!(router
-        .notices
-        .current(4101)
-        .is_some_and(|n| n.starts_with("press X again to remove proj")));
+    assert!(
+        router
+            .notices
+            .current(4101)
+            .is_some_and(|n| n.starts_with("press X again to remove proj"))
+    );
 }
 
 #[test]
@@ -195,10 +199,12 @@ fn x_and_shift_x_cross_disarm_each_other() {
     let mut router = GarageRouter::default();
     key_at(&mut router, &mut store, "x", 1000); // close armed
     key_at(&mut router, &mut store, "X", 1100); // arms removal, disarms close
-    assert!(router
-        .notices
-        .current(1101)
-        .is_some_and(|n| n.starts_with("press X again to remove proj")));
+    assert!(
+        router
+            .notices
+            .current(1101)
+            .is_some_and(|n| n.starts_with("press X again to remove proj"))
+    );
     // x now re-arms (the X disarmed it) AND disarms the removal.
     assert_eq!(key_at(&mut router, &mut store, "x", 1200), vec![]);
     assert_eq!(
@@ -207,10 +213,12 @@ fn x_and_shift_x_cross_disarm_each_other() {
     );
     // The x disarmed the removal: this X re-arms instead of confirming.
     assert_eq!(key_at(&mut router, &mut store, "X", 1300), vec![]);
-    assert!(router
-        .notices
-        .current(1301)
-        .is_some_and(|n| n.starts_with("press X again to remove proj")));
+    assert!(
+        router
+            .notices
+            .current(1301)
+            .is_some_and(|n| n.starts_with("press X again to remove proj"))
+    );
 }
 
 // ── p16-restart: the `r` prefix chords (spec restart "TUI chords") ──
@@ -307,7 +315,11 @@ fn a_cancelled_chord_disarms_a_pending_r_r() {
     key_at(&mut router, &mut store, "r", 1100); // armed
     key_at(&mut router, &mut store, "r", 1200);
     key_at(&mut router, &mut store, "z", 1300); // cancels the chord
-    assert_eq!(router.notices.current(1301), None, "the arm notice went too");
+    assert_eq!(
+        router.notices.current(1301),
+        None,
+        "the arm notice went too"
+    );
     // The next full chord must re-arm, not fire.
     key_at(&mut router, &mut store, "r", 1400);
     assert_eq!(key_at(&mut router, &mut store, "r", 1500), vec![]);
@@ -448,9 +460,15 @@ fn enter_on_a_restorable_tile_restores_it_once() {
     let mut router = GarageRouter::default();
     assert_eq!(
         key_at(&mut router, &mut store, "\r", 1000),
-        vec![Effect::Restore { id: id("a", "dead") }]
+        vec![Effect::Restore {
+            id: id("a", "dead")
+        }]
     );
-    assert_eq!(store.state().layer, KeyLayer::Garage, "engage still declined");
+    assert_eq!(
+        store.state().layer,
+        KeyLayer::Garage,
+        "engage still declined"
+    );
     // A second Enter while the restore is in flight must not duplicate.
     assert_eq!(key_at(&mut router, &mut store, "\r", 1100), vec![]);
     // Settling releases the guard.
@@ -493,7 +511,10 @@ fn r_with_nothing_restorable_shows_the_notice() {
     let mut store = store_with(vec![ws("a")], vec![si("a", "one")]);
     let mut router = GarageRouter::default();
     assert_eq!(key_at(&mut router, &mut store, "R", 1000), vec![]);
-    assert_eq!(router.notices.current(1001), Some("nothing to restore in a"));
+    assert_eq!(
+        router.notices.current(1001),
+        Some("nothing to restore in a")
+    );
 }
 
 // ── spawn (n / N) ───────────────────────────────────────────────────
@@ -550,14 +571,20 @@ fn spawn_is_busy_guarded_until_settled() {
 fn shift_i_fires_the_install_effect_busy_guarded_until_settled() {
     let mut store = store_with(vec![ws("a")], vec![si("a", "one")]);
     let mut router = GarageRouter::default();
-    assert_eq!(key_at(&mut router, &mut store, "I", 1000), vec![Effect::Install]);
+    assert_eq!(
+        key_at(&mut router, &mut store, "I", 1000),
+        vec![Effect::Install]
+    );
     assert_eq!(
         key_at(&mut router, &mut store, "I", 1100),
         vec![],
         "in flight"
     );
     router.install_settled();
-    assert_eq!(key_at(&mut router, &mut store, "I", 1200), vec![Effect::Install]);
+    assert_eq!(
+        key_at(&mut router, &mut store, "I", 1200),
+        vec![Effect::Install]
+    );
 }
 
 #[test]
@@ -567,13 +594,19 @@ fn install_statusline_notice_strings() {
         "statusline feed installed — meters go live as agents work"
     );
     assert_eq!(
-        failure_notice("statusline install failed", &ApiError::Transport("x".into())),
+        failure_notice(
+            "statusline install failed",
+            &ApiError::Transport("x".into())
+        ),
         "statusline install failed"
     );
     assert_eq!(
         failure_notice(
             "statusline install failed",
-            &ApiError::Status { status: 500, message: "boom".into() }
+            &ApiError::Status {
+                status: 500,
+                message: "boom".into()
+            }
         ),
         "statusline install failed: boom"
     );
@@ -586,7 +619,10 @@ fn hooks(already_installed: bool) -> Result<HooksInstallResult, ApiError> {
 }
 
 fn status_err(status: u16, message: &str) -> ApiError {
-    ApiError::Status { status, message: message.to_owned() }
+    ApiError::Status {
+        status,
+        message: message.to_owned(),
+    }
 }
 
 #[test]
@@ -700,7 +736,11 @@ fn install_hint_condition_gates_on_shown_delay_and_statusline_sessions() {
         !should_show_install_hint(false, Duration::from_secs(29), &none_yet),
         "too early"
     );
-    assert!(should_show_install_hint(false, Duration::from_secs(30), &none_yet));
+    assert!(should_show_install_hint(
+        false,
+        Duration::from_secs(30),
+        &none_yet
+    ));
     assert!(
         !should_show_install_hint(true, Duration::from_secs(60), &none_yet),
         "already shown this run — never again"
@@ -708,7 +748,10 @@ fn install_hint_condition_gates_on_shown_delay_and_statusline_sessions() {
 
     let transcript_only = vec![WallSession::from_info(
         &SessionInfo {
-            context: Some(ContextInfo { used_percentage: 10, source: "transcript".into() }),
+            context: Some(ContextInfo {
+                used_percentage: 10,
+                source: "transcript".into(),
+            }),
             ..si("a", "one")
         },
         None,
@@ -720,25 +763,39 @@ fn install_hint_condition_gates_on_shown_delay_and_statusline_sessions() {
 
     let with_statusline = vec![WallSession::from_info(
         &SessionInfo {
-            context: Some(ContextInfo { used_percentage: 10, source: "statusline".into() }),
+            context: Some(ContextInfo {
+                used_percentage: 10,
+                source: "statusline".into(),
+            }),
             ..si("a", "one")
         },
         None,
     )];
-    assert!(!should_show_install_hint(false, Duration::from_secs(60), &with_statusline));
+    assert!(!should_show_install_hint(
+        false,
+        Duration::from_secs(60),
+        &with_statusline
+    ));
 }
 
 #[test]
 fn any_keypress_dismisses_the_install_hint_forever_this_run() {
     let mut router = GarageRouter::default();
-    router.notices.show(crate::ui::strip::STATUSLINE_HINT, 8000, 1000);
-    assert_eq!(router.notices.current(1001), Some(crate::ui::strip::STATUSLINE_HINT));
+    router
+        .notices
+        .show(crate::ui::strip::STATUSLINE_HINT, 8000, 1000);
+    assert_eq!(
+        router.notices.current(1001),
+        Some(crate::ui::strip::STATUSLINE_HINT)
+    );
     // The dismissal check runtime.rs's `App::apply` runs before ordinary
     // key handling — exercised directly here against `Notices` since
     // building a full `App` needs a terminal/registry this module
     // doesn't stand up in tests.
     if router.notices.current(1001) == Some(crate::ui::strip::STATUSLINE_HINT) {
-        router.notices.clear_prefix(crate::ui::strip::STATUSLINE_HINT);
+        router
+            .notices
+            .clear_prefix(crate::ui::strip::STATUSLINE_HINT);
     }
     assert_eq!(router.notices.current(1001), None, "any keypress clears it");
 }
@@ -748,9 +805,9 @@ fn next_label_ignores_foreign_and_malformed_labels() {
     let store = store_with(
         vec![ws("a"), ws("b")],
         vec![
-            si("b", "claude-1"),    // other workspace
-            si("a", "claude-x"),    // not the family
-            si("a", "claude-1a"),   // trailing junk
+            si("b", "claude-1"),  // other workspace
+            si("a", "claude-x"),  // not the family
+            si("a", "claude-1a"), // trailing junk
             si("a", "api-fix"),
         ],
     );
@@ -855,15 +912,17 @@ fn user_notice_active_tracks_kind_and_expiry() {
     assert!(notices.user_notice_active(1500));
     assert!(!notices.user_notice_active(2000), "expired");
     notices.show_pet("drink some water", 4000, 2000);
-    assert!(!notices.user_notice_active(2500), "a pet notice is not a user notice");
+    assert!(
+        !notices.user_notice_active(2500),
+        "a pet notice is not a user notice"
+    );
 }
 
 // ── key-event reduction ─────────────────────────────────────────────
 
 #[test]
 fn garage_key_string_normalizes_enter_and_passes_plain_chars() {
-    let plain =
-        |code| garage_key_string(&KeyEvent::new(code, KeyModifiers::NONE));
+    let plain = |code| garage_key_string(&KeyEvent::new(code, KeyModifiers::NONE));
     assert_eq!(plain(KeyCode::Enter).as_deref(), Some("\r"));
     assert_eq!(plain(KeyCode::Char('x')).as_deref(), Some("x"));
     // Shifted capitals keep their character (the X/N/A/R/K bindings).

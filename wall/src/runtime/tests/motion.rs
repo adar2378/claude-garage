@@ -3,8 +3,8 @@
 //! frame exactly as before. The tiles here have no PTY client (tests never
 //! touch tmux), which is exactly the "attaching" state.
 use super::*;
-use ratatui::backend::TestBackend;
 use ratatui::Terminal;
+use ratatui::backend::TestBackend;
 
 use crate::ui::motion::{FX_TICK, SPINNER_TICK};
 
@@ -21,14 +21,21 @@ fn draw(app: &mut App, now: i64) -> String {
     terminal.draw(|f| app.draw_frame(f, now)).unwrap();
     let buf = terminal.backend().buffer().clone();
     (0..buf.area.height)
-        .map(|y| (0..buf.area.width).map(|x| buf[(x, y)].symbol()).collect::<String>())
+        .map(|y| {
+            (0..buf.area.width)
+                .map(|x| buf[(x, y)].symbol())
+                .collect::<String>()
+        })
         .collect::<Vec<_>>()
         .join("\n")
 }
 
 #[test]
 fn loop_timeout_is_unchanged_when_nothing_animates() {
-    assert_eq!(loop_timeout(false, Duration::from_millis(5), None), IDLE_POLL);
+    assert_eq!(
+        loop_timeout(false, Duration::from_millis(5), None),
+        IDLE_POLL
+    );
     assert_eq!(
         loop_timeout(true, Duration::from_millis(5), None),
         FRAME_CAP - Duration::from_millis(5)
@@ -43,7 +50,10 @@ fn loop_timeout_shortens_to_the_motion_tick_only_while_animating() {
         SPINNER_TICK - Duration::from_millis(30)
     );
     // Overdue: wake at once. Never longer than the idle poll.
-    assert_eq!(loop_timeout(false, Duration::from_secs(5), Some(FX_TICK)), Duration::ZERO);
+    assert_eq!(
+        loop_timeout(false, Duration::from_secs(5), Some(FX_TICK)),
+        Duration::ZERO
+    );
     assert!(loop_timeout(false, Duration::ZERO, Some(Duration::from_secs(9))) <= IDLE_POLL);
     // A dirty loop is never slower than the frame cap, so an event is
     // drawn within a frame whatever is animating.
@@ -53,7 +63,10 @@ fn loop_timeout_shortens_to_the_motion_tick_only_while_animating() {
 #[test]
 fn an_idle_wall_schedules_no_timed_redraw() {
     // Restorable sessions show a static placeholder: nothing is in flight.
-    let mut app = app_with(true, vec![si_restorable("a", "one"), si_restorable("a", "two")]);
+    let mut app = app_with(
+        true,
+        vec![si_restorable("a", "one"), si_restorable("a", "two")],
+    );
     draw(&mut app, 10_000);
     assert_eq!(app.motion.next_tick(), None);
     // And with no sessions at all.
@@ -67,7 +80,10 @@ fn an_attaching_tile_spins_and_asks_for_the_spinner_tick() {
     let mut app = app_with(true, vec![si("a", "one")]);
     let screen = draw(&mut app, 0);
     assert!(screen.contains("attaching"));
-    assert!(!screen.contains("… attaching"), "the throbber replaces the dots");
+    assert!(
+        !screen.contains("… attaching"),
+        "the throbber replaces the dots"
+    );
     assert_eq!(app.motion.next_tick(), Some(SPINNER_TICK));
     // The frame a tick later shows the next throbber step.
     let later = draw(&mut app, SPINNER_TICK.as_millis() as i64);
@@ -81,7 +97,9 @@ fn a_restoring_tile_spins_until_the_restore_settles() {
     draw(&mut app, 0);
     assert_eq!(app.motion.next_tick(), None, "restorable: static");
     app.store.focus_session(id);
-    let outcome = app.router.on_garage_key(&mut app.store, &app.keymap, "\r", 0);
+    let outcome = app
+        .router
+        .on_garage_key(&mut app.store, &app.keymap, "\r", 0);
     if let Some((action, ctx)) = outcome.action {
         let _ = app.dispatch_action(action, &ctx);
     }
@@ -100,7 +118,11 @@ fn motion_off_draws_the_static_markers_and_never_ticks() {
     let screen = draw(&mut app, 0);
     assert!(screen.contains("… attaching"));
     assert_eq!(app.motion.next_tick(), None);
-    assert_eq!(draw(&mut app, 500), screen, "frames do not change with time");
+    assert_eq!(
+        draw(&mut app, 500),
+        screen,
+        "frames do not change with time"
+    );
 }
 
 #[test]
@@ -121,7 +143,8 @@ fn a_keystroke_is_applied_immediately_while_effects_run() {
     let mut app = app_with(true, vec![si("a", "one")]);
     draw(&mut app, 0);
     app.motion.begin_frame(0);
-    app.motion.tile_drawn("garage/a/one", Rect::new(0, 0, 20, 6), true, false);
+    app.motion
+        .tile_drawn("garage/a/one", Rect::new(0, 0, 20, 6), true, false);
     assert!(app.motion.effects_running());
     // `?` opens help inside `apply` itself: nothing waits for a frame.
     assert!(!app.apply(AppEvent::Term(Event::Key(plain(KeyCode::Char('?'))))));
@@ -138,5 +161,9 @@ fn a_dead_daemon_stops_ticking_after_the_spinner_cap() {
     assert_eq!(app.motion.next_tick(), Some(SPINNER_TICK));
     let screen = draw(&mut app, down_at + 60_000);
     assert!(screen.contains("daemon down") && !screen.contains("reconnecting"));
-    assert_eq!(app.motion.next_tick(), None, "a dead daemon leaves the wall idle");
+    assert_eq!(
+        app.motion.next_tick(),
+        None,
+        "a dead daemon leaves the wall idle"
+    );
 }

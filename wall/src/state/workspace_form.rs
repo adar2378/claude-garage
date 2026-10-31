@@ -102,12 +102,18 @@ mod tests {
 
     #[test]
     fn basename_lowercased() {
-        assert_eq!(derive_workspace_name("/Users/me/dev/MyProj", NONE), "myproj");
+        assert_eq!(
+            derive_workspace_name("/Users/me/dev/MyProj", NONE),
+            "myproj"
+        );
     }
 
     #[test]
     fn non_alphanumeric_runs_collapse_to_a_single_dash() {
-        assert_eq!(derive_workspace_name("/x/My Cool_App!!", NONE), "my-cool-app");
+        assert_eq!(
+            derive_workspace_name("/x/My Cool_App!!", NONE),
+            "my-cool-app"
+        );
     }
 
     #[test]
@@ -133,7 +139,10 @@ mod tests {
     #[test]
     fn collision_appends_2_then_3() {
         assert_eq!(derive_workspace_name("/x/proj", &["proj"]), "proj-2");
-        assert_eq!(derive_workspace_name("/x/proj", &["proj", "proj-2"]), "proj-3");
+        assert_eq!(
+            derive_workspace_name("/x/proj", &["proj", "proj-2"]),
+            "proj-3"
+        );
     }
 
     #[test]

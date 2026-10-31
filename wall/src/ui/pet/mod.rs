@@ -6,19 +6,19 @@
 //! builds and runs without the pet, and the strip draws none. p25 replaces
 //! the host with a plugin that fills the same place.
 
+#[cfg(not(feature = "pet"))]
+mod disabled;
 #[cfg(feature = "pet")]
 mod engine;
 #[cfg(feature = "pet")]
 mod host;
-#[cfg(not(feature = "pet"))]
-mod disabled;
 
+#[cfg(not(feature = "pet"))]
+pub use disabled::PetHost;
 #[cfg(feature = "pet")]
 pub use engine::*;
 #[cfg(feature = "pet")]
 pub use host::PetHost;
-#[cfg(not(feature = "pet"))]
-pub use disabled::PetHost;
 
 /// What a click on the pet asks the caller to do (the host cannot touch the
 /// store).

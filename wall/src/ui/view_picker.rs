@@ -39,9 +39,10 @@ impl ViewPickerState {
 
     pub fn insert_char(&mut self, c: char) {
         if let Some(input) = self.new_group_input.as_mut()
-            && !c.is_control() {
-                input.push(c);
-            }
+            && !c.is_control()
+        {
+            input.push(c);
+        }
     }
 
     pub fn backspace(&mut self) {
@@ -56,8 +57,11 @@ impl ViewPickerState {
 /// to the view it's already in is a no-op row that only confuses), then the
 /// fixed "new group…" entry.
 pub fn picker_entries(view_names: &[String], current_view: &str) -> Vec<String> {
-    let mut entries: Vec<String> =
-        view_names.iter().filter(|name| name.as_str() != current_view).cloned().collect();
+    let mut entries: Vec<String> = view_names
+        .iter()
+        .filter(|name| name.as_str() != current_view)
+        .cloned()
+        .collect();
     entries.push(NEW_GROUP_LABEL.to_owned());
     entries
 }
@@ -65,7 +69,10 @@ pub fn picker_entries(view_names: &[String], current_view: &str) -> Vec<String> 
 fn field_line(input: &str, width: usize) -> Line<'static> {
     let mut spans = Vec::new();
     if input.is_empty() {
-        spans.push(Span::styled("group name", Style::default().fg(colors::FAINT)));
+        spans.push(Span::styled(
+            "group name",
+            Style::default().fg(colors::FAINT),
+        ));
     } else {
         let chars: Vec<char> = input.chars().collect();
         let visible = width.saturating_sub(1);
@@ -75,7 +82,10 @@ fn field_line(input: &str, width: usize) -> Line<'static> {
             Style::default().fg(colors::FG),
         ));
     }
-    spans.push(Span::styled(" ", Style::default().add_modifier(Modifier::REVERSED)));
+    spans.push(Span::styled(
+        " ",
+        Style::default().add_modifier(Modifier::REVERSED),
+    ));
     Line::from(spans)
 }
 
@@ -92,7 +102,10 @@ pub fn picker_lines(
             Line::styled("new group name", Style::default().fg(colors::DIM)),
             field_line(input, width),
             Line::raw(""),
-            Line::styled("Enter create · Esc cancel", Style::default().fg(colors::FAINT)),
+            Line::styled(
+                "Enter create · Esc cancel",
+                Style::default().fg(colors::FAINT),
+            ),
         ];
     }
     let selected = selected.min(entries.len().saturating_sub(1));
@@ -106,7 +119,10 @@ pub fn picker_lines(
                 style = style.add_modifier(Modifier::BOLD);
             }
             Line::from(vec![
-                Span::styled(if sel { "▸ " } else { "  " }, Style::default().fg(colors::FG)),
+                Span::styled(
+                    if sel { "▸ " } else { "  " },
+                    Style::default().fg(colors::FG),
+                ),
                 Span::styled(name.clone(), style),
             ])
         })
@@ -137,13 +153,20 @@ pub fn render_view_picker(
     selected: usize,
     new_group_input: Option<&str>,
 ) -> Rect {
-    let n_rows = if new_group_input.is_some() { 2 } else { entries.len() };
+    let n_rows = if new_group_input.is_some() {
+        2
+    } else {
+        entries.len()
+    };
     let rect = picker_modal_rect(area, n_rows);
     Clear.render(rect, buf);
     let block = Block::bordered()
         .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(colors::DIM))
-        .title(Line::styled(" move to group ", Style::default().fg(colors::FG)));
+        .title(Line::styled(
+            " move to group ",
+            Style::default().fg(colors::FG),
+        ));
     let inner = block.inner(rect);
     block.render(rect, buf);
     let padded = Rect {
@@ -152,8 +175,13 @@ pub fn render_view_picker(
         width: inner.width.saturating_sub(4),
         height: inner.height.saturating_sub(2),
     };
-    Paragraph::new(picker_lines(entries, selected, new_group_input, usize::from(padded.width)))
-        .render(padded, buf);
+    Paragraph::new(picker_lines(
+        entries,
+        selected,
+        new_group_input,
+        usize::from(padded.width),
+    ))
+    .render(padded, buf);
     rect
 }
 
@@ -166,7 +194,10 @@ mod tests {
         let names = vec!["main".to_owned(), "backend".to_owned()];
         // Neither name is the focused session's current view here, so both
         // survive the exclusion filter untouched.
-        assert_eq!(picker_entries(&names, "solo"), ["main", "backend", NEW_GROUP_LABEL]);
+        assert_eq!(
+            picker_entries(&names, "solo"),
+            ["main", "backend", NEW_GROUP_LABEL]
+        );
     }
 
     #[test]
@@ -174,7 +205,10 @@ mod tests {
         // Moving a session to the view it's already in is a no-op row that
         // only confuses — it must never appear alongside the OTHER views.
         let names = vec!["main".to_owned(), "backend".to_owned(), "solo".to_owned()];
-        assert_eq!(picker_entries(&names, "backend"), ["main", "solo", NEW_GROUP_LABEL]);
+        assert_eq!(
+            picker_entries(&names, "backend"),
+            ["main", "solo", NEW_GROUP_LABEL]
+        );
     }
 
     #[test]
@@ -192,7 +226,10 @@ mod tests {
         assert_eq!(lines[0].to_string(), "  main");
         assert_eq!(lines[1].to_string(), format!("▸ {NEW_GROUP_LABEL}"));
         assert_eq!(lines[1].spans[1].style.add_modifier, Modifier::BOLD);
-        assert_eq!(lines.last().unwrap().to_string(), "j/k move · Enter select · Esc cancel");
+        assert_eq!(
+            lines.last().unwrap().to_string(),
+            "j/k move · Enter select · Esc cancel"
+        );
     }
 
     #[test]
@@ -208,7 +245,10 @@ mod tests {
         let lines = picker_lines(&entries, 0, Some("back"), 40);
         assert_eq!(lines[0].to_string(), "new group name");
         assert!(lines[1].to_string().starts_with("back"));
-        assert_eq!(lines.last().unwrap().to_string(), "Enter create · Esc cancel");
+        assert_eq!(
+            lines.last().unwrap().to_string(),
+            "Enter create · Esc cancel"
+        );
     }
 
     #[test]
@@ -242,6 +282,10 @@ mod tests {
         let entries = picker_entries(&["main".to_owned(), "backend".to_owned()], "solo");
         let r = picker_modal_rect(area, entries.len());
         assert!(r.width < area.width && r.height < area.height);
-        assert_eq!(r.height, 3 + 2 + 4, "3 rows + blank/footer + border/padding");
+        assert_eq!(
+            r.height,
+            3 + 2 + 4,
+            "3 rows + blank/footer + border/padding"
+        );
     }
 }

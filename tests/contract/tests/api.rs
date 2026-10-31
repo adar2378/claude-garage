@@ -69,13 +69,19 @@ fn session_create_list_delete() {
     assert!(s["status"].is_string());
     assert!(s.get("restorable").is_none() || s["restorable"].is_null());
 
-    let (st, _) = d.post("/api/sessions", json!({"workspace": "proj", "label": "one"}));
+    let (st, _) = d.post(
+        "/api/sessions",
+        json!({"workspace": "proj", "label": "one"}),
+    );
     assert_eq!(st, 409, "duplicate session");
 
     let (st, b) = d.delete(&format!("/api/sessions/{id}"));
     assert_eq!(st, 200);
     assert_eq!(b["deleted"], true);
-    assert!(d.session(&id).is_none(), "deleted session is gone, not restorable");
+    assert!(
+        d.session(&id).is_none(),
+        "deleted session is gone, not restorable"
+    );
     let (st, _) = d.delete(&format!("/api/sessions/{id}"));
     assert_eq!(st, 404);
 }
@@ -101,7 +107,10 @@ fn a_dead_worktree_session_is_restorable_and_restores() {
     let (st, b) = d.post("/api/sessions/restore", json!({"id": id}));
     assert_eq!(st, 201, "{b}");
     assert_eq!(b["restored"][0]["id"], id.as_str());
-    assert_eq!(b["restored"][0]["resumed"], false, "no claude session id to resume");
+    assert_eq!(
+        b["restored"][0]["resumed"], false,
+        "no claude session id to resume"
+    );
     let live = d.session(&id).expect("restored session is live");
     assert!(live["restorable"].is_null());
 }
@@ -160,7 +169,10 @@ fn hooks_change_status_and_events_announce_it() {
 
     let token = d.hook_token();
     let hook = format!("/api/hooks/claude?token={token}");
-    let (st, _) = d.post("/api/hooks/claude?token=wrong", json!({"hook_event_name": "Stop"}));
+    let (st, _) = d.post(
+        "/api/hooks/claude?token=wrong",
+        json!({"hook_event_name": "Stop"}),
+    );
     assert_eq!(st, 401);
 
     // cwd fallback resolves the payload to the session in that directory
@@ -169,13 +181,17 @@ fn hooks_change_status_and_events_announce_it() {
     assert_eq!(b["applied"][0], id.as_str());
     assert_eq!(d.session(&id).unwrap()["status"], "done");
     let lines = collect_until(&rx, 10, |l| {
-        l.iter().any(|x| x.starts_with("data: ") && x.contains("\"status\":\"done\""))
+        l.iter()
+            .any(|x| x.starts_with("data: ") && x.contains("\"status\":\"done\""))
     });
     assert!(
         lines.iter().any(|x| x == "event: status"),
         "a status change must arrive as a status event; got {lines:?}"
     );
-    let data = lines.iter().find(|x| x.contains("\"status\":\"done\"")).unwrap();
+    let data = lines
+        .iter()
+        .find(|x| x.contains("\"status\":\"done\""))
+        .unwrap();
     assert!(data.contains(&id) && data.contains("\"since\""));
 
     // a real blocker carries its message; the idle reminder is ignored
@@ -236,7 +252,10 @@ fn statusline_posts_feed_session_context_and_usage() {
     assert_eq!(usage["sevenDay"]["usedPercentage"], 3);
 
     // an unattributable post records nothing
-    let (_, b) = d.post(&url, json!({"cwd": "/nonexistent", "rate_limits": {"five_hour": {"used_percentage": 99}}}));
+    let (_, b) = d.post(
+        &url,
+        json!({"cwd": "/nonexistent", "rate_limits": {"five_hour": {"used_percentage": 99}}}),
+    );
     assert_eq!(b["ignored"], true);
     assert_eq!(d.get("/api/usage").1["fiveHour"]["usedPercentage"], 12.5);
 }
@@ -259,18 +278,27 @@ fn deleting_a_worktree_session_returns_a_record_that_finish_can_discard() {
 
     // the worktree outlives the session until the user decides
     assert!(std::path::Path::new(&wt_path).is_dir());
-    let (st, _) = d.post("/api/worktrees/finish", json!({"worktree": record, "action": "keep"}));
+    let (st, _) = d.post(
+        "/api/worktrees/finish",
+        json!({"worktree": record, "action": "keep"}),
+    );
     assert_eq!(st, 200);
     assert!(std::path::Path::new(&wt_path).is_dir());
 
-    let (st, b) = d.post("/api/worktrees/finish", json!({"worktree": record, "action": "discard"}));
+    let (st, b) = d.post(
+        "/api/worktrees/finish",
+        json!({"worktree": record, "action": "discard"}),
+    );
     assert_eq!(st, 200, "{b}");
     assert_eq!(b["discarded"], true);
     assert!(!std::path::Path::new(&wt_path).exists());
 
     let mut bad = record.clone();
     bad["branch"] = json!("main");
-    let (st, _) = d.post("/api/worktrees/finish", json!({"worktree": bad, "action": "discard"}));
+    let (st, _) = d.post(
+        "/api/worktrees/finish",
+        json!({"worktree": bad, "action": "discard"}),
+    );
     assert_eq!(st, 400, "never touches non-garage branches");
 }
 
@@ -288,14 +316,25 @@ fn session_list_entries_have_the_shape_the_tui_reads() {
         .unwrap()
         .to_string();
     assert!(d.tmux(&["kill-session", "-t", &format!("={dead_id}")]));
-    d.wait_for(10, || d.session(&dead_id).filter(|s| s["restorable"] == true))
-        .expect("dead session is restorable");
+    d.wait_for(10, || {
+        d.session(&dead_id).filter(|s| s["restorable"] == true)
+    })
+    .expect("dead session is restorable");
 
     // live entry: every field the wall renders, with its type
     let live = d.session(&live_id).unwrap();
     for k in [
-        "id", "workspace", "label", "dir", "attached", "status", "since", "message", "branch",
-        "title", "context",
+        "id",
+        "workspace",
+        "label",
+        "dir",
+        "attached",
+        "status",
+        "since",
+        "message",
+        "branch",
+        "title",
+        "context",
     ] {
         assert!(live.get(k).is_some(), "live entry lacks `{k}`: {live}");
     }
@@ -303,7 +342,10 @@ fn session_list_entries_have_the_shape_the_tui_reads() {
     assert_eq!(live["workspace"], "repo");
     assert_eq!(live["label"], "live");
     assert!(live["attached"].is_boolean());
-    assert!(live["since"].is_number(), "since falls back to creation time");
+    assert!(
+        live["since"].is_number(),
+        "since falls back to creation time"
+    );
     assert!(live["message"].is_null() && live["title"].is_null() && live["context"].is_null());
     assert!(live["branch"].is_string(), "branch of the repo checkout");
     assert!(live.get("restorable").is_none() || live["restorable"].is_null());
@@ -312,7 +354,11 @@ fn session_list_entries_have_the_shape_the_tui_reads() {
     let dead = d.session(&dead_id).unwrap();
     assert_eq!(dead["workspace"], "repo");
     assert_eq!(dead["label"], "dead");
-    assert_eq!(dead["dir"], repo.to_str().unwrap(), "dir re-resolved from the registry");
+    assert_eq!(
+        dead["dir"],
+        repo.to_str().unwrap(),
+        "dir re-resolved from the registry"
+    );
     assert_eq!(dead["attached"], false);
     assert_eq!(dead["status"], "restorable");
     assert_eq!(dead["restorable"], true);
@@ -320,7 +366,11 @@ fn session_list_entries_have_the_shape_the_tui_reads() {
         assert!(dead[k].is_null(), "restorable `{k}` must be null: {dead}");
     }
     // live entries come first, restorable ones after
-    let ids: Vec<_> = d.sessions().iter().map(|s| s["id"].as_str().unwrap().to_string()).collect();
+    let ids: Vec<_> = d
+        .sessions()
+        .iter()
+        .map(|s| s["id"].as_str().unwrap().to_string())
+        .collect();
     assert_eq!(ids, vec![live_id, dead_id]);
 }
 
@@ -331,12 +381,22 @@ fn workspace_rename_moves_its_sessions() {
     let other = d.mkdir("other");
     d.add_workspace("proj", &dir);
     d.add_workspace("other", &other);
-    let old = d.create_session("proj", "one", false)["id"].as_str().unwrap().to_string();
+    let old = d.create_session("proj", "one", false)["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
     assert_eq!(old, "garage/proj/one");
 
     assert_eq!(d.patch("/api/workspaces/nope", json!({"name": "x"})).0, 404);
-    assert_eq!(d.patch("/api/workspaces/proj", json!({"name": "Bad Name"})).0, 400);
-    assert_eq!(d.patch("/api/workspaces/proj", json!({"name": "other"})).0, 409);
+    assert_eq!(
+        d.patch("/api/workspaces/proj", json!({"name": "Bad Name"}))
+            .0,
+        400
+    );
+    assert_eq!(
+        d.patch("/api/workspaces/proj", json!({"name": "other"})).0,
+        409
+    );
 
     let (st, b) = d.patch("/api/workspaces/proj", json!({"name": "renamed"}));
     assert_eq!(st, 200, "{b}");
@@ -349,12 +409,22 @@ fn workspace_rename_moves_its_sessions() {
     assert!(b.get("failedSessions").is_none());
 
     let (_, list) = d.get("/api/workspaces");
-    let names: Vec<_> = list.as_array().unwrap().iter().map(|w| w["name"].as_str().unwrap()).collect();
+    let names: Vec<_> = list
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|w| w["name"].as_str().unwrap())
+        .collect();
     assert!(names.contains(&"renamed") && !names.contains(&"proj"));
     assert!(d.session(&old).is_none());
-    let s = d.session("garage/renamed/one").expect("session follows the rename");
+    let s = d
+        .session("garage/renamed/one")
+        .expect("session follows the rename");
     assert_eq!(s["workspace"], "renamed");
-    assert!(d.tmux(&["has-session", "-t", "=garage/renamed/one"]), "tmux session really renamed");
+    assert!(
+        d.tmux(&["has-session", "-t", "=garage/renamed/one"]),
+        "tmux session really renamed"
+    );
 }
 
 #[test]
@@ -368,15 +438,26 @@ fn event_stream_frames_are_byte_exact() {
     assert!(head.contains("content-type: text/event-stream"), "{head}");
     assert!(head.contains("cache-control: no-cache"), "{head}");
 
-    let id = d.create_session("proj", "e", false)["id"].as_str().unwrap().to_string();
-    assert!(ev.wait_for("event: sessions\ndata: {}\n\n", 10), "{}", ev.text());
+    let id = d.create_session("proj", "e", false)["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert!(
+        ev.wait_for("event: sessions\ndata: {}\n\n", 10),
+        "{}",
+        ev.text()
+    );
 
     let (st, _) = d.post(
         &format!("/api/hooks/claude?token={}", d.hook_token()),
         json!({"hook_event_name": "Stop", "cwd": dir}),
     );
     assert_eq!(st, 200);
-    assert!(ev.wait_for("event: status\ndata: {\"id\":", 10), "{}", ev.text());
+    assert!(
+        ev.wait_for("event: status\ndata: {\"id\":", 10),
+        "{}",
+        ev.text()
+    );
     let text = ev.text();
     let frame_start = text.find("event: status\n").unwrap();
     let frame = &text[frame_start..];
@@ -384,7 +465,9 @@ fn event_stream_frames_are_byte_exact() {
     // key order and no whitespace: the wall parses these lines as they are
     let prefix = format!("event: status\ndata: {{\"id\":\"{id}\",\"status\":\"done\",\"since\":");
     assert!(frame.starts_with(&prefix), "{frame:?}");
-    let since = frame[prefix.len()..].strip_suffix("}\n\n").expect("closing brace");
+    let since = frame[prefix.len()..]
+        .strip_suffix("}\n\n")
+        .expect("closing brace");
     assert!(since.parse::<u64>().is_ok(), "since is epoch ms: {since:?}");
 }
 
@@ -401,7 +484,10 @@ fn discarding_a_worktree_whose_directory_vanished_still_removes_the_branch() {
     let record = b["worktree"].clone();
     std::fs::remove_dir_all(&path).unwrap();
 
-    let (st, b) = d.post("/api/worktrees/finish", json!({"worktree": record, "action": "discard"}));
+    let (st, b) = d.post(
+        "/api/worktrees/finish",
+        json!({"worktree": record, "action": "discard"}),
+    );
     assert_eq!(st, 200, "{b}");
     assert_eq!(b["discarded"], true);
     let branches = std::process::Command::new("git")

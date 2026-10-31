@@ -95,7 +95,11 @@ pub enum Kind {
 impl Kind {
     /// The OS default: tmux on macOS and Linux, host processes on Windows.
     pub fn os_default() -> Kind {
-        if cfg!(windows) { Kind::Host } else { Kind::Tmux }
+        if cfg!(windows) {
+            Kind::Host
+        } else {
+            Kind::Tmux
+        }
     }
 
     /// `GARAGE_BACKEND` (`tmux` or `host`; unset or empty is the OS default).
@@ -104,7 +108,9 @@ impl Kind {
             None => Ok(Kind::os_default()),
             Some("tmux") => Ok(Kind::Tmux),
             Some("host") => Ok(Kind::Host),
-            Some(other) => anyhow::bail!("GARAGE_BACKEND must be \"tmux\" or \"host\", got {other:?}"),
+            Some(other) => {
+                anyhow::bail!("GARAGE_BACKEND must be \"tmux\" or \"host\", got {other:?}")
+            }
         }
     }
 }
@@ -115,7 +121,8 @@ pub fn select(kind: Kind, config: &crate::Config) -> Result<std::sync::Arc<dyn S
     Ok(match kind {
         Kind::Tmux => std::sync::Arc::new(tmux::TmuxBackend::new(config.tmux_socket.clone())),
         Kind::Host => {
-            let exe = std::env::current_exe().map_err(|e| anyhow::anyhow!("cannot locate claude-garage: {e}"))?;
+            let exe = std::env::current_exe()
+                .map_err(|e| anyhow::anyhow!("cannot locate claude-garage: {e}"))?;
             std::sync::Arc::new(host::HostBackend::new(
                 config.garage_dir.join("hosts"),
                 vec![exe.to_string_lossy().into_owned(), "host".into()],
@@ -134,7 +141,9 @@ mod tests {
         assert_eq!(Kind::from_env_value(Some(" tmux ")).unwrap(), Kind::Tmux);
         assert_eq!(Kind::from_env_value(None).unwrap(), Kind::os_default());
         assert_eq!(Kind::from_env_value(Some("")).unwrap(), Kind::os_default());
-        let e = Kind::from_env_value(Some("screen")).unwrap_err().to_string();
+        let e = Kind::from_env_value(Some("screen"))
+            .unwrap_err()
+            .to_string();
         assert!(e.contains("GARAGE_BACKEND") && e.contains("screen"), "{e}");
     }
 }

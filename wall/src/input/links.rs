@@ -12,8 +12,28 @@ fn is_url_char(c: char) -> bool {
     c.is_ascii_alphanumeric()
         || matches!(
             c,
-            '-' | '.' | '_' | '~' | ':' | '/' | '?' | '#' | '[' | ']' | '@' | '!' | '$' | '&'
-                | '\'' | '(' | ')' | '*' | '+' | ',' | ';' | '=' | '%'
+            '-' | '.'
+                | '_'
+                | '~'
+                | ':'
+                | '/'
+                | '?'
+                | '#'
+                | '['
+                | ']'
+                | '@'
+                | '!'
+                | '$'
+                | '&'
+                | '\''
+                | '('
+                | ')'
+                | '*'
+                | '+'
+                | ','
+                | ';'
+                | '='
+                | '%'
         )
 }
 
@@ -53,7 +73,9 @@ pub fn url_at(line: &str, col: usize) -> Option<String> {
         }
     }
     // A bare scheme with nothing after it is not a link.
-    let rest = url.trim_start_matches("https://").trim_start_matches("http://");
+    let rest = url
+        .trim_start_matches("https://")
+        .trim_start_matches("http://");
     if rest.is_empty() {
         return None;
     }

@@ -8,13 +8,13 @@ use std::ops::Range;
 
 use ratatui::layout::Rect;
 
-use crate::actions::{ids, ActionCtx, ActionId, ActionSource};
-use crate::state::wall_state::{KeyLayer, OverlayKind, WallState};
+use crate::actions::{ActionCtx, ActionId, ActionSource, ids};
 use crate::slots::{SlotClickRegion, SlotId, SlotRegistry};
+use crate::state::wall_state::{KeyLayer, OverlayKind, WallState};
+use crate::ui::grid_layout::grid_cell_rect;
 use crate::ui::layout::WallLayout;
 use crate::ui::rail::{extra_row_items, header_items};
 use crate::ui::triage::triage_queue_rows;
-use crate::ui::grid_layout::grid_cell_rect;
 
 /// Tile slot index containing the grid-local point (`col`,`row`), or `None`
 /// when the point falls in the dead space after the last short row. Walks
@@ -137,7 +137,10 @@ pub struct ClickMap<'a> {
 /// source, a core item a plain `Mouse` one.
 pub fn click_ctx(state: &WallState, region: &SlotClickRegion, col: u16, row: u16) -> ActionCtx {
     let source = match &region.target.plugin {
-        Some(plugin) => ActionSource::Widget { plugin: plugin.to_string(), slot: region.slot },
+        Some(plugin) => ActionSource::Widget {
+            plugin: plugin.to_string(),
+            slot: region.slot,
+        },
         None => ActionSource::Mouse { col, row },
     };
     let mut ctx = ActionCtx::from_focus(state, source).with_args(region.target.args.clone());
@@ -159,7 +162,12 @@ pub fn click_ctx(state: &WallState, region: &SlotClickRegion, col: u16, row: u16
 
 /// The session id and rect under a grid point, honoring maximize (a
 /// maximized tile covers the whole grid, so every grid point targets it).
-pub fn tile_at(layout: &WallLayout, state: &WallState, col: u16, row: u16) -> Option<(String, Rect)> {
+pub fn tile_at(
+    layout: &WallLayout,
+    state: &WallState,
+    col: u16,
+    row: u16,
+) -> Option<(String, Rect)> {
     if !layout.grid.contains((col, row).into()) {
         return None;
     }
@@ -258,7 +266,9 @@ pub fn action_at(
         if !live {
             return Some((ids::SESSION_RESTORE, ctx().with_session(id)));
         }
-        if state.layer == KeyLayer::Engaged && state.focused_session_id.as_deref() == Some(id.as_str()) {
+        if state.layer == KeyLayer::Engaged
+            && state.focused_session_id.as_deref() == Some(id.as_str())
+        {
             return None;
         }
         return Some((ids::SESSION_ENGAGE, ctx().with_session(id)));
@@ -346,10 +356,7 @@ mod tests {
                     let hit = tile_index_at(col, row, n, width, height);
                     let expected = (0..n).find(|&i| {
                         let r = grid_cell_rect(i, n, width, height);
-                        col >= r.x
-                            && col < r.x + r.width
-                            && row >= r.y
-                            && row < r.y + r.height
+                        col >= r.x && col < r.x + r.width && row >= r.y && row < r.y + r.height
                     });
                     assert_eq!(hit, expected, "n={n} point=({col},{row})");
                 }
@@ -475,16 +482,38 @@ mod tests {
                 Vec::new()
             }
         });
-        let rows: Vec<String> = rail_lines(&state, &slots, 0).iter().map(ToString::to_string).collect();
+        let rows: Vec<String> = rail_lines(&state, &slots, 0)
+            .iter()
+            .map(ToString::to_string)
+            .collect();
         // rows: 0 alpha, 1 a1, 2 a2, 3 plugin one, 4 plugin two, 5 beta, 6 b1
         assert_eq!(rows[3], " plugin one");
-        assert_eq!(rail_target_at(&state, &slots, 0), Some(RailTarget::Workspace(0)));
-        assert_eq!(rail_target_at(&state, &slots, 2), Some(RailTarget::Session("a2".into())));
-        assert_eq!(rail_target_at(&state, &slots, 3), None, "header rows are inert");
+        assert_eq!(
+            rail_target_at(&state, &slots, 0),
+            Some(RailTarget::Workspace(0))
+        );
+        assert_eq!(
+            rail_target_at(&state, &slots, 2),
+            Some(RailTarget::Session("a2".into()))
+        );
+        assert_eq!(
+            rail_target_at(&state, &slots, 3),
+            None,
+            "header rows are inert"
+        );
         assert_eq!(rail_target_at(&state, &slots, 4), None);
-        assert_eq!(rail_target_at(&state, &slots, 5), Some(RailTarget::Workspace(1)));
-        assert_eq!(rows[5], " 2 beta", "the click mapping and the paint agree on the workspace row");
-        assert_eq!(rail_target_at(&state, &slots, 6), Some(RailTarget::Session("b1".into())));
+        assert_eq!(
+            rail_target_at(&state, &slots, 5),
+            Some(RailTarget::Workspace(1))
+        );
+        assert_eq!(
+            rows[5], " 2 beta",
+            "the click mapping and the paint agree on the workspace row"
+        );
+        assert_eq!(
+            rail_target_at(&state, &slots, 6),
+            Some(RailTarget::Session("b1".into()))
+        );
         assert_eq!(rail_target_at(&state, &slots, 7), None);
     }
 
@@ -498,24 +527,50 @@ mod tests {
         // Two extra rows under `alpha` only, one under `beta`.
         let mut slots = SlotRegistry::core();
         slots.register(SlotId::RailExtraRows, |ctx: &SlotCtx| {
-            let n = if ctx.group.is_some_and(|g| g.name == "alpha") { 2 } else { 1 };
-            (0..n).map(|i| SlotItem::new(vec![Span::raw(format!(" closed {i}"))], 0)).collect()
+            let n = if ctx.group.is_some_and(|g| g.name == "alpha") {
+                2
+            } else {
+                1
+            };
+            (0..n)
+                .map(|i| SlotItem::new(vec![Span::raw(format!(" closed {i}"))], 0))
+                .collect()
         });
-        let rows: Vec<String> = rail_lines(&state, &slots, 0).iter().map(ToString::to_string).collect();
+        let rows: Vec<String> = rail_lines(&state, &slots, 0)
+            .iter()
+            .map(ToString::to_string)
+            .collect();
         // 0 alpha, 1 a1, 2 a2, 3-4 extra, 5 beta, 6 b1, 7 extra
         assert_eq!(rows[3], " closed 0");
         assert_eq!(rows[5], " 2 beta");
-        assert_eq!(rail_target_at(&state, &slots, 2), Some(RailTarget::Session("a2".into())));
-        assert_eq!(rail_target_at(&state, &slots, 3), None, "extra rows are inert here (slot regions)");
+        assert_eq!(
+            rail_target_at(&state, &slots, 2),
+            Some(RailTarget::Session("a2".into()))
+        );
+        assert_eq!(
+            rail_target_at(&state, &slots, 3),
+            None,
+            "extra rows are inert here (slot regions)"
+        );
         assert_eq!(rail_target_at(&state, &slots, 4), None);
-        assert_eq!(rail_target_at(&state, &slots, 5), Some(RailTarget::Workspace(1)));
-        assert_eq!(rail_target_at(&state, &slots, 6), Some(RailTarget::Session("b1".into())));
+        assert_eq!(
+            rail_target_at(&state, &slots, 5),
+            Some(RailTarget::Workspace(1))
+        );
+        assert_eq!(
+            rail_target_at(&state, &slots, 6),
+            Some(RailTarget::Session("b1".into()))
+        );
         assert_eq!(rail_target_at(&state, &slots, 7), None);
         assert_eq!(rail_target_at(&state, &slots, 8), None);
         // Every painted row agrees with what the maths says it is.
         for (row, text) in rows.iter().enumerate() {
             let target = rail_target_at(&state, &slots, row as i32);
-            assert_eq!(target.is_some(), !text.trim().starts_with("closed"), "row {row}: {text}");
+            assert_eq!(
+                target.is_some(),
+                !text.trim().starts_with("closed"),
+                "row {row}: {text}"
+            );
         }
     }
 
@@ -544,7 +599,11 @@ mod tests {
     fn picker_rows_sit_below_the_border_plus_padding_offset() {
         assert_eq!(VIEW_PICKER_MODAL_ROW_OFFSET, 2);
         assert_eq!(view_picker_row_index_at(2, 3), Some(0));
-        assert_eq!(view_picker_row_index_at(4, 3), Some(2), "the new group… row");
+        assert_eq!(
+            view_picker_row_index_at(4, 3),
+            Some(2),
+            "the new group… row"
+        );
     }
 
     #[test]
@@ -566,7 +625,11 @@ mod tests {
         use crate::ui::layout::wall_layout;
 
         fn ws(name: &str, dir: &str) -> WorkspaceInfo {
-            WorkspaceInfo { name: name.to_owned(), dir: Some(dir.to_owned()), branch: None }
+            WorkspaceInfo {
+                name: name.to_owned(),
+                dir: Some(dir.to_owned()),
+                branch: None,
+            }
         }
         fn si(workspace: &str, label: &str, status: &str) -> SessionInfo {
             SessionInfo {
@@ -587,10 +650,7 @@ mod tests {
 
         fn store() -> WallStore {
             let mut store = WallStore::new();
-            store.workspaces_fetched(vec![
-                ws("et-a", "/w/fam/et-a"),
-                ws("et-b", "/w/fam/et-b"),
-            ]);
+            store.workspaces_fetched(vec![ws("et-a", "/w/fam/et-a"), ws("et-b", "/w/fam/et-b")]);
             store.sessions_fetched(vec![
                 si("et-a", "one", "working"),
                 si("et-a", "gone", "restorable"),
@@ -627,7 +687,12 @@ mod tests {
             }
         }
 
-        fn click(store: &WallStore, f: &Fixture, col: u16, row: u16) -> Option<(&'static str, ActionCtx)> {
+        fn click(
+            store: &WallStore,
+            f: &Fixture,
+            col: u16,
+            row: u16,
+        ) -> Option<(&'static str, ActionCtx)> {
             let mut regions = f.regions.clone();
             regions.extend(f.slots.iter().map(|(cols, target)| SlotClickRegion {
                 rect: Rect::new(cols.start, f.layout.strip.y, cols.end - cols.start, 1),
@@ -652,7 +717,11 @@ mod tests {
         }
 
         fn key_id(layer: Layer, key: &str) -> &'static str {
-            Keymap::defaults().resolve(layer, key).unwrap().action.as_str()
+            Keymap::defaults()
+                .resolve(layer, key)
+                .unwrap()
+                .action
+                .as_str()
         }
 
         #[test]
@@ -660,7 +729,10 @@ mod tests {
             let store = store();
             let f = fixture(&store);
             // Row 0 is the family label (inert); row 1 the first header.
-            assert!(click(&store, &f, 2, f.layout.rail.y).is_none(), "label row is inert");
+            assert!(
+                click(&store, &f, 2, f.layout.rail.y).is_none(),
+                "label row is inert"
+            );
             let (id, ctx) = click(&store, &f, 2, f.layout.rail.y + 1).unwrap();
             assert_eq!(id, key_id(Layer::Garage, "1"));
             assert_eq!(ctx.index, Some(0));
@@ -674,7 +746,10 @@ mod tests {
             let (id, ctx) = click(&store, &f, 2, f.layout.rail.y + 2).unwrap();
             assert_eq!(id, "session.focus");
             assert!(ctx.session.is_some());
-            assert!(click(&store, &f, 2, f.layout.rail.y + 30).is_none(), "past the last row");
+            assert!(
+                click(&store, &f, 2, f.layout.rail.y + 30).is_none(),
+                "past the last row"
+            );
         }
 
         #[test]
@@ -683,10 +758,20 @@ mod tests {
             let f = fixture(&store);
             for (i, rect) in f.layout.tiles.iter().enumerate() {
                 let id = &store.state().gridded_session_ids[i];
-                let dead = store.state().session_by_id(Some(id)).is_some_and(|s| !s.live());
+                let dead = store
+                    .state()
+                    .session_by_id(Some(id))
+                    .is_some_and(|s| !s.live());
                 let (action, ctx) = click(&store, &f, rect.x + 2, rect.y + 2).unwrap();
                 assert_eq!(ctx.session.as_deref(), Some(id.as_str()));
-                assert_eq!(action, if dead { "session.restore" } else { key_id(Layer::Garage, "\n") });
+                assert_eq!(
+                    action,
+                    if dead {
+                        "session.restore"
+                    } else {
+                        key_id(Layer::Garage, "\n")
+                    }
+                );
             }
         }
 
@@ -696,17 +781,29 @@ mod tests {
             store.engage();
             let f = fixture(&store);
             let focused = store.state().focused_session_id.clone().unwrap();
-            let own = store.state().gridded_session_ids.iter().position(|i| *i == focused).unwrap();
+            let own = store
+                .state()
+                .gridded_session_ids
+                .iter()
+                .position(|i| *i == focused)
+                .unwrap();
             let r = f.layout.tiles[own];
             assert!(click(&store, &f, r.x + 2, r.y + 2).is_none());
             let other = (0..f.layout.tiles.len())
                 .find(|i| {
                     let id = &store.state().gridded_session_ids[*i];
-                    *i != own && store.state().session_by_id(Some(id)).is_some_and(|s| s.live())
+                    *i != own
+                        && store
+                            .state()
+                            .session_by_id(Some(id))
+                            .is_some_and(|s| s.live())
                 })
                 .unwrap();
             let r = f.layout.tiles[other];
-            assert_eq!(click(&store, &f, r.x + 2, r.y + 2).unwrap().0, "session.engage");
+            assert_eq!(
+                click(&store, &f, r.x + 2, r.y + 2).unwrap().0,
+                "session.engage"
+            );
         }
 
         #[test]
@@ -714,7 +811,10 @@ mod tests {
             let store = store();
             let f = fixture(&store);
             let row = f.layout.strip.y;
-            assert_eq!(click(&store, &f, 85, row).unwrap().0, key_id(Layer::Garage, "A"));
+            assert_eq!(
+                click(&store, &f, 85, row).unwrap().0,
+                key_id(Layer::Garage, "A")
+            );
             assert_eq!(click(&store, &f, 55, row).unwrap().0, "pet.pet");
             assert!(click(&store, &f, 70, row).is_none());
         }
@@ -727,7 +827,10 @@ mod tests {
             let (id, ctx) = click(&store, &f, 35, row).unwrap();
             assert_eq!(id, "overlay.open.help");
             assert!(matches!(ctx.source, ActionSource::Mouse { col: 35, row: r } if r == row));
-            assert!(click(&store, &f, 45, row).is_none(), "between items is inert");
+            assert!(
+                click(&store, &f, 45, row).is_none(),
+                "between items is inert"
+            );
             // 78..84 overlaps the badge (80..95): the slot item wins there.
             assert_eq!(click(&store, &f, 81, row).unwrap().0, "overlay.open.help");
             assert_eq!(click(&store, &f, 85, row).unwrap().0, "overlay.open.queue");
@@ -746,17 +849,32 @@ mod tests {
             assert_eq!(id, "session.close");
             assert_eq!(
                 ctx.source,
-                ActionSource::Widget { plugin: "closer".into(), slot: SlotId::StripRight }
+                ActionSource::Widget {
+                    plugin: "closer".into(),
+                    slot: SlotId::StripRight
+                }
             );
-            assert_eq!(ctx.args.as_deref(), Some(&serde_json::json!({"why": "button"})));
-            assert_eq!(ctx.session, store.state().focused_session_id, "strip clicks target the focus");
+            assert_eq!(
+                ctx.args.as_deref(),
+                Some(&serde_json::json!({"why": "button"}))
+            );
+            assert_eq!(
+                ctx.session,
+                store.state().focused_session_id,
+                "strip clicks target the focus"
+            );
             // A core item keeps the plain mouse source and no payload.
             let (_, core) = click(&store, &f, 21, row).unwrap();
             assert!(matches!(core.source, ActionSource::Mouse { col: 21, .. }));
             assert!(core.args.is_none());
         }
 
-        fn region(rect: Rect, slot: SlotId, target: ClickTarget, session: Option<&str>) -> SlotClickRegion {
+        fn region(
+            rect: Rect,
+            slot: SlotId,
+            target: ClickTarget,
+            session: Option<&str>,
+        ) -> SlotClickRegion {
             SlotClickRegion {
                 rect,
                 target,
@@ -777,11 +895,19 @@ mod tests {
                 .iter()
                 .find(|id| {
                     **id != focused
-                        && store.state().session_by_id(Some(id)).is_some_and(|s| s.live())
+                        && store
+                            .state()
+                            .session_by_id(Some(id))
+                            .is_some_and(|s| s.live())
                 })
                 .unwrap()
                 .clone();
-            let index = store.state().gridded_session_ids.iter().position(|i| *i == other).unwrap();
+            let index = store
+                .state()
+                .gridded_session_ids
+                .iter()
+                .position(|i| *i == other)
+                .unwrap();
             let tile = f.layout.tiles[index];
             let button = Rect::new(tile.x + 5, tile.y, 3, 1);
             f.regions.push(region(
@@ -793,9 +919,19 @@ mod tests {
             let (id, ctx) = click(&store, &f, button.x + 1, button.y).unwrap();
             assert_eq!(id, "session.maximize");
             assert_eq!(ctx.session.as_deref(), Some(other.as_str()));
-            assert_ne!(ctx.session, store.state().focused_session_id, "not the focused tile");
+            assert_ne!(
+                ctx.session,
+                store.state().focused_session_id,
+                "not the focused tile"
+            );
             assert_eq!(ctx.workspace.as_deref(), Some("et-a"));
-            assert!(matches!(ctx.source, ActionSource::Widget { slot: SlotId::TileTitleRight, .. }));
+            assert!(matches!(
+                ctx.source,
+                ActionSource::Widget {
+                    slot: SlotId::TileTitleRight,
+                    ..
+                }
+            ));
             // Off the button the same tile row still means "engage the tile".
             let (id, _) = click(&store, &f, tile.x + 12, tile.y + 2).unwrap();
             assert_eq!(id, "session.engage");
@@ -820,12 +956,21 @@ mod tests {
                 workspace: Some("et-a".into()),
             });
             let (id, ctx) = click(&store, &f, rail.x + 21, rail.y + 2).unwrap();
-            assert_eq!((id, ctx.session.as_deref()), ("session.restore", Some("garage/et-a/gone")));
+            assert_eq!(
+                (id, ctx.session.as_deref()),
+                ("session.restore", Some("garage/et-a/gone"))
+            );
             // The family label row is inert without an item; with a header
             // item on it the item wins.
             let (id, ctx) = click(&store, &f, rail.x + 3, rail.y).unwrap();
-            assert_eq!((id, ctx.workspace.as_deref()), ("session.spawn", Some("et-a")));
-            assert!(click(&store, &f, rail.x + 10, rail.y).is_none(), "beside the item stays inert");
+            assert_eq!(
+                (id, ctx.workspace.as_deref()),
+                ("session.spawn", Some("et-a"))
+            );
+            assert!(
+                click(&store, &f, rail.x + 10, rail.y).is_none(),
+                "beside the item stays inert"
+            );
         }
 
         #[test]
@@ -855,7 +1000,10 @@ mod tests {
 
             // Other slots keep the documented fallback to the focus.
             let row = f.layout.strip.y;
-            f.slots = vec![(10..14, ClickTarget::new(ids::SESSION_CLOSE).from_plugin("p"))];
+            f.slots = vec![(
+                10..14,
+                ClickTarget::new(ids::SESSION_CLOSE).from_plugin("p"),
+            )];
             let (_, ctx) = click(&store, &f, 11, row).unwrap();
             assert_eq!(ctx.session, store.state().focused_session_id);
         }
@@ -873,10 +1021,16 @@ mod tests {
                 ClickTarget::new(ids::SESSION_MAXIMIZE).from_plugin("tiles"),
                 Some("garage/et-a/one"),
             ));
-            assert!(click(&store, &f, button.x, button.y).is_none(), "the modal swallows it");
+            assert!(
+                click(&store, &f, button.x, button.y).is_none(),
+                "the modal swallows it"
+            );
             store.close_overlay();
             store.open_overlay(OverlayKind::Help);
-            assert_eq!(click(&store, &f, button.x, button.y).unwrap().0, "overlay.close");
+            assert_eq!(
+                click(&store, &f, button.x, button.y).unwrap().0,
+                "overlay.close"
+            );
         }
 
         #[test]
@@ -885,11 +1039,18 @@ mod tests {
             store.open_overlay(OverlayKind::TriageQueue);
             let f = fixture(&store);
             let (id, ctx) = click(&store, &f, 30, 5 + 2).unwrap();
-            assert_eq!(id, key_id(Layer::Overlay(OverlayKind::TriageQueue), "enter"));
+            assert_eq!(
+                id,
+                key_id(Layer::Overlay(OverlayKind::TriageQueue), "enter")
+            );
             assert_eq!(ctx.session.as_deref(), Some("garage/et-b/stuck"));
             assert_eq!(ctx.selection, Some(0));
             assert!(click(&store, &f, 30, 5).is_none(), "border is inert");
-            assert_eq!(click(&store, &f, 1, 1).unwrap().0, "overlay.close", "outside = Esc");
+            assert_eq!(
+                click(&store, &f, 1, 1).unwrap().0,
+                "overlay.close",
+                "outside = Esc"
+            );
         }
 
         #[test]

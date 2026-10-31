@@ -51,7 +51,7 @@ pub async fn resolve_session_ids(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::poller::fakes::{agent, FakeAgents, FakeBackend};
+    use crate::poller::fakes::{FakeAgents, FakeBackend, agent};
 
     fn rig() -> (FakeBackend, FakeAgents) {
         let b = FakeBackend::new();
@@ -97,12 +97,16 @@ mod tests {
     #[tokio::test]
     async fn nothing_matches_gives_an_empty_list() {
         let (b, a) = rig();
-        assert!(resolve_session_ids(&b, &a, Some("nope"), Some("/nowhere"))
-            .await
-            .is_empty());
+        assert!(
+            resolve_session_ids(&b, &a, Some("nope"), Some("/nowhere"))
+                .await
+                .is_empty()
+        );
         assert!(resolve_session_ids(&b, &a, None, None).await.is_empty());
-        assert!(resolve_session_ids(&b, &a, Some(""), Some(""))
-            .await
-            .is_empty());
+        assert!(
+            resolve_session_ids(&b, &a, Some(""), Some(""))
+                .await
+                .is_empty()
+        );
     }
 }

@@ -25,26 +25,24 @@
 
 use std::io::Write as _;
 use std::ops::Range;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use crossterm::event::{
-    Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers,
-};
+use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::layout::Rect;
 use tokio::sync::mpsc;
 
-use crate::slots::SlotClickRegion;
+use crate::actions::ActionId;
 use crate::api::client::{ApiError, GarageClient};
 use crate::api::models::{
-    FinishAction, HooksInstallResult, SessionInfo, UsageInfo, WorkspaceInfo,
-    WorktreeRecord,
+    FinishAction, HooksInstallResult, SessionInfo, UsageInfo, WorkspaceInfo, WorktreeRecord,
 };
+use crate::attach::DaemonResolver;
 use crate::input::encode::encode_key;
 use crate::input::paste::wrap_bracketed_paste;
-use crate::actions::ActionId;
 use crate::keymap::Keymap;
+use crate::slots::SlotClickRegion;
 use crate::slots::{SlotId, SlotRegistry};
 use crate::state::persistence::{self, WallFile};
 use crate::state::store::WallStore;
@@ -53,9 +51,8 @@ use crate::ui::escalation::{EscalationPolicy, HEARTBEAT_INTERVAL_MS};
 use crate::ui::layout::WallLayout;
 use crate::ui::motion::Motion;
 use crate::ui::pet::{PetClick, PetHost};
-use crate::attach::DaemonResolver;
 use crate::ui::registry::{FrozenTile, TileRegistry};
-use crate::ui::scroll::{capture_frozen, history_size, page_lines, ScrollModel};
+use crate::ui::scroll::{ScrollModel, capture_frozen, history_size, page_lines};
 use crate::ui::view_picker::ViewPickerState;
 use crate::ui::workspace_add::{PickOutcome, WorkspaceAddForm};
 use crate::ui::worktree_finish::WorktreeFinishState;
@@ -120,9 +117,18 @@ struct AnimationWake {
 /// redraw. Pure, so "no animated item, no extra wake-ups" is a test.
 fn animation_wake(interval: Option<Duration>, since_last: Duration) -> AnimationWake {
     match interval {
-        None => AnimationWake { redraw: false, next: None },
-        Some(interval) if since_last >= interval => AnimationWake { redraw: true, next: Some(interval) },
-        Some(interval) => AnimationWake { redraw: false, next: Some(interval - since_last) },
+        None => AnimationWake {
+            redraw: false,
+            next: None,
+        },
+        Some(interval) if since_last >= interval => AnimationWake {
+            redraw: true,
+            next: Some(interval),
+        },
+        Some(interval) => AnimationWake {
+            redraw: false,
+            next: Some(interval - since_last),
+        },
     }
 }
 
@@ -156,9 +162,15 @@ pub enum AppEvent {
     Connection(bool),
     /// A live tile's tmux history size, polled while a `tile.gutter` marker is
     /// showing for it.
-    History { id: String, size: i64 },
+    History {
+        id: String,
+        size: i64,
+    },
     /// A transient strip notice (fetch/effect errors, lifecycle results).
-    Notice { text: String, ttl_ms: i64 },
+    Notice {
+        text: String,
+        ttl_ms: i64,
+    },
     /// A spawn effect settled (success or failure) — clears the busy guard.
     SpawnSettled,
     /// A restore effect settled for this session id.
@@ -195,7 +207,10 @@ pub enum AppEvent {
     Plugins(garage_protocol::plugins::PluginList),
     /// Widget content: one plugin's (`full: false`, the SSE `widgets` frame
     /// asked for only that plugin) or everyone's (`full: true`).
-    PluginWidgets { snapshot: garage_protocol::plugins::WidgetsSnapshot, full: bool },
+    PluginWidgets {
+        snapshot: garage_protocol::plugins::WidgetsSnapshot,
+        full: bool,
+    },
     /// SSE `ui_action`: a plugin asked the TUI to run an action. Handled as
     /// a plugin trigger, which can arm a dangerous action but never confirm.
     UiAction(garage_protocol::plugins::UiActionFrame),
@@ -207,7 +222,9 @@ pub enum AppEvent {
     /// A plugin pane is open (SSE `pane` frame, then a fetch for the attach info).
     PaneOpened(garage_protocol::plugins::PaneInstance),
     /// A plugin pane closed on the daemon side.
-    PaneClosed { session: String },
+    PaneClosed {
+        session: String,
+    },
     Quit,
 }
 
@@ -452,7 +469,10 @@ impl App {
             store: WallStore::new(),
             router: GarageRouter::default(),
             keymap: Keymap::defaults(),
-            registry: TileRegistry::with_resolver(tx.clone(), Box::new(DaemonResolver::new(base_url))),
+            registry: TileRegistry::with_resolver(
+                tx.clone(),
+                Box::new(DaemonResolver::new(base_url)),
+            ),
             slots,
             escalation: EscalationPolicy::default(),
             keylog: KeyLog::new(),
@@ -508,7 +528,10 @@ impl App {
             .collect();
         let (keymap, conflicts) = Keymap::with_plugins(&per_plugin);
         let actions = store.actions().map(|(id, a)| (id, a.clone())).collect();
-        let still_open = self.pane.plugin().is_none_or(|plugin| store.summary(plugin).is_some_and(|p| p.active));
+        let still_open = self
+            .pane
+            .plugin()
+            .is_none_or(|plugin| store.summary(plugin).is_some_and(|p| p.active));
         drop(store);
         self.keymap = keymap;
         self.plugin_key_conflicts = conflicts;
@@ -542,7 +565,10 @@ impl App {
 
     /// Close the pane overlay and the pane itself on the daemon.
     pub(super) fn close_plugin_pane(&mut self) {
-        let closed = self.pane.instance().map(|i| (i.plugin.clone(), i.pane.clone()));
+        let closed = self
+            .pane
+            .instance()
+            .map(|i| (i.plugin.clone(), i.pane.clone()));
         self.pane.close(&mut self.registry);
         if self.store.state().overlay == Some(OverlayKind::PluginPane) {
             self.store.close_overlay();
@@ -557,7 +583,10 @@ impl App {
     /// notice and waits for `p`. Input never moves on a plugin's say-so.
     fn pane_opened(&mut self, pane: garage_protocol::plugins::PaneInstance, now: i64) {
         self.pending_panes.retain(|(_, _, until)| *until > now);
-        let asked = self.pending_panes.iter().position(|(plugin, id, _)| *plugin == pane.plugin && *id == pane.pane);
+        let asked = self
+            .pending_panes
+            .iter()
+            .position(|(plugin, id, _)| *plugin == pane.plugin && *id == pane.pane);
         let name = garage_protocol::widgets::sanitise(&pane.plugin);
         if let Some(i) = asked {
             self.pending_panes.remove(i);
@@ -577,8 +606,18 @@ impl App {
 
     /// Remember that a person asked for a pane, so its frame may take the screen.
     fn note_pane_request(&mut self, effect: &Effect) {
-        if let Effect::OpenPluginPane { plugin, pane, human: true, .. } = effect {
-            self.pending_panes.push((plugin.clone(), pane.clone(), now_ms() + PANE_REQUEST_WINDOW_MS));
+        if let Effect::OpenPluginPane {
+            plugin,
+            pane,
+            human: true,
+            ..
+        } = effect
+        {
+            self.pending_panes.push((
+                plugin.clone(),
+                pane.clone(),
+                now_ms() + PANE_REQUEST_WINDOW_MS,
+            ));
         }
     }
 
@@ -607,7 +646,10 @@ impl App {
     /// `Plugin`: it targets only what the request names, and the gate
     /// decides whether it runs, arms or is refused.
     fn handle_ui_action(&mut self, frame: &garage_protocol::plugins::UiActionFrame) {
-        let Some((id, ctx)) = crate::plugins::context::ui_action_ctx(self.store.state(), frame) else { return };
+        let Some((id, ctx)) = crate::plugins::context::ui_action_ctx(self.store.state(), frame)
+        else {
+            return;
+        };
         let effects = self.dispatch_action(id, &ctx);
         self.run_effects(effects);
     }
@@ -631,13 +673,19 @@ impl App {
                 self.router.notices.show(text, ttl_ms, now_ms());
             }
             AppEvent::Plugins(list) => self.apply_plugin_listing(list),
-            AppEvent::PluginWidgets { snapshot, full } => self.plugins.borrow_mut().apply_widgets(snapshot, full),
+            AppEvent::PluginWidgets { snapshot, full } => {
+                self.plugins.borrow_mut().apply_widgets(snapshot, full)
+            }
             AppEvent::UiAction(frame) => self.handle_ui_action(&frame),
             AppEvent::SlotsReported(Ok(())) => self.geometry.reported(),
             AppEvent::SlotsReported(Err(e)) => {
                 // Retried with a growing wait; the user hears of the first failure only.
                 if self.geometry.failed(std::time::Instant::now()) == 1 {
-                    self.router.notices.show(format!("slot geometry not reported: {e} (retrying)"), 3000, now_ms());
+                    self.router.notices.show(
+                        format!("slot geometry not reported: {e} (retrying)"),
+                        3000,
+                        now_ms(),
+                    );
                 }
             }
             AppEvent::PluginNotice(text) => {
@@ -673,7 +721,11 @@ impl App {
                     self.view_picker.reset();
                 }
             }
-            AppEvent::WorktreeFinishSettled { record, action, error } => {
+            AppEvent::WorktreeFinishSettled {
+                record,
+                action,
+                error,
+            } => {
                 let notice = worktree_finish_settled(
                     &mut self.store,
                     &mut self.wt_finish,
@@ -723,8 +775,12 @@ impl App {
                     // regardless of layer, even when the key goes on to do
                     // something else (e.g. `I` itself: the hint clears here,
                     // then the install action below shows its own notice).
-                    if self.router.notices.current(now_ms()) == Some(crate::ui::strip::STATUSLINE_HINT) {
-                        self.router.notices.clear_prefix(crate::ui::strip::STATUSLINE_HINT);
+                    if self.router.notices.current(now_ms())
+                        == Some(crate::ui::strip::STATUSLINE_HINT)
+                    {
+                        self.router
+                            .notices
+                            .clear_prefix(crate::ui::strip::STATUSLINE_HINT);
                     }
                     if self.handle_key(&key) {
                         return true;
@@ -781,7 +837,9 @@ impl App {
                     self.run_effects(effects);
                     return false;
                 }
-                let home = std::env::var("HOME").or_else(|_| std::env::var("USERPROFILE")).unwrap_or_default();
+                let home = std::env::var("HOME")
+                    .or_else(|_| std::env::var("USERPROFILE"))
+                    .unwrap_or_default();
                 let (effects, notice) = handle_overlay_key(
                     &mut self.store,
                     &self.keymap,
@@ -815,9 +873,9 @@ impl App {
                 if self.take_pane_offer(&key_str, now_ms()) {
                     return false;
                 }
-                let outcome = self
-                    .router
-                    .on_garage_key(&mut self.store, &self.keymap, &key_str, now_ms());
+                let outcome =
+                    self.router
+                        .on_garage_key(&mut self.store, &self.keymap, &key_str, now_ms());
                 let mut effects = outcome.effects;
                 if let Some((id, ctx)) = outcome.action {
                     effects.extend(self.dispatch_action(id, &ctx));
@@ -992,8 +1050,14 @@ impl App {
         self.registry.sync(&live_gridded);
         self.registry.tick(Instant::now());
         // A pane whose process is gone closes its overlay.
-        if self.pane.session().is_some_and(|s| self.registry.dead_reason(s).is_some()) {
-            self.router.notices.show("plugin pane exited", 3000, now_ms());
+        if self
+            .pane
+            .session()
+            .is_some_and(|s| self.registry.dead_reason(s).is_some())
+        {
+            self.router
+                .notices
+                .show("plugin pane exited", 3000, now_ms());
             self.close_plugin_pane();
         }
         if self.store.state().layer == KeyLayer::Engaged {
@@ -1017,7 +1081,6 @@ impl App {
     }
 
     // ── Draw (task 4.1–4.5: the real wall) ───────────────────────────────
-
 }
 
 /// Snapshot the two fields `wall.json` persists (spec tui-views "View
@@ -1025,7 +1088,10 @@ impl App {
 /// [`WallFile`] ready for [`persistence::save`]. `daemon_live` and every
 /// other transient field never reach disk.
 fn wall_file_snapshot(store: &WallStore) -> WallFile {
-    WallFile { views: store.state().views.clone(), pet: store.state().pet.clone() }
+    WallFile {
+        views: store.state().views.clone(),
+        pet: store.state().pet.clone(),
+    }
 }
 
 /// Whether the one-time statusline-install hint should appear now (spec
@@ -1145,10 +1211,15 @@ async fn state_loop(
         // One-time statusline-install hint (spec tui-context-meters
         // "Install affordance"): dim, never repeats after it's shown once —
         // dismissal on any keypress is handled in `App::apply`.
-        if should_show_install_hint(install_hint_shown, startup.elapsed(), &app.store.state().sessions)
-        {
+        if should_show_install_hint(
+            install_hint_shown,
+            startup.elapsed(),
+            &app.store.state().sessions,
+        ) {
             install_hint_shown = true;
-            app.router.notices.show(crate::ui::strip::STATUSLINE_HINT, INSTALL_HINT_TTL_MS, now);
+            app.router
+                .notices
+                .show(crate::ui::strip::STATUSLINE_HINT, INSTALL_HINT_TTL_MS, now);
             dirty = true;
         }
         // Reattach retries / staggered attaches fire from the tick too, so
@@ -1172,18 +1243,23 @@ async fn state_loop(
             views_dirty_since.get_or_insert_with(Instant::now);
         }
         if let Some(since) = views_dirty_since
-            && since.elapsed() >= VIEWS_SAVE_DEBOUNCE {
-                saved_views_revision = app.store.views_revision();
-                views_dirty_since = None;
-                let file = wall_file_snapshot(&app.store);
-                let path = views_path.clone();
-                tokio::task::spawn_blocking(move || {
-                    let _ = persistence::save(&path, &file);
-                });
-            }
+            && since.elapsed() >= VIEWS_SAVE_DEBOUNCE
+        {
+            saved_views_revision = app.store.views_revision();
+            views_dirty_since = None;
+            let file = wall_file_snapshot(&app.store);
+            let path = views_path.clone();
+            tokio::task::spawn_blocking(move || {
+                let _ = persistence::save(&path, &file);
+            });
+        }
         // Motion (p23): the only timed redraw. `next_tick` is `None` while
         // nothing animates, so an idle wall never takes this branch.
-        if app.motion.next_tick().is_some_and(|tick| last_render.elapsed() >= tick) {
+        if app
+            .motion
+            .next_tick()
+            .is_some_and(|tick| last_render.elapsed() >= tick)
+        {
             dirty = true;
         }
         if dirty && last_render.elapsed() >= FRAME_CAP {
@@ -1219,11 +1295,10 @@ async fn state_loop(
             // safe to load the persisted views (see the comment above). The
             // pet choice needs no such pruning (it isn't session-shaped), so
             // it's applied in the same beat, right alongside `load_views`.
-            if was_sessions
-                && let Some(file) = pending_file.take() {
-                    app.store.load_views(file.views);
-                    app.store.set_pet(file.pet);
-                }
+            if was_sessions && let Some(file) = pending_file.take() {
+                app.store.load_views(file.views);
+                app.store.set_pet(file.pet);
+            }
         }
         // Downstream of the batch: registry sync, dead-tile disengage,
         // escalation. The bell/title bytes go straight to the terminal

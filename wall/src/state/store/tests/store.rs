@@ -29,11 +29,19 @@ fn usage_fetched_replaces_the_account_wide_usage_and_nothing_else() {
     let before_version = store.version();
 
     store.usage_fetched(UsageInfo {
-        five_hour: Some(UsageWindow { used_percentage: 24, resets_at: None }),
+        five_hour: Some(UsageWindow {
+            used_percentage: 24,
+            resets_at: None,
+        }),
         seven_day: None,
     });
     assert_eq!(
-        store.state().usage.five_hour.as_ref().map(|w| w.used_percentage),
+        store
+            .state()
+            .usage
+            .five_hour
+            .as_ref()
+            .map(|w| w.used_percentage),
         Some(24)
     );
     assert_eq!(store.state().usage.seven_day, None);
@@ -49,7 +57,10 @@ fn worktree_flag_derives_from_dir_differing_from_the_registered_dir() {
         ..si("a", "wt")
     };
     let store = store_with(vec![ws("a")], vec![si("a", "plain"), wt]);
-    let plain = store.state().session_by_id(Some(&id("a", "plain"))).unwrap();
+    let plain = store
+        .state()
+        .session_by_id(Some(&id("a", "plain")))
+        .unwrap();
     assert!(!plain.worktree);
     let wt = store.state().session_by_id(Some(&id("a", "wt"))).unwrap();
     assert!(wt.worktree);
@@ -88,14 +99,21 @@ fn p8_3_x_remove_transition_registry_only_removal_resurfaces_live_sessions_unreg
     );
     let ids: Vec<&str> = group.sessions.iter().map(|s| s.id.as_str()).collect();
     assert_eq!(ids, [id("a", "one"), id("a", "two")]);
-    assert!(store
-        .state()
-        .session_by_id(Some(&id("a", "one")))
-        .unwrap()
-        .live());
+    assert!(
+        store
+            .state()
+            .session_by_id(Some(&id("a", "one")))
+            .unwrap()
+            .live()
+    );
     // Registered groups keep registry order first; the synthesized group
     // trails them (salience build_groups insertion order).
-    let names: Vec<&str> = store.state().groups.iter().map(|g| g.name.as_str()).collect();
+    let names: Vec<&str> = store
+        .state()
+        .groups
+        .iter()
+        .map(|g| g.name.as_str())
+        .collect();
     assert_eq!(names, ["b", "a"]);
 }
 
@@ -308,7 +326,10 @@ fn with_nothing_blocked_the_jump_is_a_no_op_returning_false() {
 fn the_jump_only_fires_from_the_garage_layer() {
     let mut store = store_with(
         vec![ws("a")],
-        vec![si("a", "one"), si_status("a", "blocked", "needs-input", Some(1000))],
+        vec![
+            si("a", "one"),
+            si_status("a", "blocked", "needs-input", Some(1000)),
+        ],
     );
     store.focus_session(&id("a", "one"));
     store.engage();
@@ -409,7 +430,10 @@ fn p8_3_shift_x_maps_to_workspace_removal_an_effect_the_store_declines() {
 fn digits_focus_workspaces_in_salience_order() {
     let mut store = store_with(
         vec![ws("a"), ws("b")],
-        vec![si("a", "one"), si_status("b", "blocked", "needs-input", Some(1000))],
+        vec![
+            si("a", "one"),
+            si_status("b", "blocked", "needs-input", Some(1000)),
+        ],
     );
     // b is blocked, so it holds rail position 1.
     assert!(store.dispatch(GarageCommand::FocusWorkspace(0)));
@@ -458,7 +482,10 @@ fn status_changed_reorders_salience_and_stamps_the_new_since() {
     );
     store.status_changed(&id("b", "other"), "needs-input", Some(4242));
     assert_eq!(store.state().groups[0].name, "b");
-    let s = store.state().session_by_id(Some(&id("b", "other"))).unwrap();
+    let s = store
+        .state()
+        .session_by_id(Some(&id("b", "other")))
+        .unwrap();
     assert_eq!(s.status, "needs-input");
     assert_eq!(s.since, Some(4242));
 }

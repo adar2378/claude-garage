@@ -9,8 +9,8 @@
 //! exits, the client dies) clears the health flag, which puts the poller back
 //! on its plain 2 s tick, and the client reconnects with backoff.
 
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use tokio::io::{AsyncBufReadExt, BufReader};
@@ -247,8 +247,8 @@ mod tests {
 
     use crate::backend::SessionBackend;
     use crate::bus::{DaemonEvent, EventBus};
-    use crate::poller::fakes::{FakeAgents, FakeSink};
     use crate::poller::Poller;
+    use crate::poller::fakes::{FakeAgents, FakeSink};
     use crate::test_support::TestTmux;
     use tokio::sync::broadcast::Receiver;
 
@@ -366,18 +366,20 @@ mod tests {
             .map(|s| s.id)
             .collect();
         assert_eq!(ids, ["garage/ws/seed"]);
-        assert!(!r
-            .backend
-            .panes()
-            .await
-            .unwrap()
-            .keys()
-            .any(|k| k.contains("control")));
+        assert!(
+            !r.backend
+                .panes()
+                .await
+                .unwrap()
+                .keys()
+                .any(|k| k.contains("control"))
+        );
         // It is real and attached by exactly the control client...
-        assert!(r
-            .tmux
-            .tmux(&["ls", "-F", "#{session_name} #{session_attached}"])
-            .contains("garage-control 1"));
+        assert!(
+            r.tmux
+                .tmux(&["ls", "-F", "#{session_name} #{session_attached}"])
+                .contains("garage-control 1")
+        );
         // ...and the garage session's own attached count is untouched.
         assert!(!r.backend.list().await.unwrap()[0].attached);
         // Stopping the client leaves nothing behind.
@@ -455,10 +457,11 @@ mod tests {
             })
             .await;
         tokio::time::sleep(Duration::from_millis(300)).await;
-        assert!(r
-            .tmux
-            .tmux(&["ls", "-F", "#{session_name}"])
-            .contains("garage-control"));
+        assert!(
+            r.tmux
+                .tmux(&["ls", "-F", "#{session_name}"])
+                .contains("garage-control")
+        );
         assert!(link2.is_healthy());
 
         second.abort();
@@ -528,9 +531,11 @@ mod tests {
             )
             .await
             .unwrap();
-        assert!(next_change(&mut r.rx, Duration::from_millis(500))
-            .await
-            .is_some());
+        assert!(
+            next_change(&mut r.rx, Duration::from_millis(500))
+                .await
+                .is_some()
+        );
     }
 
     #[tokio::test]
@@ -564,8 +569,10 @@ mod tests {
             )
             .await
             .unwrap();
-        assert!(next_change(&mut r.rx, Duration::from_millis(500))
-            .await
-            .is_some());
+        assert!(
+            next_change(&mut r.rx, Duration::from_millis(500))
+                .await
+                .is_some()
+        );
     }
 }

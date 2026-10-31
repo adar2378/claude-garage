@@ -89,7 +89,13 @@ pub struct ClickTarget {
 
 impl ClickTarget {
     pub fn new(action: ActionId) -> Self {
-        ClickTarget { action, args: None, plugin: None, session: None, label: 0 }
+        ClickTarget {
+            action,
+            args: None,
+            plugin: None,
+            session: None,
+            label: 0,
+        }
     }
 
     pub fn with_args(mut self, args: Value) -> Self {
@@ -245,7 +251,10 @@ impl SlotItem {
         let first = frames.first()?.clone();
         let frame_ms = frame_ms.clamp(FRAME_MS_MIN, FRAME_MS_MAX);
         let mut item = SlotItem::new(first, priority);
-        item.animated = Some(Animated { frames: frames.into(), frame_ms });
+        item.animated = Some(Animated {
+            frames: frames.into(),
+            frame_ms,
+        });
         Some(item)
     }
 
@@ -380,7 +389,10 @@ impl SlotRegistry {
     /// for width costs at most one idle redraw per frame interval).
     pub fn items(&self, slot: SlotId, ctx: &SlotCtx) -> Vec<SlotItem> {
         let geometry = self.geometry.borrow();
-        let ctx = SlotCtx { geometry: Some(&geometry), ..*ctx };
+        let ctx = SlotCtx {
+            geometry: Some(&geometry),
+            ..*ctx
+        };
         let mut items: Vec<SlotItem> = self
             .providers
             .iter()
@@ -396,8 +408,11 @@ impl SlotRegistry {
             if let Some(anim) = &item.animated {
                 item.text = anim.frame_at(self.clock_ms.get()).to_vec();
                 let current = self.animation_ms.get();
-                self.animation_ms
-                    .set(if current == 0 { anim.frame_ms } else { current.min(anim.frame_ms) });
+                self.animation_ms.set(if current == 0 {
+                    anim.frame_ms
+                } else {
+                    current.min(anim.frame_ms)
+                });
             }
         }
         items
@@ -406,7 +421,10 @@ impl SlotRegistry {
     /// A registry holding the core providers.
     pub fn core() -> SlotRegistry {
         let mut registry = SlotRegistry::default();
-        registry.register(SlotId::TileTitleRight, crate::ui::tile::context_meter_provider);
+        registry.register(
+            SlotId::TileTitleRight,
+            crate::ui::tile::context_meter_provider,
+        );
         registry.register(SlotId::StripRight, crate::ui::strip::usage_chip_provider);
         registry.register(SlotId::RailHeader, crate::ui::rail::family_label_provider);
         registry
@@ -515,7 +533,9 @@ mod tests {
         use crate::actions::ids;
         let region_for = |text: &'static str| {
             let mut registry = SlotRegistry::default();
-            registry.register(SlotId::StripRight, move |_: &SlotCtx| vec![clickable(text, 1, ids::SESSION_CLOSE)]);
+            registry.register(SlotId::StripRight, move |_: &SlotCtx| {
+                vec![clickable(text, 1, ids::SESSION_CLOSE)]
+            });
             let items = registry.items(SlotId::StripRight, &SlotCtx::default());
             SlotClickRegion {
                 rect: Rect::new(0, 0, 3, 1),
@@ -526,8 +546,16 @@ mod tests {
             }
             .identity()
         };
-        assert_eq!(region_for("ok"), region_for("ok"), "the same text is the same region");
-        assert_ne!(region_for("ok"), region_for("OK"), "a relabelled item is another region");
+        assert_eq!(
+            region_for("ok"),
+            region_for("ok"),
+            "the same text is the same region"
+        );
+        assert_ne!(
+            region_for("ok"),
+            region_for("OK"),
+            "a relabelled item is another region"
+        );
     }
 
     #[test]
@@ -547,7 +575,11 @@ mod tests {
         let cols: Vec<_> = laid.placed.iter().map(|p| p.cols.clone()).collect();
         assert_eq!(cols, vec![0..2, 2..5, 5..6]);
         assert_eq!(laid.clicks(10, 100), vec![(12..15, ids::PET_PET.into())]);
-        assert_eq!(laid.clicks(10, 13), vec![(12..13, ids::PET_PET.into())], "clipped to the limit");
+        assert_eq!(
+            laid.clicks(10, 13),
+            vec![(12..13, ids::PET_PET.into())],
+            "clipped to the limit"
+        );
         assert!(laid.clicks(10, 12).is_empty(), "fully clipped away");
     }
 
@@ -570,8 +602,17 @@ mod tests {
 
     #[test]
     fn the_frame_interval_is_clamped_and_an_empty_frame_list_is_not_an_item() {
-        let at = |ms| SlotItem::animated(vec![spans("a")], ms, 0).unwrap().animated.unwrap().frame_ms;
-        assert_eq!((at(1), at(99), at(100), at(2000), at(2001), at(u16::MAX)), (100, 100, 100, 2000, 2000, 2000));
+        let at = |ms| {
+            SlotItem::animated(vec![spans("a")], ms, 0)
+                .unwrap()
+                .animated
+                .unwrap()
+                .frame_ms
+        };
+        assert_eq!(
+            (at(1), at(99), at(100), at(2000), at(2001), at(u16::MAX)),
+            (100, 100, 100, 2000, 2000, 2000)
+        );
         assert!(SlotItem::animated(Vec::new(), 250, 0).is_none());
     }
 
@@ -588,10 +629,20 @@ mod tests {
         let ctx = SlotCtx::default();
         assert_eq!(registry.animation_interval(), None, "nothing drawn yet");
         registry.begin_frame(0);
-        assert_eq!(joined(&layout(registry.items(SlotId::StripRight, &ctx), None).spans), "1xstatic");
-        assert_eq!(registry.animation_interval(), Some(Duration::from_millis(150)), "the fastest wins");
+        assert_eq!(
+            joined(&layout(registry.items(SlotId::StripRight, &ctx), None).spans),
+            "1xstatic"
+        );
+        assert_eq!(
+            registry.animation_interval(),
+            Some(Duration::from_millis(150)),
+            "the fastest wins"
+        );
         registry.begin_frame(450);
-        assert_eq!(joined(&layout(registry.items(SlotId::StripRight, &ctx), None).spans), "2ystatic");
+        assert_eq!(
+            joined(&layout(registry.items(SlotId::StripRight, &ctx), None).spans),
+            "2ystatic"
+        );
         // A frame that asks for no animated slot clears the interval.
         registry.begin_frame(500);
         let _ = registry.items(SlotId::RailRow, &ctx);
@@ -616,13 +667,19 @@ mod tests {
         let laid = layout(
             vec![
                 item("aa", 1),
-                SlotItem { on_click: Some(target.clone()), ..item("bb", 1) },
+                SlotItem {
+                    on_click: Some(target.clone()),
+                    ..item("bb", 1)
+                },
             ],
             None,
         );
         let clicks = laid.clicks(5, 100);
         assert_eq!(clicks, vec![(7..9, target)]);
-        assert_eq!(clicks[0].1.args.as_deref(), Some(&serde_json::json!({"keep": 2})));
+        assert_eq!(
+            clicks[0].1.args.as_deref(),
+            Some(&serde_json::json!({"keep": 2}))
+        );
         assert_eq!(clicks[0].1.plugin.as_deref(), Some("closer"));
     }
 
@@ -642,15 +699,29 @@ mod tests {
         let mut mine = SlotRegistry::default();
         mine.register(SlotId::StripRight, boxed);
         let ctx = SlotCtx::default();
-        assert_eq!(joined(&layout(mine.items(SlotId::StripRight, &ctx), None).spans), "n1");
-        assert_eq!(joined(&layout(mine.items(SlotId::StripRight, &ctx), None).spans), "n2");
+        assert_eq!(
+            joined(&layout(mine.items(SlotId::StripRight, &ctx), None).spans),
+            "n1"
+        );
+        assert_eq!(
+            joined(&layout(mine.items(SlotId::StripRight, &ctx), None).spans),
+            "n2"
+        );
         assert_eq!(calls.get(), 2);
-        assert!(SlotRegistry::default().items(SlotId::StripRight, &ctx).is_empty(), "another registry is untouched");
+        assert!(
+            SlotRegistry::default()
+                .items(SlotId::StripRight, &ctx)
+                .is_empty(),
+            "another registry is untouched"
+        );
     }
 
     #[test]
     fn a_priority_tie_drops_the_later_item() {
-        assert_eq!(joined(&layout(vec![item("aa", 3), item("bb", 3)], Some(2)).spans), "aa");
+        assert_eq!(
+            joined(&layout(vec![item("aa", 3), item("bb", 3)], Some(2)).spans),
+            "aa"
+        );
     }
 
     #[test]

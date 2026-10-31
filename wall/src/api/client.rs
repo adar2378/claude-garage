@@ -8,7 +8,7 @@
 use std::fmt;
 use std::time::Duration;
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use super::models::{
     FinishAction, HooksInstallResult, RestartResponse, SessionInfo, SpawnedSession, UsageInfo,
@@ -20,9 +20,11 @@ use super::models::{
 pub fn port_from_env(tui_port: Option<&str>, garage_port: Option<&str>) -> u16 {
     for value in [tui_port, garage_port].into_iter().flatten() {
         if let Ok(port) = value.trim().parse::<u32>()
-            && port > 0 && port <= 65535 {
-                return port as u16;
-            }
+            && port > 0
+            && port <= 65535
+        {
+            return port as u16;
+        }
     }
     4747
 }
@@ -142,7 +144,10 @@ impl GarageClient {
     /// a 422 whose `error` lands in [`ApiError::Status`].
     pub fn install_hooks(&self) -> Result<HooksInstallResult, ApiError> {
         let body = self.post_json("/api/hooks/install", &json!({}))?;
-        Ok(body.as_ref().map(HooksInstallResult::from_json).unwrap_or_default())
+        Ok(body
+            .as_ref()
+            .map(HooksInstallResult::from_json)
+            .unwrap_or_default())
     }
 
     /// `POST /api/worktrees/finish {worktree, action}` (spec
@@ -165,8 +170,7 @@ impl GarageClient {
                 .build()
                 .header("Content-Type", "application/json")
                 .send(
-                    json!({ "worktree": record.to_json(), "action": action.as_str() })
-                        .to_string(),
+                    json!({ "worktree": record.to_json(), "action": action.as_str() }).to_string(),
                 ),
         )?;
         Ok(())
@@ -207,15 +211,19 @@ impl GarageClient {
     /// success.
     pub fn restore_session(&self, id: &str) -> Result<Option<String>, ApiError> {
         let body = self.post_json("/api/sessions/restore", &json!({ "id": id }))?;
-        let failed = body.as_ref().and_then(|b| b.get("failed")).and_then(Value::as_array);
+        let failed = body
+            .as_ref()
+            .and_then(|b| b.get("failed"))
+            .and_then(Value::as_array);
         if let Some(failed) = failed
-            && let Some(first) = failed.first() {
-                let reason = first
-                    .get("reason")
-                    .and_then(Value::as_str)
-                    .unwrap_or("restore failed");
-                return Ok(Some(reason.to_owned()));
-            }
+            && let Some(first) = failed.first()
+        {
+            let reason = first
+                .get("reason")
+                .and_then(Value::as_str)
+                .unwrap_or("restore failed");
+            return Ok(Some(reason.to_owned()));
+        }
         Ok(None)
     }
 
@@ -227,7 +235,10 @@ impl GarageClient {
     /// is the caller issuing one call per id — the daemon has no workspace
     /// filter — exactly like restore-all.
     pub fn restart_session(&self, id: &str, force: bool) -> Result<RestartResponse, ApiError> {
-        let body = self.post_json("/api/sessions/restart", &json!({ "id": id, "force": force }))?;
+        let body = self.post_json(
+            "/api/sessions/restart",
+            &json!({ "id": id, "force": force }),
+        )?;
         body.as_ref()
             .and_then(RestartResponse::from_json)
             .ok_or_else(|| ApiError::Transport("unexpected restart response shape".into()))
@@ -262,7 +273,11 @@ impl GarageClient {
             encode_component(id),
             if meta_only { "?meta=1" } else { "" }
         );
-        let body = read_json(self.agent.delete(&format!("{}{}", self.base_url, path)).call())?;
+        let body = read_json(
+            self.agent
+                .delete(&format!("{}{}", self.base_url, path))
+                .call(),
+        )?;
         Ok(body
             .as_ref()
             .and_then(|b| b.get("worktree"))
@@ -298,7 +313,11 @@ impl GarageClient {
             encode_component(name),
             if kill_sessions { "?sessions=kill" } else { "" }
         );
-        let body = read_json(self.agent.delete(&format!("{}{}", self.base_url, path)).call())?;
+        let body = read_json(
+            self.agent
+                .delete(&format!("{}{}", self.base_url, path))
+                .call(),
+        )?;
         Ok(body.filter(|b| b.is_object()))
     }
 
@@ -325,7 +344,9 @@ impl GarageClient {
         if body.get("cancelled").and_then(Value::as_bool) == Some(true) {
             return Ok(None);
         }
-        Err(ApiError::Transport("unexpected picker response shape".into()))
+        Err(ApiError::Transport(
+            "unexpected picker response shape".into(),
+        ))
     }
 
     /// `GET /api/attach?id=` — how to attach a tile to this session on the
@@ -334,7 +355,8 @@ impl GarageClient {
         let body = self
             .get_json(&format!("/api/attach?id={}", encode_component(id)))?
             .ok_or_else(|| ApiError::Transport("empty attach reply".into()))?;
-        serde_json::from_value(body).map_err(|e| ApiError::Transport(format!("bad attach spec: {e}")))
+        serde_json::from_value(body)
+            .map_err(|e| ApiError::Transport(format!("bad attach spec: {e}")))
     }
 
     // ── Plugin host (p24) ────────────────────────────────────────────────
@@ -342,57 +364,98 @@ impl GarageClient {
     /// `GET /api/plugins`: the installed plugins with their actions, buttons
     /// and panes.
     pub fn fetch_plugins(&self) -> Result<garage_protocol::plugins::PluginList, ApiError> {
-        let body = self.get_json("/api/plugins")?.ok_or_else(|| ApiError::Transport("empty plugin list".into()))?;
-        serde_json::from_value(body).map_err(|e| ApiError::Transport(format!("bad plugin list: {e}")))
+        let body = self
+            .get_json("/api/plugins")?
+            .ok_or_else(|| ApiError::Transport("empty plugin list".into()))?;
+        serde_json::from_value(body)
+            .map_err(|e| ApiError::Transport(format!("bad plugin list: {e}")))
     }
 
     /// `GET /api/plugins/widgets[?plugin=]`: only the named plugin's content
     /// when `plugin` is given.
-    pub fn fetch_plugin_widgets(&self, plugin: Option<&str>) -> Result<garage_protocol::plugins::WidgetsSnapshot, ApiError> {
+    pub fn fetch_plugin_widgets(
+        &self,
+        plugin: Option<&str>,
+    ) -> Result<garage_protocol::plugins::WidgetsSnapshot, ApiError> {
         let path = match plugin {
             Some(p) => format!("/api/plugins/widgets?plugin={}", encode_component(p)),
             None => "/api/plugins/widgets".to_owned(),
         };
-        let body = self.get_json(&path)?.ok_or_else(|| ApiError::Transport("empty widget snapshot".into()))?;
-        serde_json::from_value(body).map_err(|e| ApiError::Transport(format!("bad widget snapshot: {e}")))
+        let body = self
+            .get_json(&path)?
+            .ok_or_else(|| ApiError::Transport("empty widget snapshot".into()))?;
+        serde_json::from_value(body)
+            .map_err(|e| ApiError::Transport(format!("bad widget snapshot: {e}")))
     }
 
     /// `GET /api/plugins/panes`.
     pub fn fetch_plugin_panes(&self) -> Result<garage_protocol::plugins::PanesResponse, ApiError> {
-        let body = self.get_json("/api/plugins/panes")?.ok_or_else(|| ApiError::Transport("empty pane list".into()))?;
+        let body = self
+            .get_json("/api/plugins/panes")?
+            .ok_or_else(|| ApiError::Transport("empty pane list".into()))?;
         serde_json::from_value(body).map_err(|e| ApiError::Transport(format!("bad pane list: {e}")))
     }
 
     /// `POST /api/plugins/{id}/actions/{action}/run` with the UI token.
-    pub fn run_plugin_action(&self, plugin: &str, action: &str, context: &Value) -> Result<(), ApiError> {
-        let path = format!("/api/plugins/{}/actions/{}/run", encode_component(plugin), encode_component(action));
+    pub fn run_plugin_action(
+        &self,
+        plugin: &str,
+        action: &str,
+        context: &Value,
+    ) -> Result<(), ApiError> {
+        let path = format!(
+            "/api/plugins/{}/actions/{}/run",
+            encode_component(plugin),
+            encode_component(action)
+        );
         self.ui_request("POST", &path, Some(context)).map(|_| ())
     }
 
     /// `POST /api/plugins/{id}/panes/{pane}/open` with the UI token.
-    pub fn open_plugin_pane(&self, plugin: &str, pane: &str, context: &Value) -> Result<(), ApiError> {
-        let path = format!("/api/plugins/{}/panes/{}/open", encode_component(plugin), encode_component(pane));
+    pub fn open_plugin_pane(
+        &self,
+        plugin: &str,
+        pane: &str,
+        context: &Value,
+    ) -> Result<(), ApiError> {
+        let path = format!(
+            "/api/plugins/{}/panes/{}/open",
+            encode_component(plugin),
+            encode_component(pane)
+        );
         self.ui_request("POST", &path, Some(context)).map(|_| ())
     }
 
     /// `DELETE /api/plugins/{id}/panes/{pane}` with the UI token.
     pub fn close_plugin_pane(&self, plugin: &str, pane: &str) -> Result<(), ApiError> {
-        let path = format!("/api/plugins/{}/panes/{}", encode_component(plugin), encode_component(pane));
+        let path = format!(
+            "/api/plugins/{}/panes/{}",
+            encode_component(plugin),
+            encode_component(pane)
+        );
         self.ui_request("DELETE", &path, None).map(|_| ())
     }
 
     /// `PUT /api/plugins/ui/slots` with the UI token.
     pub fn put_ui_slots(&self, geometry: &Value) -> Result<(), ApiError> {
-        self.ui_request("PUT", "/api/plugins/ui/slots", Some(geometry)).map(|_| ())
+        self.ui_request("PUT", "/api/plugins/ui/slots", Some(geometry))
+            .map(|_| ())
     }
 
     /// A request that carries the UI token. The token is re-read from disk
     /// once when the daemon answers 401 (it recreates the file only if it was
     /// gone), and the call retried a single time.
-    fn ui_request(&self, method: &str, path: &str, body: Option<&Value>) -> Result<Option<Value>, ApiError> {
+    fn ui_request(
+        &self,
+        method: &str,
+        path: &str,
+        body: Option<&Value>,
+    ) -> Result<Option<Value>, ApiError> {
         let tokens = UiToken::global();
         for attempt in 0..2 {
-            let token = tokens.get().map_err(|e| ApiError::Transport(format!("no UI token: {e}")))?;
+            let token = tokens
+                .get()
+                .map_err(|e| ApiError::Transport(format!("no UI token: {e}")))?;
             let request = ureq::http::Request::builder()
                 .method(method)
                 .uri(format!("{}{}", self.base_url, path))
@@ -434,7 +497,10 @@ pub struct UiToken {
 
 impl UiToken {
     pub fn at(path: std::path::PathBuf) -> UiToken {
-        UiToken { path, cached: std::sync::Mutex::new(None) }
+        UiToken {
+            path,
+            cached: std::sync::Mutex::new(None),
+        }
     }
 
     pub fn global() -> &'static UiToken {
@@ -480,7 +546,9 @@ fn parse_list<T>(
 /// Shared response handling (port of the Dart `_readJson`): non-2xx becomes
 /// [`ApiError::Status`] carrying the daemon's `error` body when present; an
 /// empty body yields `None`.
-fn read_json(result: Result<ureq::http::Response<ureq::Body>, ureq::Error>) -> Result<Option<Value>, ApiError> {
+fn read_json(
+    result: Result<ureq::http::Response<ureq::Body>, ureq::Error>,
+) -> Result<Option<Value>, ApiError> {
     let mut response = result.map_err(|e| ApiError::Transport(e.to_string()))?;
     let status = response.status();
     let text = response.body_mut().read_to_string();
@@ -498,7 +566,10 @@ fn read_json(result: Result<ureq::http::Response<ureq::Body>, ureq::Error>) -> R
         .ok()
         .and_then(|v| v.get("error").and_then(Value::as_str).map(str::to_owned))
         .unwrap_or(text);
-    Err(ApiError::Status { status: status.as_u16(), message })
+    Err(ApiError::Status {
+        status: status.as_u16(),
+        message,
+    })
 }
 
 /// True when the daemon answers `GET /api/health` with a 2xx.
@@ -570,7 +641,11 @@ mod tests {
         std::fs::write(&path, "abc123\n").unwrap();
         assert_eq!(tokens.get().unwrap(), "abc123");
         std::fs::write(&path, "rotated").unwrap();
-        assert_eq!(tokens.get().unwrap(), "abc123", "cached until a 401 says otherwise");
+        assert_eq!(
+            tokens.get().unwrap(),
+            "abc123",
+            "cached until a 401 says otherwise"
+        );
         tokens.forget();
         assert_eq!(tokens.get().unwrap(), "rotated");
         std::fs::write(&path, "  \n").unwrap();

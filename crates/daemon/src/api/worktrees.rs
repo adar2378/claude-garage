@@ -2,13 +2,13 @@
 //! The git work (`create_worktree`, `current_branch`, `finish_worktree`) lives
 //! in `crate::git`, where the sessions routes also use it.
 
+use axum::Json;
 use axum::body::Bytes;
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use axum::Json;
 use garage_protocol::FinishAction;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use super::hooks::parse_body;
 use crate::error::error_response;

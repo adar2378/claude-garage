@@ -5,7 +5,7 @@
 //! them directly. Approval is recorded here, at the moment the user says yes:
 //! `granted_permissions` is what `plugin link` / `install` showed.
 
-use super::layout::{ensure_token, Entry, Paths, PluginsFile, Source};
+use super::layout::{Entry, Paths, PluginsFile, Source, ensure_token};
 
 /// What the CLI hands over after the user confirmed a preview.
 #[derive(Debug, Clone, PartialEq)]
@@ -28,15 +28,24 @@ pub fn register(paths: &Paths, r: &Registration) -> Result<(), String> {
         return Err(format!("{:?} is not a valid plugin id", r.id));
     }
     PluginsFile::update(paths, |file| {
-        if file.plugins.iter().any(|e| e.id == r.id && e.is_first_party()) {
-            return (false, Err(format!("{} is a bundled plugin; use enable/disable", r.id)));
+        if file
+            .plugins
+            .iter()
+            .any(|e| e.id == r.id && e.is_first_party())
+        {
+            return (
+                false,
+                Err(format!("{} is a bundled plugin; use enable/disable", r.id)),
+            );
         }
         let keep = file.plugins.iter().find(|e| e.id == r.id).cloned();
         file.plugins.retain(|e| e.id != r.id);
         let mut entry = Entry::new(&r.id, r.source.clone());
         entry.granted_permissions = Some(r.granted_permissions.clone());
         entry.manifest_sha256 = r.manifest_sha256.clone();
-        entry.installed_at = r.installed_at.or_else(|| keep.as_ref().and_then(|k| k.installed_at));
+        entry.installed_at = r
+            .installed_at
+            .or_else(|| keep.as_ref().and_then(|k| k.installed_at));
         if let Some(k) = keep {
             entry.bindings = k.bindings;
             entry.enabled = k.enabled;
@@ -45,43 +54,55 @@ pub fn register(paths: &Paths, r: &Registration) -> Result<(), String> {
         file.plugins.push(entry);
         (true, Ok(()))
     })??;
-    std::fs::create_dir_all(paths.data(&r.id)).map_err(|e| format!("cannot create {}: {e}", paths.data(&r.id).display()))?;
+    std::fs::create_dir_all(paths.data(&r.id))
+        .map_err(|e| format!("cannot create {}: {e}", paths.data(&r.id).display()))?;
     ensure_token(paths, &r.id).map_err(|e| format!("cannot create the plugin token: {e}"))?;
     Ok(())
 }
 
 pub fn set_enabled(paths: &Paths, id: &str, enabled: bool) -> Result<(), String> {
-    PluginsFile::update(paths, |file| match file.plugins.iter_mut().find(|e| e.id == id) {
-        Some(e) => {
-            let changed = e.enabled != enabled;
-            e.enabled = enabled;
-            (changed, Ok(()))
+    PluginsFile::update(paths, |file| {
+        match file.plugins.iter_mut().find(|e| e.id == id) {
+            Some(e) => {
+                let changed = e.enabled != enabled;
+                e.enabled = enabled;
+                (changed, Ok(()))
+            }
+            None => (false, Err(format!("no plugin {id:?}"))),
         }
-        None => (false, Err(format!("no plugin {id:?}"))),
     })?
 }
 
 /// Drop the registry entry. Bundled plugins can only be disabled. Returns the
 /// removed entry so the caller can delete its files.
 pub fn remove_entry(paths: &Paths, id: &str) -> Result<Entry, String> {
-    PluginsFile::update(paths, |file| match file.plugins.iter().position(|e| e.id == id) {
-        None => (false, Err(format!("no plugin {id:?}"))),
-        Some(i) if file.plugins[i].is_first_party() => (false, Err(format!("{id} is a bundled plugin and cannot be removed; use `plugin disable {id}`"))),
-        Some(i) => (true, Ok(file.plugins.remove(i))),
+    PluginsFile::update(paths, |file| {
+        match file.plugins.iter().position(|e| e.id == id) {
+            None => (false, Err(format!("no plugin {id:?}"))),
+            Some(i) if file.plugins[i].is_first_party() => (
+                false,
+                Err(format!(
+                    "{id} is a bundled plugin and cannot be removed; use `plugin disable {id}`"
+                )),
+            ),
+            Some(i) => (true, Ok(file.plugins.remove(i))),
+        }
     })?
 }
 
 /// Bind `key` to the full action id `<plugin>:<action>` (None clears it).
 pub fn set_binding(paths: &Paths, id: &str, action: &str, key: Option<&str>) -> Result<(), String> {
-    PluginsFile::update(paths, |file| match file.plugins.iter_mut().find(|e| e.id == id) {
-        Some(e) => {
-            match key {
-                Some(k) => e.bindings.insert(action.to_owned(), k.to_owned()),
-                None => e.bindings.remove(action),
-            };
-            (true, Ok(()))
+    PluginsFile::update(paths, |file| {
+        match file.plugins.iter_mut().find(|e| e.id == id) {
+            Some(e) => {
+                match key {
+                    Some(k) => e.bindings.insert(action.to_owned(), k.to_owned()),
+                    None => e.bindings.remove(action),
+                };
+                (true, Ok(()))
+            }
+            None => (false, Err(format!("no plugin {id:?}"))),
         }
-        None => (false, Err(format!("no plugin {id:?}"))),
     })?
 }
 
@@ -132,23 +153,46 @@ mod tests {
         set_enabled(&p, "dev-one", false).unwrap();
         register(&p, &reg("dev-one", &["ui.widgets", "core.actions"])).unwrap();
         let e = PluginsFile::read(&p).unwrap().plugins.remove(0);
-        assert_eq!(e.granted_permissions.unwrap(), ["ui.widgets", "core.actions"]);
+        assert_eq!(
+            e.granted_permissions.unwrap(),
+            ["ui.widgets", "core.actions"]
+        );
         assert_eq!(e.bindings["dev-one:go"], "x");
-        assert!(!e.enabled, "re-approving does not switch a disabled plugin back on");
+        assert!(
+            !e.enabled,
+            "re-approving does not switch a disabled plugin back on"
+        );
         assert!(p.data("dev-one").is_dir());
-        assert_eq!(std::fs::read_to_string(p.token("dev-one")).unwrap().trim().len(), 64);
+        assert_eq!(
+            std::fs::read_to_string(p.token("dev-one"))
+                .unwrap()
+                .trim()
+                .len(),
+            64
+        );
     }
 
     #[test]
     fn bundled_plugins_cannot_be_registered_over_or_removed_but_can_be_disabled() {
         let (_d, p) = paths();
         PluginsFile::update(&p, |f| {
-            f.plugins.push(Entry::new("usage-bar", Source::Bundled { path: "/b".into() }));
+            f.plugins.push(Entry::new(
+                "usage-bar",
+                Source::Bundled { path: "/b".into() },
+            ));
             (true, ())
         })
         .unwrap();
-        assert!(register(&p, &reg("usage-bar", &[])).unwrap_err().contains("bundled"));
-        assert!(remove_entry(&p, "usage-bar").unwrap_err().contains("plugin disable"));
+        assert!(
+            register(&p, &reg("usage-bar", &[]))
+                .unwrap_err()
+                .contains("bundled")
+        );
+        assert!(
+            remove_entry(&p, "usage-bar")
+                .unwrap_err()
+                .contains("plugin disable")
+        );
         set_enabled(&p, "usage-bar", false).unwrap();
         assert!(!PluginsFile::read(&p).unwrap().plugins[0].enabled);
         let mut r = reg("other", &[]);
@@ -168,7 +212,10 @@ mod tests {
         assert!(remove_entry(&p, "gone").unwrap_err().contains("no plugin"));
         delete_files(&p, "gone", false).unwrap();
         assert!(!p.installed("gone").exists() && !p.token("gone").exists());
-        assert!(p.data("gone").join("keep.txt").exists() && p.log("gone").exists(), "kept without --purge");
+        assert!(
+            p.data("gone").join("keep.txt").exists() && p.log("gone").exists(),
+            "kept without --purge"
+        );
         delete_files(&p, "gone", true).unwrap();
         assert!(!p.data("gone").exists() && !p.log("gone").exists());
         delete_files(&p, "gone", true).unwrap();
@@ -182,15 +229,31 @@ mod tests {
         register(&p, &reg("ok-one", &[])).unwrap();
         set_binding(&p, "ok-one", "ok-one:a", Some("g")).unwrap();
         set_binding(&p, "ok-one", "ok-one:a", None).unwrap();
-        assert!(PluginsFile::read(&p).unwrap().plugins[0].bindings.is_empty());
+        assert!(
+            PluginsFile::read(&p).unwrap().plugins[0]
+                .bindings
+                .is_empty()
+        );
     }
 
     #[test]
     fn a_github_subdir_is_joined_but_never_allowed_to_leave_the_checkout() {
         let (_d, p) = paths();
-        assert_eq!(super::super::layout::github_plugin_dir(&p, "a", Some("tools/x")), p.installed("a").join("tools/x"));
-        assert_eq!(super::super::layout::github_plugin_dir(&p, "a", Some("../../etc")), p.installed("a"));
-        assert_eq!(super::super::layout::github_plugin_dir(&p, "a", Some("/etc")), p.installed("a"));
-        assert_eq!(super::super::layout::github_plugin_dir(&p, "a", None), p.installed("a"));
+        assert_eq!(
+            super::super::layout::github_plugin_dir(&p, "a", Some("tools/x")),
+            p.installed("a").join("tools/x")
+        );
+        assert_eq!(
+            super::super::layout::github_plugin_dir(&p, "a", Some("../../etc")),
+            p.installed("a")
+        );
+        assert_eq!(
+            super::super::layout::github_plugin_dir(&p, "a", Some("/etc")),
+            p.installed("a")
+        );
+        assert_eq!(
+            super::super::layout::github_plugin_dir(&p, "a", None),
+            p.installed("a")
+        );
     }
 }

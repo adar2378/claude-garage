@@ -11,7 +11,7 @@ use std::time::Duration;
 use async_trait::async_trait;
 use tokio::process::Command;
 
-use super::{spawn_detached, Os, OsError};
+use super::{Os, OsError, spawn_detached};
 
 /// The folder dialog blocks while it is open; same allowance as macOS.
 pub const PICKER_TIMEOUT: Duration = Duration::from_secs(120);
@@ -49,11 +49,21 @@ fn base64(bytes: &[u8]) -> String {
     const T: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
     for c in bytes.chunks(3) {
-        let n = (u32::from(c[0]) << 16) | (u32::from(*c.get(1).unwrap_or(&0)) << 8) | u32::from(*c.get(2).unwrap_or(&0));
+        let n = (u32::from(c[0]) << 16)
+            | (u32::from(*c.get(1).unwrap_or(&0)) << 8)
+            | u32::from(*c.get(2).unwrap_or(&0));
         out.push(T[(n >> 18) as usize & 63] as char);
         out.push(T[(n >> 12) as usize & 63] as char);
-        out.push(if c.len() > 1 { T[(n >> 6) as usize & 63] as char } else { '=' });
-        out.push(if c.len() > 2 { T[n as usize & 63] as char } else { '=' });
+        out.push(if c.len() > 1 {
+            T[(n >> 6) as usize & 63] as char
+        } else {
+            '='
+        });
+        out.push(if c.len() > 2 {
+            T[n as usize & 63] as char
+        } else {
+            '='
+        });
     }
     out
 }
@@ -62,7 +72,12 @@ fn base64(bytes: &[u8]) -> String {
 /// script then never passes through command-line quoting, so no character in
 /// a notification title or body can change what PowerShell parses.
 pub fn encode_command(script: &str) -> String {
-    base64(&script.encode_utf16().flat_map(u16::to_le_bytes).collect::<Vec<u8>>())
+    base64(
+        &script
+            .encode_utf16()
+            .flat_map(u16::to_le_bytes)
+            .collect::<Vec<u8>>(),
+    )
 }
 
 /// argv (after `powershell.exe`) that runs `script` without a profile or prompt.
@@ -76,10 +91,18 @@ pub fn powershell_args(script: &str, sta: bool) -> Vec<String> {
 }
 
 /// The picker prints the chosen path; nothing printed means the dialog was cancelled.
-pub fn interpret_picker(success: bool, stdout: &str, stderr: &str) -> Result<Option<PathBuf>, OsError> {
+pub fn interpret_picker(
+    success: bool,
+    stdout: &str,
+    stderr: &str,
+) -> Result<Option<PathBuf>, OsError> {
     if !success {
         let detail = stderr.trim();
-        return Err(OsError::Failed(if detail.is_empty() { "folder picker failed".into() } else { detail.to_owned() }));
+        return Err(OsError::Failed(if detail.is_empty() {
+            "folder picker failed".into()
+        } else {
+            detail.to_owned()
+        }));
     }
     let dir = stdout.trim();
     Ok((!dir.is_empty()).then(|| PathBuf::from(dir)))
@@ -87,7 +110,9 @@ pub fn interpret_picker(success: bool, stdout: &str, stderr: &str) -> Result<Opt
 
 fn powershell(args: Vec<String>) -> Command {
     let mut cmd = Command::new("powershell.exe");
-    cmd.args(args).stdin(std::process::Stdio::null()).kill_on_drop(true);
+    cmd.args(args)
+        .stdin(std::process::Stdio::null())
+        .kill_on_drop(true);
     #[cfg(windows)]
     {
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
@@ -102,7 +127,8 @@ pub struct WindowsOs;
 impl Os for WindowsOs {
     async fn notify(&self, title: &str, body: &str) -> Result<(), OsError> {
         let mut cmd = powershell(powershell_args(&toast_script(title, body), false));
-        cmd.stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null());
+        cmd.stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null());
         match tokio::time::timeout(Duration::from_secs(10), cmd.status()).await {
             Ok(Ok(_)) => Ok(()),
             Ok(Err(e)) => Err(OsError::Failed(e.to_string())),
@@ -117,7 +143,11 @@ impl Os for WindowsOs {
             Ok(Err(e)) => return Err(OsError::Failed(format!("powershell failed: {e}"))),
             Err(_) => return Err(OsError::Failed("folder picker timed out".into())),
         };
-        interpret_picker(out.status.success(), &String::from_utf8_lossy(&out.stdout), &String::from_utf8_lossy(&out.stderr))
+        interpret_picker(
+            out.status.success(),
+            &String::from_utf8_lossy(&out.stdout),
+            &String::from_utf8_lossy(&out.stderr),
+        )
     }
 
     async fn open_window(&self, cmd: &[String]) -> Result<(), OsError> {
@@ -136,15 +166,32 @@ mod tests {
     #[test]
     fn toast_text_is_quoted_so_a_quote_cannot_end_the_string() {
         let s = toast_script("claude-garage", "it's 'x'; Remove-Item *");
-        assert!(s.contains("CreateTextNode('it''s ''x''; Remove-Item *')"), "{s}");
+        assert!(
+            s.contains("CreateTextNode('it''s ''x''; Remove-Item *')"),
+            "{s}"
+        );
         assert!(s.contains("CreateTextNode('claude-garage')"));
-        assert!(s.contains("{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\\WindowsPowerShell\\v1.0\\powershell.exe"));
+        assert!(s.contains(
+            "{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\\WindowsPowerShell\\v1.0\\powershell.exe"
+        ));
     }
 
     #[test]
     fn powershell_runs_without_profile_and_the_picker_needs_sta() {
-        assert_eq!(powershell_args("x", false), ["-NoProfile", "-NonInteractive", "-EncodedCommand", "eAA="]);
-        assert_eq!(powershell_args("x", true), ["-NoProfile", "-NonInteractive", "-STA", "-EncodedCommand", "eAA="]);
+        assert_eq!(
+            powershell_args("x", false),
+            ["-NoProfile", "-NonInteractive", "-EncodedCommand", "eAA="]
+        );
+        assert_eq!(
+            powershell_args("x", true),
+            [
+                "-NoProfile",
+                "-NonInteractive",
+                "-STA",
+                "-EncodedCommand",
+                "eAA="
+            ]
+        );
     }
 
     #[test]
@@ -164,9 +211,16 @@ mod tests {
 
     #[test]
     fn picker_output_maps_to_a_path_a_cancel_or_an_error() {
-        assert_eq!(interpret_picker(true, "C:\\Users\\me\\proj\r\n", "").unwrap(), Some(PathBuf::from("C:\\Users\\me\\proj")));
+        assert_eq!(
+            interpret_picker(true, "C:\\Users\\me\\proj\r\n", "").unwrap(),
+            Some(PathBuf::from("C:\\Users\\me\\proj"))
+        );
         assert_eq!(interpret_picker(true, "\r\n", "").unwrap(), None);
-        assert!(matches!(interpret_picker(false, "", "boom\n"), Err(OsError::Failed(m)) if m == "boom"));
-        assert!(matches!(interpret_picker(false, "", ""), Err(OsError::Failed(m)) if m == "folder picker failed"));
+        assert!(
+            matches!(interpret_picker(false, "", "boom\n"), Err(OsError::Failed(m)) if m == "boom")
+        );
+        assert!(
+            matches!(interpret_picker(false, "", ""), Err(OsError::Failed(m)) if m == "folder picker failed")
+        );
     }
 }

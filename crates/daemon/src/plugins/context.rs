@@ -9,7 +9,7 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::backend::SessionBackend;
 use crate::git::resolve_branch;
@@ -39,16 +39,34 @@ pub struct StateLookup {
 #[async_trait]
 impl SessionLookup for StateLookup {
     async fn session(&self, id: &str) -> Option<SessionInfo> {
-        let live = self.backend.list().await.ok()?.into_iter().find(|s| s.id == id)?;
+        let live = self
+            .backend
+            .list()
+            .await
+            .ok()?
+            .into_iter()
+            .find(|s| s.id == id)?;
         let panes = self.backend.panes().await.unwrap_or_default();
         let dir = panes.get(id).map(|p| p.cwd.clone()).unwrap_or(live.dir);
         let branch = resolve_branch(&dir).await;
-        let worktree = match self.registry.get_session_meta(id).await.and_then(|m| m.worktree) {
+        let worktree = match self
+            .registry
+            .get_session_meta(id)
+            .await
+            .and_then(|m| m.worktree)
+        {
             Some(w) => json!({"path": w.path, "branch": w.branch, "repo_dir": w.repo_dir}),
             None => Value::Null,
         };
-        let status = serde_json::to_value(self.status.get(id)).ok().and_then(|v| v.as_str().map(str::to_owned));
-        Some(SessionInfo { dir: Some(dir), status, branch, worktree })
+        let status = serde_json::to_value(self.status.get(id))
+            .ok()
+            .and_then(|v| v.as_str().map(str::to_owned));
+        Some(SessionInfo {
+            dir: Some(dir),
+            status,
+            branch,
+            worktree,
+        })
     }
 }
 
@@ -71,7 +89,11 @@ pub struct CtxRequest {
 impl CtxRequest {
     /// Read the TUI's run request body leniently: anything absent is null.
     pub fn from_run_body(kind: &str, action: &str, body: &Value) -> Self {
-        let text = |v: Option<&Value>| v.and_then(Value::as_str).filter(|s| !s.is_empty()).map(str::to_owned);
+        let text = |v: Option<&Value>| {
+            v.and_then(Value::as_str)
+                .filter(|s| !s.is_empty())
+                .map(str::to_owned)
+        };
         let trigger = body.get("trigger");
         let focus = body.get("focus");
         let session = focus.and_then(|f| f.get("session"));
@@ -80,7 +102,10 @@ impl CtxRequest {
             key: text(trigger.and_then(|t| t.get("key"))),
             slot: text(trigger.and_then(|t| t.get("slot"))),
             action: Some(action.to_owned()),
-            args: trigger.and_then(|t| t.get("args")).cloned().unwrap_or_else(|| json!({})),
+            args: trigger
+                .and_then(|t| t.get("args"))
+                .cloned()
+                .unwrap_or_else(|| json!({})),
             workspace: text(focus.and_then(|f| f.get("workspace"))),
             session: text(session.and_then(|s| s.get("id"))).or_else(|| text(session)),
             selection: body.get("selection").cloned().unwrap_or(Value::Null),
@@ -96,7 +121,12 @@ pub struct PluginFacts<'a> {
     pub state_dir: &'a std::path::Path,
 }
 
-pub async fn build(lookup: &dyn SessionLookup, plugin: &PluginFacts<'_>, req: CtxRequest, ui_slots: &Value) -> Value {
+pub async fn build(
+    lookup: &dyn SessionLookup,
+    plugin: &PluginFacts<'_>,
+    req: CtxRequest,
+    ui_slots: &Value,
+) -> Value {
     let (session, worktree) = match &req.session {
         Some(id) => {
             let info = lookup.session(id).await.unwrap_or(req.fallback.clone());
@@ -133,7 +163,11 @@ mod tests {
     }
 
     fn facts() -> PluginFacts<'static> {
-        PluginFacts { id: "p", version: "1.0.0", state_dir: std::path::Path::new("/data/p") }
+        PluginFacts {
+            id: "p",
+            version: "1.0.0",
+            state_dir: std::path::Path::new("/data/p"),
+        }
     }
 
     #[tokio::test]
@@ -150,12 +184,27 @@ mod tests {
             "selection": {"session": "garage/main", "index": 2}
         });
         let req = CtxRequest::from_run_body("button", "p:refresh", &body);
-        let ctx = build(&Fixed(Some(info)), &facts(), req, &json!({"strip.right": {"width": 38}})).await;
-        assert_eq!(ctx["focus"]["session"]["dir"], "/dev/garage", "the TUI's dir is not trusted");
+        let ctx = build(
+            &Fixed(Some(info)),
+            &facts(),
+            req,
+            &json!({"strip.right": {"width": 38}}),
+        )
+        .await;
+        assert_eq!(
+            ctx["focus"]["session"]["dir"], "/dev/garage",
+            "the TUI's dir is not trusted"
+        );
         assert_eq!(ctx["focus"]["session"]["status"], "working");
         assert_eq!(ctx["focus"]["workspace"], "garage");
-        assert_eq!(ctx["trigger"], json!({"kind": "key", "key": "u", "slot": null, "action": "p:refresh", "args": {}}));
-        assert_eq!(ctx["selection"], json!({"session": "garage/main", "index": 2, "view": null}));
+        assert_eq!(
+            ctx["trigger"],
+            json!({"kind": "key", "key": "u", "slot": null, "action": "p:refresh", "args": {}})
+        );
+        assert_eq!(
+            ctx["selection"],
+            json!({"session": "garage/main", "index": 2, "view": null})
+        );
         assert_eq!(ctx["worktree"]["branch"], "b");
         assert_eq!(ctx["ui"]["slots"]["strip.right"]["width"], 38);
         assert_eq!(ctx["plugin"]["state_dir"], "/data/p");
@@ -164,16 +213,33 @@ mod tests {
 
     #[tokio::test]
     async fn everything_missing_is_null_not_absent() {
-        let ctx = build(&Fixed(None), &facts(), CtxRequest::from_run_body("palette", "p:x", &json!({})), &json!({})).await;
+        let ctx = build(
+            &Fixed(None),
+            &facts(),
+            CtxRequest::from_run_body("palette", "p:x", &json!({})),
+            &json!({}),
+        )
+        .await;
         assert_eq!(ctx["focus"], json!({"workspace": null, "session": null}));
         assert_eq!(ctx["trigger"]["kind"], "palette");
-        assert_eq!(ctx["selection"], json!({"session": null, "index": null, "view": null}));
+        assert_eq!(
+            ctx["selection"],
+            json!({"session": null, "index": null, "view": null})
+        );
         for k in ["worktree", "event"] {
             assert!(ctx.get(k).is_some_and(Value::is_null), "{k}");
         }
         // a session that is no longer live falls back to what the event carried
-        let mut req = CtxRequest::from_run_body("event", "x", &json!({"focus": {"session": "garage/w/gone"}}));
-        req.fallback = SessionInfo { dir: Some("/was".into()), status: Some("idle".into()), ..Default::default() };
+        let mut req = CtxRequest::from_run_body(
+            "event",
+            "x",
+            &json!({"focus": {"session": "garage/w/gone"}}),
+        );
+        req.fallback = SessionInfo {
+            dir: Some("/was".into()),
+            status: Some("idle".into()),
+            ..Default::default()
+        };
         let ctx = build(&Fixed(None), &facts(), req, &json!({})).await;
         assert_eq!(ctx["focus"]["session"]["dir"], "/was");
         assert_eq!(ctx["focus"]["session"]["branch"], Value::Null);

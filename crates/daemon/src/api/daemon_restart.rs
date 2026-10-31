@@ -12,10 +12,10 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
+use axum::Json;
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use axum::Json;
 use serde_json::json;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt};
 use tokio::sync::Notify;
@@ -137,9 +137,11 @@ pub async fn default_probe(port: u16) -> bool {
         let mut s = tokio::net::TcpStream::connect(("127.0.0.1", port))
             .await
             .ok()?;
-        s.write_all(format!("GET /api/health HTTP/1.0\r\nHost: 127.0.0.1:{port}\r\n\r\n").as_bytes())
-            .await
-            .ok()?;
+        s.write_all(
+            format!("GET /api/health HTTP/1.0\r\nHost: 127.0.0.1:{port}\r\n\r\n").as_bytes(),
+        )
+        .await
+        .ok()?;
         // Only the status line matters; never wait for the body or EOF.
         let mut line = String::new();
         tokio::io::BufReader::new(s.take(1024))

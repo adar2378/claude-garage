@@ -117,11 +117,7 @@ pub fn encode_key(key: &KeyEvent) -> Option<Vec<u8>> {
         KeyCode::BackTab => b"\x1b[Z".to_vec(),
         KeyCode::Backspace => {
             let byte = if ctrl { 0x08 } else { 0x7f };
-            if alt {
-                vec![0x1b, byte]
-            } else {
-                vec![byte]
-            }
+            if alt { vec![0x1b, byte] } else { vec![byte] }
         }
         KeyCode::Esc => vec![0x1b],
         KeyCode::PageUp => tilde(5),
@@ -309,7 +305,11 @@ mod tests {
                 key(KeyCode::Down, alt_shift),
                 b"\x1b[1;4B",
             ),
-            c("Ctrl+Right (mod 5)", key(KeyCode::Right, CTRL), b"\x1b[1;5C"),
+            c(
+                "Ctrl+Right (mod 5)",
+                key(KeyCode::Right, CTRL),
+                b"\x1b[1;5C",
+            ),
             c("Ctrl+Left (mod 5)", key(KeyCode::Left, CTRL), b"\x1b[1;5D"),
             c("Ctrl+Up (mod 5)", key(KeyCode::Up, CTRL), b"\x1b[1;5A"),
             c("Ctrl+Down (mod 5)", key(KeyCode::Down, CTRL), b"\x1b[1;5B"),
@@ -405,10 +405,7 @@ mod tests {
             // --- Nothing forwardable.
             Case {
                 desc: "bare modifier keypress encodes to nothing",
-                event: key(
-                    KeyCode::Modifier(ModifierKeyCode::LeftControl),
-                    CTRL,
-                ),
+                event: key(KeyCode::Modifier(ModifierKeyCode::LeftControl), CTRL),
                 expected: None,
             },
         ]
@@ -487,15 +484,15 @@ mod tests {
         );
         // Option+Enter stays the protocol-free legacy form Claude Code
         // accepts directly; plain Enter stays \r.
-        assert_eq!(encode_key(&key(KeyCode::Enter, ALT)), Some(b"\x1b\r".to_vec()));
+        assert_eq!(
+            encode_key(&key(KeyCode::Enter, ALT)),
+            Some(b"\x1b\r".to_vec())
+        );
         assert_eq!(encode_key(&key(KeyCode::Enter, NONE)), Some(b"\r".to_vec()));
     }
 
     #[test]
     fn ctrl_backspace_sends_0x08_spike_extension() {
-        assert_eq!(
-            encode_key(&key(KeyCode::Backspace, CTRL)),
-            Some(vec![0x08])
-        );
+        assert_eq!(encode_key(&key(KeyCode::Backspace, CTRL)), Some(vec![0x08]));
     }
 }

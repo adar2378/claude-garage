@@ -33,14 +33,21 @@ fn worktree_close_opens_the_finish_overlay_even_from_engaged_or_another_overlay(
     let mut store = store_with(vec![ws("a")], vec![si("a", "one")]);
     assert!(store.engage());
     let mut finish = WorktreeFinishState::default();
-    assert!(!show_worktree_finish(&mut store, &mut finish, wt_record("garage/x")));
+    assert!(!show_worktree_finish(
+        &mut store,
+        &mut finish,
+        wt_record("garage/x")
+    ));
     assert_eq!(store.state().layer, KeyLayer::Overlay);
     assert_eq!(store.state().overlay, Some(OverlayKind::WorktreeFinish));
 
     let mut store = store_with(vec![ws("a")], vec![si("a", "one")]);
     store.open_overlay(OverlayKind::WorkspaceAdd);
     let mut finish = WorktreeFinishState::default();
-    assert!(show_worktree_finish(&mut store, &mut finish, wt_record("garage/x")), "displaced");
+    assert!(
+        show_worktree_finish(&mut store, &mut finish, wt_record("garage/x")),
+        "displaced"
+    );
     assert_eq!(store.state().overlay, Some(OverlayKind::WorktreeFinish));
 }
 
@@ -48,10 +55,22 @@ fn worktree_close_opens_the_finish_overlay_even_from_engaged_or_another_overlay(
 fn a_second_worktree_close_queues_behind_the_first() {
     let mut store = store_with(vec![ws("a")], vec![si("a", "one")]);
     let mut finish = finish_open(&mut store, "garage/a");
-    assert!(!show_worktree_finish(&mut store, &mut finish, wt_record("garage/b")));
-    assert_eq!(finish.current().unwrap().branch, "garage/a", "first stays on screen");
+    assert!(!show_worktree_finish(
+        &mut store,
+        &mut finish,
+        wt_record("garage/b")
+    ));
+    assert_eq!(
+        finish.current().unwrap().branch,
+        "garage/a",
+        "first stays on screen"
+    );
     assert_eq!(finish_key(&mut store, &mut finish, 'k', 1000), vec![]);
-    assert_eq!(store.state().overlay, Some(OverlayKind::WorktreeFinish), "b still waits");
+    assert_eq!(
+        store.state().overlay,
+        Some(OverlayKind::WorktreeFinish),
+        "b still waits"
+    );
     assert_eq!(finish.current().unwrap().branch, "garage/b");
     assert_eq!(finish_key(&mut store, &mut finish, 'k', 1100), vec![]);
     assert_eq!(store.state().overlay, None);
@@ -69,25 +88,41 @@ fn m_merges_once_and_ignores_choices_while_busy() {
         }]
     );
     for c in ['m', 'd', 'k'] {
-        assert_eq!(finish_key(&mut store, &mut finish, c, 1100), vec![], "{c} while busy");
+        assert_eq!(
+            finish_key(&mut store, &mut finish, c, 1100),
+            vec![],
+            "{c} while busy"
+        );
     }
     assert_eq!(
         handle_worktree_finish_key(&mut store, &plain(KeyCode::Esc), &mut finish, 1100),
         vec![]
     );
-    assert_eq!(store.state().overlay, Some(OverlayKind::WorktreeFinish), "still open");
+    assert_eq!(
+        store.state().overlay,
+        Some(OverlayKind::WorktreeFinish),
+        "still open"
+    );
 }
 
 #[test]
 fn d_arms_and_a_second_d_discards_any_other_key_disarms() {
     let mut store = store_with(vec![ws("a")], vec![si("a", "one")]);
     let mut finish = finish_open(&mut store, "garage/x");
-    assert_eq!(finish_key(&mut store, &mut finish, 'd', 1000), vec![], "first d arms");
+    assert_eq!(
+        finish_key(&mut store, &mut finish, 'd', 1000),
+        vec![],
+        "first d arms"
+    );
     assert!(finish.discard_armed(1001));
     // An unbound key is consumed (modal) and disarms.
     assert_eq!(finish_key(&mut store, &mut finish, 'z', 1100), vec![]);
     assert!(!finish.discard_armed(1101));
-    assert_eq!(finish_key(&mut store, &mut finish, 'd', 1200), vec![], "re-arms");
+    assert_eq!(
+        finish_key(&mut store, &mut finish, 'd', 1200),
+        vec![],
+        "re-arms"
+    );
     assert_eq!(
         finish_key(&mut store, &mut finish, 'd', 1300),
         vec![Effect::FinishWorktree {
@@ -137,7 +172,10 @@ fn a_finish_error_keeps_the_overlay_open_with_the_message() {
     );
     assert_eq!(notice, None);
     assert_eq!(store.state().overlay, Some(OverlayKind::WorktreeFinish));
-    assert_eq!(finish.error.as_deref(), Some("worktree has uncommitted changes"));
+    assert_eq!(
+        finish.error.as_deref(),
+        Some("worktree has uncommitted changes")
+    );
     assert_eq!(finish.busy, None);
     // Choices are live again: keep closes, no request.
     assert_eq!(finish_key(&mut store, &mut finish, 'k', 2000), vec![]);

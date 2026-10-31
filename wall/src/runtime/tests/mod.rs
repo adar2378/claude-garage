@@ -7,7 +7,7 @@
 //! caller-side behavior the Dart TUI kept in `bin/garage_tui.dart`.
 use super::router::next_label;
 use super::*;
-use crate::actions::{command_for_action, ids, ActionCtx, ActionSource};
+use crate::actions::{ActionCtx, ActionSource, command_for_action, ids};
 use crate::api::models::{RestartResponse, SessionInfo, WorkspaceInfo};
 use crate::keymap::Layer;
 use crate::state::store::GarageCommand;
@@ -76,12 +76,7 @@ fn store_with(workspaces: Vec<WorkspaceInfo>, sessions: Vec<SessionInfo>) -> Wal
 /// then `App::dispatch_action_at` (the overlay/pet layer and the router's
 /// `run_action`). The caller's router and store are swapped into a scratch
 /// `App` for the call so the tests keep their virtual clock.
-fn key_at(
-    router: &mut GarageRouter,
-    store: &mut WallStore,
-    key: &str,
-    now: i64,
-) -> Vec<Effect> {
+fn key_at(router: &mut GarageRouter, store: &mut WallStore, key: &str, now: i64) -> Vec<Effect> {
     let (tx, _rx) = mpsc::unbounded_channel();
     let mut app = App::new(tx, "http://127.0.0.1:0", 0);
     std::mem::swap(&mut app.router, router);
@@ -105,8 +100,8 @@ fn plain(code: KeyCode) -> KeyEvent {
 mod dispatch;
 mod draw;
 mod layers;
+mod motion;
 mod plugin_gate;
 mod plugins;
-mod motion;
 mod router;
 mod worktree;

@@ -29,8 +29,10 @@ fn p10_new_session_joins_the_default_view_leaving_other_views_unchanged() {
 fn p10_d_detaches_a_multi_session_view_to_a_solo_view_and_back() {
     // Spec tui-views "Detach and rejoin", scenario "d detaches to a
     // solo view".
-    let mut store =
-        store_with(vec![ws("a")], vec![si("a", "one"), si("a", "two"), si("a", "three")]);
+    let mut store = store_with(
+        vec![ws("a")],
+        vec![si("a", "one"), si("a", "two"), si("a", "three")],
+    );
     store.focus_session(&id("a", "three"));
 
     assert!(store.detach_focused());
@@ -43,7 +45,11 @@ fn p10_d_detaches_a_multi_session_view_to_a_solo_view_and_back() {
         .into_iter()
         .find(|v| v.name == DEFAULT_VIEW)
         .unwrap();
-    assert_eq!(origin.session_ids.len(), 2, "the origin view has 2 sessions");
+    assert_eq!(
+        origin.session_ids.len(),
+        2,
+        "the origin view has 2 sessions"
+    );
 
     assert!(store.detach_focused()); // pressing d again
     assert_eq!(store.state().focused_view_name("a"), DEFAULT_VIEW);
@@ -87,7 +93,11 @@ fn p10_grid_cap_and_lru_are_scoped_to_the_focused_view_not_the_whole_workspace()
     // Detach the overflow session s8 into its own solo view.
     store.focus_session(&id("a", "s8"));
     assert!(store.detach_focused());
-    assert_eq!(store.state().gridded_session_ids, [id("a", "s8")], "a solo view is never capped");
+    assert_eq!(
+        store.state().gridded_session_ids,
+        [id("a", "s8")],
+        "a solo view is never capped"
+    );
 
     // The default view still holds 7 (s1..s7) — the cap still applies
     // to it alone, unaffected by the sibling solo view.
@@ -95,15 +105,24 @@ fn p10_grid_cap_and_lru_are_scoped_to_the_focused_view_not_the_whole_workspace()
     assert_eq!(store.state().focused_view_name("a"), DEFAULT_VIEW);
     assert_eq!(store.state().gridded_session_ids.len(), 6);
     assert!(!store.state().gridded_session_ids.contains(&id("a", "s8")));
-    let rail: Vec<&str> =
-        store.state().groups[0].sessions.iter().map(|s| s.label.as_str()).collect();
-    assert_eq!(rail.len(), 8, "the rail still lists every session across every view");
+    let rail: Vec<&str> = store.state().groups[0]
+        .sessions
+        .iter()
+        .map(|s| s.label.as_str())
+        .collect();
+    assert_eq!(
+        rail.len(),
+        8,
+        "the rail still lists every session across every view"
+    );
 }
 
 #[test]
 fn p10_tab_cycles_the_focused_workspaces_views_and_focus_follows() {
-    let mut store =
-        store_with(vec![ws("a")], vec![si("a", "one"), si("a", "two"), si("a", "three")]);
+    let mut store = store_with(
+        vec![ws("a")],
+        vec![si("a", "one"), si("a", "two"), si("a", "three")],
+    );
     store.focus_session(&id("a", "three"));
     store.detach_focused();
     assert_eq!(store.state().focused_view_name("a"), "three");
@@ -168,8 +187,10 @@ fn p10_focus_session_crosses_views_within_the_same_workspace_rail_click_semantic
 
 #[test]
 fn p10_rail_ordering_and_blocked_count_are_view_independent() {
-    let mut store =
-        store_with(vec![ws("a")], vec![si("a", "one"), si("a", "two"), si("a", "three")]);
+    let mut store = store_with(
+        vec![ws("a")],
+        vec![si("a", "one"), si("a", "two"), si("a", "three")],
+    );
     store.focus_session(&id("a", "three"));
     store.detach_focused(); // "three" -> its own view; still the same workspace/rail.
 
@@ -178,8 +199,16 @@ fn p10_rail_ordering_and_blocked_count_are_view_independent() {
         si_status("a", "two", "needs-input", Some(10)),
         si_status("a", "three", "needs-input", Some(5)),
     ]);
-    assert_eq!(store.state().blocked_count(), 2, "blocked count spans every view");
-    let labels: Vec<&str> = store.state().groups[0].sessions.iter().map(|s| s.label.as_str()).collect();
+    assert_eq!(
+        store.state().blocked_count(),
+        2,
+        "blocked count spans every view"
+    );
+    let labels: Vec<&str> = store.state().groups[0]
+        .sessions
+        .iter()
+        .map(|s| s.label.as_str())
+        .collect();
     assert_eq!(
         labels,
         ["two", "three", "one"],
@@ -202,10 +231,16 @@ fn p10_load_views_prunes_dead_sessions_and_is_idempotent_no_spurious_dirty_bump(
     store.load_views(loaded);
     assert_eq!(
         store.state().views.get("a").unwrap(),
-        &[View { name: "solo".to_owned(), session_ids: vec![id("a", "two")] }],
+        &[View {
+            name: "solo".to_owned(),
+            session_ids: vec![id("a", "two")]
+        }],
         "the dead 'ghost' id is pruned on load"
     );
-    assert!(store.views_revision() > before, "pruning something is a dirty change");
+    assert!(
+        store.views_revision() > before,
+        "pruning something is a dirty change"
+    );
 
     let after_load = store.views_revision();
     store.sessions_fetched(vec![si("a", "one"), si("a", "two")]); // nothing new to prune
@@ -277,8 +312,10 @@ fn p10_shift_d_is_a_no_op_on_an_empty_wall() {
 fn p10_move_focused_to_view_creates_a_new_group_and_moves_more_sessions_into_it() {
     // Spec tui-views "Move to a group", scenario "Building a
     // three-session group".
-    let mut store =
-        store_with(vec![ws("a")], vec![si("a", "A"), si("a", "B"), si("a", "C")]);
+    let mut store = store_with(
+        vec![ws("a")],
+        vec![si("a", "A"), si("a", "B"), si("a", "C")],
+    );
     store.focus_session(&id("a", "A"));
     assert!(store.move_focused_to_view("backend"));
     assert_eq!(store.state().focused_view_name("a"), "backend");
@@ -388,7 +425,11 @@ fn p10_bug_restart_shape_load_views_with_everything_in_a_named_view_focuses_it()
     // store whose `focused_view` map is empty (so it starts out assuming
     // DEFAULT_VIEW, per-workspace, same as a real process restart).
     let mut store = store_with(vec![ws("a")], vec![si("a", "alpha"), si("a", "beta")]);
-    assert_eq!(store.state().focused_view_name("a"), DEFAULT_VIEW, "sanity: starts on the default");
+    assert_eq!(
+        store.state().focused_view_name("a"),
+        DEFAULT_VIEW,
+        "sanity: starts on the default"
+    );
 
     let mut loaded: HashMap<String, Vec<View>> = HashMap::new();
     loaded.insert(
@@ -405,12 +446,16 @@ fn p10_bug_restart_shape_load_views_with_everything_in_a_named_view_focuses_it()
         "backend",
         "the default is now empty; focus must land on the only real view"
     );
-    assert_eq!(store.state().gridded_session_ids, [id("a", "alpha"), id("a", "beta")]);
+    assert_eq!(
+        store.state().gridded_session_ids,
+        [id("a", "alpha"), id("a", "beta")]
+    );
     assert_eq!(store.state().focused_session_id, Some(id("a", "alpha")));
 }
 
 #[test]
-fn p10_bug_reconcile_refocuses_when_a_live_death_vacates_the_focused_view_and_default_is_also_empty() {
+fn p10_bug_reconcile_refocuses_when_a_live_death_vacates_the_focused_view_and_default_is_also_empty()
+ {
     // Same trap, reached via a live refetch instead of a cold load: two
     // named views, default empty, focus on "frontend"; its only member
     // dies. Pruning drops "frontend" (spec: empty non-default views are
@@ -443,7 +488,11 @@ fn p10_bug_refocus_is_a_no_op_when_the_focused_view_already_has_members() {
     assert_eq!(store.state().focused_view_name("a"), "two");
 
     store.sessions_fetched(vec![si("a", "one"), si("a", "two")]); // no-op refetch
-    assert_eq!(store.state().focused_view_name("a"), "two", "already on a real view — untouched");
+    assert_eq!(
+        store.state().focused_view_name("a"),
+        "two",
+        "already on a real view — untouched"
+    );
 }
 
 #[test]
@@ -467,13 +516,23 @@ fn p10_bug_cycle_view_escapes_an_empty_focused_view_even_with_only_one_real_view
     assert!(store.move_focused_to_view("backend"));
     store.focus_view_of(&id("a", "beta"));
     assert!(store.move_focused_to_view("backend"));
-    store.state.focused_view.insert("a".to_owned(), DEFAULT_VIEW.to_owned());
-    assert_eq!(store.state().views_for("a").len(), 1, "sanity: only \"backend\" is real");
+    store
+        .state
+        .focused_view
+        .insert("a".to_owned(), DEFAULT_VIEW.to_owned());
+    assert_eq!(
+        store.state().views_for("a").len(),
+        1,
+        "sanity: only \"backend\" is real"
+    );
 
     store.cycle_view();
 
     assert_eq!(store.state().focused_view_name("a"), "backend");
-    assert_eq!(store.state().gridded_session_ids, [id("a", "alpha"), id("a", "beta")]);
+    assert_eq!(
+        store.state().gridded_session_ids,
+        [id("a", "alpha"), id("a", "beta")]
+    );
 }
 
 #[test]
@@ -485,7 +544,11 @@ fn p10_bug_cycle_view_stays_put_with_a_single_real_view_already_focused() {
 
     store.cycle_view();
 
-    assert_eq!(store.version(), before, "one real view, already on it: nothing to cycle to");
+    assert_eq!(
+        store.version(),
+        before,
+        "one real view, already on it: nothing to cycle to"
+    );
 }
 
 #[test]

@@ -29,18 +29,25 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
 
 use garage_plugin::argv::{self, Vars};
-use garage_plugin::manifest::{sha256_hex, ActionContext, EventName, PanePlacement, Manifest, DEFAULT_ACTION_TIMEOUT_SECS, DEFAULT_EVENT_TIMEOUT_SECS};
+use garage_plugin::manifest::{
+    ActionContext, DEFAULT_ACTION_TIMEOUT_SECS, DEFAULT_EVENT_TIMEOUT_SECS, EventName, Manifest,
+    PanePlacement, sha256_hex,
+};
 use garage_plugin::{check_cli_conflicts, check_host, parse};
 use garage_protocol::plugins::{
-    ActionSummary, ButtonSummary, PaneSummary, PluginList, PluginSummary, PluginWidgets, WidgetContent, WidgetSummary, WidgetsSnapshot,
+    ActionSummary, ButtonSummary, PaneSummary, PluginList, PluginSummary, PluginWidgets,
+    WidgetContent, WidgetSummary, WidgetsSnapshot,
 };
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use tokio::task::JoinHandle;
 
 use crate::bus::{DaemonEvent, EventBus};
 use crate::config::Config;
 use context::{CtxRequest, PluginFacts, SessionInfo, SessionLookup};
-use layout::{create_private_dir, ensure_token, ensure_ui_token, write_private, Entry, Paths, PluginsFile, Source, MANIFEST_FILE};
+use layout::{
+    Entry, MANIFEST_FILE, Paths, PluginsFile, Source, create_private_dir, ensure_token,
+    ensure_ui_token, write_private,
+};
 use runner::{PluginLog, ProcessRunner, RunOutcome, RunSpec, Runner, Running};
 use widgets::{Bucket, WidgetStore};
 
@@ -90,7 +97,10 @@ impl PluginState {
     /// `granted_permissions`: bundled plugins get it automatically at first
     /// load, anything else only when `plugin link`/`install` writes it.
     pub fn active(&self) -> bool {
-        self.entry.enabled && self.entry.granted_permissions.is_some() && self.good.is_some() && self.refused.is_none()
+        self.entry.enabled
+            && self.entry.granted_permissions.is_some()
+            && self.good.is_some()
+            && self.refused.is_none()
     }
 
     pub fn manifest(&self) -> Option<&Arc<Manifest>> {
@@ -207,7 +217,12 @@ impl PluginHost {
         Self::with_runner(config, bus, lookup, Arc::new(ProcessRunner))
     }
 
-    pub fn with_runner(config: &Config, bus: EventBus, lookup: Arc<dyn SessionLookup>, runner: Arc<dyn Runner>) -> Self {
+    pub fn with_runner(
+        config: &Config,
+        bus: EventBus,
+        lookup: Arc<dyn SessionLookup>,
+        runner: Arc<dyn Runner>,
+    ) -> Self {
         let ui_token = ensure_ui_token(&config.garage_dir).unwrap_or_else(|e| {
             eprintln!("plugins: cannot create the UI token under {}: {e}; UI-only plugin routes are closed", config.garage_dir.display());
             String::new()
@@ -280,7 +295,10 @@ impl PluginHost {
         });
         tokio::spawn({
             let host = host.clone();
-            async move { host.dispatch_event("daemon.started", json!({}), None, SessionInfo::default()).await }
+            async move {
+                host.dispatch_event("daemon.started", json!({}), None, SessionInfo::default())
+                    .await
+            }
         });
         tokio::spawn(async move {
             loop {
@@ -292,17 +310,24 @@ impl PluginHost {
                     }
                     Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
                 };
-                let Some((name, data)) = ev.plugin_event() else { continue };
+                let Some((name, data)) = ev.plugin_event() else {
+                    continue;
+                };
                 // Context building looks sessions up (backend, git); that
                 // must not hold up the next bus event.
                 let Ok(permit) = host.0.dispatch_permits.clone().try_acquire_owned() else {
-                    eprintln!("plugins: {DISPATCH_INFLIGHT} event dispatches in flight; dropped {name}");
+                    eprintln!(
+                        "plugins: {DISPATCH_INFLIGHT} event dispatches in flight; dropped {name}"
+                    );
                     continue;
                 };
                 let session = data.get("id").and_then(Value::as_str).map(str::to_owned);
                 let fallback = SessionInfo {
                     dir: data.get("dir").and_then(Value::as_str).map(str::to_owned),
-                    status: data.get("last_status").and_then(Value::as_str).map(str::to_owned),
+                    status: data
+                        .get("last_status")
+                        .and_then(Value::as_str)
+                        .map(str::to_owned),
                     ..Default::default()
                 };
                 let host = host.clone();
@@ -319,10 +344,21 @@ impl PluginHost {
     /// and every active plugin's log.
     fn note_lagged(&self, missed: u64) {
         eprintln!("plugins: event hooks fell behind the bus and missed {missed} events");
-        let ids: Vec<String> = self.0.state.lock().unwrap().plugins.iter().filter(|p| p.active()).map(|p| p.entry.id.clone()).collect();
+        let ids: Vec<String> = self
+            .0
+            .state
+            .lock()
+            .unwrap()
+            .plugins
+            .iter()
+            .filter(|p| p.active())
+            .map(|p| p.entry.id.clone())
+            .collect();
         for id in ids {
             let log = self.0.log_for(&id);
-            tokio::spawn(async move { log.append("host", &format!("missed {missed} bus events (the host fell behind); hooks were not run for them")).await });
+            tokio::spawn(async move {
+                log.append("host", &format!("missed {missed} bus events (the host fell behind); hooks were not run for them")).await
+            });
         }
     }
 
@@ -358,8 +394,16 @@ impl PluginHost {
                 enabled: p.entry.enabled,
                 active: p.active(),
                 version: p.manifest().map(|m| m.version.clone()),
-                permissions: p.manifest().map(|m| m.permission_names()).unwrap_or_default(),
-                problems: p.problems.iter().cloned().chain(p.refused.clone()).collect(),
+                permissions: p
+                    .manifest()
+                    .map(|m| m.permission_names())
+                    .unwrap_or_default(),
+                problems: p
+                    .problems
+                    .iter()
+                    .cloned()
+                    .chain(p.refused.clone())
+                    .collect(),
             })
             .collect()
     }
@@ -381,7 +425,10 @@ impl PluginHost {
                     enabled: p.entry.enabled,
                     active: p.active(),
                     version: p.manifest().map(|m| m.version.clone()),
-                    permissions: p.manifest().map(|m| m.permission_names()).unwrap_or_default(),
+                    permissions: p
+                        .manifest()
+                        .map(|m| m.permission_names())
+                        .unwrap_or_default(),
                     bindings: p.entry.bindings.clone(),
                     actions: manifest
                         .map(|m| {
@@ -424,7 +471,15 @@ impl PluginHost {
                         })
                         .unwrap_or_default(),
                     widgets: manifest
-                        .map(|m| m.widgets.iter().map(|w| WidgetSummary { id: w.id.clone(), slot: w.slot.to_protocol() }).collect())
+                        .map(|m| {
+                            m.widgets
+                                .iter()
+                                .map(|w| WidgetSummary {
+                                    id: w.id.clone(),
+                                    slot: w.slot.to_protocol(),
+                                })
+                                .collect()
+                        })
                         .unwrap_or_default(),
                     panes: manifest
                         .map(|m| {
@@ -473,7 +528,15 @@ impl PluginHost {
                     .widgets
                     .widgets(&id)
                     .into_iter()
-                    .map(|(name, w)| (name, WidgetContent { slot: w.slot, scopes: w.scopes }))
+                    .map(|(name, w)| {
+                        (
+                            name,
+                            WidgetContent {
+                                slot: w.slot,
+                                scopes: w.scopes,
+                            },
+                        )
+                    })
                     .collect();
                 let rev = self.0.widgets.rev(&id);
                 (id, PluginWidgets { rev, widgets })
@@ -484,7 +547,14 @@ impl PluginHost {
 
     /// The state of one plugin, whether or not it is active.
     pub fn plugin(&self, id: &str) -> Option<PluginState> {
-        self.0.state.lock().unwrap().plugins.iter().find(|p| p.entry.id == id).cloned()
+        self.0
+            .state
+            .lock()
+            .unwrap()
+            .plugins
+            .iter()
+            .find(|p| p.entry.id == id)
+            .cloned()
     }
 
     /// The plugin, only if it is enabled, loaded and not refused.
@@ -517,18 +587,21 @@ impl PluginHost {
     /// The answer to a client's `ui/challenge`: proof that this daemon holds
     /// the UI token, without revealing it. `None` when no token exists.
     pub fn ui_proof(&self, port: u16, nonce: &str) -> Option<String> {
-        (!self.0.ui_token.is_empty()).then(|| garage_protocol::auth::proof_for(&self.0.ui_token, port, nonce))
+        (!self.0.ui_token.is_empty())
+            .then(|| garage_protocol::auth::proof_for(&self.0.ui_token, port, nonce))
     }
 
     /// Enable or disable via the registry file, then reload (the teardown
     /// sequence runs when a plugin stops being active).
     pub fn set_enabled(&self, id: &str, enabled: bool) -> Result<(), String> {
-        PluginsFile::update(&self.0.paths, |file| match file.plugins.iter_mut().find(|e| e.id == id) {
-            Some(entry) => {
-                entry.enabled = enabled;
-                (true, Ok(()))
+        PluginsFile::update(&self.0.paths, |file| {
+            match file.plugins.iter_mut().find(|e| e.id == id) {
+                Some(entry) => {
+                    entry.enabled = enabled;
+                    (true, Ok(()))
+                }
+                None => (false, Err(format!("no plugin {id:?}"))),
             }
-            None => (false, Err(format!("no plugin {id:?}"))),
         })??;
         self.0.reload(false)
     }
@@ -543,7 +616,13 @@ impl PluginHost {
     /// move its focus as fast as a plugin can post).
     pub fn acquire_ui_action(&self, plugin: &str, now: std::time::Instant) -> Result<(), Duration> {
         let rate = f64::from(UI_ACTIONS_PER_SEC);
-        self.0.ui_action_buckets.lock().unwrap().entry(plugin.to_owned()).or_insert_with(|| Bucket::with_limits(now, rate, rate)).take(now)
+        self.0
+            .ui_action_buckets
+            .lock()
+            .unwrap()
+            .entry(plugin.to_owned())
+            .or_insert_with(|| Bucket::with_limits(now, rate, rate))
+            .take(now)
     }
 
     pub fn set_ui_slots(&self, slots: Value) {
@@ -568,20 +647,39 @@ impl PluginHost {
 
     /// `POST /api/plugins/{id}/actions/{action}/run`: queue one run and return
     /// its id at once.
-    pub async fn run_action(&self, plugin: &str, action: &str, body: &Value) -> Result<u64, RunError> {
+    pub async fn run_action(
+        &self,
+        plugin: &str,
+        action: &str,
+        body: &Value,
+    ) -> Result<u64, RunError> {
         let state = self.plugin(plugin).ok_or(RunError::UnknownPlugin)?;
         if !state.active() {
             return Err(RunError::Disabled);
         }
         let manifest = state.manifest().cloned().ok_or(RunError::Disabled)?;
         let a = manifest.action(action).ok_or(RunError::UnknownAction)?;
-        let Some(command) = &a.command else { return Err(RunError::PaneAction) };
+        let Some(command) = &a.command else {
+            return Err(RunError::PaneAction);
+        };
         let full = format!("{plugin}:{action}");
         let req = CtxRequest::from_run_body("button", &full, body);
         let trigger = trigger_name(&req.kind);
         let ctx = self.context(&state, req).await;
-        let timeout = Duration::from_secs(u64::from(a.timeout_secs.unwrap_or(DEFAULT_ACTION_TIMEOUT_SECS)));
-        let job = self.0.make_job(&state, JobKind::Action, format!("action:{action}"), full, command, timeout, trigger, ctx, None);
+        let timeout = Duration::from_secs(u64::from(
+            a.timeout_secs.unwrap_or(DEFAULT_ACTION_TIMEOUT_SECS),
+        ));
+        let job = self.0.make_job(
+            &state,
+            JobKind::Action,
+            format!("action:{action}"),
+            full,
+            command,
+            timeout,
+            trigger,
+            ctx,
+            None,
+        );
         let id = job.run_id;
         self.0.submit(plugin, job);
         Ok(id)
@@ -589,34 +687,80 @@ impl PluginHost {
 
     async fn context(&self, state: &PluginState, req: CtxRequest) -> Value {
         let state_dir = self.0.paths.data(&state.entry.id);
-        let version = state.manifest().map(|m| m.version.clone()).unwrap_or_default();
-        let facts = PluginFacts { id: &state.entry.id, version: &version, state_dir: &state_dir };
+        let version = state
+            .manifest()
+            .map(|m| m.version.clone())
+            .unwrap_or_default();
+        let facts = PluginFacts {
+            id: &state.entry.id,
+            version: &version,
+            state_dir: &state_dir,
+        };
         context::build(self.0.lookup.as_ref(), &facts, req, &self.ui_slots()).await
     }
 
     /// Queue a run for every active plugin hook listening to `name`.
-    pub async fn dispatch_event(&self, name: &str, data: Value, session: Option<String>, fallback: SessionInfo) {
-        let states: Vec<PluginState> = self.0.state.lock().unwrap().plugins.iter().filter(|p| p.active()).cloned().collect();
+    pub async fn dispatch_event(
+        &self,
+        name: &str,
+        data: Value,
+        session: Option<String>,
+        fallback: SessionInfo,
+    ) {
+        let states: Vec<PluginState> = self
+            .0
+            .state
+            .lock()
+            .unwrap()
+            .plugins
+            .iter()
+            .filter(|p| p.active())
+            .cloned()
+            .collect();
         for state in states {
-            let Some(manifest) = state.manifest().cloned() else { continue };
-            for hook in manifest.events.iter().filter(|h| h.on.as_str() == name && h.on != EventName::Timer) {
+            let Some(manifest) = state.manifest().cloned() else {
+                continue;
+            };
+            for hook in manifest
+                .events
+                .iter()
+                .filter(|h| h.on.as_str() == name && h.on != EventName::Timer)
+            {
                 let mut req = CtxRequest {
                     kind: "event".into(),
                     args: json!({}),
                     session: session.clone(),
-                    event: Some(json!({"name": name, "at": crate::state::status::now_ms(), "data": data})),
+                    event: Some(
+                        json!({"name": name, "at": crate::state::status::now_ms(), "data": data}),
+                    ),
                     fallback: fallback.clone(),
                     workspace: data
                         .get("workspace")
                         .and_then(Value::as_str)
                         .map(str::to_owned)
-                        .or_else(|| session.as_deref().map(|id| crate::backend::tmux::split_session_id(id).0)),
+                        .or_else(|| {
+                            session
+                                .as_deref()
+                                .map(|id| crate::backend::tmux::split_session_id(id).0)
+                        }),
                     ..Default::default()
                 };
                 req.action = Some(format!("event:{name}"));
                 let ctx = self.context(&state, req).await;
-                let timeout = Duration::from_secs(u64::from(hook.timeout_secs.unwrap_or(DEFAULT_EVENT_TIMEOUT_SECS)));
-                let job = self.0.make_job(&state, JobKind::Event, format!("event:{name}"), format!("event:{name}"), &hook.command, timeout, "event", ctx, None);
+                let timeout = Duration::from_secs(u64::from(
+                    hook.timeout_secs.unwrap_or(DEFAULT_EVENT_TIMEOUT_SECS),
+                ));
+                let job = self.0.make_job(
+                    &state,
+                    JobKind::Event,
+                    format!("event:{name}"),
+                    format!("event:{name}"),
+                    &hook.command,
+                    timeout,
+                    "event",
+                    ctx,
+                    None,
+                );
                 self.0.submit(&state.entry.id, job);
             }
         }
@@ -624,11 +768,21 @@ impl PluginHost {
 
     /// Runs queued or running for `plugin` (tests, status).
     pub fn queue_len(&self, plugin: &str) -> usize {
-        self.0.queues.lock().unwrap().get(plugin).map_or(0, |q| q.queue.len())
+        self.0
+            .queues
+            .lock()
+            .unwrap()
+            .get(plugin)
+            .map_or(0, |q| q.queue.len())
     }
 
     pub fn events_disabled(&self, plugin: &str) -> bool {
-        self.0.queues.lock().unwrap().get(plugin).is_some_and(|q| q.events_disabled)
+        self.0
+            .queues
+            .lock()
+            .unwrap()
+            .get(plugin)
+            .is_some_and(|q| q.events_disabled)
     }
 
     pub fn running_count(&self, plugin: &str) -> usize {
@@ -660,16 +814,26 @@ fn trigger_name(kind: &str) -> &'static str {
 
 impl Inner {
     pub(crate) fn log_for(&self, plugin: &str) -> Arc<PluginLog> {
-        self.logs.lock().unwrap().entry(plugin.to_owned()).or_insert_with(|| PluginLog::new(self.paths.log(plugin))).clone()
+        self.logs
+            .lock()
+            .unwrap()
+            .entry(plugin.to_owned())
+            .or_insert_with(|| PluginLog::new(self.paths.log(plugin)))
+            .clone()
     }
 
     fn notice(&self, plugin: &str, message: String) {
-        self.bus.publish(DaemonEvent::PluginNotice { plugin: plugin.to_owned(), message });
+        self.bus.publish(DaemonEvent::PluginNotice {
+            plugin: plugin.to_owned(),
+            message,
+        });
     }
 
     fn resolve_dir(&self, e: &Entry) -> PathBuf {
         match &e.source {
-            Source::Github { subdir, .. } => layout::github_plugin_dir(&self.paths, &e.id, subdir.as_deref()),
+            Source::Github { subdir, .. } => {
+                layout::github_plugin_dir(&self.paths, &e.id, subdir.as_deref())
+            }
             Source::Link { path } | Source::Bundled { path } => PathBuf::from(path),
         }
     }
@@ -684,8 +848,14 @@ impl Inner {
                 return Err(e);
             }
         };
-        let prev: HashMap<String, PluginState> =
-            self.state.lock().unwrap().plugins.drain(..).map(|p| (p.entry.id.clone(), p)).collect();
+        let prev: HashMap<String, PluginState> = self
+            .state
+            .lock()
+            .unwrap()
+            .plugins
+            .drain(..)
+            .map(|p| (p.entry.id.clone(), p))
+            .collect();
         let mut notices: Vec<(String, String)> = Vec::new();
         let mut next: Vec<PluginState> = Vec::new();
         // (id, granted permissions, manifest sha) to record under the lock.
@@ -701,7 +871,10 @@ impl Inner {
                 // load. Anything else (a linked or GitHub plugin, a bundled
                 // entry with an unknown or edited manifest) waits for
                 // `plugin link` or `plugin install`, which write the grant.
-                if entry.granted_permissions.is_none() && entry.is_first_party() && bundled::is_trusted(&entry.id, &good.sha) {
+                if entry.granted_permissions.is_none()
+                    && entry.is_first_party()
+                    && bundled::is_trusted(&entry.id, &good.sha)
+                {
                     let names = good.manifest.permission_names();
                     entry.granted_permissions = Some(names.clone());
                     grant = Some(names);
@@ -730,7 +903,9 @@ impl Inner {
                 // Approved just now: the token the load step skipped.
                 match ensure_token(&self.paths, &entry.id) {
                     Ok(t) => state.token = t,
-                    Err(e) => state.problems.push(format!("cannot create the plugin token: {e}")),
+                    Err(e) => state
+                        .problems
+                        .push(format!("cannot create the plugin token: {e}")),
                 }
             }
             state.entry = entry;
@@ -742,16 +917,20 @@ impl Inner {
             let saved = PluginsFile::update(&self.paths, |f| {
                 let mut dirty = false;
                 for e in f.plugins.iter_mut() {
-                    let Some((_, grant, sha)) = records.iter().find(|(id, _, _)| *id == e.id) else { continue };
+                    let Some((_, grant, sha)) = records.iter().find(|(id, _, _)| *id == e.id)
+                    else {
+                        continue;
+                    };
                     if let (Some(g), None) = (grant, &e.granted_permissions) {
                         e.granted_permissions = Some(g.clone());
                         dirty = true;
                     }
                     if let Some(sha) = sha
-                        && e.manifest_sha256.as_ref() != Some(sha) {
-                            e.manifest_sha256 = Some(sha.clone());
-                            dirty = true;
-                        }
+                        && e.manifest_sha256.as_ref() != Some(sha)
+                    {
+                        e.manifest_sha256 = Some(sha.clone());
+                        dirty = true;
+                    }
                 }
                 (dirty, ())
             });
@@ -776,8 +955,16 @@ impl Inner {
         }
 
         // What stopped being active gets the teardown sequence.
-        let was_active: Vec<&String> = prev.iter().filter(|(_, p)| p.active()).map(|(id, _)| id).collect();
-        let still_active: Vec<&str> = next.iter().filter(|p| p.active()).map(|p| p.entry.id.as_str()).collect();
+        let was_active: Vec<&String> = prev
+            .iter()
+            .filter(|(_, p)| p.active())
+            .map(|(id, _)| id)
+            .collect();
+        let still_active: Vec<&str> = next
+            .iter()
+            .filter(|p| p.active())
+            .map(|p| p.entry.id.as_str())
+            .collect();
         for id in was_active {
             if !still_active.contains(&id.as_str()) {
                 self.teardown(id);
@@ -787,24 +974,40 @@ impl Inner {
         // auto-disable of plugins whose manifest changed.
         for p in next.iter().filter(|p| p.active()) {
             let m = p.manifest().expect("active plugins have a manifest");
-            let declared: HashMap<String, _> = m.widgets.iter().map(|w| (w.id.clone(), w.slot.to_protocol())).collect();
+            let declared: HashMap<String, _> = m
+                .widgets
+                .iter()
+                .map(|w| (w.id.clone(), w.slot.to_protocol()))
+                .collect();
             self.widgets.retain_declared(&p.entry.id, &declared);
         }
         let signature = next
             .iter()
-            .map(|p| format!("{}:{}:{}:{}", p.entry.id, p.active(), p.good.as_ref().map_or("-", |g| g.sha.as_str()), p.refused.is_some()))
+            .map(|p| {
+                format!(
+                    "{}:{}:{}:{}",
+                    p.entry.id,
+                    p.active(),
+                    p.good.as_ref().map_or("-", |g| g.sha.as_str()),
+                    p.refused.is_some()
+                )
+            })
             .collect::<Vec<_>>()
             .join("|");
         let changed_ids: Vec<String> = next
             .iter()
             .filter(|p| {
                 explicit
-                    || prev.get(&p.entry.id).map(|o| (o.active(), o.good.as_ref().map(|g| g.sha.clone())))
+                    || prev
+                        .get(&p.entry.id)
+                        .map(|o| (o.active(), o.good.as_ref().map(|g| g.sha.clone())))
                         != Some((p.active(), p.good.as_ref().map(|g| g.sha.clone())))
             })
             .map(|p| p.entry.id.clone())
             .collect();
-        let has_links = next.iter().any(|p| matches!(p.entry.source, Source::Link { .. }));
+        let has_links = next
+            .iter()
+            .any(|p| matches!(p.entry.source, Source::Link { .. }));
         let (publish, notices) = {
             let mut st = self.state.lock().unwrap();
             let publish = st.signature != signature;
@@ -855,8 +1058,18 @@ impl Inner {
     /// a toast to show.
     fn load_one(&self, entry: &Entry, old: Option<&PluginState>) -> (PluginState, Option<String>) {
         let dir = self.resolve_dir(entry);
-        let stamp = std::fs::metadata(dir.join(MANIFEST_FILE)).ok().map(|m| (m.modified().unwrap_or(SystemTime::UNIX_EPOCH), m.len()));
-        let mut state = PluginState { entry: entry.clone(), dir: dir.clone(), good: None, problems: vec![], refused: None, token: String::new(), seen: stamp };
+        let stamp = std::fs::metadata(dir.join(MANIFEST_FILE))
+            .ok()
+            .map(|m| (m.modified().unwrap_or(SystemTime::UNIX_EPOCH), m.len()));
+        let mut state = PluginState {
+            entry: entry.clone(),
+            dir: dir.clone(),
+            good: None,
+            problems: vec![],
+            refused: None,
+            token: String::new(),
+            seen: stamp,
+        };
         let keep_old = |state: &mut PluginState| {
             if let Some(o) = old {
                 state.good = o.good.clone();
@@ -865,7 +1078,10 @@ impl Inner {
         let raw = match std::fs::read_to_string(dir.join(MANIFEST_FILE)) {
             Ok(r) => r,
             Err(e) => {
-                state.problems.push(format!("cannot read {}: {e}", dir.join(MANIFEST_FILE).display()));
+                state.problems.push(format!(
+                    "cannot read {}: {e}",
+                    dir.join(MANIFEST_FILE).display()
+                ));
                 keep_old(&mut state);
                 return self.finish_load(state, old);
             }
@@ -878,39 +1094,63 @@ impl Inner {
                 return self.finish_load(state, old);
             }
         };
-        let mut problems: Vec<String> = check_host(&manifest).iter().map(ToString::to_string).collect();
+        let mut problems: Vec<String> = check_host(&manifest)
+            .iter()
+            .map(ToString::to_string)
+            .collect();
         if manifest.id != entry.id {
-            problems.push(format!("id: manifest says {:?} but the registry entry is {:?}", manifest.id, entry.id));
+            problems.push(format!(
+                "id: manifest says {:?} but the registry entry is {:?}",
+                manifest.id, entry.id
+            ));
         }
         let wants_more = entry.granted_permissions.as_ref().is_some_and(|granted| {
-            manifest.permission_names().iter().any(|p| !granted.contains(p))
+            manifest
+                .permission_names()
+                .iter()
+                .any(|p| !granted.contains(p))
         });
         if wants_more {
-            problems.push(format!("plugin {} wants new permissions - run `claude-garage plugin link` to approve", entry.id));
+            problems.push(format!(
+                "plugin {} wants new permissions - run `claude-garage plugin link` to approve",
+                entry.id
+            ));
         }
         if !problems.is_empty() {
             state.problems = problems;
             keep_old(&mut state);
             return self.finish_load(state, old);
         }
-        state.good = Some(Good { sha: sha256_hex(raw.as_bytes()), manifest: Arc::new(manifest) });
+        state.good = Some(Good {
+            sha: sha256_hex(raw.as_bytes()),
+            manifest: Arc::new(manifest),
+        });
         self.finish_load(state, old)
     }
 
-    fn finish_load(&self, mut state: PluginState, old: Option<&PluginState>) -> (PluginState, Option<String>) {
+    fn finish_load(
+        &self,
+        mut state: PluginState,
+        old: Option<&PluginState>,
+    ) -> (PluginState, Option<String>) {
         // No token until the plugin is approved: an unapproved plugin cannot
         // call the API at all.
         if state.good.is_some() && state.entry.granted_permissions.is_some() {
             match ensure_token(&self.paths, &state.entry.id) {
                 Ok(t) => state.token = t,
-                Err(e) => state.problems.push(format!("cannot create the plugin token: {e}")),
+                Err(e) => state
+                    .problems
+                    .push(format!("cannot create the plugin token: {e}")),
             }
         }
         let notice = if state.problems.is_empty() {
             None
         } else if state.good.is_some() && old.is_some_and(|o| o.good.is_some()) {
             // Keeping the last good manifest: say so, once.
-            Some(format!("{} (still running the previous version)", state.problems[0]))
+            Some(format!(
+                "{} (still running the previous version)",
+                state.problems[0]
+            ))
         } else {
             None
         };
@@ -946,7 +1186,9 @@ impl Inner {
         if slot.as_ref().is_some_and(|h| !h.is_finished()) {
             return;
         }
-        let Ok(rt) = tokio::runtime::Handle::try_current() else { return };
+        let Ok(rt) = tokio::runtime::Handle::try_current() else {
+            return;
+        };
         let (inner, every) = (self.clone(), self.link_poll);
         *slot = Some(rt.spawn(async move {
             loop {
@@ -978,10 +1220,19 @@ impl Inner {
         if let Some(old) = self.timers.lock().unwrap().remove(&id) {
             old.into_iter().for_each(|h| h.abort());
         }
-        let Some(manifest) = p.manifest().filter(|_| p.active()).cloned() else { return };
-        let Ok(rt) = tokio::runtime::Handle::try_current() else { return };
+        let Some(manifest) = p.manifest().filter(|_| p.active()).cloned() else {
+            return;
+        };
+        let Ok(rt) = tokio::runtime::Handle::try_current() else {
+            return;
+        };
         let mut handles = Vec::new();
-        for (i, hook) in manifest.events.iter().enumerate().filter(|(_, h)| h.on == EventName::Timer) {
+        for (i, hook) in manifest
+            .events
+            .iter()
+            .enumerate()
+            .filter(|(_, h)| h.on == EventName::Timer)
+        {
             let every = self.timer_unit * hook.every_secs.unwrap_or(5);
             let (inner, id, busy) = (self.clone(), id.clone(), Arc::new(AtomicBool::new(false)));
             handles.push(rt.spawn(async move {
@@ -1001,9 +1252,27 @@ impl Inner {
     /// One timer firing: skipped (not queued) while the previous run of the
     /// same entry is still going.
     async fn timer_tick(self: &Arc<Self>, plugin: &str, index: usize, busy: &Arc<AtomicBool>) {
-        let Some(state) = self.state.lock().unwrap().plugins.iter().find(|p| p.entry.id == plugin && p.active()).cloned() else { return };
-        let Some(manifest) = state.manifest().cloned() else { return };
-        let Some(hook) = manifest.events.get(index).filter(|h| h.on == EventName::Timer) else { return };
+        let Some(state) = self
+            .state
+            .lock()
+            .unwrap()
+            .plugins
+            .iter()
+            .find(|p| p.entry.id == plugin && p.active())
+            .cloned()
+        else {
+            return;
+        };
+        let Some(manifest) = state.manifest().cloned() else {
+            return;
+        };
+        let Some(hook) = manifest
+            .events
+            .get(index)
+            .filter(|h| h.on == EventName::Timer)
+        else {
+            return;
+        };
         if busy.swap(true, Ordering::SeqCst) {
             return;
         }
@@ -1017,8 +1286,20 @@ impl Inner {
             ..Default::default()
         };
         let ctx = host.context(&state, req).await;
-        let timeout = Duration::from_secs(u64::from(hook.timeout_secs.unwrap_or(DEFAULT_EVENT_TIMEOUT_SECS)));
-        let job = self.make_job(&state, JobKind::Timer, "timer".into(), "timer".into(), &hook.command, timeout, "timer", ctx, Some(guard));
+        let timeout = Duration::from_secs(u64::from(
+            hook.timeout_secs.unwrap_or(DEFAULT_EVENT_TIMEOUT_SECS),
+        ));
+        let job = self.make_job(
+            &state,
+            JobKind::Timer,
+            "timer".into(),
+            "timer".into(),
+            &hook.command,
+            timeout,
+            "timer",
+            ctx,
+            Some(guard),
+        );
         self.submit(plugin, job);
     }
 
@@ -1039,7 +1320,12 @@ impl Inner {
     ) -> Job {
         let state_dir = self.paths.data(&state.entry.id);
         let platform = argv::platform_id();
-        let vars = Vars { plugin_id: &state.entry.id, plugin_dir: &state.dir, state_dir: &state_dir, platform: &platform };
+        let vars = Vars {
+            plugin_id: &state.entry.id,
+            plugin_dir: &state.dir,
+            state_dir: &state_dir,
+            platform: &platform,
+        };
         Job {
             run_id: self.run_seq.fetch_add(1, Ordering::Relaxed),
             kind,
@@ -1061,12 +1347,17 @@ impl Inner {
                 return;
             }
             if q.queue.len() >= QUEUE_CAP
-                && let Some(dropped) = q.queue.pop_front() {
-                    let (log, plugin) = (self.log_for(plugin), plugin.to_owned());
-                    tokio::spawn(async move {
-                        log.append(&format!("{} {}", dropped.run_id, dropped.label), &format!("queue full for {plugin}: dropped this run")).await;
-                    });
-                }
+                && let Some(dropped) = q.queue.pop_front()
+            {
+                let (log, plugin) = (self.log_for(plugin), plugin.to_owned());
+                tokio::spawn(async move {
+                    log.append(
+                        &format!("{} {}", dropped.run_id, dropped.label),
+                        &format!("queue full for {plugin}: dropped this run"),
+                    )
+                    .await;
+                });
+            }
             q.queue.push_back(job);
         }
         self.pump(plugin);
@@ -1076,11 +1367,15 @@ impl Inner {
         loop {
             let job = {
                 let mut queues = self.queues.lock().unwrap();
-                let Some(q) = queues.get_mut(plugin) else { return };
+                let Some(q) = queues.get_mut(plugin) else {
+                    return;
+                };
                 if q.running >= MAX_CONCURRENT {
                     return;
                 }
-                let Some(job) = q.queue.pop_front() else { return };
+                let Some(job) = q.queue.pop_front() else {
+                    return;
+                };
                 q.running += 1;
                 job
             };
@@ -1095,7 +1390,14 @@ impl Inner {
 
     async fn execute(self: &Arc<Self>, plugin: &str, job: &Job) -> Option<RunOutcome> {
         // A plugin disabled while its run waited never starts.
-        let state = self.state.lock().unwrap().plugins.iter().find(|p| p.entry.id == plugin && p.active()).cloned()?;
+        let state = self
+            .state
+            .lock()
+            .unwrap()
+            .plugins
+            .iter()
+            .find(|p| p.entry.id == plugin && p.active())
+            .cloned()?;
         let (env, ctx_file) = match self.run_env(&state, job.trigger, &job.ctx) {
             Ok(v) => v,
             Err(e) => return Some(RunOutcome::SpawnFailed(e)),
@@ -1123,19 +1425,37 @@ impl Inner {
     /// The environment every plugin process gets (actions, hooks and panes),
     /// with the context inline or, above [`CONTEXT_ENV_MAX`], as a private
     /// file whose path is returned for the caller to remove.
-    fn run_env(&self, state: &PluginState, trigger: &str, ctx_value: &Value) -> Result<RunEnv, String> {
+    fn run_env(
+        &self,
+        state: &PluginState,
+        trigger: &str,
+        ctx_value: &Value,
+    ) -> Result<RunEnv, String> {
         let plugin = &state.entry.id;
-        let version = state.manifest().map(|m| m.version.clone()).unwrap_or_default();
+        let version = state
+            .manifest()
+            .map(|m| m.version.clone())
+            .unwrap_or_default();
         let data_dir = self.paths.data(plugin);
-        std::fs::create_dir_all(&data_dir).map_err(|e| format!("cannot create {}: {e}", data_dir.display()))?;
+        std::fs::create_dir_all(&data_dir)
+            .map_err(|e| format!("cannot create {}: {e}", data_dir.display()))?;
         let ctx = serde_json::to_string(ctx_value).unwrap_or_else(|_| "{}".into());
         let mut env = vec![
-            ("GARAGE_API".to_owned(), format!("http://127.0.0.1:{}", self.port)),
+            (
+                "GARAGE_API".to_owned(),
+                format!("http://127.0.0.1:{}", self.port),
+            ),
             ("GARAGE_API_VERSION".into(), "1".into()),
             ("GARAGE_PLUGIN_ID".into(), plugin.to_owned()),
             ("GARAGE_PLUGIN_VERSION".into(), version),
-            ("GARAGE_PLUGIN_DIR".into(), state.dir.to_string_lossy().into_owned()),
-            ("GARAGE_PLUGIN_STATE_DIR".into(), data_dir.to_string_lossy().into_owned()),
+            (
+                "GARAGE_PLUGIN_DIR".into(),
+                state.dir.to_string_lossy().into_owned(),
+            ),
+            (
+                "GARAGE_PLUGIN_STATE_DIR".into(),
+                data_dir.to_string_lossy().into_owned(),
+            ),
             ("GARAGE_PLUGIN_TOKEN".into(), state.token.clone()),
             ("GARAGE_TRIGGER".into(), trigger.to_owned()),
         ];
@@ -1144,10 +1464,18 @@ impl Inner {
             env.push(("GARAGE_CONTEXT".into(), ctx));
         } else {
             let dir = self.paths.tmp();
-            let path = dir.join(format!("{plugin}-{}.json", self.run_seq.fetch_add(1, Ordering::Relaxed)));
+            let path = dir.join(format!(
+                "{plugin}-{}.json",
+                self.run_seq.fetch_add(1, Ordering::Relaxed)
+            ));
             // The context names sessions and directories: owner-only.
-            create_private_dir(&dir).and_then(|_| write_private(&path, &ctx)).map_err(|e| format!("cannot write the context file: {e}"))?;
-            env.push(("GARAGE_CONTEXT_FILE".into(), path.to_string_lossy().into_owned()));
+            create_private_dir(&dir)
+                .and_then(|_| write_private(&path, &ctx))
+                .map_err(|e| format!("cannot write the context file: {e}"))?;
+            env.push((
+                "GARAGE_CONTEXT_FILE".into(),
+                path.to_string_lossy().into_owned(),
+            ));
             ctx_file = Some(path);
         }
         Ok((env, ctx_file))
@@ -1157,7 +1485,12 @@ impl Inner {
     fn argv_for(&self, state: &PluginState, command: &[String]) -> Vec<String> {
         let state_dir = self.paths.data(&state.entry.id);
         let platform = argv::platform_id();
-        let vars = Vars { plugin_id: &state.entry.id, plugin_dir: &state.dir, state_dir: &state_dir, platform: &platform };
+        let vars = Vars {
+            plugin_id: &state.entry.id,
+            plugin_dir: &state.dir,
+            state_dir: &state_dir,
+            platform: &platform,
+        };
         argv::substitute(command, &vars)
     }
 
@@ -1180,7 +1513,13 @@ impl Inner {
                 }
             }
         }
-        let still_active = self.state.lock().unwrap().plugins.iter().any(|p| p.entry.id == plugin && p.active());
+        let still_active = self
+            .state
+            .lock()
+            .unwrap()
+            .plugins
+            .iter()
+            .any(|p| p.entry.id == plugin && p.active());
         let Some(outcome) = outcome else { return };
         if !outcome.is_success() && still_active {
             self.bus.publish(DaemonEvent::PluginRunFailed {
@@ -1190,7 +1529,9 @@ impl Inner {
             });
         }
         if disabled_now {
-            let msg = format!("{plugin}: event hooks failed {FAIL_LIMIT} times in a row and are off until reload; see `claude-garage plugin logs {plugin}`");
+            let msg = format!(
+                "{plugin}: event hooks failed {FAIL_LIMIT} times in a row and are off until reload; see `claude-garage plugin logs {plugin}`"
+            );
             let (log, line) = (self.log_for(plugin), msg.clone());
             tokio::spawn(async move { log.append("host", &line).await });
             self.notice(plugin, msg);

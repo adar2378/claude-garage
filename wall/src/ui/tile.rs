@@ -64,20 +64,34 @@ pub struct Gutter<'a> {
 /// when it is inside the visible `height` rows.
 pub fn gutter_screen_row(row: u64, top_abs: i64, height: u16) -> Option<u16> {
     let offset = i64::try_from(row).ok()?.checked_sub(top_abs)?;
-    (0..i64::from(height)).contains(&offset).then_some(offset as u16)
+    (0..i64::from(height))
+        .contains(&offset)
+        .then_some(offset as u16)
 }
 
 /// Draw the gutter markers into the tile's left border column (no layout
 /// change, so the PTY never resizes as markers come and go) and return their
 /// click regions. A row holds one marker: the first by priority wins.
-fn render_gutter(buf: &mut Buffer, rect: Rect, v: &TileView, gutter: &Gutter) -> Vec<SlotClickRegion> {
+fn render_gutter(
+    buf: &mut Buffer,
+    rect: Rect,
+    v: &TileView,
+    gutter: &Gutter,
+) -> Vec<SlotClickRegion> {
     let height = rect.height.saturating_sub(2);
-    let mut items: Vec<&SlotItem> = gutter.items.iter().filter(|i| i.gutter_row.is_some()).collect();
+    let mut items: Vec<&SlotItem> = gutter
+        .items
+        .iter()
+        .filter(|i| i.gutter_row.is_some())
+        .collect();
     items.sort_by_key(|i| std::cmp::Reverse(i.priority)); // stable: ties keep provider order
     let mut taken: Vec<u16> = Vec::new();
     let mut regions = Vec::new();
     for item in items {
-        let Some(row) = item.gutter_row.and_then(|r| gutter_screen_row(r, gutter.top_abs, height)) else {
+        let Some(row) = item
+            .gutter_row
+            .and_then(|r| gutter_screen_row(r, gutter.top_abs, height))
+        else {
             continue;
         };
         if taken.contains(&row) {
@@ -86,7 +100,9 @@ fn render_gutter(buf: &mut Buffer, rect: Rect, v: &TileView, gutter: &Gutter) ->
         taken.push(row);
         let y = rect.y + 1 + row;
         // One column: the first character of the item's text, in its style.
-        let Some(span) = item.text.iter().find(|s| !s.content.is_empty()) else { continue };
+        let Some(span) = item.text.iter().find(|s| !s.content.is_empty()) else {
+            continue;
+        };
         let glyph: String = span.content.chars().take(1).collect();
         buf.set_string(rect.x, y, glyph, span.style);
         if let Some(target) = item.on_click.clone() {
@@ -253,8 +269,7 @@ pub fn title_parts(
 
     let glyph = format!(" {} ", glyph_for(&s.status));
     let glyph_w = glyph.chars().count();
-    let fixed: usize =
-        glyph.chars().count() + tail.iter().map(Span::width).sum::<usize>() + 1; // +1 trailing space
+    let fixed: usize = glyph.chars().count() + tail.iter().map(Span::width).sum::<usize>() + 1; // +1 trailing space
     let avail = (width as usize).saturating_sub(fixed);
     let name = s.display_name();
     let mut fitted = fit_subtitle(name, avail);
@@ -490,7 +505,10 @@ mod tests {
         v.fade_done = true;
         let faded = title_line(&v, 40).spans[0].style.fg;
         assert_eq!(hard, Some(colors::GREEN));
-        assert!(matches!(faded, Some(Color::Rgb(..))), "mid-fade is a stepped tone");
+        assert!(
+            matches!(faded, Some(Color::Rgb(..))),
+            "mid-fade is a stepped tone"
+        );
         let working = session("working");
         let mut w = view(&working);
         let before = title_line(&w, 40);
@@ -505,7 +523,11 @@ mod tests {
         v.engaged = true;
         let (color, border_type) = border_for(&v);
         assert_eq!(color, colors::AMBER);
-        assert_eq!(border_type, BorderType::Thick, "engaged still bolds the frame");
+        assert_eq!(
+            border_type,
+            BorderType::Thick,
+            "engaged still bolds the frame"
+        );
     }
 
     #[test]
@@ -608,7 +630,10 @@ mod tests {
         let text = line.to_string();
         assert!(!text.contains("anything"));
         assert!(text.contains("lbl"), "{text}");
-        assert!(text.contains("a-genuinely-quite-long-branch-name-here"), "{text}");
+        assert!(
+            text.contains("a-genuinely-quite-long-branch-name-here"),
+            "{text}"
+        );
     }
 
     // ── p24: clickable tile.title.right items ───────────────────────────
@@ -617,7 +642,9 @@ mod tests {
         let mut slots = SlotRegistry::core();
         slots.register(SlotId::TileTitleRight, |_: &slots::SlotCtx| {
             vec![SlotItem {
-                on_click: Some(ClickTarget::new(crate::actions::ids::SESSION_CLOSE).from_plugin("tiles")),
+                on_click: Some(
+                    ClickTarget::new(crate::actions::ids::SESSION_CLOSE).from_plugin("tiles"),
+                ),
                 ..SlotItem::new(vec![Span::raw(" [x]")], 5)
             }]
         });
@@ -626,13 +653,18 @@ mod tests {
 
     /// The text the buffer shows under `rect`.
     fn cells(buf: &Buffer, rect: Rect) -> String {
-        (rect.x..rect.x + rect.width).map(|x| buf[(x, rect.y)].symbol()).collect()
+        (rect.x..rect.x + rect.width)
+            .map(|x| buf[(x, rect.y)].symbol())
+            .collect()
     }
 
     #[test]
     fn a_title_button_region_covers_exactly_the_columns_its_text_landed_on() {
         let slots = button_slots();
-        for (title, width) in [(None, 50u16), (Some("a long title that has to be cut short"), 44)] {
+        for (title, width) in [
+            (None, 50u16),
+            (Some("a long title that has to be cut short"), 44),
+        ] {
             let mut s = session("working");
             s.branch = Some("feat/x".into());
             s.title = title.map(str::to_owned);
@@ -649,7 +681,10 @@ mod tests {
             // region must clip with it and never claim columns the paint did
             // not reach.
             let shown = cells(&buf, region.rect);
-            assert!(" [x]".starts_with(&shown) && shown.len() >= 3, "{title:?}: {shown:?}");
+            assert!(
+                " [x]".starts_with(&shown) && shown.len() >= 3,
+                "{title:?}: {shown:?}"
+            );
             if title.is_none() {
                 assert_eq!(shown, " [x]");
             }
@@ -671,7 +706,10 @@ mod tests {
         let parser = vt100::Parser::new(1, 10, 0);
         let regions = render_tile(&mut buf, rect, &v, Some(parser.screen()));
         for r in &regions {
-            assert!(r.rect.right() < rect.right(), "never over the right border: {r:?}");
+            assert!(
+                r.rect.right() < rect.right(),
+                "never over the right border: {r:?}"
+            );
         }
     }
 
@@ -681,7 +719,9 @@ mod tests {
         let v = view(&s);
         let mut buf = Buffer::empty(Rect::new(0, 0, 40, 4));
         let parser = vt100::Parser::new(2, 38, 0);
-        assert!(render_tile(&mut buf, Rect::new(0, 0, 40, 4), &v, Some(parser.screen())).is_empty());
+        assert!(
+            render_tile(&mut buf, Rect::new(0, 0, 40, 4), &v, Some(parser.screen())).is_empty()
+        );
     }
 
     // ── p24: tile.gutter ────────────────────────────────────────────────
@@ -693,7 +733,11 @@ mod tests {
         assert_eq!(gutter_screen_row(109, 100, 10), Some(9));
         assert_eq!(gutter_screen_row(99, 100, 10), None, "scrolled out above");
         assert_eq!(gutter_screen_row(110, 100, 10), None, "below the view");
-        assert_eq!(gutter_screen_row(0, 0, 10), Some(0), "a view at the very top of history");
+        assert_eq!(
+            gutter_screen_row(0, 0, 10),
+            Some(0),
+            "a view at the very top of history"
+        );
         assert_eq!(gutter_screen_row(5, 100, 0), None, "no body rows");
         assert_eq!(gutter_screen_row(u64::MAX, 0, 10), None, "no overflow");
     }
@@ -703,7 +747,13 @@ mod tests {
             gutter_row: Some(row),
             on_click: clickable
                 .then(|| ClickTarget::new(crate::actions::ids::SESSION_FOCUS).from_plugin("turns")),
-            ..SlotItem::new(vec![Span::styled(glyph.to_owned(), Style::default().fg(colors::AMBER))], priority)
+            ..SlotItem::new(
+                vec![Span::styled(
+                    glyph.to_owned(),
+                    Style::default().fg(colors::AMBER),
+                )],
+                priority,
+            )
         }
     }
 
@@ -721,7 +771,11 @@ mod tests {
 
     #[test]
     fn gutter_markers_land_on_their_rows_in_the_left_border_column() {
-        let items = [marker(102, "▌", 1, true), marker(104, "◆", 1, false), marker(50, "x", 1, true)];
+        let items = [
+            marker(102, "▌", 1, true),
+            marker(104, "◆", 1, false),
+            marker(50, "x", 1, true),
+        ];
         let (buf, regions) = render_with_gutter(&items, 100);
         // Tile at x=2,y=1; body starts at y=2. Row 102 -> body row 2 -> y=4.
         assert_eq!(buf[(2, 4)].symbol(), "▌");
@@ -741,17 +795,31 @@ mod tests {
         let (_, at_100) = render_with_gutter(&items, 100);
         let (_, at_101) = render_with_gutter(&items, 101);
         assert_eq!(at_100[0].rect.y, 4);
-        assert_eq!(at_101[0].rect.y, 3, "scrolled one line: the marker moves up one row");
+        assert_eq!(
+            at_101[0].rect.y, 3,
+            "scrolled one line: the marker moves up one row"
+        );
         let (buf, scrolled_out) = render_with_gutter(&items, 103);
         assert!(scrolled_out.is_empty());
-        assert!((2..8).all(|y| buf[(2, y)].symbol() == "│"), "no marker drawn");
+        assert!(
+            (2..8).all(|y| buf[(2, y)].symbol() == "│"),
+            "no marker drawn"
+        );
     }
 
     #[test]
     fn one_marker_per_row_the_higher_priority_wins() {
-        let items = [marker(101, "a", 1, false), marker(101, "B", 9, false), marker(101, "c", 9, false)];
+        let items = [
+            marker(101, "a", 1, false),
+            marker(101, "B", 9, false),
+            marker(101, "c", 9, false),
+        ];
         let (buf, _) = render_with_gutter(&items, 100);
-        assert_eq!(buf[(2, 3)].symbol(), "B", "highest priority, ties keep the earlier");
+        assert_eq!(
+            buf[(2, 3)].symbol(),
+            "B",
+            "highest priority, ties keep the earlier"
+        );
     }
 
     #[test]
@@ -775,7 +843,10 @@ mod tests {
         let s = session("restorable");
         let items = [marker(100, "▌", 1, true)];
         let mut v = view(&s);
-        v.gutter = Some(Gutter { items: &items, top_abs: 100 });
+        v.gutter = Some(Gutter {
+            items: &items,
+            top_abs: 100,
+        });
         let mut buf = Buffer::empty(Rect::new(0, 0, 30, 10));
         assert!(render_tile(&mut buf, Rect::new(2, 1, 20, 8), &v, None).is_empty());
     }
@@ -794,7 +865,11 @@ mod tests {
         assert_eq!(context_segments(0), 0, "0% shows every segment empty");
         assert_eq!(context_segments(1), 1, "min 1 segment once pct > 0");
         assert_eq!(context_segments(25), 1);
-        assert_eq!(context_segments(79), 4, "ceil(79/25) == 4, same as 80/88/100");
+        assert_eq!(
+            context_segments(79),
+            4,
+            "ceil(79/25) == 4, same as 80/88/100"
+        );
         assert_eq!(context_segments(80), 4);
         assert_eq!(context_segments(100), 4);
     }
@@ -913,7 +988,12 @@ mod tests {
         parser.process(b"\x1b[1;1H");
         let mut buf = Buffer::empty(Rect::new(0, 0, 22, 7));
         render_tile(&mut buf, Rect::new(0, 0, 22, 7), &v, Some(parser.screen()));
-        assert!(buf[(1, 1)].style().add_modifier.contains(Modifier::REVERSED));
+        assert!(
+            buf[(1, 1)]
+                .style()
+                .add_modifier
+                .contains(Modifier::REVERSED)
+        );
 
         // Unengaged: no inverse cell anywhere.
         v.engaged = false;
@@ -932,10 +1012,7 @@ mod tests {
         let s = session("working");
         let mut v = view(&s);
         v.dead_reason = Some("attach exited (code 1) — gave up after 4 reattach attempts");
-        assert_eq!(
-            placeholder_for(&v, false).unwrap().0,
-            "✕ attach dead"
-        );
+        assert_eq!(placeholder_for(&v, false).unwrap().0, "✕ attach dead");
         v.dead_reason = None;
         assert_eq!(
             placeholder_for(&v, false),

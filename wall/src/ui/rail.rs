@@ -155,7 +155,11 @@ pub fn rail_render(
 /// The `rail.header` items above a group's workspace row, one rail row each.
 /// The renderer and the click router both ask here, so a plugin's header row
 /// can never shift clicks.
-pub fn header_items(state: &WallState, slots: &SlotRegistry, group: &WorkspaceGroup) -> Vec<SlotItem> {
+pub fn header_items(
+    state: &WallState,
+    slots: &SlotRegistry,
+    group: &WorkspaceGroup,
+) -> Vec<SlotItem> {
     let ctx = SlotCtx {
         state: Some(state),
         group: Some(group),
@@ -167,7 +171,11 @@ pub fn header_items(state: &WallState, slots: &SlotRegistry, group: &WorkspaceGr
 /// The `rail.extra_rows` items under a group's sessions, one rail row each.
 /// The renderer and the click router both ask here, so the row maths cannot
 /// drift.
-pub fn extra_row_items(state: &WallState, slots: &SlotRegistry, group: &WorkspaceGroup) -> Vec<SlotItem> {
+pub fn extra_row_items(
+    state: &WallState,
+    slots: &SlotRegistry,
+    group: &WorkspaceGroup,
+) -> Vec<SlotItem> {
     let ctx = SlotCtx {
         state: Some(state),
         group: Some(group),
@@ -373,7 +381,10 @@ mod tests {
         let rows = texts(&rail_lines(store.state(), &SlotRegistry::core(), 60_000));
         assert_eq!(rows.len(), 5);
         assert_eq!(rows[0], " 1 alpha");
-        assert_eq!(rows[1], " ▸ ◐ one 1:00", "focused session carries the marker");
+        assert_eq!(
+            rows[1], " ▸ ◐ one 1:00",
+            "focused session carries the marker"
+        );
         assert_eq!(rows[2], "   ○ two", "reserved marker column on every row");
         assert_eq!(rows[3], " 2 beta");
         assert_eq!(rows[4], "   ○ other");
@@ -410,12 +421,24 @@ mod tests {
     fn non_gridded_sessions_render_faint() {
         let mut store = WallStore::new();
         store.workspaces_fetched(vec![ws("a")]);
-        store.sessions_fetched((1..=7).map(|i| si("a", &format!("s{i}"), "working", Some(0))).collect());
+        store.sessions_fetched(
+            (1..=7)
+                .map(|i| si("a", &format!("s{i}"), "working", Some(0)))
+                .collect(),
+        );
         let lines = rail_lines(store.state(), &SlotRegistry::core(), 0);
         let overflow = &lines[7]; // header + 6 gridded rows before it
         assert!(overflow.to_string().contains("s7"));
-        assert_eq!(overflow.spans[1].style.fg, Some(colors::FAINT), "glyph dimmed");
-        assert_eq!(overflow.spans[2].style.fg, Some(colors::FAINT), "label dimmed");
+        assert_eq!(
+            overflow.spans[1].style.fg,
+            Some(colors::FAINT),
+            "glyph dimmed"
+        );
+        assert_eq!(
+            overflow.spans[2].style.fg,
+            Some(colors::FAINT),
+            "label dimmed"
+        );
     }
 
     #[test]
@@ -438,7 +461,10 @@ mod tests {
         use crate::actions::ids;
         let mut store = WallStore::new();
         store.workspaces_fetched(vec![ws("alpha"), ws("beta")]);
-        store.sessions_fetched(vec![si("alpha", "one", "idle", None), si("beta", "two", "idle", None)]);
+        store.sessions_fetched(vec![
+            si("alpha", "one", "idle", None),
+            si("beta", "two", "idle", None),
+        ]);
         let mut slots = SlotRegistry::core();
         slots.register(SlotId::RailRow, |ctx: &SlotCtx| {
             let s = ctx.session.unwrap();
@@ -462,9 +488,16 @@ mod tests {
         let regions = render_rail(&mut buf, rect, store.state(), &slots, 0);
         // rows: 0 alpha, 1 one, 2 [+], 3 beta, 4 two
         let text = |r: &SlotClickRegion| -> String {
-            (r.rect.x..r.rect.x + r.rect.width).map(|x| buf[(x, r.rect.y)].symbol()).collect()
+            (r.rect.x..r.rect.x + r.rect.width)
+                .map(|x| buf[(x, r.rect.y)].symbol())
+                .collect()
         };
-        let by_slot = |slot: SlotId| regions.iter().filter(move |r| r.slot == slot).collect::<Vec<_>>();
+        let by_slot = |slot: SlotId| {
+            regions
+                .iter()
+                .filter(move |r| r.slot == slot)
+                .collect::<Vec<_>>()
+        };
         let rows = by_slot(SlotId::RailRow);
         assert_eq!(rows.len(), 2);
         assert_eq!(text(rows[0]), " x3");
@@ -479,7 +512,10 @@ mod tests {
         assert_eq!(header[0].session, None);
         // The painted rows are exactly what rail_lines says, plus the item.
         let lines = texts(&rail_lines(store.state(), &slots, 0));
-        assert_eq!(lines[1], " ▸ ○ one x3", "focused session carries the marker");
+        assert_eq!(
+            lines[1], " ▸ ○ one x3",
+            "focused session carries the marker"
+        );
     }
 
     #[test]
@@ -493,7 +529,9 @@ mod tests {
         slots.register(SlotId::RailExtraRows, |_: &SlotCtx| {
             vec![SlotItem {
                 on_click: Some(
-                    ClickTarget::new(ids::SESSION_RESTORE).from_plugin("closed").about_session("garage/alpha/gone"),
+                    ClickTarget::new(ids::SESSION_RESTORE)
+                        .from_plugin("closed")
+                        .about_session("garage/alpha/gone"),
                 ),
                 row_style: Some(Style::default().bg(Color::Indexed(236))),
                 ..SlotItem::new(vec![Span::raw(" ↺ gone")], 1)
@@ -505,12 +543,24 @@ mod tests {
         // rows: 0 alpha, 1 one, 2 extra
         assert_eq!(regions.len(), 1);
         let r = &regions[0];
-        assert_eq!((r.rect.y, r.rect.x, r.rect.width), (2, 0, 19), "the whole inner row");
-        assert_eq!(r.session.as_deref(), Some("garage/alpha/gone"), "the item's own session, not a row's");
+        assert_eq!(
+            (r.rect.y, r.rect.x, r.rect.width),
+            (2, 0, 19),
+            "the whole inner row"
+        );
+        assert_eq!(
+            r.session.as_deref(),
+            Some("garage/alpha/gone"),
+            "the item's own session, not a row's"
+        );
         assert_eq!(r.workspace.as_deref(), Some("alpha"));
         assert_eq!(r.slot, SlotId::RailExtraRows);
         assert_eq!(buf[(1, 2)].symbol(), "↺");
-        assert_eq!(buf[(15, 2)].bg, Color::Indexed(236), "row style reaches past the text");
+        assert_eq!(
+            buf[(15, 2)].bg,
+            Color::Indexed(236),
+            "row style reaches past the text"
+        );
         assert_eq!(buf[(1, 1)].bg, Color::Reset, "other rows untouched");
     }
 

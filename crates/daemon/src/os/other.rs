@@ -6,7 +6,7 @@ use std::path::PathBuf;
 
 use async_trait::async_trait;
 
-use super::{spawn_detached, Os, OsError};
+use super::{Os, OsError, spawn_detached};
 
 pub struct OtherOs;
 

@@ -169,7 +169,11 @@ mod armed_action_tests {
         let mut armed = ArmedAction::default();
         armed.arm("a", 1000);
         assert!(!armed.confirm("b", 1100), "another target");
-        assert_eq!(armed.armed_id(), Some("a"), "a wrong confirm leaves the arm");
+        assert_eq!(
+            armed.armed_id(),
+            Some("a"),
+            "a wrong confirm leaves the arm"
+        );
         assert!(!armed.confirm("a", 4001), "expired");
         armed.arm("a", 5000);
         assert!(armed.confirm("a", 8000), "the window edge still confirms");
@@ -242,6 +246,9 @@ mod armed_close_tests {
         let mut armed = ArmedClose::default();
         armed.press(A, 1000);
         assert!(armed.press(A, 1500));
-        assert!(!armed.press(A, 1600), "the third x starts a new arming cycle");
+        assert!(
+            !armed.press(A, 1600),
+            "the third x starts a new arming cycle"
+        );
     }
 }

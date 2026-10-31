@@ -3,19 +3,19 @@
 
 use std::path::Path;
 
+use axum::Json;
 use axum::body::Bytes;
 use axum::extract::{Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use axum::Json;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use super::hooks::{install_error, internal, parse_body, query_token};
 use crate::error::error_response;
-use crate::install::{read_settings_or_refuse, write_settings_atomic, InstallError};
+use crate::install::{InstallError, read_settings_or_refuse, write_settings_atomic};
 use crate::security::token_matches;
-use crate::state::context::clamp_percentage;
 use crate::state::AppState;
+use crate::state::context::clamp_percentage;
 
 /// Single-quote a string for safe embedding in a POSIX sh script: close the
 /// quote, emit an escaped literal quote, reopen it.
@@ -322,10 +322,12 @@ mod tests {
         let (s, body) = h.call("GET", "/api/statusline/snippet", None).await;
         assert_eq!(s, StatusCode::OK);
         assert_eq!(body["statusLine"]["type"], "command");
-        assert!(body["statusLine"]["command"]
-            .as_str()
-            .unwrap()
-            .contains("garage-statusline.sh"));
+        assert!(
+            body["statusLine"]["command"]
+                .as_str()
+                .unwrap()
+                .contains("garage-statusline.sh")
+        );
         let script = body["script"].as_str().unwrap();
         assert!(script.contains("curl"));
         assert!(script.contains(&format!("api/statusline/claude?token={TOKEN}")));
@@ -402,10 +404,12 @@ mod tests {
         let settings: Value =
             serde_json::from_str(&std::fs::read_to_string(&settings_path).unwrap()).unwrap();
         assert_eq!(settings["statusLine"]["type"], "command");
-        assert!(settings["statusLine"]["command"]
-            .as_str()
-            .unwrap()
-            .contains("garage-statusline.sh"));
+        assert!(
+            settings["statusLine"]["command"]
+                .as_str()
+                .unwrap()
+                .contains("garage-statusline.sh")
+        );
         let script = std::fs::read_to_string(&wrapper).unwrap();
         assert!(script.contains("curl") && script.contains("api/statusline/claude?token="));
         assert!(crate::test_support::is_executable(&wrapper), "executable");
@@ -444,16 +448,20 @@ mod tests {
             (json!(false), json!(true))
         );
         let backup = body["backup"].as_str().expect("a backup must be taken");
-        assert!(std::fs::read_to_string(backup)
-            .unwrap()
-            .contains("fake-original.sh"));
+        assert!(
+            std::fs::read_to_string(backup)
+                .unwrap()
+                .contains("fake-original.sh")
+        );
         let settings: Value =
             serde_json::from_str(&std::fs::read_to_string(&settings_path).unwrap()).unwrap();
         assert_eq!(settings["model"], "opus");
-        assert!(settings["statusLine"]["command"]
-            .as_str()
-            .unwrap()
-            .contains("garage-statusline.sh"));
+        assert!(
+            settings["statusLine"]["command"]
+                .as_str()
+                .unwrap()
+                .contains("garage-statusline.sh")
+        );
         // The background curl targets a port nothing listens on and is silenced.
         let original_alone = run_with_stdin(&original, "");
         let wrapped = run_with_stdin(

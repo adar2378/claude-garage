@@ -26,7 +26,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize};
+use portable_pty::{Child, CommandBuilder, MasterPty, PtySize, native_pty_system};
 
 use crate::attach::Target;
 
@@ -79,13 +79,18 @@ impl TileClient {
     ) -> std::io::Result<TileClient> {
         let argv = match target {
             Target::Tmux { socket } => {
-                if socket.as_deref().is_some_and(|s| !garage_protocol::is_valid_tmux_socket(s)) {
+                if socket
+                    .as_deref()
+                    .is_some_and(|s| !garage_protocol::is_valid_tmux_socket(s))
+                {
                     return Err(other("refusing an invalid tmux socket name"));
                 }
                 target.attach_argv(session)
             }
             Target::Socket { addr, token } => {
-                return Self::new_host(session, target, addr, token, cols, rows, scrollback, on_output);
+                return Self::new_host(
+                    session, target, addr, token, cols, rows, scrollback, on_output,
+                );
             }
         };
         let pty = native_pty_system();
@@ -217,7 +222,8 @@ impl TileClient {
             let mut p = Vec::with_capacity(4);
             p.extend_from_slice(&cols.to_le_bytes());
             p.extend_from_slice(&rows.to_le_bytes());
-            let _ = garage_host::proto::write_frame(&mut host.stream, garage_host::proto::F_RESIZE, &p);
+            let _ =
+                garage_host::proto::write_frame(&mut host.stream, garage_host::proto::F_RESIZE, &p);
         }
         if let Some(master) = self.master.as_ref() {
             let _ = master.resize(PtySize {
@@ -227,7 +233,11 @@ impl TileClient {
                 pixel_height: 0,
             });
         }
-        self.parser.lock().unwrap().screen_mut().set_size(rows, cols);
+        self.parser
+            .lock()
+            .unwrap()
+            .screen_mut()
+            .set_size(rows, cols);
     }
 
     /// Non-blocking exit poll for the reattach loop (spec tui-wall "Tile PTY
@@ -238,7 +248,9 @@ impl TileClient {
         if let Some(host) = self.host.as_ref() {
             return host.exited.load(Ordering::SeqCst).then_some(0);
         }
-        let Some(child) = self.child.as_mut() else { return Some(1) };
+        let Some(child) = self.child.as_mut() else {
+            return Some(1);
+        };
         match child.try_wait() {
             Ok(Some(status)) => Some(status.exit_code()),
             Ok(None) => None,
@@ -249,7 +261,11 @@ impl TileClient {
     /// Verbatim byte passthrough into the attach client (engaged typing).
     pub fn write_bytes(&mut self, bytes: &[u8]) -> std::io::Result<()> {
         if let Some(host) = self.host.as_mut() {
-            return garage_host::proto::write_frame(&mut host.stream, garage_host::proto::F_INPUT, bytes);
+            return garage_host::proto::write_frame(
+                &mut host.stream,
+                garage_host::proto::F_INPUT,
+                bytes,
+            );
         }
         let Some(writer) = self.writer.as_mut() else {
             return Ok(());
@@ -375,9 +391,13 @@ mod host_tests {
             hosts_dir: hosts.path().to_path_buf(),
             cols: 60,
             rows: 6,
-            command: ["sh", "-c", "i=0; while [ $i -lt 20 ]; do echo old-$i; i=$((i+1)); done; echo hello-tile; cat"]
-                .map(String::from)
-                .to_vec(),
+            command: [
+                "sh",
+                "-c",
+                "i=0; while [ $i -lt 20 ]; do echo old-$i; i=$((i+1)); done; echo hello-tile; cat",
+            ]
+            .map(String::from)
+            .to_vec(),
         };
         let host = std::thread::spawn(move || server::run(opts));
         let mut entry = None;
@@ -386,7 +406,10 @@ mod host_tests {
             entry.is_some()
         });
         let e = entry.unwrap();
-        let spec = Target::Socket { addr: e.addr(), token: e.token.clone() };
+        let spec = Target::Socket {
+            addr: e.addr(),
+            token: e.token.clone(),
+        };
 
         let mut tile = TileClient::new("garage/ws/t", &spec, 60, 6, 0, || {}).unwrap();
         eventually("the snapshot", || screen_text(&tile).contains("hello-tile"));
@@ -404,22 +427,38 @@ mod host_tests {
         let hist = history_size(&spec, "garage/ws/t").unwrap();
         assert!(hist >= 10, "history {hist}");
         let top = capture_frozen(&spec, "garage/ws/t", 0, 70, 3).unwrap();
-        assert!(top.screen().contents().contains("old-0"), "{:?}", top.screen().contents());
+        assert!(
+            top.screen().contents().contains("old-0"),
+            "{:?}",
+            top.screen().contents()
+        );
 
         proto::shutdown(&e.addr(), &e.token).unwrap();
-        eventually("the tile to notice the host ended", || tile.poll_exited().is_some());
+        eventually("the tile to notice the host ended", || {
+            tile.poll_exited().is_some()
+        });
         tile.close(); // no tmux to detach from: must not hang or panic
         host.join().unwrap().unwrap();
     }
 
     #[test]
     fn a_dead_socket_or_an_empty_argv_is_an_error_not_a_panic() {
-        let gone = Target::Socket { addr: "127.0.0.1:1".into(), token: "t".repeat(32) };
+        let gone = Target::Socket {
+            addr: "127.0.0.1:1".into(),
+            token: "t".repeat(32),
+        };
         assert!(TileClient::new("s", &gone, 80, 24, 0, || {}).is_err());
-        let off_loopback = Target::Socket { addr: "203.0.113.9:80".into(), token: "t".repeat(32) };
-        let e = TileClient::new("s", &off_loopback, 80, 24, 0, || {}).err().unwrap();
+        let off_loopback = Target::Socket {
+            addr: "203.0.113.9:80".into(),
+            token: "t".repeat(32),
+        };
+        let e = TileClient::new("s", &off_loopback, 80, 24, 0, || {})
+            .err()
+            .unwrap();
         assert!(e.to_string().contains("non-loopback"), "{e}");
-        let bad_socket = Target::Tmux { socket: Some("x -f /evil".into()) };
+        let bad_socket = Target::Tmux {
+            socket: Some("x -f /evil".into()),
+        };
         assert!(TileClient::new("s", &bad_socket, 80, 24, 0, || {}).is_err());
     }
 }

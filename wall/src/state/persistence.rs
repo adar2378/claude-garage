@@ -28,9 +28,9 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
-use crate::state::views::{View, ViewsByWorkspace, DEFAULT_VIEW};
+use crate::state::views::{DEFAULT_VIEW, View, ViewsByWorkspace};
 
 pub const SCHEMA_VERSION: u64 = 1;
 
@@ -52,7 +52,10 @@ pub struct WallFile {
 
 /// `$GARAGE_DIR`, else `~/.garage` (shared by `wall.json` and `config.toml`).
 pub fn garage_dir() -> PathBuf {
-    garage_dir_from(std::env::var("GARAGE_DIR").ok().as_deref(), std::env::var("HOME").ok().as_deref())
+    garage_dir_from(
+        std::env::var("GARAGE_DIR").ok().as_deref(),
+        std::env::var("HOME").ok().as_deref(),
+    )
 }
 
 /// `$GARAGE_DIR/wall.json`, else `~/.garage/wall.json` — mirrors the
@@ -65,7 +68,10 @@ pub fn wall_json_path() -> PathBuf {
 
 /// `$GARAGE_DIR`, else `~/.garage` (`%USERPROFILE%` when `HOME` is unset).
 pub fn garage_dir_from_env() -> PathBuf {
-    let home = std::env::var("HOME").ok().filter(|h| !h.is_empty()).or_else(|| std::env::var("USERPROFILE").ok());
+    let home = std::env::var("HOME")
+        .ok()
+        .filter(|h| !h.is_empty())
+        .or_else(|| std::env::var("USERPROFILE").ok());
     garage_dir_from(std::env::var("GARAGE_DIR").ok().as_deref(), home.as_deref())
 }
 
@@ -97,9 +103,10 @@ pub fn serialize(file: &WallFile) -> String {
     // disk space) — an unconditional write would also happily persist a
     // caller's typo, which the lenient reader would then just discard.
     if let Some(pet) = file.pet.as_deref()
-        && PET_VALUES.contains(&pet) {
-            doc["pet"] = Value::String(pet.to_owned());
-        }
+        && PET_VALUES.contains(&pet)
+    {
+        doc["pet"] = Value::String(pet.to_owned());
+    }
     // A `Value` built from owned strings/numbers always serializes; the
     // fallback is unreachable in practice but keeps this function total.
     serde_json::to_string_pretty(&doc).unwrap_or_else(|_| "{}".to_owned())
@@ -130,20 +137,31 @@ pub fn deserialize(raw: &str) -> WallFile {
 
     let mut out = HashMap::new();
     for (workspace, entries) in by_workspace {
-        let Some(entries) = entries.as_array() else { continue };
+        let Some(entries) = entries.as_array() else {
+            continue;
+        };
         let mut list = Vec::new();
         for entry in entries {
-            let Some(name) = entry.get("name").and_then(Value::as_str) else { continue };
-            let Some(sessions) = entry.get("sessions").and_then(Value::as_array) else { continue };
+            let Some(name) = entry.get("name").and_then(Value::as_str) else {
+                continue;
+            };
+            let Some(sessions) = entry.get("sessions").and_then(Value::as_array) else {
+                continue;
+            };
             if name == DEFAULT_VIEW {
                 continue; // the default is never a stored view — see module docs.
             }
-            let session_ids: Vec<String> =
-                sessions.iter().filter_map(|s| s.as_str().map(str::to_owned)).collect();
+            let session_ids: Vec<String> = sessions
+                .iter()
+                .filter_map(|s| s.as_str().map(str::to_owned))
+                .collect();
             if session_ids.is_empty() {
                 continue;
             }
-            list.push(View { name: name.to_owned(), session_ids });
+            list.push(View {
+                name: name.to_owned(),
+                session_ids,
+            });
         }
         if !list.is_empty() {
             out.insert(workspace.clone(), list);
@@ -181,7 +199,10 @@ pub fn load(path: &Path) -> WallFile {
 pub fn save(path: &Path, file: &WallFile) -> std::io::Result<()> {
     let dir = path.parent().unwrap_or_else(|| Path::new("."));
     std::fs::create_dir_all(dir)?;
-    let file_name = path.file_name().and_then(|f| f.to_str()).unwrap_or("wall.json");
+    let file_name = path
+        .file_name()
+        .and_then(|f| f.to_str())
+        .unwrap_or("wall.json");
     let tmp = dir.join(format!(".{file_name}.{}.tmp", std::process::id()));
     let write_result = std::fs::write(&tmp, serialize(file));
     if write_result.is_err() {
@@ -199,11 +220,17 @@ mod tests {
     use super::*;
 
     fn view(name: &str, ids: &[&str]) -> View {
-        View { name: name.to_owned(), session_ids: ids.iter().map(|s| (*s).to_owned()).collect() }
+        View {
+            name: name.to_owned(),
+            session_ids: ids.iter().map(|s| (*s).to_owned()).collect(),
+        }
     }
 
     fn file(views: ViewsByWorkspace, pet: Option<&str>) -> WallFile {
-        WallFile { views, pet: pet.map(str::to_owned) }
+        WallFile {
+            views,
+            pet: pet.map(str::to_owned),
+        }
     }
 
     // ── path resolution ─────────────────────────────────────────────────
@@ -218,8 +245,14 @@ mod tests {
 
     #[test]
     fn falls_back_to_home_dot_garage_when_unset_or_empty() {
-        assert_eq!(garage_dir_from(None, Some("/home/u")), PathBuf::from("/home/u/.garage"));
-        assert_eq!(garage_dir_from(Some(""), Some("/home/u")), PathBuf::from("/home/u/.garage"));
+        assert_eq!(
+            garage_dir_from(None, Some("/home/u")),
+            PathBuf::from("/home/u/.garage")
+        );
+        assert_eq!(
+            garage_dir_from(Some(""), Some("/home/u")),
+            PathBuf::from("/home/u/.garage")
+        );
     }
 
     // ── round trip ──────────────────────────────────────────────────────
@@ -227,7 +260,10 @@ mod tests {
     #[test]
     fn serialize_then_deserialize_round_trips() {
         let mut views: ViewsByWorkspace = HashMap::new();
-        views.insert("apexlabs".to_owned(), vec![view("api-fix", &["garage/apexlabs/api-fix"])]);
+        views.insert(
+            "apexlabs".to_owned(),
+            vec![view("api-fix", &["garage/apexlabs/api-fix"])],
+        );
         let doc = file(views, None);
         let raw = serialize(&doc);
         assert_eq!(deserialize(&raw), doc);
@@ -296,7 +332,10 @@ mod tests {
 
     #[test]
     fn deserialize_rejects_an_unrecognized_version() {
-        assert_eq!(deserialize(r#"{"version":2,"views":{}}"#), WallFile::default());
+        assert_eq!(
+            deserialize(r#"{"version":2,"views":{}}"#),
+            WallFile::default()
+        );
         assert_eq!(deserialize(r#"{"views":{}}"#), WallFile::default());
     }
 
@@ -371,7 +410,9 @@ mod tests {
 
         // A second save overwrites cleanly (exercises the rename-over-
         // existing-file path, not just create-fresh).
-        doc.views.get_mut("a").unwrap()[0].session_ids.push("garage/a/two".to_owned());
+        doc.views.get_mut("a").unwrap()[0]
+            .session_ids
+            .push("garage/a/two".to_owned());
         save(&path, &doc).unwrap();
         assert_eq!(load(&path), doc);
 

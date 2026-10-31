@@ -9,16 +9,16 @@ use std::sync::Arc;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use http_body_util::BodyExt;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use tower::ServiceExt;
 
-use crate::api::daemon_restart::{default_successor_args, wait_for_predecessor, Lifecycle};
+use crate::api::daemon_restart::{Lifecycle, default_successor_args, wait_for_predecessor};
 use crate::api::editor::{editor_cmd, resolve};
 use crate::backend::SessionBackend;
 use crate::os::fake::{FakeOs, Mode};
 use crate::poller::fakes::FakeBackend;
 use crate::test_support::TestTmux;
-use crate::{app, AppState, Config};
+use crate::{AppState, Config, app};
 
 fn state_with(os: Arc<FakeOs>, backend: Arc<dyn SessionBackend>, garage: &Path) -> AppState {
     let cfg = Config {
@@ -581,10 +581,12 @@ async fn finish_discard_and_dirty_merge_over_the_route() {
     )
     .await;
     assert_eq!(s, StatusCode::BAD_REQUEST);
-    assert!(b["error"]
-        .as_str()
-        .unwrap()
-        .contains("not a garage worktree"));
+    assert!(
+        b["error"]
+            .as_str()
+            .unwrap()
+            .contains("not a garage worktree")
+    );
 }
 
 // -------------------------------------------------------------------- editor
@@ -1025,7 +1027,10 @@ async fn default_probe_against_the_real_app_health_route() {
         .unwrap();
     let port = listener.local_addr().unwrap().port();
     // The Host guard compares against the port the daemon really serves on.
-    st.config = Arc::new(Config { port, ..(*st.config).clone() });
+    st.config = Arc::new(Config {
+        port,
+        ..(*st.config).clone()
+    });
     let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
     let server = tokio::spawn(crate::serve(listener, st, async {
         let _ = stopped.await;

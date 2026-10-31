@@ -17,10 +17,10 @@ use tower::ServiceExt;
 
 use super::layout::{Entry, Paths, PluginsFile, Source};
 use super::runner::{RunOutcome, RunSpec, Runner};
+use crate::Config;
 use crate::bus::DaemonEvent;
 use crate::poller::fakes::{FakeAgents, FakeBackend};
 use crate::state::AppState;
-use crate::Config;
 
 /// A runner that records every run and can hold runs open.
 #[derive(Default)]
@@ -45,7 +45,11 @@ pub struct Call {
 
 impl Call {
     pub fn env(&self, key: &str) -> Option<&str> {
-        self.spec.env.iter().find(|(k, _)| k == key).map(|(_, v)| v.as_str())
+        self.spec
+            .env
+            .iter()
+            .find(|(k, _)| k == key)
+            .map(|(_, v)| v.as_str())
     }
 
     /// The context JSON the plugin would read from stdin.
@@ -73,7 +77,11 @@ impl FakeRunner {
 #[async_trait]
 impl Runner for FakeRunner {
     async fn run(&self, spec: RunSpec) -> RunOutcome {
-        let ctx_file = spec.env.iter().find(|(k, _)| k == "GARAGE_CONTEXT_FILE").and_then(|(_, p)| std::fs::read_to_string(p).ok());
+        let ctx_file = spec
+            .env
+            .iter()
+            .find(|(k, _)| k == "GARAGE_CONTEXT_FILE")
+            .and_then(|(_, p)| std::fs::read_to_string(p).ok());
         #[cfg(unix)]
         let ctx_file_mode = spec
             .env
@@ -83,7 +91,11 @@ impl Runner for FakeRunner {
             .map(|m| std::os::unix::fs::PermissionsExt::mode(&m.permissions()) & 0o777);
         #[cfg(not(unix))]
         let ctx_file_mode = None;
-        self.calls.lock().unwrap().push(Call { spec, ctx_file, ctx_file_mode });
+        self.calls.lock().unwrap().push(Call {
+            spec,
+            ctx_file,
+            ctx_file_mode,
+        });
         let now = self.active.fetch_add(1, Ordering::SeqCst) + 1;
         self.max_active.fetch_max(now, Ordering::SeqCst);
         let gate = self.gate.lock().unwrap().clone();
@@ -91,7 +103,11 @@ impl Runner for FakeRunner {
             g.acquire().await.unwrap().forget();
         }
         self.active.fetch_sub(1, Ordering::SeqCst);
-        self.outcomes.lock().unwrap().pop_front().unwrap_or(RunOutcome::Success)
+        self.outcomes
+            .lock()
+            .unwrap()
+            .pop_front()
+            .unwrap_or(RunOutcome::Success)
     }
 }
 
@@ -131,7 +147,13 @@ impl Rig {
     fn build(fake: bool, port: u16) -> Self {
         let garage = tempfile::tempdir().unwrap();
         let backend = Arc::new(FakeBackend::new());
-        let config = Config { port, garage_dir: garage.path().to_path_buf(), tmux_socket: None, tmux_control: false, ui_origins: vec![] };
+        let config = Config {
+            port,
+            garage_dir: garage.path().to_path_buf(),
+            tmux_socket: None,
+            tmux_control: false,
+            ui_origins: vec![],
+        };
         let claude_home = tempfile::tempdir().unwrap();
         let mut st = AppState::with_agents(
             config,
@@ -145,7 +167,15 @@ impl Rig {
             st = st.with_plugin_runner(runner.clone());
         }
         let rx = st.bus.subscribe();
-        Self { garage, src: tempfile::tempdir().unwrap(), st, backend, runner, rx, _claude_home: claude_home }
+        Self {
+            garage,
+            src: tempfile::tempdir().unwrap(),
+            st,
+            backend,
+            runner,
+            rx,
+            _claude_home: claude_home,
+        }
     }
 
     pub fn paths(&self) -> Paths {
@@ -156,14 +186,30 @@ impl Rig {
     /// permissions, as `plugin link` does after the user says yes; returns its
     /// dir.
     pub fn link(&self, id: &str, toml: &str) -> PathBuf {
-        let granted = garage_plugin::parse(toml).map(|m| m.permission_names()).unwrap_or_default();
-        self.register(id, toml, Source::Link { path: self.src.path().join(id).to_string_lossy().into_owned() }, Some(granted))
+        let granted = garage_plugin::parse(toml)
+            .map(|m| m.permission_names())
+            .unwrap_or_default();
+        self.register(
+            id,
+            toml,
+            Source::Link {
+                path: self.src.path().join(id).to_string_lossy().into_owned(),
+            },
+            Some(granted),
+        )
     }
 
     /// Register a linked plugin nobody has approved (what a hand-edited
     /// registry, or a CLI that skipped the prompt, leaves behind).
     pub fn link_unapproved(&self, id: &str, toml: &str) -> PathBuf {
-        self.register(id, toml, Source::Link { path: self.src.path().join(id).to_string_lossy().into_owned() }, None)
+        self.register(
+            id,
+            toml,
+            Source::Link {
+                path: self.src.path().join(id).to_string_lossy().into_owned(),
+            },
+            None,
+        )
     }
 
     /// Register a first-party plugin shipped with garage (no approval needed).
@@ -174,10 +220,23 @@ impl Rig {
 
     /// A bundled entry whose manifest is not on the build's allowlist.
     pub fn bundle_untrusted(&self, id: &str, toml: &str) -> PathBuf {
-        self.register(id, toml, Source::Bundled { path: self.src.path().join(id).to_string_lossy().into_owned() }, None)
+        self.register(
+            id,
+            toml,
+            Source::Bundled {
+                path: self.src.path().join(id).to_string_lossy().into_owned(),
+            },
+            None,
+        )
     }
 
-    fn register(&self, id: &str, toml: &str, source: Source, granted: Option<Vec<String>>) -> PathBuf {
+    fn register(
+        &self,
+        id: &str,
+        toml: &str,
+        source: Source,
+        granted: Option<Vec<String>>,
+    ) -> PathBuf {
         let dir = self.src.path().join(id);
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("garage-plugin.toml"), toml).unwrap();
@@ -219,7 +278,10 @@ impl Rig {
     }
 
     pub fn token(&self, id: &str) -> String {
-        std::fs::read_to_string(self.paths().token(id)).unwrap().trim().to_owned()
+        std::fs::read_to_string(self.paths().token(id))
+            .unwrap()
+            .trim()
+            .to_owned()
     }
 
     pub fn events(&mut self) -> Vec<DaemonEvent> {
@@ -232,16 +294,30 @@ impl Rig {
 
     /// The per-install UI token, as the TUI reads it from disk.
     pub fn ui_token(&self) -> String {
-        std::fs::read_to_string(super::layout::ui_token_path(self.garage.path())).unwrap().trim().to_owned()
+        std::fs::read_to_string(super::layout::ui_token_path(self.garage.path()))
+            .unwrap()
+            .trim()
+            .to_owned()
     }
 
     /// A call the TUI would make: the UI token as bearer, no plugin token.
-    pub async fn call_ui(&self, method: &str, uri: &str, body: Option<&str>) -> (StatusCode, axum::http::HeaderMap, Value) {
+    pub async fn call_ui(
+        &self,
+        method: &str,
+        uri: &str,
+        body: Option<&str>,
+    ) -> (StatusCode, axum::http::HeaderMap, Value) {
         let t = self.ui_token();
         self.call(method, uri, Some(&t), body).await
     }
 
-    pub async fn call(&self, method: &str, uri: &str, token: Option<&str>, body: Option<&str>) -> (StatusCode, axum::http::HeaderMap, Value) {
+    pub async fn call(
+        &self,
+        method: &str,
+        uri: &str,
+        token: Option<&str>,
+        body: Option<&str>,
+    ) -> (StatusCode, axum::http::HeaderMap, Value) {
         self.call_with(method, uri, token, body, &[]).await
     }
 
@@ -264,13 +340,21 @@ impl Rig {
         let res = crate::app(self.st.clone()).oneshot(req).await.unwrap();
         let (status, headers) = (res.status(), res.headers().clone());
         let bytes = res.into_body().collect().await.unwrap().to_bytes();
-        (status, headers, serde_json::from_slice(&bytes).unwrap_or(Value::Null))
+        (
+            status,
+            headers,
+            serde_json::from_slice(&bytes).unwrap_or(Value::Null),
+        )
     }
 }
 
 /// A manifest with the given permissions and extra TOML after the header.
 pub fn manifest(id: &str, perms: &[&str], extra: &str) -> String {
-    let perms = perms.iter().map(|p| format!("\"{p}\"")).collect::<Vec<_>>().join(", ");
+    let perms = perms
+        .iter()
+        .map(|p| format!("\"{p}\""))
+        .collect::<Vec<_>>()
+        .join(", ");
     format!(
         "id = \"{id}\"\nname = \"{id}\"\nversion = \"1.0.0\"\napi_version = 1\nplatforms = [\"macos\", \"linux\", \"windows\"]\npermissions = [{perms}]\n{extra}\n"
     )
@@ -323,8 +407,13 @@ impl Rig {
             status: self.st.status.clone(),
             registry: self.st.registry.clone(),
         });
-        self.st.plugins = super::PluginHost::with_runner(&self.st.config, self.st.bus.clone(), lookup, self.runner.clone())
-            .with_timer_unit(unit);
+        self.st.plugins = super::PluginHost::with_runner(
+            &self.st.config,
+            self.st.bus.clone(),
+            lookup,
+            self.runner.clone(),
+        )
+        .with_timer_unit(unit);
         self.st.plugins.set_backend(self.st.backend.clone());
     }
 
@@ -333,7 +422,10 @@ impl Rig {
         let end = Instant::now() + Duration::from_secs(5);
         loop {
             let left = end.saturating_duration_since(Instant::now());
-            let ev = tokio::time::timeout(left, self.rx.recv()).await.expect("event in time").expect("bus open");
+            let ev = tokio::time::timeout(left, self.rx.recv())
+                .await
+                .expect("event in time")
+                .expect("bus open");
             if pred(&ev) {
                 return ev;
             }

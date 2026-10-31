@@ -10,8 +10,8 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::widgets::{WidgetItem, WidgetSlot};
 use crate::AttachSpec;
+use crate::widgets::{WidgetItem, WidgetSlot};
 
 /// `GET /api/plugins`: the plugins in install order (which is also the
 /// tiebreak for two plugins that suggest the same key).
@@ -184,7 +184,10 @@ mod tests {
 
     #[test]
     fn a_listing_with_missing_optional_pieces_still_parses() {
-        let list: PluginList = serde_json::from_value(json!({"plugins": [{"id": "p", "name": "P", "enabled": true, "active": false}]})).unwrap();
+        let list: PluginList = serde_json::from_value(
+            json!({"plugins": [{"id": "p", "name": "P", "enabled": true, "active": false}]}),
+        )
+        .unwrap();
         assert!(list.plugins[0].actions.is_empty() && list.plugins[0].bindings.is_empty());
     }
 }

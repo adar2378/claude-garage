@@ -34,7 +34,8 @@ impl App {
         self.motion.begin_frame(now_ms);
         {
             let state = self.store.state();
-            self.motion.closed(|id| state.session_by_id(Some(id)).is_some());
+            self.motion
+                .closed(|id| state.session_by_id(Some(id)).is_some());
         }
         let (ids, maximized_index) = {
             let state = self.store.state();
@@ -86,8 +87,11 @@ impl App {
 
         if show_view_strip {
             let ranges = render_view_strip(buf, layout.view_strip, &views, &focused_view_name);
-            self.view_strip_targets =
-                views.iter().zip(ranges).map(|(v, r)| (r, v.name.clone())).collect();
+            self.view_strip_targets = views
+                .iter()
+                .zip(ranges)
+                .map(|(v, r)| (r, v.name.clone()))
+                .collect();
         } else {
             self.view_strip_targets.clear();
         }
@@ -138,7 +142,8 @@ impl App {
                     continue;
                 }
                 let (attached, blocked, spinning) = self.tile_motion_flags(id);
-                self.motion.tile_drawn(id, layout.tiles[i], attached, blocked);
+                self.motion
+                    .tile_drawn(id, layout.tiles[i], attached, blocked);
                 if spinning {
                     self.motion.spinner_shown();
                 }
@@ -147,7 +152,10 @@ impl App {
         }
         // Effects run over the finished tiles, under the strip and overlays.
         self.motion.apply(buf);
-        if self.motion.strip_spinner_active(self.store.state().daemon_live, now_ms) {
+        if self
+            .motion
+            .strip_spinner_active(self.store.state().daemon_live, now_ms)
+        {
             self.motion.spinner_shown();
         }
 
@@ -162,18 +170,24 @@ impl App {
             self.router.notices.current_of(NoticeKind::User, now_ms),
         );
         self.badge_cols = strip_cols.badge;
-        slot_clicks.extend(strip_cols.slots.into_iter().map(|(cols, target)| SlotClickRegion {
-            rect: Rect::new(cols.start, layout.strip.y, cols.end - cols.start, 1),
-            target,
-            slot: SlotId::StripRight,
-            session: None,
-            workspace: None,
-        }));
+        slot_clicks.extend(
+            strip_cols
+                .slots
+                .into_iter()
+                .map(|(cols, target)| SlotClickRegion {
+                    rect: Rect::new(cols.start, layout.strip.y, cols.end - cols.start, 1),
+                    target,
+                    slot: SlotId::StripRight,
+                    session: None,
+                    workspace: None,
+                }),
+        );
         self.slot_clicks = slot_clicks;
         self.last_strip_filler = strip_cols.filler_width;
         // What each slot had room for this frame: providers read it (via
         // `SlotCtx::geometry`) the next time they are asked.
-        self.slots.set_geometry(slot_geometry(&layout, &strip_cols.filler));
+        self.slots
+            .set_geometry(slot_geometry(&layout, &strip_cols.filler));
 
         self.triage_rect = None;
         self.ws_add_rect = None;
@@ -182,8 +196,13 @@ impl App {
             Some(OverlayKind::Help) => render_help_with(buf, area, &self.plugin_help_rows()),
             Some(OverlayKind::TriageQueue) => {
                 let rows = triage_queue_rows(&self.store.state().sessions);
-                self.triage_rect =
-                    Some(render_triage(buf, area, &rows, self.queue_selection, now_ms));
+                self.triage_rect = Some(render_triage(
+                    buf,
+                    area,
+                    &rows,
+                    self.queue_selection,
+                    now_ms,
+                ));
             }
             Some(OverlayKind::WorkspaceAdd) => {
                 self.ws_add_rect = Some(render_workspace_add(buf, area, &self.ws_form));
@@ -217,14 +236,28 @@ impl App {
     fn plugin_help_rows(&self) -> Vec<(String, String)> {
         let store = self.plugins.borrow();
         let mut rows = Vec::new();
-        for p in store.list().plugins.iter().filter(|p| p.active && !p.actions.is_empty()) {
+        for p in store
+            .list()
+            .plugins
+            .iter()
+            .filter(|p| p.active && !p.actions.is_empty())
+        {
             rows.push((p.name.clone(), String::new()));
             for a in &p.actions {
-                let key = crate::actions::ActionId::lookup(&a.id).and_then(|id| self.keymap.key_for(id)).unwrap_or_default();
+                let key = crate::actions::ActionId::lookup(&a.id)
+                    .and_then(|id| self.keymap.key_for(id))
+                    .unwrap_or_default();
                 rows.push((key, a.title.clone()));
             }
-            for c in self.plugin_key_conflicts.iter().filter(|c| c.plugin == p.id) {
-                rows.push((format!("! {}", c.key), format!("{} ({})", c.action.as_str(), c.reason)));
+            for c in self
+                .plugin_key_conflicts
+                .iter()
+                .filter(|c| c.plugin == p.id)
+            {
+                rows.push((
+                    format!("! {}", c.key),
+                    format!("{} ({})", c.action.as_str(), c.reason),
+                ));
             }
         }
         rows
@@ -237,11 +270,15 @@ impl App {
             return;
         }
         let geometry = self.slots.geometry();
-        let Some(body) = self.geometry.due(&geometry, std::time::Instant::now()) else { return };
+        let Some(body) = self.geometry.due(&geometry, std::time::Instant::now()) else {
+            return;
+        };
         let base_url = self.base_url.clone();
         let tx = self.tx.clone();
         drop(tokio::task::spawn_blocking(move || {
-            let reported = crate::api::client::GarageClient::new(Some(base_url)).put_ui_slots(&body).map_err(|e| e.to_string());
+            let reported = crate::api::client::GarageClient::new(Some(base_url))
+                .put_ui_slots(&body)
+                .map_err(|e| e.to_string());
             let _ = tx.send(super::AppEvent::SlotsReported(reported));
         }));
     }
@@ -250,13 +287,19 @@ impl App {
     /// popup's own size), with the close chord named in its frame.
     fn draw_plugin_pane(&mut self, buf: &mut ratatui::buffer::Buffer, area: Rect, now_ms: i64) {
         use tui_term::widget::{Cursor, PseudoTerminal};
-        let Some(pane) = self.pane.instance().cloned() else { return };
+        let Some(pane) = self.pane.instance().cloned() else {
+            return;
+        };
         let rect = crate::plugins::panes::pane_rect(area, &pane);
         self.pane.rect = Some(rect);
         let (cols, rows) = crate::plugins::panes::inner(rect);
         self.registry.apply_size(&pane.session, cols, rows);
         ratatui::widgets::Clear.render(rect, buf);
-        let hint = if self.pane.close_pending(now_ms) { " ctrl+q again to close " } else { " ctrl+q ctrl+q closes " };
+        let hint = if self.pane.close_pending(now_ms) {
+            " ctrl+q again to close "
+        } else {
+            " ctrl+q ctrl+q closes "
+        };
         let block = Block::bordered()
             .border_type(BorderType::Rounded)
             .border_style(Style::default().fg(colors::PLUGIN))
@@ -267,7 +310,10 @@ impl App {
             let cursor = Cursor::default()
                 .symbol(" ")
                 .style(Style::default().add_modifier(ratatui::style::Modifier::REVERSED));
-            PseudoTerminal::new(parser.screen()).block(block).cursor(cursor).render(rect, buf);
+            PseudoTerminal::new(parser.screen())
+                .block(block)
+                .cursor(cursor)
+                .render(rect, buf);
         } else {
             let inner = block.inner(rect);
             block.render(rect, buf);
@@ -275,7 +321,11 @@ impl App {
                 Some(reason) => reason.to_owned(),
                 None => "… attaching".to_owned(),
             };
-            render_centered_lines(buf, inner, vec![Line::styled(text, Style::default().fg(colors::DIM))]);
+            render_centered_lines(
+                buf,
+                inner,
+                vec![Line::styled(text, Style::default().fg(colors::DIM))],
+            );
         }
     }
 
@@ -313,7 +363,10 @@ impl App {
         // history size (and draws no gutter until the first poll lands).
         let gutter_items = self.slots.items(
             SlotId::TileGutter,
-            &SlotCtx { session: Some(session), ..SlotCtx::default() },
+            &SlotCtx {
+                session: Some(session),
+                ..SlotCtx::default()
+            },
         );
         if !gutter_items.is_empty() {
             self.gutter_sessions.insert(id.to_owned());
@@ -322,7 +375,10 @@ impl App {
             .map(|f| f.model.top_abs())
             .or_else(|| self.registry.history(id));
         let gutter = match (gutter_items.is_empty(), top_abs) {
-            (false, Some(top_abs)) => Some(Gutter { items: &gutter_items, top_abs }),
+            (false, Some(top_abs)) => Some(Gutter {
+                items: &gutter_items,
+                top_abs,
+            }),
             _ => None,
         };
         let view = TileView {
@@ -334,7 +390,11 @@ impl App {
             frozen_new_lines: frozen.map(|f| f.new_lines),
             now_ms,
             fade_done: self.motion.enabled(),
-            spinner: if spinning { self.motion.tile_spinner(now_ms) } else { None },
+            spinner: if spinning {
+                self.motion.tile_spinner(now_ms)
+            } else {
+                None
+            },
             slots: &self.slots,
             gutter,
         };

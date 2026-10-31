@@ -7,7 +7,7 @@ use ratatui::layout::Rect;
 
 use crate::input::links::url_at;
 use crate::state::wall_state::{KeyLayer, OverlayKind, WallSession};
-use crate::ui::hit_targets::{self, action_at, ClickMap};
+use crate::ui::hit_targets::{self, ClickMap, action_at};
 use crate::ui::scroll::WHEEL_LINES;
 
 use super::router::plugin_gate::ClickConfirm;
@@ -20,7 +20,10 @@ impl App {
         // reaches the wall underneath.
         if self.store.state().overlay == Some(OverlayKind::PluginPane) {
             if matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left))
-                && !self.pane.rect.is_some_and(|r| r.contains((mouse.column, mouse.row).into()))
+                && !self
+                    .pane
+                    .rect
+                    .is_some_and(|r| r.contains((mouse.column, mouse.row).into()))
             {
                 self.close_plugin_pane();
             }
@@ -55,26 +58,30 @@ impl App {
         // not "type here". Not an action; everything else resolves below.
         if self.store.state().overlay.is_none()
             && !(layout.view_strip.height > 0 && row == layout.view_strip.y)
-            && let Some((id, rect)) = self.tile_at(col, row) {
-                let inner = Rect {
-                    x: rect.x + 1,
-                    y: rect.y + 1,
-                    width: rect.width.saturating_sub(2),
-                    height: rect.height.saturating_sub(2),
-                };
-                if inner.contains((col, row).into())
-                    && let Some(line) = self.registry.row_text(&id, row - inner.y)
-                        && let Some(url) = url_at(&line, usize::from(col - inner.x)) {
-                            // A click like any other: it cancels a pending
-                            // plugin arm before it does its own thing.
-                            if self.router.plugin_origin_arm_pending() {
-                                self.router.disarm_plugin();
-                            }
-                            let _ = open_url(&url);
-                            self.router.notices.show(format!("opened {url}"), 2000, now_ms());
-                            return false;
-                        }
+            && let Some((id, rect)) = self.tile_at(col, row)
+        {
+            let inner = Rect {
+                x: rect.x + 1,
+                y: rect.y + 1,
+                width: rect.width.saturating_sub(2),
+                height: rect.height.saturating_sub(2),
+            };
+            if inner.contains((col, row).into())
+                && let Some(line) = self.registry.row_text(&id, row - inner.y)
+                && let Some(url) = url_at(&line, usize::from(col - inner.x))
+            {
+                // A click like any other: it cancels a pending
+                // plugin arm before it does its own thing.
+                if self.router.plugin_origin_arm_pending() {
+                    self.router.disarm_plugin();
+                }
+                let _ = open_url(&url);
+                self.router
+                    .notices
+                    .show(format!("opened {url}"), 2000, now_ms());
+                return false;
             }
+        }
         let picker_entries = if self.store.state().overlay == Some(OverlayKind::ViewPicker) {
             view_picker_entries(&self.store).len()
         } else {
@@ -174,7 +181,9 @@ impl App {
 /// URL is never parsed as a command line).
 fn open_url(url: &str) -> std::io::Result<std::process::Child> {
     let argv = opener_argv(url);
-    std::process::Command::new(&argv[0]).args(&argv[1..]).spawn()
+    std::process::Command::new(&argv[0])
+        .args(&argv[1..])
+        .spawn()
 }
 
 fn opener_argv(url: &str) -> Vec<String> {
@@ -185,7 +194,10 @@ fn opener_argv(url: &str) -> Vec<String> {
     } else {
         &["xdg-open"]
     };
-    v.iter().map(|s| s.to_string()).chain([url.to_string()]).collect()
+    v.iter()
+        .map(|s| s.to_string())
+        .chain([url.to_string()])
+        .collect()
 }
 
 #[cfg(test)]

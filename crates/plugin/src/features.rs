@@ -2,8 +2,8 @@
 //! slots and optional capabilities. Validation, plugin load and
 //! `GET /api/plugin/features` all read it (design section 9).
 
-use garage_protocol::widgets::{limits, WidgetSlot};
-use serde_json::{json, Value};
+use garage_protocol::widgets::{WidgetSlot, limits};
+use serde_json::{Value, json};
 
 /// Plugin API majors this garage loads.
 pub const API_VERSIONS: &[u32] = &[1];
@@ -86,9 +86,10 @@ pub fn has_feature(requirement: &str) -> bool {
         };
     }
     match requirement.split_once(':') {
-        Some((name, value)) => {
-            features.get(name).and_then(Value::as_array).is_some_and(|a| a.iter().any(|x| x.as_str() == Some(value)))
-        }
+        Some((name, value)) => features
+            .get(name)
+            .and_then(Value::as_array)
+            .is_some_and(|a| a.iter().any(|x| x.as_str() == Some(value))),
         None => false,
     }
 }
@@ -99,10 +100,24 @@ mod tests {
 
     #[test]
     fn requirements_cover_booleans_lists_and_name_value_pairs() {
-        for ok in ["widgets.animated", "cli.fallback", "widgets.slot_geometry", "events:session.turn", "events:timer", "slots:tile.gutter", "events"] {
+        for ok in [
+            "widgets.animated",
+            "cli.fallback",
+            "widgets.slot_geometry",
+            "events:session.turn",
+            "events:timer",
+            "slots:tile.gutter",
+            "events",
+        ] {
             assert!(has_feature(ok), "{ok}");
         }
-        for no in ["warp.drive", "events:session.exploded", "widgets.animated:x", "", "limits:x"] {
+        for no in [
+            "warp.drive",
+            "events:session.exploded",
+            "widgets.animated:x",
+            "",
+            "limits:x",
+        ] {
             assert!(!has_feature(no), "{no}");
         }
     }
@@ -113,7 +128,19 @@ mod tests {
         assert_eq!(r["api_versions"], json!([1]));
         assert_eq!(r["garage"], "0.7.0");
         assert_eq!(r["features"]["limits"]["widget_items"], 16);
-        assert!(r["features"]["slots"].as_array().unwrap().iter().any(|s| s == "tile.gutter"));
-        assert!(r["features"]["actions.core_invocable"].as_array().unwrap().iter().any(|s| s == "session.close"));
+        assert!(
+            r["features"]["slots"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|s| s == "tile.gutter")
+        );
+        assert!(
+            r["features"]["actions.core_invocable"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|s| s == "session.close")
+        );
     }
 }

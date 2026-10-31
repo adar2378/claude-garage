@@ -80,7 +80,8 @@ impl PluginPaneState {
 
     /// Feed a key; true when it completes the close chord.
     pub fn close_chord(&mut self, key: &KeyEvent, now_ms: i64) -> bool {
-        let is_chord = key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('q');
+        let is_chord =
+            key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('q');
         if !is_chord {
             self.first_close_press_ms = None;
             return false;
@@ -99,7 +100,8 @@ impl PluginPaneState {
 
     /// True when the first Ctrl+Q is waiting for its second (the overlay frame says so).
     pub fn close_pending(&self, now_ms: i64) -> bool {
-        self.first_close_press_ms.is_some_and(|f| now_ms - f <= CLOSE_CHORD_WINDOW.as_millis() as i64)
+        self.first_close_press_ms
+            .is_some_and(|f| now_ms - f <= CLOSE_CHORD_WINDOW.as_millis() as i64)
     }
 }
 
@@ -110,24 +112,40 @@ pub fn pane_rect(area: Rect, pane: &PaneInstance) -> Rect {
     let fit = |want: u16, max: u16| want.clamp(4, max.max(4));
     match pane.placement.as_str() {
         "popup" => {
-            let (mut cols, mut rows) = (pane.cols.unwrap_or(POPUP_DEFAULT.0), pane.rows.unwrap_or(POPUP_DEFAULT.1));
+            let (mut cols, mut rows) = (
+                pane.cols.unwrap_or(POPUP_DEFAULT.0),
+                pane.rows.unwrap_or(POPUP_DEFAULT.1),
+            );
             if pane.pct {
                 cols = (u32::from(area.width) * u32::from(cols.min(100)) / 100) as u16;
                 rows = (u32::from(area.height) * u32::from(rows.min(100)) / 100) as u16;
             }
             let (w, h) = (fit(cols, area.width), fit(rows, area.height));
-            Rect::new(area.x + (area.width.saturating_sub(w)) / 2, area.y + (area.height.saturating_sub(h)) / 2, w.min(area.width), h.min(area.height))
+            Rect::new(
+                area.x + (area.width.saturating_sub(w)) / 2,
+                area.y + (area.height.saturating_sub(h)) / 2,
+                w.min(area.width),
+                h.min(area.height),
+            )
         }
         _ => {
             let (mx, my) = (2.min(area.width / 4), 1.min(area.height / 4));
-            Rect::new(area.x + mx, area.y + my, area.width.saturating_sub(2 * mx), area.height.saturating_sub(2 * my))
+            Rect::new(
+                area.x + mx,
+                area.y + my,
+                area.width.saturating_sub(2 * mx),
+                area.height.saturating_sub(2 * my),
+            )
         }
     }
 }
 
 /// The PTY size inside the bordered pane.
 pub fn inner(rect: Rect) -> (u16, u16) {
-    (rect.width.saturating_sub(2).max(1), rect.height.saturating_sub(2).max(1))
+    (
+        rect.width.saturating_sub(2).max(1),
+        rect.height.saturating_sub(2).max(1),
+    )
 }
 
 #[cfg(test)]
@@ -159,7 +177,10 @@ mod tests {
         let nasty = format!("\u{1b}[2J{}\u{202e}x\n", "y".repeat(80));
         let l = label("bt", &nasty);
         assert!(l.starts_with(" bt: "), "{l:?}");
-        assert!(!l.chars().any(|c| c.is_control() || c == '\u{202e}'), "{l:?}");
+        assert!(
+            !l.chars().any(|c| c.is_control() || c == '\u{202e}'),
+            "{l:?}"
+        );
         assert_eq!(l.chars().count(), " bt: ".len() + TITLE_MAX + 1, "{l:?}");
         assert!(l.trim_end().ends_with('…'));
         // A title cannot pose as another plugin: the real id is always first.
@@ -174,21 +195,45 @@ mod tests {
         assert!(s.close_chord(&ctrl_q(), 2000), "second press inside 1.5 s");
         assert!(!s.close_chord(&ctrl_q(), 3000), "and it starts over");
         assert!(!s.close_chord(&KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE), 3100));
-        assert!(!s.close_chord(&ctrl_q(), 3200), "another key in between cancelled the first press");
-        assert!(!s.close_chord(&ctrl_q(), 5000), "too late is a first press again");
-        assert!(!s.close_pending(9000), "a stale first press is not shown as pending");
+        assert!(
+            !s.close_chord(&ctrl_q(), 3200),
+            "another key in between cancelled the first press"
+        );
+        assert!(
+            !s.close_chord(&ctrl_q(), 5000),
+            "too late is a first press again"
+        );
+        assert!(
+            !s.close_pending(9000),
+            "a stale first press is not shown as pending"
+        );
     }
 
     #[test]
     fn an_overlay_nearly_fills_the_screen_and_a_popup_is_centred_in_its_size() {
         let area = Rect::new(0, 0, 100, 30);
-        assert_eq!(pane_rect(area, &pane("overlay", None)), Rect::new(2, 1, 96, 28));
-        assert_eq!(pane_rect(area, &pane("popup", None)), Rect::new(20, 7, 60, 16));
-        assert_eq!(pane_rect(area, &pane("popup", Some((40, 10, false)))), Rect::new(30, 10, 40, 10));
-        assert_eq!(pane_rect(area, &pane("popup", Some((50, 50, true)))), Rect::new(25, 7, 50, 15));
+        assert_eq!(
+            pane_rect(area, &pane("overlay", None)),
+            Rect::new(2, 1, 96, 28)
+        );
+        assert_eq!(
+            pane_rect(area, &pane("popup", None)),
+            Rect::new(20, 7, 60, 16)
+        );
+        assert_eq!(
+            pane_rect(area, &pane("popup", Some((40, 10, false)))),
+            Rect::new(30, 10, 40, 10)
+        );
+        assert_eq!(
+            pane_rect(area, &pane("popup", Some((50, 50, true)))),
+            Rect::new(25, 7, 50, 15)
+        );
         let tiny = Rect::new(0, 0, 30, 8);
         let r = pane_rect(tiny, &pane("popup", None));
-        assert!(r.width <= 30 && r.height <= 8, "a popup never outgrows the screen: {r:?}");
+        assert!(
+            r.width <= 30 && r.height <= 8,
+            "a popup never outgrows the screen: {r:?}"
+        );
         assert_eq!(inner(Rect::new(0, 0, 60, 16)), (58, 14));
     }
 }

@@ -22,7 +22,7 @@
 //! seeded from the clicked region or the request's `target`), never from
 //! `args`: nothing in this file reads `ctx.args`.
 
-use crate::actions::{meta, ActionCtx, ActionId, ActionSource, ids};
+use crate::actions::{ActionCtx, ActionId, ActionSource, ids, meta};
 use crate::slots::RegionId;
 use crate::state::salience::restorable_session_ids;
 use crate::state::store::WallStore;
@@ -112,7 +112,9 @@ impl GarageRouter {
             .plugin_arm
             .as_ref()
             .map(|a| self.notices.current(now_ms) == Some(a.notice.as_str()));
-        if showing == Some(false) || (showing.is_some() && self.armed_plugin.armed_live(now_ms).is_none()) {
+        if showing == Some(false)
+            || (showing.is_some() && self.armed_plugin.armed_live(now_ms).is_none())
+        {
             self.disarm_plugin();
         }
     }
@@ -130,14 +132,17 @@ impl GarageRouter {
     pub(in crate::runtime) fn mark_prompt_drawn(&mut self, now_ms: i64) {
         let current = self.notices.current(now_ms).map(str::to_owned);
         if let Some(arm) = self.plugin_arm.as_mut()
-            && current.as_deref() == Some(arm.notice.as_str()) {
-                arm.drawn = true;
-            }
+            && current.as_deref() == Some(arm.notice.as_str())
+        {
+            arm.drawn = true;
+        }
     }
 
     /// True when the pending arm was raised by a human trigger of `id`.
     pub(in crate::runtime) fn human_arm_is(&self, id: ActionId) -> bool {
-        self.plugin_arm.as_ref().is_some_and(|a| a.origin == ArmOrigin::Human && a.id == id)
+        self.plugin_arm
+            .as_ref()
+            .is_some_and(|a| a.origin == ArmOrigin::Human && a.id == id)
     }
 
     pub(in crate::runtime) fn plugin_arm_pending(&self) -> bool {
@@ -147,7 +152,9 @@ impl GarageRouter {
     /// True when the pending arm is a plugin's (a click elsewhere cancels
     /// it); a human-raised arm is left to its own trigger.
     pub(in crate::runtime) fn plugin_origin_arm_pending(&self) -> bool {
-        self.plugin_arm.as_ref().is_some_and(|a| a.origin != ArmOrigin::Human)
+        self.plugin_arm
+            .as_ref()
+            .is_some_and(|a| a.origin != ArmOrigin::Human)
     }
 
     /// `y` while an arm is pending. The action comes back as a confirmed
@@ -161,7 +168,10 @@ impl GarageRouter {
         if now_ms - arm.armed_at < Y_GUARD_MS {
             return ConfirmKey::TooSoon;
         }
-        self.take_confirmed(now_ms).map_or(ConfirmKey::Gone, |(id, ctx)| ConfirmKey::Run(Box::new((id, ctx))))
+        self.take_confirmed(now_ms)
+            .map_or(ConfirmKey::Gone, |(id, ctx)| {
+                ConfirmKey::Run(Box::new((id, ctx)))
+            })
     }
 
     /// A click while an arm is pending. `region` is the slot region the
@@ -169,7 +179,11 @@ impl GarageRouter {
     /// click on the region that armed it confirms, and only once the guard
     /// window has passed and the prompt has been drawn; anything else
     /// cancels.
-    pub(in crate::runtime) fn plugin_confirm_click(&mut self, region: Option<&RegionId>, now_ms: i64) -> ClickConfirm {
+    pub(in crate::runtime) fn plugin_confirm_click(
+        &mut self,
+        region: Option<&RegionId>,
+        now_ms: i64,
+    ) -> ClickConfirm {
         self.refresh_plugin_arm(now_ms);
         let Some(arm) = self.plugin_arm.as_ref() else {
             return ClickConfirm::Cancelled;
@@ -202,7 +216,10 @@ impl GarageRouter {
         self.notices.clear_prefix(&arm.notice);
         self.confirm_token = Some((arm.key, arm.force));
         let mut ctx = arm.ctx;
-        ctx.source = ActionSource::Plugin { plugin: plugin_name(&ctx.source), confirmed: true };
+        ctx.source = ActionSource::Plugin {
+            plugin: plugin_name(&ctx.source),
+            confirmed: true,
+        };
         Some((arm.id, ctx))
     }
 
@@ -226,18 +243,30 @@ impl GarageRouter {
         // `confirmed` counts only with the token the confirm path issued for
         // this very action; a forged one is just another plugin trigger.
         let mut confirmed_force = None;
-        if let ActionSource::Plugin { confirmed: true, .. } = ctx.source {
+        if let ActionSource::Plugin {
+            confirmed: true, ..
+        } = ctx.source
+        {
             let token = self.confirm_token.take();
-            confirmed_force = token.filter(|(key, _)| *key == arm_key(id, ctx)).map(|(_, force)| force);
+            confirmed_force = token
+                .filter(|(key, _)| *key == arm_key(id, ctx))
+                .map(|(_, force)| force);
         }
         if let Some(force) = confirmed_force {
             self.run_confirmed(store, id, ctx, force, now_ms, effects);
             return true;
         }
-        let forged = matches!(ctx.source, ActionSource::Plugin { confirmed: true, .. });
+        let forged = matches!(
+            ctx.source,
+            ActionSource::Plugin {
+                confirmed: true,
+                ..
+            }
+        );
         if ctx.source.is_plugin_origin() || forged {
             if info.is_some_and(|m| !m.plugin_invocable) {
-                self.notices.show("that action is not available to plugins", 3000, now_ms);
+                self.notices
+                    .show("that action is not available to plugins", 3000, now_ms);
                 return true;
             }
             // A row that is not a session's own (an extra row without
@@ -253,7 +282,9 @@ impl GarageRouter {
                 // the human is looking at stays put.
                 if self.plugin_arm.is_none() {
                     let origin = match (&ctx.source, &ctx.region) {
-                        (ActionSource::Widget { .. }, Some(region)) => ArmOrigin::Region(region.clone()),
+                        (ActionSource::Widget { .. }, Some(region)) => {
+                            ArmOrigin::Region(region.clone())
+                        }
                         _ => ArmOrigin::Api,
                     };
                     self.arm_plugin(store, id, ctx, origin, now_ms);
@@ -281,7 +312,10 @@ impl GarageRouter {
                 // never engages a session (a click on its button, a human act, may).
                 if id == ids::SESSION_ENGAGE {
                     self.notices.show(
-                        format!("plugin {} asked to type into a session — only you can engage one", plugin_name(&ctx.source)),
+                        format!(
+                            "plugin {} asked to type into a session — only you can engage one",
+                            plugin_name(&ctx.source)
+                        ),
                         3000,
                         now_ms,
                     );
@@ -290,7 +324,10 @@ impl GarageRouter {
                 // Focus moves are for a person to make at a person's pace: a
                 // burst from a plugin lands once and the rest is dropped.
                 if moves_focus(id) {
-                    if self.plugin_focus_at.is_some_and(|t| now_ms - t < PLUGIN_FOCUS_GAP_MS) {
+                    if self
+                        .plugin_focus_at
+                        .is_some_and(|t| now_ms - t < PLUGIN_FOCUS_GAP_MS)
+                    {
                         return true;
                     }
                     self.plugin_focus_at = Some(now_ms);
@@ -316,15 +353,17 @@ impl GarageRouter {
             .plugin_arm
             .as_ref()
             .is_some_and(|a| a.origin == ArmOrigin::Human && a.key == arm_key(id, ctx));
-        if human_arm && self.armed_plugin.confirm(&arm_key(id, ctx), now_ms)
-            && let Some(arm) = self.plugin_arm.take() {
-                self.notices.clear_prefix(&arm.notice);
-                if store.state().layer == crate::state::wall_state::KeyLayer::Engaged {
-                    store.disengage();
-                }
-                self.run_confirmed(store, id, &arm.ctx, arm.force, now_ms, effects);
-                return true;
+        if human_arm
+            && self.armed_plugin.confirm(&arm_key(id, ctx), now_ms)
+            && let Some(arm) = self.plugin_arm.take()
+        {
+            self.notices.clear_prefix(&arm.notice);
+            if store.state().layer == crate::state::wall_state::KeyLayer::Engaged {
+                store.disengage();
             }
+            self.run_confirmed(store, id, &arm.ctx, arm.force, now_ms, effects);
+            return true;
+        }
         // ... and `session.delete`, which has no native double-press of its
         // own, arms on a human's first trigger instead of running at once.
         if id == ids::SESSION_DELETE || asks_confirm {
@@ -334,7 +373,14 @@ impl GarageRouter {
         false
     }
 
-    fn arm_plugin(&mut self, store: &WallStore, id: ActionId, ctx: &ActionCtx, origin: ArmOrigin, now_ms: i64) {
+    fn arm_plugin(
+        &mut self,
+        store: &WallStore,
+        id: ActionId,
+        ctx: &ActionCtx,
+        origin: ArmOrigin,
+        now_ms: i64,
+    ) {
         let prompt = match self.plugin_actions.get(&id) {
             Some(action) => Some((format!("Run {}{CONFIRM_TAIL}", action.title), false)),
             None => arm_prompt(store, id, ctx),
@@ -351,7 +397,16 @@ impl GarageRouter {
         let key = arm_key(id, ctx);
         self.armed_plugin.arm(&key, now_ms);
         self.notices.show(notice.clone(), 3000, now_ms);
-        self.plugin_arm = Some(PluginArm { id, ctx: ctx.clone(), key, notice, origin, force, armed_at: now_ms, drawn: false });
+        self.plugin_arm = Some(PluginArm {
+            id,
+            ctx: ctx.clone(),
+            key,
+            notice,
+            origin,
+            force,
+            armed_at: now_ms,
+            drawn: false,
+        });
     }
 
     /// Run a dangerous action a human just confirmed. Targets come from the
@@ -378,26 +433,49 @@ impl GarageRouter {
             }
             ids::SESSION_DELETE => {
                 let Some(id) = session else { return };
-                if store.state().session_by_id(Some(id)).is_some_and(|s| s.live()) {
-                    self.notices.show("close it first — delete forgets a closed session", 4000, now_ms);
+                if store
+                    .state()
+                    .session_by_id(Some(id))
+                    .is_some_and(|s| s.live())
+                {
+                    self.notices.show(
+                        "close it first — delete forgets a closed session",
+                        4000,
+                        now_ms,
+                    );
                     return;
                 }
                 let label = id.rsplit('/').next().unwrap_or(id).to_owned();
-                effects.push(Effect::Close { id: id.to_owned(), label, meta_only: true });
+                effects.push(Effect::Close {
+                    id: id.to_owned(),
+                    label,
+                    meta_only: true,
+                });
             }
             ids::SESSION_RESTART => {
                 let Some(s) = store.state().session_by_id(session).filter(|s| s.live()) else {
-                    self.notices.show("no live session to restart", 2000, now_ms);
+                    self.notices
+                        .show("no live session to restart", 2000, now_ms);
                     return;
                 };
                 // Same words as the native `r r` once it fires; `force` is what
                 // the arm prompt warned about, not a fresh look at the state.
                 let name = s.display_name().to_owned();
-                effects.push(Effect::RestartSession { id: s.id.clone(), name: name.clone(), force });
-                self.notices.show(format!("restarting {name} — resumes the conversation"), 5000, now_ms);
+                effects.push(Effect::RestartSession {
+                    id: s.id.clone(),
+                    name: name.clone(),
+                    force,
+                });
+                self.notices.show(
+                    format!("restarting {name} — resumes the conversation"),
+                    5000,
+                    now_ms,
+                );
             }
             ids::WORKSPACE_RESTART => {
-                let Some(ws) = ctx.workspace.as_deref() else { return };
+                let Some(ws) = ctx.workspace.as_deref() else {
+                    return;
+                };
                 let ids: Vec<String> = store
                     .state()
                     .sessions
@@ -406,12 +484,18 @@ impl GarageRouter {
                     .map(|s| s.id.clone())
                     .collect();
                 if ids.is_empty() {
-                    self.notices
-                        .show(format!("nothing to restart in {ws} (all busy or none)"), 3000, now_ms);
+                    self.notices.show(
+                        format!("nothing to restart in {ws} (all busy or none)"),
+                        3000,
+                        now_ms,
+                    );
                     return;
                 }
-                self.notices
-                    .show(format!("restarting {} sessions in {ws}", ids.len()), 5000, now_ms);
+                self.notices.show(
+                    format!("restarting {} sessions in {ws}", ids.len()),
+                    5000,
+                    now_ms,
+                );
                 effects.push(Effect::RestartWorkspace { ids });
             }
             ids::DAEMON_RESTART => {
@@ -419,19 +503,31 @@ impl GarageRouter {
                 effects.push(Effect::RestartDaemon);
             }
             ids::WORKSPACE_REMOVE | ids::WORKSPACE_REMOVE_KILL => {
-                let Some(name) = ctx.workspace.clone() else { return };
-                if store.state().group_by_name(Some(&name)).is_some_and(|g| g.registered) {
-                    effects.push(Effect::RemoveWorkspace { name, kill: id == ids::WORKSPACE_REMOVE_KILL });
+                let Some(name) = ctx.workspace.clone() else {
+                    return;
+                };
+                if store
+                    .state()
+                    .group_by_name(Some(&name))
+                    .is_some_and(|g| g.registered)
+                {
+                    effects.push(Effect::RemoveWorkspace {
+                        name,
+                        kill: id == ids::WORKSPACE_REMOVE_KILL,
+                    });
                 }
             }
             ids::SESSION_RESTORE_ALL => {
-                let Some(ws) = ctx.workspace.clone() else { return };
+                let Some(ws) = ctx.workspace.clone() else {
+                    return;
+                };
                 let ids: Vec<String> = restorable_session_ids(&store.state().sessions, &ws)
                     .into_iter()
                     .filter(|id| !self.restoring().contains(id))
                     .collect();
                 if ids.is_empty() {
-                    self.notices.show(format!("nothing to restore in {ws}"), 2000, now_ms);
+                    self.notices
+                        .show(format!("nothing to restore in {ws}"), 2000, now_ms);
                 }
                 for id in ids {
                     self.restore(id, effects);
@@ -503,9 +599,14 @@ fn arm_prompt(store: &WallStore, id: ActionId, ctx: &ActionCtx) -> Option<(Strin
         ids::WORKSPACE_RESTART => format!("Restart idle sessions in {}", ctx.workspace.as_deref()?),
         ids::WORKSPACE_REMOVE => format!("Remove workspace {}", ctx.workspace.as_deref()?),
         ids::WORKSPACE_REMOVE_KILL => {
-            format!("Remove workspace {} and kill its sessions", ctx.workspace.as_deref()?)
+            format!(
+                "Remove workspace {} and kill its sessions",
+                ctx.workspace.as_deref()?
+            )
         }
-        ids::SESSION_RESTORE_ALL => format!("Restore every session in {}", ctx.workspace.as_deref()?),
+        ids::SESSION_RESTORE_ALL => {
+            format!("Restore every session in {}", ctx.workspace.as_deref()?)
+        }
         ids::DAEMON_RESTART => "Restart the daemon".to_owned(),
         ids::HOOKS_INSTALL => "Install the statusline and hooks".to_owned(),
         _ => return None,
@@ -570,16 +671,17 @@ fn retarget(store: &mut WallStore, id: ActionId, ctx: &ActionCtx) {
         | ids::OVERLAY_OPEN_VIEW_PICKER => {
             if let Some(session) = ctx.session.as_deref()
                 && store.state().focused_session_id.as_deref() != Some(session)
-                    && store.state().session_by_id(Some(session)).is_some()
-                {
-                    store.focus_session(session);
-                }
+                && store.state().session_by_id(Some(session)).is_some()
+            {
+                store.focus_session(session);
+            }
         }
         ids::SESSION_SPAWN | ids::SESSION_SPAWN_WORKTREE | ids::WORKSPACE_FOCUS => {
             if let Some(ws) = ctx.workspace.as_deref()
-                && store.state().focused_workspace.as_deref() != Some(ws) {
-                    store.focus_workspace_named(ws);
-                }
+                && store.state().focused_workspace.as_deref() != Some(ws)
+            {
+                store.focus_workspace_named(ws);
+            }
         }
         _ => {}
     }

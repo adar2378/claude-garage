@@ -39,7 +39,9 @@ pub fn host_allowed(host: &str, port: u16) -> bool {
 
 pub async fn host_guard(State(state): State<AppState>, req: Request, next: Next) -> Response {
     if let Some(host) = req.headers().get(axum::http::header::HOST) {
-        let ok = host.to_str().is_ok_and(|h| host_allowed(h, state.config.port));
+        let ok = host
+            .to_str()
+            .is_ok_and(|h| host_allowed(h, state.config.port));
         if !ok {
             return error_response(axum::http::StatusCode::FORBIDDEN, "host not allowed");
         }
@@ -52,16 +54,15 @@ pub async fn origin_guard(State(state): State<AppState>, req: Request, next: Nex
         *req.method(),
         Method::POST | Method::PUT | Method::PATCH | Method::DELETE
     );
-    if state_changing
-        && let Some(origin) = req.headers().get("origin") {
-            let ok = origin
-                .to_str()
-                .map(|o| state.config.ui_origins.iter().any(|a| a == o))
-                .unwrap_or(false);
-            if !ok {
-                return error_response(axum::http::StatusCode::FORBIDDEN, "origin not allowed");
-            }
+    if state_changing && let Some(origin) = req.headers().get("origin") {
+        let ok = origin
+            .to_str()
+            .map(|o| state.config.ui_origins.iter().any(|a| a == o))
+            .unwrap_or(false);
+        if !ok {
+            return error_response(axum::http::StatusCode::FORBIDDEN, "origin not allowed");
         }
+    }
     next.run(req).await
 }
 
@@ -97,17 +98,38 @@ mod host_tests {
 
     #[test]
     fn only_loopback_names_on_the_daemons_port_pass() {
-        for h in ["127.0.0.1:4747", "localhost:4747", "LocalHost:4747", "[::1]:4747"] {
+        for h in [
+            "127.0.0.1:4747",
+            "localhost:4747",
+            "LocalHost:4747",
+            "[::1]:4747",
+        ] {
             assert!(host_allowed(h, 4747), "{h}");
         }
         for h in [
-            "evil.example:4747", "127.0.0.1.evil.example:4747", "localhost.evil.example:4747",
-            "127.0.0.1:4748", "127.0.0.1", "localhost", "[::1]", "[::1", "", "0.0.0.0:4747", "[::2]:4747",
-            "127.0.0.1:4747:1", "127.0.0.1:",
+            "evil.example:4747",
+            "127.0.0.1.evil.example:4747",
+            "localhost.evil.example:4747",
+            "127.0.0.1:4748",
+            "127.0.0.1",
+            "localhost",
+            "[::1]",
+            "[::1",
+            "",
+            "0.0.0.0:4747",
+            "[::2]:4747",
+            "127.0.0.1:4747:1",
+            "127.0.0.1:",
         ] {
             assert!(!host_allowed(h, 4747), "{h:?}");
         }
-        assert!(host_allowed("127.0.0.1:55555", 0), "ephemeral test port skips the port check");
-        assert!(!host_allowed("evil.example:1", 0), "but never the name check");
+        assert!(
+            host_allowed("127.0.0.1:55555", 0),
+            "ephemeral test port skips the port check"
+        );
+        assert!(
+            !host_allowed("evil.example:1", 0),
+            "but never the name check"
+        );
     }
 }

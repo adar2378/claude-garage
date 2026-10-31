@@ -18,7 +18,7 @@ use ratatui::layout::{Alignment, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::Line;
 use ratatui::widgets::{Paragraph, Widget};
-use tachyonfx::{fx, Effect, Interpolation};
+use tachyonfx::{Effect, Interpolation, fx};
 use tui_big_text::{BigText, PixelSize};
 
 use crate::api::client::daemon_healthy;
@@ -59,9 +59,14 @@ fn parse_daemon_pid(value: Option<&str>) -> Option<u32> {
 /// wait falls back to the deadline.
 #[cfg(unix)]
 pub fn daemon_gone(pid: Option<u32>) -> bool {
-    let Some(pid) = pid.and_then(|p| i32::try_from(p).ok()).filter(|p| *p > 1) else { return false };
+    let Some(pid) = pid.and_then(|p| i32::try_from(p).ok()).filter(|p| *p > 1) else {
+        return false;
+    };
     // SAFETY: signal 0 only checks existence/permission; nothing is sent.
-    unsafe { libc::kill(pid, 0) != 0 && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH) }
+    unsafe {
+        libc::kill(pid, 0) != 0
+            && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH)
+    }
 }
 
 #[cfg(not(unix))]
@@ -105,9 +110,12 @@ pub fn render_wordmark(buf: &mut Buffer, area: Rect, now_ms: i64, spinning: bool
             .centered()
             .build()
             .render(word, buf),
-        None => Paragraph::new(Line::styled(WORD, Style::default().fg(colors::FG).add_modifier(Modifier::BOLD)))
-            .alignment(Alignment::Center)
-            .render(word, buf),
+        None => Paragraph::new(Line::styled(
+            WORD,
+            Style::default().fg(colors::FG).add_modifier(Modifier::BOLD),
+        ))
+        .alignment(Alignment::Center)
+        .render(word, buf),
     }
     let mut line = |row: u16, line: Line<'static>| {
         let y = top + row;
@@ -117,7 +125,10 @@ pub fn render_wordmark(buf: &mut Buffer, area: Rect, now_ms: i64, spinning: bool
                 .render(Rect::new(area.x, y, area.width, 1), buf);
         }
     };
-    line(word_rows + 1, Line::styled(TAGLINE, Style::default().fg(colors::FAINT)));
+    line(
+        word_rows + 1,
+        Line::styled(TAGLINE, Style::default().fg(colors::FAINT)),
+    );
     let waiting = if spinning {
         Line::from(vec![
             spinner_span(now_ms).style(Style::default().fg(colors::DIM)),
@@ -167,17 +178,23 @@ pub fn reveal(
             let area = f.area();
             let word = render_wordmark(f.buffer_mut(), area, now_ms, true);
             if !effect.done() {
-                effect.process(tachyonfx::Duration::from_millis(step.as_millis().min(100) as _), f.buffer_mut(), word);
+                effect.process(
+                    tachyonfx::Duration::from_millis(step.as_millis().min(100) as _),
+                    f.buffer_mut(),
+                    word,
+                );
             }
         })?;
         if event::poll(FRAME)?
-            && let Event::Key(key) = event::read()? {
-                let ctrl_c = key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c');
-                // Only Ctrl+C aborts; every other key is dropped.
-                if key.kind != KeyEventKind::Release && ctrl_c {
-                    return Ok(Outcome::Aborted);
-                }
+            && let Event::Key(key) = event::read()?
+        {
+            let ctrl_c =
+                key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c');
+            // Only Ctrl+C aborts; every other key is dropped.
+            if key.kind != KeyEventKind::Release && ctrl_c {
+                return Ok(Outcome::Aborted);
             }
+        }
     }
 }
 

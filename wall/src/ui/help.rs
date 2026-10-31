@@ -28,13 +28,19 @@ pub const BINDINGS: [(&str, &str); 24] = [
     ("R", "restore all restorable sessions in workspace"),
     ("I", "install hooks (instant status) + context meter feed"),
     ("x x", "close focused session (press twice)"),
-    ("r r", "restart focused session — resumes on the current claude binary"),
+    (
+        "r r",
+        "restart focused session — resumes on the current claude binary",
+    ),
     ("r a", "restart idle/done sessions in workspace"),
     ("r d", "restart the daemon (sessions untouched)"),
     ("X X", "remove focused workspace (sessions keep running)"),
     ("X K", "remove focused workspace AND kill its sessions"),
     ("w", "add workspace"),
-    ("d", "detach focused session to its own view, or rejoin main"),
+    (
+        "d",
+        "detach focused session to its own view, or rejoin main",
+    ),
     ("D", "move focused session to another view / new group"),
     ("Tab", "cycle the focused workspace's views"),
     ("?", "toggle this help"),
@@ -84,12 +90,24 @@ pub fn help_modal_rect(area: Rect) -> Rect {
 }
 
 fn help_modal_rect_with(area: Rect, plugins: &[(String, String)]) -> Rect {
-    let core = BINDINGS.iter().map(|(k, w)| 8 + w.chars().count().max(k.chars().count()));
-    let extra = plugins.iter().map(|(l, r)| if r.is_empty() { l.chars().count() } else { 8 + r.chars().count() });
+    let core = BINDINGS
+        .iter()
+        .map(|(k, w)| 8 + w.chars().count().max(k.chars().count()));
+    let extra = plugins.iter().map(|(l, r)| {
+        if r.is_empty() {
+            l.chars().count()
+        } else {
+            8 + r.chars().count()
+        }
+    });
     let content_w = core.chain(extra).max().unwrap_or(0) as u16;
     // border (2) + horizontal padding (4) like the Dart container.
     let width = (content_w + 6).min(area.width);
-    let section = if plugins.is_empty() { 0 } else { plugins.len() + 2 };
+    let section = if plugins.is_empty() {
+        0
+    } else {
+        plugins.len() + 2
+    };
     let height = ((BINDINGS.len() + section) as u16 + 4).min(area.height);
     centered_rect(area, width, height)
 }
@@ -149,12 +167,30 @@ mod tests {
         render_help_with(&mut none, area, &[]);
         assert_eq!(plain, none);
 
-        let rows = vec![("usage".to_owned(), String::new()), ("u".to_owned(), "Refresh usage".to_owned())];
+        let rows = vec![
+            ("usage".to_owned(), String::new()),
+            ("u".to_owned(), "Refresh usage".to_owned()),
+        ];
         let mut with = Buffer::empty(area);
         render_help_with(&mut with, area, &rows);
-        let text: String = (0..50).map(|y| (0..120).map(|x| with[(x, y)].symbol().to_owned()).collect::<String>() + "\n").collect();
-        assert!(text.contains("Plugins") && text.contains("usage") && text.contains("u       Refresh usage"), "{text}");
-        assert_eq!(help_modal_rect_with(area, &rows).height, help_modal_rect(area).height + 4);
+        let text: String = (0..50)
+            .map(|y| {
+                (0..120)
+                    .map(|x| with[(x, y)].symbol().to_owned())
+                    .collect::<String>()
+                    + "\n"
+            })
+            .collect();
+        assert!(
+            text.contains("Plugins")
+                && text.contains("usage")
+                && text.contains("u       Refresh usage"),
+            "{text}"
+        );
+        assert_eq!(
+            help_modal_rect_with(area, &rows).height,
+            help_modal_rect(area).height + 4
+        );
     }
 
     #[test]
@@ -162,7 +198,11 @@ mod tests {
         let area = Rect::new(0, 0, 120, 40);
         let r = help_modal_rect(area);
         assert!(r.width < area.width && r.height < area.height);
-        assert_eq!(r.height, BINDINGS.len() as u16 + 4, "rows + border + padding");
+        assert_eq!(
+            r.height,
+            BINDINGS.len() as u16 + 4,
+            "rows + border + padding"
+        );
         // Centered: symmetric margins within a cell.
         assert!((r.x - area.x).abs_diff(area.width - (r.x + r.width)) <= 1);
     }

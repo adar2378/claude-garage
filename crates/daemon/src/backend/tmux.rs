@@ -13,7 +13,7 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::process::Stdio;
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use garage_protocol::AttachSpec;
 use tokio::process::Command;
@@ -312,7 +312,9 @@ pub fn parse_version(out: &str) -> Option<(u32, u32)> {
 /// file or directory)`, and `no sessions`.
 fn is_no_server(message: &str) -> bool {
     let m = message.to_ascii_lowercase();
-    m.contains("no server running") || m.contains("no sessions") || (m.contains("error connecting to") && m.contains("no such file"))
+    m.contains("no server running")
+        || m.contains("no sessions")
+        || (m.contains("error connecting to") && m.contains("no such file"))
 }
 
 /// The JS `/xterm\*?[^\n]*extkeys/` test, line by line.
@@ -480,14 +482,19 @@ impl SessionBackend for TmuxBackend {
     /// separate Enter so a multi-line paste does not swallow it.
     async fn send_text(&self, id: &str, text: &str) -> Result<()> {
         let target = format!("{}:", exact(id));
-        self.run_args(&["send-keys", "-t", &target, "-l", "--", text]).await?;
+        self.run_args(&["send-keys", "-t", &target, "-l", "--", text])
+            .await?;
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-        self.run_args(&["send-keys", "-t", &target, "Enter"]).await.map(|_| ())
+        self.run_args(&["send-keys", "-t", &target, "Enter"])
+            .await
+            .map(|_| ())
     }
 
     async fn mark_plugin_pane(&self, id: &str, plugin: &str) -> Result<()> {
         // Like `status` above: set-option rejects the `=` prefix.
-        self.run_args(&["set-option", "-t", id, PANE_TAG, plugin]).await.map(|_| ())
+        self.run_args(&["set-option", "-t", id, PANE_TAG, plugin])
+            .await
+            .map(|_| ())
     }
 
     async fn plugin_pane_sessions(&self) -> Result<Vec<String>> {
@@ -501,13 +508,18 @@ impl SessionBackend for TmuxBackend {
         Ok(out
             .lines()
             .filter_map(|l| l.split_once('\t'))
-            .filter(|(name, tag)| crate::plugins::panes::parse_pane_session(name).is_some_and(|(plugin, _)| plugin == *tag))
+            .filter(|(name, tag)| {
+                crate::plugins::panes::parse_pane_session(name)
+                    .is_some_and(|(plugin, _)| plugin == *tag)
+            })
             .map(|(name, _)| name.to_owned())
             .collect())
     }
 
     fn attach_spec(&self, _id: &str) -> AttachSpec {
-        AttachSpec::Tmux { socket: self.socket.clone() }
+        AttachSpec::Tmux {
+            socket: self.socket.clone(),
+        }
     }
 }
 
@@ -533,13 +545,18 @@ mod tests {
     fn attach_spec_carries_the_isolated_socket() {
         assert_eq!(
             TmuxBackend::new(Some("t1".into())).attach_spec("garage/ws/a"),
-            AttachSpec::Tmux { socket: Some("t1".into()) }
+            AttachSpec::Tmux {
+                socket: Some("t1".into())
+            }
         );
     }
 
     #[test]
     fn attach_spec_uses_default_server_without_socket() {
-        assert_eq!(TmuxBackend::new(None).attach_spec("s"), AttachSpec::Tmux { socket: None });
+        assert_eq!(
+            TmuxBackend::new(None).attach_spec("s"),
+            AttachSpec::Tmux { socket: None }
+        );
     }
 
     #[test]
@@ -688,7 +705,12 @@ mod tests {
         ] {
             assert!(is_no_server(gone), "{gone}");
         }
-        for failed in ["tmux timed out after 5s", "cannot run tmux: No such file or directory", "tmux ls: protocol version mismatch", "tmux ls: error connecting to /s (Permission denied)"] {
+        for failed in [
+            "tmux timed out after 5s",
+            "cannot run tmux: No such file or directory",
+            "tmux ls: protocol version mismatch",
+            "tmux ls: error connecting to /s (Permission denied)",
+        ] {
             assert!(!is_no_server(failed), "{failed}");
         }
     }
@@ -807,14 +829,20 @@ mod tests {
         let t = TestTmux::new();
         let b = t.backend();
         for id in ["plugin/p/a", "plugin/p/b", "plugin/q/c", "garage/ws/x"] {
-            b.create(id, t.dir(), "sleep", &sleeper(), &[]).await.unwrap();
+            b.create(id, t.dir(), "sleep", &sleeper(), &[])
+                .await
+                .unwrap();
         }
         b.mark_plugin_pane("plugin/p/a", "p").await.unwrap();
         // Tagged for another plugin than its name says: not trusted.
         b.mark_plugin_pane("plugin/q/c", "p").await.unwrap();
         // Untagged (`plugin/p/b`) is some other session that happens to be named like a pane.
         assert_eq!(b.plugin_pane_sessions().await.unwrap(), ["plugin/p/a"]);
-        assert_eq!(t.tmux(&["show-options", "-t", "plugin/p/a", "-v", "@garage-pane"]).trim(), "p");
+        assert_eq!(
+            t.tmux(&["show-options", "-t", "plugin/p/a", "-v", "@garage-pane"])
+                .trim(),
+            "p"
+        );
     }
 
     #[tokio::test]
@@ -851,10 +879,11 @@ mod tests {
             created,
             "same tmux session"
         );
-        assert!(b
-            .respawn("garage/ws/missing", t.dir(), "sleep", &sleeper(), &[])
-            .await
-            .is_err());
+        assert!(
+            b.respawn("garage/ws/missing", t.dir(), "sleep", &sleeper(), &[])
+                .await
+                .is_err()
+        );
     }
 
     #[tokio::test]
@@ -863,11 +892,17 @@ mod tests {
         let b = t.backend();
         // `read` only returns once Enter arrives; a leading dash and a key name
         // in the text must reach the pane as plain characters.
-        let args = vec!["-c".to_string(), "read line; printf '%s' \"$line\" > out.txt; sleep 60".to_string()];
-        b.create("garage/ws/s", t.dir(), "sh", &args, &[]).await.unwrap();
+        let args = vec![
+            "-c".to_string(),
+            "read line; printf '%s' \"$line\" > out.txt; sleep 60".to_string(),
+        ];
+        b.create("garage/ws/s", t.dir(), "sh", &args, &[])
+            .await
+            .unwrap();
         b.send_text("garage/ws/s", "-l Enter C-c ok").await.unwrap();
         let out = t.dir().join("out.txt");
-        t.wait_for(|| std::fs::read_to_string(&out).is_ok_and(|s| !s.is_empty())).await;
+        t.wait_for(|| std::fs::read_to_string(&out).is_ok_and(|s| !s.is_empty()))
+            .await;
         assert_eq!(std::fs::read_to_string(&out).unwrap(), "-l Enter C-c ok");
         assert!(b.send_text("garage/ws/missing", "x").await.is_err());
     }

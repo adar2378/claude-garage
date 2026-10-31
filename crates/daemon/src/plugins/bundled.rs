@@ -33,12 +33,18 @@ use std::path::{Path, PathBuf};
 
 use garage_plugin::manifest::sha256_hex;
 
-use super::layout::{Entry, Paths, PluginsFile, Source, MANIFEST_FILE};
+use super::layout::{Entry, MANIFEST_FILE, Paths, PluginsFile, Source};
 
 include!(concat!(env!("OUT_DIR"), "/bundled_allowlist.rs"));
 
 /// On at first run. Every other bundled plugin starts off.
-pub const DEFAULT_ON: [&str; 5] = ["usage-bar", "closed-chats", "quick-send", "tile-buttons", "pit-pet"];
+pub const DEFAULT_ON: [&str; 5] = [
+    "usage-bar",
+    "closed-chats",
+    "quick-send",
+    "tile-buttons",
+    "pit-pet",
+];
 
 /// `plugins.json` key listing the bundled ids already seeded.
 pub const SEEDED_KEY: &str = "bundledSeeded";
@@ -54,13 +60,21 @@ static TEST_TRUST: std::sync::Mutex<Vec<(String, String)>> = std::sync::Mutex::n
 /// Trust a manifest in tests (a content hash, so sharing it across tests is harmless).
 #[cfg(test)]
 pub fn trust_for_tests(id: &str, manifest: &[u8]) {
-    TEST_TRUST.lock().unwrap().push((id.to_owned(), sha256_hex(manifest)));
+    TEST_TRUST
+        .lock()
+        .unwrap()
+        .push((id.to_owned(), sha256_hex(manifest)));
 }
 
 /// Is `id` with a manifest hashing to `sha` a first-party plugin this build knows?
 pub fn is_trusted(id: &str, sha: &str) -> bool {
     #[cfg(test)]
-    if TEST_TRUST.lock().unwrap().iter().any(|(i, s)| i == id && s == sha) {
+    if TEST_TRUST
+        .lock()
+        .unwrap()
+        .iter()
+        .any(|(i, s)| i == id && s == sha)
+    {
         return true;
     }
     ALLOWLIST.iter().any(|(i, s)| *i == id && *s == sha)
@@ -85,12 +99,16 @@ fn candidates(exe: Option<PathBuf>, dev_env: Option<PathBuf>, dev: bool) -> Vec<
 
 /// The bundled root: the first candidate holding at least one manifest.
 pub fn discover() -> Option<PathBuf> {
-    let exe = std::env::current_exe().ok().and_then(|e| e.canonicalize().ok());
+    let exe = std::env::current_exe()
+        .ok()
+        .and_then(|e| e.canonicalize().ok());
     #[cfg(debug_assertions)]
     let (dev, env) = (true, std::env::var_os(ROOT_ENV).map(PathBuf::from));
     #[cfg(not(debug_assertions))]
     let (dev, env) = (false, None);
-    candidates(exe, env, dev).into_iter().find(|c| !plugin_dirs(c).is_empty())
+    candidates(exe, env, dev)
+        .into_iter()
+        .find(|c| !plugin_dirs(c).is_empty())
 }
 
 /// `(id, dir)` of every `<root>/<id>/garage-plugin.toml`, sorted by id.
@@ -127,19 +145,30 @@ pub fn seed(paths: &Paths, root: &Path) -> Result<Seeded, String> {
             .extra
             .get(SEEDED_KEY)
             .and_then(|v| v.as_array())
-            .map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_owned)).collect())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|v| v.as_str().map(str::to_owned))
+                    .collect()
+            })
             .unwrap_or_default();
         let mut out = Seeded::default();
         for (id, dir) in &found {
             let path = dir.to_string_lossy().into_owned();
-            let sha = std::fs::read(dir.join(MANIFEST_FILE)).ok().map(|b| sha256_hex(&b));
+            let sha = std::fs::read(dir.join(MANIFEST_FILE))
+                .ok()
+                .map(|b| sha256_hex(&b));
             let trusted = sha.as_deref().is_some_and(|s| is_trusted(id, s));
             match file.plugins.iter_mut().find(|e| &e.id == id) {
                 // A user's own entry (link, GitHub) is left alone.
-                Some(Entry { source: Source::Link { .. } | Source::Github { .. }, .. }) => {}
+                Some(Entry {
+                    source: Source::Link { .. } | Source::Github { .. },
+                    ..
+                }) => {}
                 Some(entry) => {
                     // Only bundled entries follow the package.
-                    let Source::Bundled { path: old } = &mut entry.source else { unreachable!() };
+                    let Source::Bundled { path: old } = &mut entry.source else {
+                        unreachable!()
+                    };
                     let mut changed = false;
                     if *old != path {
                         *old = path;
@@ -178,7 +207,13 @@ pub fn seed(paths: &Paths, root: &Path) -> Result<Seeded, String> {
             }
             !gone
         });
-        let dirty = !out.added.is_empty() || !out.refreshed.is_empty() || !out.pruned.is_empty() || file.extra.get(SEEDED_KEY).is_none_or(|v| v.as_array().map(Vec::len) != Some(seeded.len()));
+        let dirty = !out.added.is_empty()
+            || !out.refreshed.is_empty()
+            || !out.pruned.is_empty()
+            || file
+                .extra
+                .get(SEEDED_KEY)
+                .is_none_or(|v| v.as_array().map(Vec::len) != Some(seeded.len()));
         file.extra.insert(SEEDED_KEY.into(), seeded.into());
         (dirty, out)
     })
@@ -205,23 +240,42 @@ mod tests {
 
     fn write_manifest(root: &Path, id: &str, version: &str) -> String {
         std::fs::create_dir_all(root.join(id)).unwrap();
-        let toml = format!("id = \"{id}\"\nname = \"{id}\"\nversion = \"{version}\"\napi_version = 1\nplatforms = [\"macos\", \"linux\", \"windows\"]\npermissions = []\n");
+        let toml = format!(
+            "id = \"{id}\"\nname = \"{id}\"\nversion = \"{version}\"\napi_version = 1\nplatforms = [\"macos\", \"linux\", \"windows\"]\npermissions = []\n"
+        );
         std::fs::write(root.join(id).join(MANIFEST_FILE), &toml).unwrap();
         toml
     }
 
     fn enabled(paths: &Paths) -> Vec<(String, bool)> {
-        PluginsFile::read(paths).unwrap().plugins.into_iter().map(|e| (e.id, e.enabled)).collect()
+        PluginsFile::read(paths)
+            .unwrap()
+            .plugins
+            .into_iter()
+            .map(|e| (e.id, e.enabled))
+            .collect()
     }
 
-    const ALL: [&str; 9] =
-        ["usage-bar", "closed-chats", "quick-send", "tile-buttons", "pit-pet", "jump-palette", "turn-markers", "cli-extras", "prune-empty-projects"];
+    const ALL: [&str; 9] = [
+        "usage-bar",
+        "closed-chats",
+        "quick-send",
+        "tile-buttons",
+        "pit-pet",
+        "jump-palette",
+        "turn-markers",
+        "cli-extras",
+        "prune-empty-projects",
+    ];
 
     #[test]
     fn every_plugin_crate_in_the_checkout_ships_a_valid_manifest_named_after_its_directory() {
         let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../plugins");
         let found = plugin_dirs(&repo);
-        assert!(!found.is_empty(), "plugins/ holds at least the hello sample");
+        assert!(
+            !found.is_empty(),
+            "plugins/ holds at least the hello sample"
+        );
         for (id, dir) in found {
             let raw = std::fs::read_to_string(dir.join(MANIFEST_FILE)).unwrap();
             let m = garage_plugin::parse(&raw).unwrap_or_else(|e| panic!("{id}: {e:?}"));
@@ -265,10 +319,20 @@ mod tests {
         .unwrap();
         let before = std::fs::read_to_string(paths.registry_file()).unwrap();
         assert_eq!(seed(&paths, bundle.path()).unwrap(), Seeded::default());
-        assert_eq!(std::fs::read_to_string(paths.registry_file()).unwrap(), before, "an unchanged pass does not rewrite the file");
+        assert_eq!(
+            std::fs::read_to_string(paths.registry_file()).unwrap(),
+            before,
+            "an unchanged pass does not rewrite the file"
+        );
         let now = enabled(&paths);
-        assert!(now.contains(&("pit-pet".into(), false)) && now.contains(&("jump-palette".into(), true)));
-        assert!(!now.iter().any(|(id, _)| id == "quick-send"), "a plugin the user removed stays gone");
+        assert!(
+            now.contains(&("pit-pet".into(), false))
+                && now.contains(&("jump-palette".into(), true))
+        );
+        assert!(
+            !now.iter().any(|(id, _)| id == "quick-send"),
+            "a plugin the user removed stays gone"
+        );
     }
 
     #[test]
@@ -278,7 +342,10 @@ mod tests {
         seed(&paths, bundle.path()).unwrap();
         add(bundle.path(), "pit-pet", "1.0.0");
         add(bundle.path(), "extra", "1.0.0");
-        assert_eq!(seed(&paths, bundle.path()).unwrap().added, ["extra", "pit-pet"]);
+        assert_eq!(
+            seed(&paths, bundle.path()).unwrap().added,
+            ["extra", "pit-pet"]
+        );
         let now = enabled(&paths);
         assert!(now.contains(&("usage-bar".into(), true)));
         assert!(now.contains(&("pit-pet".into(), false)) && now.contains(&("extra".into(), false)));
@@ -292,7 +359,9 @@ mod tests {
         // the host recorded the grant and sha at its first load
         PluginsFile::update(&paths, |f| {
             f.plugins[0].granted_permissions = Some(vec![]);
-            f.plugins[0].manifest_sha256 = Some(sha256_hex(&std::fs::read(old.path().join("usage-bar").join(MANIFEST_FILE)).unwrap()));
+            f.plugins[0].manifest_sha256 = Some(sha256_hex(
+                &std::fs::read(old.path().join("usage-bar").join(MANIFEST_FILE)).unwrap(),
+            ));
             (true, ())
         })
         .unwrap();
@@ -302,8 +371,16 @@ mod tests {
         add(new.path(), "usage-bar", "2.0.0");
         assert_eq!(seed(&paths, new.path()).unwrap().refreshed, ["usage-bar"]);
         let e = &PluginsFile::read(&paths).unwrap().plugins[0];
-        assert_eq!(e.source, Source::Bundled { path: new.path().join("usage-bar").to_string_lossy().into_owned() });
-        assert_eq!(e.granted_permissions, None, "first-party grant is re-recorded by the host");
+        assert_eq!(
+            e.source,
+            Source::Bundled {
+                path: new.path().join("usage-bar").to_string_lossy().into_owned()
+            }
+        );
+        assert_eq!(
+            e.granted_permissions, None,
+            "first-party grant is re-recorded by the host"
+        );
         assert!(e.enabled);
     }
 
@@ -317,7 +394,9 @@ mod tests {
         seed(&paths, bundle.path()).unwrap();
         let now = enabled(&paths);
         assert!(now.contains(&("usage-bar".into(), true)));
-        assert!(now.contains(&("pit-pet".into(), false)) && now.contains(&("unknown".into(), false)));
+        assert!(
+            now.contains(&("pit-pet".into(), false)) && now.contains(&("unknown".into(), false))
+        );
 
         // a trusted plugin whose manifest later changes loses its grant, and stays without it
         PluginsFile::update(&paths, |f| {
@@ -327,16 +406,33 @@ mod tests {
         })
         .unwrap();
         write_manifest(bundle.path(), "usage-bar", "9.9.9"); // same id, different hash, not trusted
-        assert_eq!(seed(&paths, bundle.path()).unwrap().refreshed, ["usage-bar"]);
-        let e = PluginsFile::read(&paths).unwrap().plugins.into_iter().find(|e| e.id == "usage-bar").unwrap();
+        assert_eq!(
+            seed(&paths, bundle.path()).unwrap().refreshed,
+            ["usage-bar"]
+        );
+        let e = PluginsFile::read(&paths)
+            .unwrap()
+            .plugins
+            .into_iter()
+            .find(|e| e.id == "usage-bar")
+            .unwrap();
         assert_eq!(e.granted_permissions, None);
-        assert_eq!(seed(&paths, bundle.path()).unwrap(), Seeded::default(), "and a second pass leaves the file alone");
+        assert_eq!(
+            seed(&paths, bundle.path()).unwrap(),
+            Seeded::default(),
+            "and a second pass leaves the file alone"
+        );
     }
 
     #[test]
     fn the_compiled_allowlist_never_lists_the_hello_fixture() {
         assert!(ALLOWLIST.iter().all(|(id, _)| *id != "hello"));
-        let hello = std::fs::read(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../plugins/hello").join(MANIFEST_FILE)).unwrap();
+        let hello = std::fs::read(
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../plugins/hello")
+                .join(MANIFEST_FILE),
+        )
+        .unwrap();
         assert!(!is_trusted("hello", &sha256_hex(&hello)));
     }
 
@@ -344,28 +440,52 @@ mod tests {
     fn a_release_build_looks_only_next_to_the_binary() {
         let exe = Some(PathBuf::from("/opt/garage/bin/claude-garage"));
         let env = Some(PathBuf::from("/evil"));
-        assert_eq!(candidates(exe.clone(), env.clone(), false), [PathBuf::from("/opt/garage/bin/plugins")]);
+        assert_eq!(
+            candidates(exe.clone(), env.clone(), false),
+            [PathBuf::from("/opt/garage/bin/plugins")]
+        );
         let dev = candidates(exe, env, true);
         assert_eq!(dev[0], PathBuf::from("/evil"));
         assert_eq!(dev.len(), 3);
     }
 
     #[test]
-    fn a_plugin_that_stops_shipping_is_pruned_but_a_user_entry_holding_its_id_is_not_and_is_remembered_as_seeded() {
-        let (garage, bundle) = (tempfile::tempdir().unwrap(), root(&["usage-bar", "pit-pet", "extra"]));
+    fn a_plugin_that_stops_shipping_is_pruned_but_a_user_entry_holding_its_id_is_not_and_is_remembered_as_seeded()
+     {
+        let (garage, bundle) = (
+            tempfile::tempdir().unwrap(),
+            root(&["usage-bar", "pit-pet", "extra"]),
+        );
         let paths = Paths::new(garage.path());
         PluginsFile::update(&paths, |f| {
-            f.plugins.push(Entry::new("extra", Source::Link { path: "/mine".into() }));
+            f.plugins.push(Entry::new(
+                "extra",
+                Source::Link {
+                    path: "/mine".into(),
+                },
+            ));
             (true, ())
         })
         .unwrap();
         seed(&paths, bundle.path()).unwrap();
         let file = PluginsFile::read(&paths).unwrap();
-        assert!(file.extra[SEEDED_KEY].as_array().unwrap().iter().any(|v| v == "extra"), "recorded although the user's entry held it");
+        assert!(
+            file.extra[SEEDED_KEY]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|v| v == "extra"),
+            "recorded although the user's entry held it"
+        );
 
         std::fs::remove_dir_all(bundle.path().join("pit-pet")).unwrap();
         assert_eq!(seed(&paths, bundle.path()).unwrap().pruned, ["pit-pet"]);
-        let ids: Vec<_> = PluginsFile::read(&paths).unwrap().plugins.into_iter().map(|e| e.id).collect();
+        let ids: Vec<_> = PluginsFile::read(&paths)
+            .unwrap()
+            .plugins
+            .into_iter()
+            .map(|e| e.id)
+            .collect();
         assert_eq!(ids, ["extra", "usage-bar"]);
 
         // the user drops their link: "extra" was seeded, so the bundle does not re-add it
@@ -382,17 +502,30 @@ mod tests {
         let (garage, bundle) = (tempfile::tempdir().unwrap(), root(&["usage-bar"]));
         let paths = Paths::new(garage.path());
         PluginsFile::update(&paths, |f| {
-            f.plugins.push(Entry::new("usage-bar", Source::Link { path: "/mine".into() }));
+            f.plugins.push(Entry::new(
+                "usage-bar",
+                Source::Link {
+                    path: "/mine".into(),
+                },
+            ));
             (true, ())
         })
         .unwrap();
         seed(&paths, bundle.path()).unwrap();
-        assert_eq!(PluginsFile::read(&paths).unwrap().plugins[0].source, Source::Link { path: "/mine".into() });
+        assert_eq!(
+            PluginsFile::read(&paths).unwrap().plugins[0].source,
+            Source::Link {
+                path: "/mine".into()
+            }
+        );
 
         let (garage, empty) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
         let paths = Paths::new(garage.path());
         seed(&paths, empty.path()).unwrap();
-        assert!(!paths.registry_file().exists(), "nothing bundled: nothing is created");
+        assert!(
+            !paths.registry_file().exists(),
+            "nothing bundled: nothing is created"
+        );
     }
 }
 
@@ -401,7 +534,7 @@ mod tests {
 #[cfg(all(test, unix))]
 mod end_to_end {
     use super::*;
-    use crate::plugins::rig::{wait_for, Rig};
+    use crate::plugins::rig::{Rig, wait_for};
     use serde_json::json;
     use std::sync::OnceLock;
 
@@ -412,8 +545,20 @@ mod end_to_end {
             let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
             // Same profile and target dir as this test run (deps/ sits two levels
             // under the profile dir), so cargo reuses the compiled dependencies.
-            let target = std::env::current_exe().unwrap().ancestors().nth(3).unwrap().to_path_buf();
-            let mut args = vec!["build", "-p", "garage-plugin-hello", "--message-format=json", "--target-dir", target.to_str().unwrap()];
+            let target = std::env::current_exe()
+                .unwrap()
+                .ancestors()
+                .nth(3)
+                .unwrap()
+                .to_path_buf();
+            let mut args = vec![
+                "build",
+                "-p",
+                "garage-plugin-hello",
+                "--message-format=json",
+                "--target-dir",
+                target.to_str().unwrap(),
+            ];
             if !cfg!(debug_assertions) {
                 args.push("--release");
             }
@@ -422,11 +567,19 @@ mod end_to_end {
                 .current_dir(env!("CARGO_MANIFEST_DIR"))
                 .output()
                 .expect("cargo runs");
-            assert!(out.status.success(), "building the hello plugin failed:\n{}", String::from_utf8_lossy(&out.stderr));
+            assert!(
+                out.status.success(),
+                "building the hello plugin failed:\n{}",
+                String::from_utf8_lossy(&out.stderr)
+            );
             String::from_utf8_lossy(&out.stdout)
                 .lines()
                 .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
-                .find_map(|v| v.get("executable").and_then(|e| e.as_str()).map(PathBuf::from))
+                .find_map(|v| {
+                    v.get("executable")
+                        .and_then(|e| e.as_str())
+                        .map(PathBuf::from)
+                })
                 .expect("cargo reported the hello executable")
         })
     }
@@ -455,14 +608,24 @@ mod end_to_end {
         assert_eq!(seeded.added, ["hello"]);
         r.st.plugins.reload().unwrap();
         let hello = r.st.plugins.plugin("hello").unwrap();
-        assert!(hello.entry.is_first_party() && !hello.entry.enabled && !hello.active(), "not a default: seeded off");
-        assert_eq!(hello.entry.granted_permissions, Some(vec!["ui.widgets".to_owned()]), "first-party grant needs no preview");
+        assert!(
+            hello.entry.is_first_party() && !hello.entry.enabled && !hello.active(),
+            "not a default: seeded off"
+        );
+        assert_eq!(
+            hello.entry.granted_permissions,
+            Some(vec!["ui.widgets".to_owned()]),
+            "first-party grant needs no preview"
+        );
 
         r.st.plugins.set_enabled("hello", true).unwrap();
         assert!(r.st.plugins.active("hello").is_some());
 
-        let body = json!({"focus": {"workspace": "ws", "session": {"id": "garage/ws/a"}}}).to_string();
-        let (status, _, _) = r.call_ui("POST", "/api/plugins/hello/actions/greet/run", Some(&body)).await;
+        let body =
+            json!({"focus": {"workspace": "ws", "session": {"id": "garage/ws/a"}}}).to_string();
+        let (status, _, _) = r
+            .call_ui("POST", "/api/plugins/hello/actions/greet/run", Some(&body))
+            .await;
         assert_eq!(status, axum::http::StatusCode::ACCEPTED);
 
         wait_for(|| !r.st.plugins.widgets().widgets("hello").is_empty()).await;

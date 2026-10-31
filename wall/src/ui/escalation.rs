@@ -129,7 +129,11 @@ mod tests {
         let out = p
             .update(&[session("a", "needs-input"), session("b", "needs-input")])
             .unwrap();
-        assert_eq!(out.matches(BEL).count(), 2, "one ring + the title's terminator");
+        assert_eq!(
+            out.matches(BEL).count(),
+            2,
+            "one ring + the title's terminator"
+        );
         assert!(out.starts_with(BEL));
         assert!(out.ends_with(&osc_title("(2) garage")));
     }

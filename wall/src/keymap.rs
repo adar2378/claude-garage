@@ -14,7 +14,7 @@
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-use crate::actions::{ids, ActionId};
+use crate::actions::{ActionId, ids};
 use crate::state::wall_state::OverlayKind;
 
 /// Which key table a key is looked up in.
@@ -50,7 +50,9 @@ pub struct Keymap {
 impl Keymap {
     /// The shipped bindings (spec tui-key-routing, spec restart).
     pub fn defaults() -> Self {
-        let mut km = Keymap { bindings: Vec::new() };
+        let mut km = Keymap {
+            bindings: Vec::new(),
+        };
         for n in 1..=9usize {
             km.bind_indexed(Layer::Garage, &n.to_string(), ids::WORKSPACE_FOCUS, n - 1);
         }
@@ -102,7 +104,8 @@ impl Keymap {
     /// Replace the binding of `key` in `layer` (any index it carried is
     /// dropped), or add it when unbound. Later calls win.
     pub fn bind_override(&mut self, layer: Layer, key: &str, action: ActionId) {
-        self.bindings.retain(|b| !(b.layer == layer && b.key == key));
+        self.bindings
+            .retain(|b| !(b.layer == layer && b.key == key));
         self.bind(layer, key, action);
     }
 
@@ -140,7 +143,11 @@ impl Keymap {
 
     /// The garage-layer key bound to `action`, as the help overlay spells it.
     pub fn key_for(&self, action: ActionId) -> Option<String> {
-        let key = &self.bindings.iter().find(|b| b.layer == Layer::Garage && b.action == action && b.index.is_none())?.key;
+        let key = &self
+            .bindings
+            .iter()
+            .find(|b| b.layer == Layer::Garage && b.action == action && b.index.is_none())?
+            .key;
         Some(match key.as_str() {
             "\t" => "Tab".to_owned(),
             "\r" | "\n" => "Enter".to_owned(),
@@ -196,9 +203,17 @@ impl Keymap {
                     (None, Some(k)) => (k, false),
                     (None, None) => continue,
                 };
-                let conflict = |reason: String| KeyConflict { plugin: plugin.clone(), action: *id, key: spec.to_owned(), reason };
+                let conflict = |reason: String| KeyConflict {
+                    plugin: plugin.clone(),
+                    action: *id,
+                    key: spec.to_owned(),
+                    reason,
+                };
                 let Some(key) = plugin_key(spec) else {
-                    conflicts.push(conflict("not a key the garage layer can bind (a single character, tab or enter)".into()));
+                    conflicts.push(conflict(
+                        "not a key the garage layer can bind (a single character, tab or enter)"
+                            .into(),
+                    ));
                     continue;
                 };
                 let taken = km.resolve(Layer::Garage, &key).map(|r| r.action);
@@ -248,7 +263,6 @@ pub fn overlay_key_string(key: &KeyEvent) -> Option<String> {
 mod tests {
     use super::*;
 
-
     type Spec<'a> = &'a [(&'a str, Option<&'a str>, Option<&'a str>)];
 
     fn with(plugins: &[(&str, Spec)]) -> (Keymap, Vec<KeyConflict>) {
@@ -258,7 +272,13 @@ mod tests {
                 (
                     p.to_string(),
                     a.iter()
-                        .map(|(id, user, default)| (ActionId::intern(id), user.map(str::to_owned), default.map(str::to_owned)))
+                        .map(|(id, user, default)| {
+                            (
+                                ActionId::intern(id),
+                                user.map(str::to_owned),
+                                default.map(str::to_owned),
+                            )
+                        })
                         .collect(),
                 )
             })
@@ -269,33 +289,76 @@ mod tests {
     #[test]
     fn a_plugin_default_key_never_displaces_a_core_key_and_the_first_plugin_keeps_a_shared_key() {
         let (km, conflicts) = with(&[
-            ("one", &[("one:go", None, Some("u")), ("one:close", None, Some("x"))]),
-            ("two", &[("two:go", None, Some("u")), ("two:free", None, Some("z"))]),
+            (
+                "one",
+                &[("one:go", None, Some("u")), ("one:close", None, Some("x"))],
+            ),
+            (
+                "two",
+                &[("two:go", None, Some("u")), ("two:free", None, Some("z"))],
+            ),
         ]);
         let at = |k: &str| km.resolve(Layer::Garage, k).map(|r| r.action.as_str());
         assert_eq!(at("u"), Some("one:go"), "installed first");
         assert_eq!(at("x"), Some("session.close"), "core wins");
         assert_eq!(at("z"), Some("two:free"));
-        let why: Vec<_> = conflicts.iter().map(|c| (c.plugin.as_str(), c.key.as_str(), c.reason.as_str())).collect();
-        assert_eq!(why, [("one", "x", "kept by session.close"), ("two", "u", "kept by one:go")]);
+        let why: Vec<_> = conflicts
+            .iter()
+            .map(|c| (c.plugin.as_str(), c.key.as_str(), c.reason.as_str()))
+            .collect();
+        assert_eq!(
+            why,
+            [
+                ("one", "x", "kept by session.close"),
+                ("two", "u", "kept by one:go")
+            ]
+        );
     }
 
     #[test]
     fn a_user_binding_displaces_anything_and_says_so() {
         let (km, conflicts) = with(&[("one", &[("one:go", Some("x"), Some("u"))])]);
-        assert_eq!(km.resolve(Layer::Garage, "x").map(|r| r.action.as_str()), Some("one:go"));
-        assert_eq!(km.resolve(Layer::Garage, "u"), None, "the default is not also bound");
+        assert_eq!(
+            km.resolve(Layer::Garage, "x").map(|r| r.action.as_str()),
+            Some("one:go")
+        );
+        assert_eq!(
+            km.resolve(Layer::Garage, "u"),
+            None,
+            "the default is not also bound"
+        );
         assert_eq!(conflicts.len(), 1);
         assert_eq!(conflicts[0].reason, "replaced session.close");
     }
 
     #[test]
     fn keys_the_garage_layer_cannot_see_are_reported_not_bound() {
-        let (km, conflicts) = with(&[("one", &[("one:go", None, Some("ctrl+u")), ("one:t", None, Some("tab")), ("one:e", None, Some("enter"))])]);
+        let (km, conflicts) = with(&[(
+            "one",
+            &[
+                ("one:go", None, Some("ctrl+u")),
+                ("one:t", None, Some("tab")),
+                ("one:e", None, Some("enter")),
+            ],
+        )]);
         let why: Vec<_> = conflicts.iter().map(|c| c.reason.as_str()).collect();
-        assert_eq!(why, ["not a key the garage layer can bind (a single character, tab or enter)", "kept by view.cycle", "kept by session.engage"]);
-        assert_eq!(km.resolve(Layer::Garage, "\t").map(|r| r.action.as_str()), Some("view.cycle"), "tab stays core");
-        assert_eq!(km.resolve(Layer::Garage, "\r").map(|r| r.action.as_str()), Some("session.engage"));
+        assert_eq!(
+            why,
+            [
+                "not a key the garage layer can bind (a single character, tab or enter)",
+                "kept by view.cycle",
+                "kept by session.engage"
+            ]
+        );
+        assert_eq!(
+            km.resolve(Layer::Garage, "\t").map(|r| r.action.as_str()),
+            Some("view.cycle"),
+            "tab stays core"
+        );
+        assert_eq!(
+            km.resolve(Layer::Garage, "\r").map(|r| r.action.as_str()),
+            Some("session.engage")
+        );
     }
 
     #[test]
@@ -303,7 +366,10 @@ mod tests {
         let (km, conflicts) = Keymap::with_plugins(&[]);
         assert!(conflicts.is_empty());
         let a: Vec<_> = km.bound_actions().map(ActionId::as_str).collect();
-        let b: Vec<_> = Keymap::defaults().bound_actions().map(ActionId::as_str).collect();
+        let b: Vec<_> = Keymap::defaults()
+            .bound_actions()
+            .map(ActionId::as_str)
+            .collect();
         assert_eq!(a, b);
     }
 
@@ -385,21 +451,40 @@ mod tests {
     fn an_override_replaces_a_default_and_bind_does_not() {
         let mut km = Keymap::defaults();
         km.bind(Layer::Garage, "q", ids::SESSION_MAXIMIZE);
-        assert_eq!(km.resolve(Layer::Garage, "q").unwrap().action, ids::APP_QUIT, "bind extends");
+        assert_eq!(
+            km.resolve(Layer::Garage, "q").unwrap().action,
+            ids::APP_QUIT,
+            "bind extends"
+        );
         km.bind_override(Layer::Garage, "q", ids::SESSION_MAXIMIZE);
-        assert_eq!(km.resolve(Layer::Garage, "q").unwrap().action, ids::SESSION_MAXIMIZE);
+        assert_eq!(
+            km.resolve(Layer::Garage, "q").unwrap().action,
+            ids::SESSION_MAXIMIZE
+        );
         km.bind_override(Layer::Garage, "q", ids::OVERLAY_OPEN_HELP);
-        assert_eq!(km.resolve(Layer::Garage, "q").unwrap().action, ids::OVERLAY_OPEN_HELP, "later wins");
+        assert_eq!(
+            km.resolve(Layer::Garage, "q").unwrap().action,
+            ids::OVERLAY_OPEN_HELP,
+            "later wins"
+        );
         // An indexed default loses its index when replaced; other layers are untouched.
         km.bind_override(Layer::Garage, "1", ids::SESSION_MAXIMIZE);
         assert_eq!(km.resolve(Layer::Garage, "1").unwrap().index, None);
-        assert_eq!(km.resolve(Layer::Overlay(OverlayKind::Help), "q").unwrap().action, ids::OVERLAY_CLOSE);
+        assert_eq!(
+            km.resolve(Layer::Overlay(OverlayKind::Help), "q")
+                .unwrap()
+                .action,
+            ids::OVERLAY_CLOSE
+        );
     }
 
     #[test]
     fn restart_chord_second_keys() {
         let km = Keymap::defaults();
-        let id = |k| km.resolve(Layer::RestartChord, k).map(|r| r.action.as_str());
+        let id = |k| {
+            km.resolve(Layer::RestartChord, k)
+                .map(|r| r.action.as_str())
+        };
         assert_eq!(id("r"), Some("session.restart"));
         assert_eq!(id("a"), Some("workspace.restart"));
         assert_eq!(id("d"), Some("daemon.restart"));
@@ -409,16 +494,31 @@ mod tests {
     #[test]
     fn overlay_keys_resolve_per_overlay() {
         let km = Keymap::defaults();
-        let id = |kind, k| km.resolve(Layer::Overlay(kind), k).map(|r| r.action.as_str());
+        let id = |kind, k| {
+            km.resolve(Layer::Overlay(kind), k)
+                .map(|r| r.action.as_str())
+        };
         for k in ["esc", "?", "q"] {
             assert_eq!(id(OverlayKind::Help, k), Some("overlay.close"));
         }
         assert_eq!(id(OverlayKind::Help, "j"), None);
         assert_eq!(id(OverlayKind::TriageQueue, "enter"), Some("jump.blocked"));
-        assert_eq!(id(OverlayKind::TriageQueue, "j"), Some("overlay.select.next"));
-        assert_eq!(id(OverlayKind::TriageQueue, "down"), Some("overlay.select.next"));
-        assert_eq!(id(OverlayKind::TriageQueue, "k"), Some("overlay.select.prev"));
-        assert_eq!(id(OverlayKind::TriageQueue, "up"), Some("overlay.select.prev"));
+        assert_eq!(
+            id(OverlayKind::TriageQueue, "j"),
+            Some("overlay.select.next")
+        );
+        assert_eq!(
+            id(OverlayKind::TriageQueue, "down"),
+            Some("overlay.select.next")
+        );
+        assert_eq!(
+            id(OverlayKind::TriageQueue, "k"),
+            Some("overlay.select.prev")
+        );
+        assert_eq!(
+            id(OverlayKind::TriageQueue, "up"),
+            Some("overlay.select.prev")
+        );
         assert_eq!(id(OverlayKind::TriageQueue, "esc"), Some("overlay.close"));
         assert_eq!(id(OverlayKind::TriageQueue, "?"), None);
     }
@@ -426,9 +526,18 @@ mod tests {
     #[test]
     fn overlay_key_strings_ignore_modifiers_on_named_keys_only() {
         let k = |code, mods| overlay_key_string(&KeyEvent::new(code, mods));
-        assert_eq!(k(KeyCode::Esc, KeyModifiers::CONTROL).as_deref(), Some("esc"));
-        assert_eq!(k(KeyCode::Char('j'), KeyModifiers::NONE).as_deref(), Some("j"));
-        assert_eq!(k(KeyCode::Char('J'), KeyModifiers::SHIFT).as_deref(), Some("J"));
+        assert_eq!(
+            k(KeyCode::Esc, KeyModifiers::CONTROL).as_deref(),
+            Some("esc")
+        );
+        assert_eq!(
+            k(KeyCode::Char('j'), KeyModifiers::NONE).as_deref(),
+            Some("j")
+        );
+        assert_eq!(
+            k(KeyCode::Char('J'), KeyModifiers::SHIFT).as_deref(),
+            Some("J")
+        );
         assert_eq!(k(KeyCode::Char('j'), KeyModifiers::CONTROL), None);
     }
 }

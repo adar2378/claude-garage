@@ -106,7 +106,9 @@ impl WallSession {
     /// tui-context-meters "Install affordance": "no session has
     /// statusline-sourced context").
     pub fn has_statusline_context(&self) -> bool {
-        self.context.as_ref().is_some_and(|c| c.source == "statusline")
+        self.context
+            .as_ref()
+            .is_some_and(|c| c.source == "statusline")
     }
 
     /// A live session has a tmux session behind it — anything but restorable.
@@ -124,7 +126,9 @@ impl WallSession {
         message: Option<String>,
     ) -> WallSession {
         WallSession {
-            status: status.map(str::to_owned).unwrap_or_else(|| self.status.clone()),
+            status: status
+                .map(str::to_owned)
+                .unwrap_or_else(|| self.status.clone()),
             since,
             message,
             ..self.clone()
@@ -262,7 +266,10 @@ impl WallState {
     /// pruning would otherwise leave it pointing at a view that no longer
     /// exists (see `store::reconcile`).
     pub fn focused_view_name(&self, workspace: &str) -> &str {
-        self.focused_view.get(workspace).map(String::as_str).unwrap_or(views::DEFAULT_VIEW)
+        self.focused_view
+            .get(workspace)
+            .map(String::as_str)
+            .unwrap_or(views::DEFAULT_VIEW)
     }
 
     /// Salience-ordered session ids of `workspace`'s `view` — the input to

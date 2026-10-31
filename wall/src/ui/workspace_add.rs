@@ -130,8 +130,7 @@ impl WorkspaceAddForm {
             }
             PickOutcome::Cancelled => {}
             PickOutcome::Unsupported => {
-                self.error =
-                    Some("folder picker is macOS-only — type or paste a path".to_owned());
+                self.error = Some("folder picker is macOS-only — type or paste a path".to_owned());
             }
             PickOutcome::Failed => self.error = Some("folder picker failed".to_owned()),
         }
@@ -359,11 +358,11 @@ mod tests {
         let form = WorkspaceAddForm::default();
         let lines = workspace_add_lines(&form, 40);
         assert_eq!(lines[0].to_string(), "project directory");
-        assert!(lines[1].to_string().contains("~/dev/my-project"), "placeholder");
-        assert_eq!(
-            lines[3].to_string(),
-            "Enter add · ^O browse · Esc cancel"
+        assert!(
+            lines[1].to_string().contains("~/dev/my-project"),
+            "placeholder"
         );
+        assert_eq!(lines[3].to_string(), "Enter add · ^O browse · Esc cancel");
         let busy = WorkspaceAddForm {
             busy: true,
             ..WorkspaceAddForm::default()
@@ -375,7 +374,10 @@ mod tests {
             ..WorkspaceAddForm::default()
         };
         let lines = workspace_add_lines(&picking, 40);
-        assert_eq!(lines.last().unwrap().to_string(), "waiting for folder picker…");
+        assert_eq!(
+            lines.last().unwrap().to_string(),
+            "waiting for folder picker…"
+        );
     }
 
     // ── paste cleanup ────────────────────────────────────────────────────

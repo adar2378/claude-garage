@@ -2,7 +2,12 @@ use super::*;
 use crate::state::wall_state::WallState;
 
 fn env_of(pairs: &'static [(&'static str, &'static str)]) -> impl Fn(&str) -> Option<String> {
-    move |name| pairs.iter().find(|(k, _)| *k == name).map(|(_, v)| (*v).to_owned())
+    move |name| {
+        pairs
+            .iter()
+            .find(|(k, _)| *k == name)
+            .map(|(_, v)| (*v).to_owned())
+    }
 }
 
 // ── Off switch ───────────────────────────────────────────────────────────
@@ -35,14 +40,23 @@ fn env_values_that_mean_no_do_not_switch_motion_off() {
 #[test]
 fn config_animations_false_turns_motion_off_and_env_beats_config_true() {
     assert!(!motion_enabled(Some("animations = false\n"), &env_of(&[])));
-    assert!(!motion_enabled(Some("animations = true\n"), &env_of(&[("REDUCE_MOTION", "1")])));
+    assert!(!motion_enabled(
+        Some("animations = true\n"),
+        &env_of(&[("REDUCE_MOTION", "1")])
+    ));
     assert!(motion_enabled(Some("animations = true\n"), &env_of(&[])));
 }
 
 #[test]
 fn config_parsing_ignores_comments_quotes_and_other_keys() {
-    assert_eq!(config_animations("animations = false # off for ssh"), Some(false));
-    assert_eq!(config_animations("[ui]\n  animations=\"true\"\n"), Some(true));
+    assert_eq!(
+        config_animations("animations = false # off for ssh"),
+        Some(false)
+    );
+    assert_eq!(
+        config_animations("[ui]\n  animations=\"true\"\n"),
+        Some(true)
+    );
     assert_eq!(config_animations("# animations = false\n"), None);
     assert_eq!(config_animations("pet_animations = false\n"), None);
     assert_eq!(config_animations("animations = maybe\n"), None);
@@ -166,7 +180,11 @@ fn finished_effects_leave_the_plain_frame_behind() {
         }
     }
     assert!(last_animated.is_some());
-    assert_eq!(frame(&mut m, now + 33, true, false), painted(), "settled frame == plain");
+    assert_eq!(
+        frame(&mut m, now + 33, true, false),
+        painted(),
+        "settled frame == plain"
+    );
 }
 
 #[test]
@@ -226,7 +244,11 @@ fn a_closed_session_dissolves_over_the_new_layout_then_is_gone() {
     assert!(m.effects_running(), "ghost counts as running");
     let mut buf = Buffer::empty(Rect::new(0, 0, 40, 10));
     m.apply(&mut buf);
-    assert_eq!(buf[(2, 2)].symbol(), "h", "first ghost frame shows the old tile");
+    assert_eq!(
+        buf[(2, 2)].symbol(),
+        "h",
+        "first ghost frame shows the old tile"
+    );
     let mut t = now + 33;
     let mut frames = 0;
     while m.next_tick().is_some() {
@@ -240,7 +262,11 @@ fn a_closed_session_dissolves_over_the_new_layout_then_is_gone() {
     let mut buf = Buffer::empty(Rect::new(0, 0, 40, 10));
     m.begin_frame(t + 33);
     m.apply(&mut buf);
-    assert_eq!(buf, Buffer::empty(Rect::new(0, 0, 40, 10)), "nothing of the tile remains");
+    assert_eq!(
+        buf,
+        Buffer::empty(Rect::new(0, 0, 40, 10)),
+        "nothing of the tile remains"
+    );
 }
 
 #[test]
@@ -262,8 +288,15 @@ fn done_fade_runs_green_to_neutral_in_rgb_at_every_step_endpoints_included() {
     let neutral = Color::Rgb(DONE_NEUTRAL.0, DONE_NEUTRAL.1, DONE_NEUTRAL.2);
     assert_eq!(done_fade_color(Some(1000), 1000), green);
     assert_eq!(done_fade_color(Some(1000), 1000 + DONE_FADE_MS), neutral);
-    assert_eq!(done_fade_color(Some(1000), 1000 + 10 * DONE_FADE_MS), neutral);
-    assert_eq!(done_fade_color(None, i64::MAX), green, "unknown since never fades");
+    assert_eq!(
+        done_fade_color(Some(1000), 1000 + 10 * DONE_FADE_MS),
+        neutral
+    );
+    assert_eq!(
+        done_fade_color(None, i64::MAX),
+        green,
+        "unknown since never fades"
+    );
     for step in 0..=DONE_FADE_STEPS {
         let c = done_fade_color(Some(0), step * (DONE_FADE_MS / DONE_FADE_STEPS));
         assert!(matches!(c, Color::Rgb(..)), "step {step} is {c:?}");
@@ -292,21 +325,32 @@ fn done_fade_changes_color_once_per_elapsed_tick() {
     // colour per tick, no finer.
     let step_ms = DONE_FADE_MS / DONE_FADE_STEPS;
     assert_eq!(step_ms, 10_000);
-    assert_eq!(done_fade_color(Some(0), step_ms - 1), done_fade_color(Some(0), 0));
-    assert_ne!(done_fade_color(Some(0), step_ms), done_fade_color(Some(0), 0));
+    assert_eq!(
+        done_fade_color(Some(0), step_ms - 1),
+        done_fade_color(Some(0), 0)
+    );
+    assert_ne!(
+        done_fade_color(Some(0), step_ms),
+        done_fade_color(Some(0), 0)
+    );
 }
 
 // ── Spinner ──────────────────────────────────────────────────────────────
 
 #[test]
 fn spinner_cycles_six_single_cell_frames() {
-    let frames: Vec<String> = (0..6).map(|i| spinner_symbol(i * SPINNER_TICK.as_millis() as i64)).collect();
+    let frames: Vec<String> = (0..6)
+        .map(|i| spinner_symbol(i * SPINNER_TICK.as_millis() as i64))
+        .collect();
     let mut unique = frames.clone();
     unique.sort();
     unique.dedup();
     assert_eq!(unique.len(), 6);
     assert!(frames.iter().all(|f| f.chars().count() == 1));
-    assert_eq!(spinner_symbol(6 * SPINNER_TICK.as_millis() as i64), frames[0]);
+    assert_eq!(
+        spinner_symbol(6 * SPINNER_TICK.as_millis() as i64),
+        frames[0]
+    );
 }
 
 #[test]
@@ -316,12 +360,23 @@ fn strip_spinner_shows_while_down_or_restarting_and_clears_after_the_reconnect()
     let mut state = WallState::initial();
     let items = |state: &WallState, now: i64| {
         provider.clock.set(now);
-        provider.items(&SlotCtx { state: Some(state), ..SlotCtx::default() })
+        provider.items(&SlotCtx {
+            state: Some(state),
+            ..SlotCtx::default()
+        })
     };
-    assert!(items(&state, 0).is_empty(), "daemon live, nothing restarting");
+    assert!(
+        items(&state, 0).is_empty(),
+        "daemon live, nothing restarting"
+    );
 
     m.daemon_restart_requested(0);
-    let text: String = items(&state, 10).remove(0).text.iter().map(|s| s.content.to_string()).collect();
+    let text: String = items(&state, 10)
+        .remove(0)
+        .text
+        .iter()
+        .map(|s| s.content.to_string())
+        .collect();
     assert!(text.contains("daemon restarting"));
 
     state.daemon_live = false;
@@ -353,7 +408,10 @@ fn a_dead_daemon_stops_the_spinner_after_the_cap_and_shows_a_static_caption() {
     let text = |now: i64| -> String {
         provider.clock.set(now);
         provider
-            .items(&SlotCtx { state: Some(&state), ..SlotCtx::default() })
+            .items(&SlotCtx {
+                state: Some(&state),
+                ..SlotCtx::default()
+            })
             .remove(0)
             .text
             .iter()
@@ -363,7 +421,10 @@ fn a_dead_daemon_stops_the_spinner_after_the_cap_and_shows_a_static_caption() {
     assert!(text(1_000 + DOWN_SPIN_MS - 1).contains("reconnecting"));
     assert!(m.strip_spinner_active(false, 1_000 + DOWN_SPIN_MS - 1));
     assert_eq!(text(1_000 + DOWN_SPIN_MS), "◌ daemon down");
-    assert!(!m.strip_spinner_active(false, 1_000 + DOWN_SPIN_MS), "no spinner, so no tick");
+    assert!(
+        !m.strip_spinner_active(false, 1_000 + DOWN_SPIN_MS),
+        "no spinner, so no tick"
+    );
     // A later drop-less call must not restart the clock.
     m.connection_changed(false, 99_000);
     assert!(!m.strip_spinner_active(false, 100_000));
@@ -383,7 +444,10 @@ fn a_switch_and_return_does_not_fade_the_tile_in_again() {
     // Switch away: the tile is drawn detached (or not at all), then back.
     frame(&mut m, now + 100, false, false);
     frame(&mut m, now + 200, true, false);
-    assert!(!m.effects_running(), "re-attach after a switch is not a first attach");
+    assert!(
+        !m.effects_running(),
+        "re-attach after a switch is not a first attach"
+    );
     assert_eq!(m.next_tick(), None);
 }
 

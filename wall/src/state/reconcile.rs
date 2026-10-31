@@ -69,7 +69,10 @@ pub(super) fn reconcile(base: WallState, sessions: Vec<WallSession>) -> (WallSta
             next.layer = KeyLayer::Garage;
         }
         let first = next.groups.first().map(|g| g.name.clone());
-        return (with_focused_workspace(next, first.as_deref()), views_changed);
+        return (
+            with_focused_workspace(next, first.as_deref()),
+            views_changed,
+        );
     };
 
     let ids: HashSet<&str> = group_session_ids.iter().map(String::as_str).collect();
@@ -138,8 +141,11 @@ pub(super) fn reconcile(base: WallState, sessions: Vec<WallSession>) -> (WallSta
 /// so it keeps rendering the (correct, distinct) "no sessions in this
 /// workspace" hint.
 pub(super) fn refocus_vacated_views(mut next: WallState) -> WallState {
-    let ws_sessions: Vec<(String, Vec<WallSession>)> =
-        next.groups.iter().map(|g| (g.name.clone(), g.sessions.clone())).collect();
+    let ws_sessions: Vec<(String, Vec<WallSession>)> = next
+        .groups
+        .iter()
+        .map(|g| (g.name.clone(), g.sessions.clone()))
+        .collect();
     for (name, sessions) in ws_sessions {
         let current = next.focused_view_name(&name).to_owned();
         if !next.view_session_ids(&name, &current).is_empty() {
@@ -169,7 +175,10 @@ pub(super) fn with_focused_workspace(base: WallState, name: Option<&str>) -> Wal
     let grid: Vec<String> = match name {
         Some(n) => {
             let view = next.focused_view_name(n).to_owned();
-            next.view_session_ids(n, &view).into_iter().take(WallState::GRID_CAP).collect()
+            next.view_session_ids(n, &view)
+                .into_iter()
+                .take(WallState::GRID_CAP)
+                .collect()
         }
         None => Vec::new(),
     };
@@ -186,15 +195,24 @@ pub(super) fn with_focused_workspace(base: WallState, name: Option<&str>) -> Wal
 /// append/LRU-swap-in rule. The one primitive behind plain session focus,
 /// `d`, `Tab`, and both jump commands — see [`focus_session_state`] and the
 /// `WallStore` view methods.
-pub(super) fn focus_in_view(base: WallState, workspace: &str, view: &str, session_id: &str) -> WallState {
-    let switching =
-        base.focused_workspace.as_deref() != Some(workspace) || base.focused_view_name(workspace) != view;
+pub(super) fn focus_in_view(
+    base: WallState,
+    workspace: &str,
+    view: &str,
+    session_id: &str,
+) -> WallState {
+    let switching = base.focused_workspace.as_deref() != Some(workspace)
+        || base.focused_view_name(workspace) != view;
     let mut next = base;
-    next.focused_view.insert(workspace.to_owned(), view.to_owned());
+    next.focused_view
+        .insert(workspace.to_owned(), view.to_owned());
     if switching {
         next.focused_workspace = Some(workspace.to_owned());
-        let grid: Vec<String> =
-            next.view_session_ids(workspace, view).into_iter().take(WallState::GRID_CAP).collect();
+        let grid: Vec<String> = next
+            .view_session_ids(workspace, view)
+            .into_iter()
+            .take(WallState::GRID_CAP)
+            .collect();
         next.gridded_session_ids = grid.clone();
         next.grid_focus_recency = grid;
     }

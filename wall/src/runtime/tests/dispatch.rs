@@ -48,13 +48,21 @@ fn a_key_and_a_click_for_the_same_action_leave_the_same_state() {
         let effects = by_click.dispatch_action(id, &ctx);
         assert!(effects.is_empty(), "{id:?}");
 
-        assert_eq!(state_of(&by_key), state_of(&by_click), "{key:?} vs click on {id:?}");
+        assert_eq!(
+            state_of(&by_key),
+            state_of(&by_click),
+            "{key:?} vs click on {id:?}"
+        );
     }
 }
 
 #[test]
 fn the_source_of_a_context_never_changes_what_an_action_does() {
-    for id in [ids::OVERLAY_OPEN_QUEUE, ids::SESSION_MAXIMIZE, ids::FOCUS_CYCLE_PREV] {
+    for id in [
+        ids::OVERLAY_OPEN_QUEUE,
+        ids::SESSION_MAXIMIZE,
+        ids::FOCUS_CYCLE_PREV,
+    ] {
         let mut a = two_workspaces();
         let mut b = two_workspaces();
         let key_ctx = ActionCtx::from_focus(a.store.state(), ActionSource::Key("x".into()));
@@ -72,8 +80,15 @@ fn session_focus_lands_on_the_named_session_and_disengages_first() {
     let ctx = click_ctx(&app).with_session(id("a", "two"));
     app.dispatch_action(ids::SESSION_FOCUS, &ctx);
     let state = app.store.state();
-    assert_eq!(state.layer, KeyLayer::Garage, "a click leaves the engaged tile first");
-    assert_eq!(state.focused_session_id.as_deref(), Some(id("a", "two").as_str()));
+    assert_eq!(
+        state.layer,
+        KeyLayer::Garage,
+        "a click leaves the engaged tile first"
+    );
+    assert_eq!(
+        state.focused_session_id.as_deref(),
+        Some(id("a", "two").as_str())
+    );
 }
 
 #[test]
@@ -83,12 +98,18 @@ fn session_engage_focuses_the_clicked_tile_then_engages_it() {
     app.dispatch_action(ids::SESSION_ENGAGE, &ctx);
     let state = app.store.state();
     assert_eq!(state.layer, KeyLayer::Engaged);
-    assert_eq!(state.focused_session_id.as_deref(), Some(id("a", "two").as_str()));
+    assert_eq!(
+        state.focused_session_id.as_deref(),
+        Some(id("a", "two").as_str())
+    );
 }
 
 #[test]
 fn session_restore_focuses_then_restores_with_the_in_flight_guard() {
-    let mut app = app(vec![ws("a")], vec![si("a", "live"), si_restorable("a", "old")]);
+    let mut app = app(
+        vec![ws("a")],
+        vec![si("a", "live"), si_restorable("a", "old")],
+    );
     let ctx = click_ctx(&app).with_session(id("a", "old"));
     let effects = app.dispatch_action(ids::SESSION_RESTORE, &ctx);
     assert_eq!(effects, vec![Effect::Restore { id: id("a", "old") }]);
@@ -96,7 +117,10 @@ fn session_restore_focuses_then_restores_with_the_in_flight_guard() {
         app.store.state().focused_session_id.as_deref(),
         Some(id("a", "old").as_str())
     );
-    assert!(app.dispatch_action(ids::SESSION_RESTORE, &ctx).is_empty(), "no double restore");
+    assert!(
+        app.dispatch_action(ids::SESSION_RESTORE, &ctx).is_empty(),
+        "no double restore"
+    );
 }
 
 #[test]
@@ -128,14 +152,25 @@ fn opening_the_queue_resets_its_selection_whatever_raised_the_action() {
 #[test]
 fn the_restart_ids_run_only_from_the_chord() {
     let sessions = || vec![si_status("a", "one", "idle"), si_status("a", "two", "idle")];
-    for id in [ids::SESSION_RESTART, ids::WORKSPACE_RESTART, ids::DAEMON_RESTART] {
+    for id in [
+        ids::SESSION_RESTART,
+        ids::WORKSPACE_RESTART,
+        ids::DAEMON_RESTART,
+    ] {
         // Any other source (a key, a click) is ignored: no effect, no arm.
-        for source in [ActionSource::Key("a".into()), ActionSource::Mouse { col: 1, row: 1 }] {
+        for source in [
+            ActionSource::Key("a".into()),
+            ActionSource::Mouse { col: 1, row: 1 },
+        ] {
             let mut app = app(vec![ws("a")], sessions());
             let ctx = ActionCtx::from_focus(app.store.state(), source);
             assert!(app.dispatch_action(id, &ctx).is_empty(), "{id:?}");
             assert!(app.dispatch_action(id, &ctx).is_empty(), "{id:?} twice");
-            assert_eq!(app.router.notices.current(now_ms()), None, "{id:?} left a notice");
+            assert_eq!(
+                app.router.notices.current(now_ms()),
+                None,
+                "{id:?} left a notice"
+            );
         }
     }
 
@@ -144,11 +179,26 @@ fn the_restart_ids_run_only_from_the_chord() {
     // Armed double-press: the first press only arms.
     assert!(app.dispatch_action(ids::SESSION_RESTART, &chord).is_empty());
     let effects = app.dispatch_action(ids::SESSION_RESTART, &chord);
-    assert!(matches!(effects.as_slice(), [Effect::RestartSession { force: false, .. }]), "{effects:?}");
+    assert!(
+        matches!(
+            effects.as_slice(),
+            [Effect::RestartSession { force: false, .. }]
+        ),
+        "{effects:?}"
+    );
     let effects = app.dispatch_action(ids::WORKSPACE_RESTART, &chord);
-    assert!(matches!(effects.as_slice(), [Effect::RestartWorkspace { ids }] if ids.len() == 2), "{effects:?}");
-    assert_eq!(app.dispatch_action(ids::DAEMON_RESTART, &chord), vec![Effect::RestartDaemon]);
-    assert_eq!(app.router.notices.current(now_ms()), Some("restarting the daemon…"));
+    assert!(
+        matches!(effects.as_slice(), [Effect::RestartWorkspace { ids }] if ids.len() == 2),
+        "{effects:?}"
+    );
+    assert_eq!(
+        app.dispatch_action(ids::DAEMON_RESTART, &chord),
+        vec![Effect::RestartDaemon]
+    );
+    assert_eq!(
+        app.router.notices.current(now_ms()),
+        Some("restarting the daemon…")
+    );
 }
 
 #[test]
@@ -157,7 +207,10 @@ fn the_r_chord_reaches_the_restart_action_through_handle_key() {
     // the arm notice is the observable.
     let mut app = app(vec![ws("a")], vec![si_status("a", "one", "idle")]);
     assert!(!app.handle_key(&plain(KeyCode::Char('r'))));
-    assert_eq!(app.router.notices.current(now_ms()), Some(RESTART_PREFIX_HINT));
+    assert_eq!(
+        app.router.notices.current(now_ms()),
+        Some(RESTART_PREFIX_HINT)
+    );
     assert!(!app.handle_key(&plain(KeyCode::Char('r'))));
     assert_eq!(
         app.router.notices.current(now_ms()),
@@ -169,7 +222,10 @@ fn the_r_chord_reaches_the_restart_action_through_handle_key() {
 fn a_plain_a_key_is_jump_blocked_never_a_workspace_restart() {
     let mut app = app(vec![ws("a")], vec![si_status("a", "one", "idle")]);
     app.handle_key(&plain(KeyCode::Char('a')));
-    assert_eq!(app.router.notices.current(now_ms()), Some("no session needs you"));
+    assert_eq!(
+        app.router.notices.current(now_ms()),
+        Some("no session needs you")
+    );
 }
 
 #[test]
@@ -186,13 +242,19 @@ fn a_key_and_a_click_agree_when_starting_from_the_engaged_layer() {
         let ctx = click_ctx(&by_click);
         by_click.dispatch_action(id, &ctx);
 
-        assert_eq!(state_of(&by_key), state_of(&by_click), "{key:?} vs click on {id:?}");
+        assert_eq!(
+            state_of(&by_key),
+            state_of(&by_click),
+            "{key:?} vs click on {id:?}"
+        );
     }
 }
 
 /// An app with a drawn-looking layout and the given clickable strip slots,
 /// so `handle_click` resolves real coordinates.
-fn app_with_strip_slots(slots: Vec<(std::ops::Range<u16>, crate::slots::ClickTarget)>) -> (App, u16) {
+fn app_with_strip_slots(
+    slots: Vec<(std::ops::Range<u16>, crate::slots::ClickTarget)>,
+) -> (App, u16) {
     let mut app = two_workspaces();
     let layout = crate::ui::layout::wall_layout(Rect::new(0, 0, 120, 40), 3, None, false, false);
     let row = layout.strip.y;
@@ -235,21 +297,32 @@ fn the_apps_one_keymap_drives_garage_keys_and_overlay_keys_alike() {
     use crate::keymap::Layer;
     let mut app = two_workspaces();
     app.keymap.bind(Layer::Garage, "z", ids::SESSION_MAXIMIZE);
-    app.keymap.bind(Layer::Overlay(OverlayKind::Help), "x", ids::OVERLAY_CLOSE);
+    app.keymap
+        .bind(Layer::Overlay(OverlayKind::Help), "x", ids::OVERLAY_CLOSE);
 
     app.handle_key(&plain(KeyCode::Char('z')));
-    assert!(app.store.state().maximized_session_id.is_some(), "a garage key bound on the app's keymap");
+    assert!(
+        app.store.state().maximized_session_id.is_some(),
+        "a garage key bound on the app's keymap"
+    );
 
     app.handle_key(&plain(KeyCode::Char('?')));
     assert_eq!(app.store.state().overlay, Some(OverlayKind::Help));
     app.handle_key(&plain(KeyCode::Char('x')));
-    assert_eq!(app.store.state().overlay, None, "an overlay key bound on the same keymap");
+    assert_eq!(
+        app.store.state().overlay,
+        None,
+        "an overlay key bound on the same keymap"
+    );
 }
 
 #[test]
 fn the_gutter_history_poll_runs_only_while_a_marker_is_showing() {
     use std::time::Duration;
-    assert!(!history_refresh_due(false, Duration::from_secs(3600)), "no marker, no tmux call, ever");
+    assert!(
+        !history_refresh_due(false, Duration::from_secs(3600)),
+        "no marker, no tmux call, ever"
+    );
     assert!(!history_refresh_due(true, Duration::from_millis(900)));
     assert!(history_refresh_due(true, Duration::from_secs(1)));
 }
@@ -259,10 +332,40 @@ fn the_loop_wakes_for_animation_only_when_an_animated_item_is_visible() {
     use std::time::Duration;
     let ms = Duration::from_millis;
     // Nothing animated: no redraw and no wake-up, however long it has been.
-    assert_eq!(animation_wake(None, ms(0)), AnimationWake { redraw: false, next: None });
-    assert_eq!(animation_wake(None, Duration::from_secs(3600)), AnimationWake { redraw: false, next: None });
+    assert_eq!(
+        animation_wake(None, ms(0)),
+        AnimationWake {
+            redraw: false,
+            next: None
+        }
+    );
+    assert_eq!(
+        animation_wake(None, Duration::from_secs(3600)),
+        AnimationWake {
+            redraw: false,
+            next: None
+        }
+    );
     // Animated: not yet due, then due.
-    assert_eq!(animation_wake(Some(ms(250)), ms(100)), AnimationWake { redraw: false, next: Some(ms(150)) });
-    assert_eq!(animation_wake(Some(ms(250)), ms(250)), AnimationWake { redraw: true, next: Some(ms(250)) });
-    assert_eq!(animation_wake(Some(ms(250)), ms(900)), AnimationWake { redraw: true, next: Some(ms(250)) });
+    assert_eq!(
+        animation_wake(Some(ms(250)), ms(100)),
+        AnimationWake {
+            redraw: false,
+            next: Some(ms(150))
+        }
+    );
+    assert_eq!(
+        animation_wake(Some(ms(250)), ms(250)),
+        AnimationWake {
+            redraw: true,
+            next: Some(ms(250))
+        }
+    );
+    assert_eq!(
+        animation_wake(Some(ms(250)), ms(900)),
+        AnimationWake {
+            redraw: true,
+            next: Some(ms(250))
+        }
+    );
 }

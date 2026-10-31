@@ -34,7 +34,11 @@ impl PluginLog {
     }
 
     pub fn with_max(path: PathBuf, max: u64) -> Arc<Self> {
-        Arc::new(Self { path, max, lock: tokio::sync::Mutex::new(()) })
+        Arc::new(Self {
+            path,
+            max,
+            lock: tokio::sync::Mutex::new(()),
+        })
     }
 
     pub fn path(&self) -> &std::path::Path {
@@ -55,7 +59,11 @@ impl PluginLog {
             rotated.push(".1");
             let _ = std::fs::rename(&self.path, PathBuf::from(rotated));
         }
-        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&self.path) {
+        if let Ok(mut f) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&self.path)
+        {
             let _ = f.write_all(entry.as_bytes());
         }
     }
@@ -67,7 +75,12 @@ pub struct Running(Mutex<HashMap<String, HashMap<u64, u32>>>);
 
 impl Running {
     fn add(&self, plugin: &str, run_id: u64, pid: u32) {
-        self.0.lock().unwrap().entry(plugin.to_owned()).or_default().insert(run_id, pid);
+        self.0
+            .lock()
+            .unwrap()
+            .entry(plugin.to_owned())
+            .or_default()
+            .insert(run_id, pid);
     }
 
     fn remove(&self, plugin: &str, run_id: u64) {
@@ -87,8 +100,13 @@ impl Running {
     /// SIGTERM every group of `plugin` now, SIGKILL the stragglers after
     /// [`KILL_GRACE`]. Returns how many runs were signalled.
     pub fn terminate(self: &Arc<Self>, plugin: &str) -> usize {
-        let runs: Vec<(u64, u32)> =
-            self.0.lock().unwrap().get(plugin).map(|r| r.iter().map(|(a, b)| (*a, *b)).collect()).unwrap_or_default();
+        let runs: Vec<(u64, u32)> = self
+            .0
+            .lock()
+            .unwrap()
+            .get(plugin)
+            .map(|r| r.iter().map(|(a, b)| (*a, *b)).collect())
+            .unwrap_or_default();
         for (_, pid) in &runs {
             signal_group(*pid, false);
         }
@@ -173,10 +191,15 @@ pub fn base_env(parent: impl Iterator<Item = (String, String)>) -> Vec<(String, 
     const KEEP_WINDOWS: &[&str] = &["SYSTEMROOT", "USERPROFILE", "APPDATA"];
     parent
         .filter(|(k, _)| {
-            let name = if cfg!(windows) { k.to_ascii_uppercase() } else { k.clone() };
+            let name = if cfg!(windows) {
+                k.to_ascii_uppercase()
+            } else {
+                k.clone()
+            };
             KEEP.contains(&name.as_str())
                 || name.starts_with("LC_")
-                || (cfg!(windows) && (KEEP_WINDOWS.contains(&name.as_str()) || name == "TEMP" || name == "TMP"))
+                || (cfg!(windows)
+                    && (KEEP_WINDOWS.contains(&name.as_str()) || name == "TEMP" || name == "TMP"))
         })
         .collect()
 }
@@ -202,7 +225,9 @@ impl Runner for ProcessRunner {
         let mut child = match cmd.spawn() {
             Ok(c) => c,
             Err(e) => {
-                spec.log.append(&prefix, &format!("could not start {program}: {e}")).await;
+                spec.log
+                    .append(&prefix, &format!("could not start {program}: {e}"))
+                    .await;
                 return RunOutcome::SpawnFailed(e.to_string());
             }
         };
@@ -217,8 +242,14 @@ impl Runner for ProcessRunner {
             });
         }
         let readers: Vec<_> = [
-            child.stdout.take().map(|s| tokio::spawn(pump(s, spec.log.clone(), prefix.clone()))),
-            child.stderr.take().map(|s| tokio::spawn(pump(s, spec.log.clone(), prefix.clone()))),
+            child
+                .stdout
+                .take()
+                .map(|s| tokio::spawn(pump(s, spec.log.clone(), prefix.clone()))),
+            child
+                .stderr
+                .take()
+                .map(|s| tokio::spawn(pump(s, spec.log.clone(), prefix.clone()))),
         ]
         .into_iter()
         .flatten()
@@ -237,7 +268,10 @@ impl Runner for ProcessRunner {
             Ok(Err(e)) => RunOutcome::SpawnFailed(e.to_string()),
             Err(limit) => {
                 signal_group(pid, false);
-                if tokio::time::timeout(KILL_GRACE, child.wait()).await.is_err() {
+                if tokio::time::timeout(KILL_GRACE, child.wait())
+                    .await
+                    .is_err()
+                {
                     signal_group(pid, true);
                     let _ = child.wait().await;
                 }
@@ -256,7 +290,9 @@ impl Runner for ProcessRunner {
         }
         spec.running.remove(&spec.plugin, spec.run_id);
         if !outcome.is_success() {
-            spec.log.append(&prefix, &format!("run failed: {}", outcome.reason())).await;
+            spec.log
+                .append(&prefix, &format!("run failed: {}", outcome.reason()))
+                .await;
         }
         outcome
     }
@@ -274,11 +310,19 @@ async fn pump<R: AsyncReadExt + Unpin>(mut r: R, log: Arc<PluginLog>, prefix: St
         buf.extend_from_slice(&chunk[..n]);
         while let Some(pos) = buf.iter().position(|b| *b == b'\n') {
             let line: Vec<u8> = buf.drain(..=pos).collect();
-            log.append(&prefix, String::from_utf8_lossy(&line[..line.len() - 1]).trim_end_matches('\r')).await;
+            log.append(
+                &prefix,
+                String::from_utf8_lossy(&line[..line.len() - 1]).trim_end_matches('\r'),
+            )
+            .await;
         }
         if buf.len() >= MAX_LINE {
             let line = std::mem::take(&mut buf);
-            log.append(&prefix, &format!("{} [cut]", String::from_utf8_lossy(&line))).await;
+            log.append(
+                &prefix,
+                &format!("{} [cut]", String::from_utf8_lossy(&line)),
+            )
+            .await;
         }
     }
     if !buf.is_empty() {
@@ -300,7 +344,11 @@ mod tests {
         p.to_string_lossy().into_owned()
     }
 
-    fn spec(dir: &std::path::Path, argv: Vec<String>, timeout: Option<Duration>) -> (RunSpec, Arc<PluginLog>, Arc<Running>) {
+    fn spec(
+        dir: &std::path::Path,
+        argv: Vec<String>,
+        timeout: Option<Duration>,
+    ) -> (RunSpec, Arc<PluginLog>, Arc<Running>) {
         let log = PluginLog::new(dir.join("logs/p.log"));
         let running = Arc::new(Running::default());
         let s = RunSpec {
@@ -321,25 +369,61 @@ mod tests {
     #[tokio::test]
     async fn a_real_script_gets_stdin_env_and_cwd_and_its_output_lands_in_the_log() {
         let d = tempfile::tempdir().unwrap();
-        let sh = script(d.path(), "run.sh", "cat > got-stdin.json\necho \"id=$GARAGE_PLUGIN_ID cwd=$(pwd)\"\necho oops >&2\nexit 0");
-        let (s, log, running) = spec(d.path(), vec!["/bin/sh".into(), sh], Some(Duration::from_secs(10)));
+        let sh = script(
+            d.path(),
+            "run.sh",
+            "cat > got-stdin.json\necho \"id=$GARAGE_PLUGIN_ID cwd=$(pwd)\"\necho oops >&2\nexit 0",
+        );
+        let (s, log, running) = spec(
+            d.path(),
+            vec!["/bin/sh".into(), sh],
+            Some(Duration::from_secs(10)),
+        );
         assert_eq!(ProcessRunner.run(s).await, RunOutcome::Success);
-        assert_eq!(std::fs::read_to_string(d.path().join("got-stdin.json")).unwrap(), "{\"hello\":1}");
+        assert_eq!(
+            std::fs::read_to_string(d.path().join("got-stdin.json")).unwrap(),
+            "{\"hello\":1}"
+        );
         let text = std::fs::read_to_string(log.path()).unwrap();
         assert!(text.contains("[7 action:t] id=p cwd="), "{text}");
-        assert!(text.contains("[7 action:t] oops"), "stderr is captured too: {text}");
+        assert!(
+            text.contains("[7 action:t] oops"),
+            "stderr is captured too: {text}"
+        );
         assert_eq!(running.count("p"), 0, "finished runs are unregistered");
     }
 
     #[test]
     fn only_the_allowlisted_variables_are_inherited() {
         let parent = [
-            "PATH", "HOME", "USER", "LANG", "LC_ALL", "LC_CTYPE", "TERM", "TMPDIR", "SHELL", "ANTHROPIC_API_KEY", "AWS_SECRET_ACCESS_KEY",
-            "GITHUB_TOKEN", "GARAGE_PORT", "SSH_AUTH_SOCK", "LCX", "PATHEXT_NOT",
+            "PATH",
+            "HOME",
+            "USER",
+            "LANG",
+            "LC_ALL",
+            "LC_CTYPE",
+            "TERM",
+            "TMPDIR",
+            "SHELL",
+            "ANTHROPIC_API_KEY",
+            "AWS_SECRET_ACCESS_KEY",
+            "GITHUB_TOKEN",
+            "GARAGE_PORT",
+            "SSH_AUTH_SOCK",
+            "LCX",
+            "PATHEXT_NOT",
         ]
         .map(|k| (k.to_owned(), "v".to_owned()));
-        let kept: Vec<String> = base_env(parent.into_iter()).into_iter().map(|(k, _)| k).collect();
-        assert_eq!(kept, ["PATH", "HOME", "USER", "LANG", "LC_ALL", "LC_CTYPE", "TERM", "TMPDIR", "SHELL"]);
+        let kept: Vec<String> = base_env(parent.into_iter())
+            .into_iter()
+            .map(|(k, _)| k)
+            .collect();
+        assert_eq!(
+            kept,
+            [
+                "PATH", "HOME", "USER", "LANG", "LC_ALL", "LC_CTYPE", "TERM", "TMPDIR", "SHELL"
+            ]
+        );
     }
 
     #[tokio::test]
@@ -351,8 +435,14 @@ mod tests {
         let (s, _log, _r) = spec(d.path(), vec!["/bin/sh".into(), sh], None);
         assert_eq!(ProcessRunner.run(s).await, RunOutcome::Success);
         let seen = std::fs::read_to_string(d.path().join("seen.env")).unwrap();
-        assert!(seen.contains("GARAGE_PLUGIN_ID=p"), "the plugin's own variables arrive: {seen}");
-        assert!(seen.lines().any(|l| l.starts_with("PATH=")), "PATH is inherited");
+        assert!(
+            seen.contains("GARAGE_PLUGIN_ID=p"),
+            "the plugin's own variables arrive: {seen}"
+        );
+        assert!(
+            seen.lines().any(|l| l.starts_with("PATH=")),
+            "PATH is inherited"
+        );
         assert!(!seen.contains("CARGO"), "{seen}");
     }
 
@@ -361,15 +451,34 @@ mod tests {
         let d = tempfile::tempdir().unwrap();
         let pidfile = d.path().join("bg.pid");
         // exits 0 at once, leaving a sleeper that still holds stdout open
-        let sh = script(d.path(), "bg.sh", &format!("sleep 30 &\necho $! > {}\nexit 0", pidfile.display()));
-        let (s, _log, running) = spec(d.path(), vec!["/bin/sh".into(), sh], Some(Duration::from_secs(10)));
+        let sh = script(
+            d.path(),
+            "bg.sh",
+            &format!("sleep 30 &\necho $! > {}\nexit 0", pidfile.display()),
+        );
+        let (s, _log, running) = spec(
+            d.path(),
+            vec!["/bin/sh".into(), sh],
+            Some(Duration::from_secs(10)),
+        );
         let started = std::time::Instant::now();
         assert_eq!(ProcessRunner.run(s).await, RunOutcome::Success);
-        assert!(started.elapsed() < Duration::from_millis(400), "no wait for the pipe holder: {:?}", started.elapsed());
-        let pid: i32 = std::fs::read_to_string(&pidfile).unwrap().trim().parse().unwrap();
+        assert!(
+            started.elapsed() < Duration::from_millis(400),
+            "no wait for the pipe holder: {:?}",
+            started.elapsed()
+        );
+        let pid: i32 = std::fs::read_to_string(&pidfile)
+            .unwrap()
+            .trim()
+            .parse()
+            .unwrap();
         let end = std::time::Instant::now() + Duration::from_secs(5);
         while unsafe { libc::kill(pid, 0) } == 0 {
-            assert!(std::time::Instant::now() < end, "background child {pid} survived its run");
+            assert!(
+                std::time::Instant::now() < end,
+                "background child {pid} survived its run"
+            );
             tokio::time::sleep(Duration::from_millis(25)).await;
         }
         assert_eq!(running.count("p"), 0);
@@ -379,9 +488,22 @@ mod tests {
     async fn argv_is_never_a_shell_metacharacters_stay_arguments() {
         let d = tempfile::tempdir().unwrap();
         let sh = script(d.path(), "args.sh", "printf '%s|' \"$@\" > args.txt");
-        let (s, _log, _r) = spec(d.path(), vec!["/bin/sh".into(), sh, "a; touch pwned".into(), "$(touch pwned)".into(), "`x`".into()], None);
+        let (s, _log, _r) = spec(
+            d.path(),
+            vec![
+                "/bin/sh".into(),
+                sh,
+                "a; touch pwned".into(),
+                "$(touch pwned)".into(),
+                "`x`".into(),
+            ],
+            None,
+        );
         assert_eq!(ProcessRunner.run(s).await, RunOutcome::Success);
-        assert_eq!(std::fs::read_to_string(d.path().join("args.txt")).unwrap(), "a; touch pwned|$(touch pwned)|`x`|");
+        assert_eq!(
+            std::fs::read_to_string(d.path().join("args.txt")).unwrap(),
+            "a; touch pwned|$(touch pwned)|`x`|"
+        );
         assert!(!d.path().join("pwned").exists());
     }
 
@@ -393,9 +515,20 @@ mod tests {
         let out = ProcessRunner.run(s).await;
         assert_eq!(out, RunOutcome::Failed(Some(3)));
         assert_eq!(out.reason(), "exited with code 3");
-        assert!(std::fs::read_to_string(log.path()).unwrap().contains("run failed: exited with code 3"));
-        let (s, _l, _r) = spec(d.path(), vec![d.path().join("nope").to_string_lossy().into_owned()], None);
-        assert!(matches!(ProcessRunner.run(s).await, RunOutcome::SpawnFailed(_)));
+        assert!(
+            std::fs::read_to_string(log.path())
+                .unwrap()
+                .contains("run failed: exited with code 3")
+        );
+        let (s, _l, _r) = spec(
+            d.path(),
+            vec![d.path().join("nope").to_string_lossy().into_owned()],
+            None,
+        );
+        assert!(matches!(
+            ProcessRunner.run(s).await,
+            RunOutcome::SpawnFailed(_)
+        ));
     }
 
     #[tokio::test]
@@ -403,17 +536,35 @@ mod tests {
         let d = tempfile::tempdir().unwrap();
         let pidfile = d.path().join("child.pid");
         // The shell backgrounds a sleeper (a grandchild) and waits on it.
-        let sh = script(d.path(), "hang.sh", &format!("sleep 30 &\necho $! > {}\nwait", pidfile.display()));
-        let (s, _log, running) = spec(d.path(), vec!["/bin/sh".into(), sh], Some(Duration::from_secs(3)));
+        let sh = script(
+            d.path(),
+            "hang.sh",
+            &format!("sleep 30 &\necho $! > {}\nwait", pidfile.display()),
+        );
+        let (s, _log, running) = spec(
+            d.path(),
+            vec!["/bin/sh".into(), sh],
+            Some(Duration::from_secs(3)),
+        );
         let started = std::time::Instant::now();
         let out = ProcessRunner.run(s).await;
         assert!(matches!(out, RunOutcome::TimedOut(_)), "{out:?}");
-        assert!(started.elapsed() < Duration::from_secs(8), "TERM must not wait for the 30 s sleeper");
-        let pid: i32 = std::fs::read_to_string(&pidfile).unwrap().trim().parse().unwrap();
+        assert!(
+            started.elapsed() < Duration::from_secs(8),
+            "TERM must not wait for the 30 s sleeper"
+        );
+        let pid: i32 = std::fs::read_to_string(&pidfile)
+            .unwrap()
+            .trim()
+            .parse()
+            .unwrap();
         // the grandchild is gone (kill -0 fails once it has exited)
         let end = std::time::Instant::now() + Duration::from_secs(5);
         while unsafe { libc::kill(pid, 0) } == 0 {
-            assert!(std::time::Instant::now() < end, "grandchild {pid} survived the group kill");
+            assert!(
+                std::time::Instant::now() < end,
+                "grandchild {pid} survived the group kill"
+            );
             tokio::time::sleep(Duration::from_millis(25)).await;
         }
         assert_eq!(running.count("p"), 0);
@@ -433,7 +584,10 @@ mod tests {
         }
         assert_eq!(r2.terminate("other"), 0);
         assert_eq!(r2.terminate("p"), 1);
-        let out = tokio::time::timeout(Duration::from_secs(5), run).await.expect("run ends").unwrap();
+        let out = tokio::time::timeout(Duration::from_secs(5), run)
+            .await
+            .expect("run ends")
+            .unwrap();
         assert_eq!(out, RunOutcome::Failed(None), "killed by SIGTERM");
     }
 
@@ -446,7 +600,12 @@ mod tests {
         }
         let cur = std::fs::read_to_string(d.path().join("p.log")).unwrap();
         let old = std::fs::read_to_string(d.path().join("p.log.1")).unwrap();
-        assert!(cur.len() <= 200 && old.len() <= 200, "{} {}", cur.len(), old.len());
+        assert!(
+            cur.len() <= 200 && old.len() <= 200,
+            "{} {}",
+            cur.len(),
+            old.len()
+        );
         assert!(cur.contains("line number 39"));
         assert!(!d.path().join("p.log.2").exists(), "two files only");
     }

@@ -108,7 +108,10 @@ async fn run_cli() -> Result<()> {
         Command::External(argv) => match plugin::cmd::dispatch_external(&argv) {
             Ok(Some(code)) => std::process::exit(code),
             Ok(None) => Cli::command()
-                .error(clap::error::ErrorKind::InvalidSubcommand, format!("unrecognized subcommand '{}'", argv[0]))
+                .error(
+                    clap::error::ErrorKind::InvalidSubcommand,
+                    format!("unrecognized subcommand '{}'", argv[0]),
+                )
                 .exit(),
             Err(e) => {
                 eprintln!("{e}");
@@ -136,14 +139,29 @@ mod tests {
 
     #[test]
     fn daemon_port_and_restart_flags_parse() {
-        assert_eq!(parse(&["daemon", "--port", "5001"]), Command::Daemon { port: Some(5001) });
-        assert_eq!(parse(&["restart", "--sessions", "--all"]), Command::Restart { sessions: true, all: true });
+        assert_eq!(
+            parse(&["daemon", "--port", "5001"]),
+            Command::Daemon { port: Some(5001) }
+        );
+        assert_eq!(
+            parse(&["restart", "--sessions", "--all"]),
+            Command::Restart {
+                sessions: true,
+                all: true
+            }
+        );
     }
 
     #[test]
     fn unknown_words_reach_the_external_arm_but_core_names_never_do() {
-        assert_eq!(parse(&["/home/me/app", "-x"]), Command::External(vec!["/home/me/app".into(), "-x".into()]));
-        assert_eq!(parse(&["usage", "--week"]), Command::External(vec!["usage".into(), "--week".into()]));
+        assert_eq!(
+            parse(&["/home/me/app", "-x"]),
+            Command::External(vec!["/home/me/app".into(), "-x".into()])
+        );
+        assert_eq!(
+            parse(&["usage", "--week"]),
+            Command::External(vec!["usage".into(), "--week".into()])
+        );
         assert!(matches!(parse(&["plugin", "list"]), Command::Plugin { .. }));
         assert!(matches!(parse(&["restart"]), Command::Restart { .. }));
         assert!(matches!(parse(&["tui"]), Command::Tui));

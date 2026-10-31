@@ -31,7 +31,10 @@ pub struct ViewStripLine {
 /// strip.
 pub fn view_strip_line(views: &[ViewSummary], focused: &str, width: u16) -> ViewStripLine {
     if views.len() < 2 {
-        return ViewStripLine { line: Line::default(), spans: Vec::new() };
+        return ViewStripLine {
+            line: Line::default(),
+            spans: Vec::new(),
+        };
     }
     let mut spans: Vec<Span<'static>> = Vec::new();
     let mut ranges = Vec::new();
@@ -49,7 +52,10 @@ pub fn view_strip_line(views: &[ViewSummary], focused: &str, width: u16) -> View
         let end: usize = spans.iter().map(Span::width).sum();
         ranges.push(start.min(usize::from(width)) as u16..end.min(usize::from(width)) as u16);
     }
-    ViewStripLine { line: Line::from(spans), spans: ranges }
+    ViewStripLine {
+        line: Line::from(spans),
+        spans: ranges,
+    }
 }
 
 /// Render the strip into its 1-row rect (a no-op for fewer than 2 views, or
@@ -68,7 +74,11 @@ pub fn render_view_strip(
     Paragraph::new(built.line)
         .style(Style::default().bg(Color::Black))
         .render(rect, buf);
-    built.spans.into_iter().map(|r| rect.x + r.start..rect.x + r.end).collect()
+    built
+        .spans
+        .into_iter()
+        .map(|r| rect.x + r.start..rect.x + r.end)
+        .collect()
 }
 
 #[cfg(test)]
@@ -106,7 +116,12 @@ mod tests {
         assert!(!main_span.style.add_modifier.contains(Modifier::BOLD));
         let backend_span = &built.line.spans[1];
         assert!(backend_span.style.add_modifier.contains(Modifier::BOLD));
-        assert!(backend_span.style.add_modifier.contains(Modifier::UNDERLINED));
+        assert!(
+            backend_span
+                .style
+                .add_modifier
+                .contains(Modifier::UNDERLINED)
+        );
     }
 
     #[test]

@@ -102,7 +102,11 @@ pub fn format_elapsed(since_ms: Option<i64>, now_ms: i64) -> String {
         return format!("{}:{:02}", total_seconds / 60, total_seconds % 60);
     }
     if total_seconds < 86400 {
-        return format!("{}h {:02}m", total_seconds / 3600, (total_seconds % 3600) / 60);
+        return format!(
+            "{}h {:02}m",
+            total_seconds / 3600,
+            (total_seconds % 3600) / 60
+        );
     }
     format!("{}d", total_seconds / 86400)
 }
@@ -188,8 +192,14 @@ mod tests {
 
     #[test]
     fn elapsed_only_for_needs_input_and_working() {
-        assert_eq!(elapsed_for("needs-input", Some(0), 60_000).as_deref(), Some("1:00"));
-        assert_eq!(elapsed_for("working", Some(0), 60_000).as_deref(), Some("1:00"));
+        assert_eq!(
+            elapsed_for("needs-input", Some(0), 60_000).as_deref(),
+            Some("1:00")
+        );
+        assert_eq!(
+            elapsed_for("working", Some(0), 60_000).as_deref(),
+            Some("1:00")
+        );
         assert_eq!(elapsed_for("done", Some(0), 60_000), None);
         assert_eq!(elapsed_for("idle", Some(0), 60_000), None);
         assert_eq!(elapsed_for("restorable", None, 60_000), None);

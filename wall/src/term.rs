@@ -20,10 +20,10 @@ use crossterm::event::{
     KeyboardEnhancementFlags, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
 };
 use crossterm::terminal::{
-    disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
+    EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
-use ratatui::prelude::CrosstermBackend;
 use ratatui::Terminal;
+use ratatui::prelude::CrosstermBackend;
 
 /// True while there is nothing to restore (before `enter`, after `restore`).
 static RESTORED: AtomicBool = AtomicBool::new(true);
@@ -47,7 +47,10 @@ pub fn enter() -> std::io::Result<WallTerminal> {
     // a terminal without kitty support just ignores the query, and the
     // probe tells us not to push (pushing unconditionally would leave
     // legacy terminals fine, but the probe keeps event parsing honest).
-    if matches!(crossterm::terminal::supports_keyboard_enhancement(), Ok(true)) {
+    if matches!(
+        crossterm::terminal::supports_keyboard_enhancement(),
+        Ok(true)
+    ) {
         let _ = crossterm::execute!(
             stdout(),
             PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES)

@@ -62,7 +62,10 @@ impl ClosingIntents {
     }
 
     fn put(&self, id: &str, intent: Intent) {
-        self.0.lock().unwrap().insert(id.to_owned(), (intent, Instant::now()));
+        self.0
+            .lock()
+            .unwrap()
+            .insert(id.to_owned(), (intent, Instant::now()));
     }
 
     /// Forget a marker whose close did not happen (the kill failed).
@@ -87,13 +90,20 @@ mod tests {
         let c = ClosingIntents::default();
         assert_eq!(c.take("garage/w/a"), None);
         c.mark("garage/w/a", CloseReason::User);
-        assert_eq!(c.take("garage/w/a"), Some(Intent::Reason(CloseReason::User)));
+        assert_eq!(
+            c.take("garage/w/a"),
+            Some(Intent::Reason(CloseReason::User))
+        );
         assert_eq!(c.take("garage/w/a"), None);
     }
 
     #[test]
     fn reasons_use_the_documented_wire_names() {
-        for r in [CloseReason::User, CloseReason::Crash, CloseReason::DaemonRestart] {
+        for r in [
+            CloseReason::User,
+            CloseReason::Crash,
+            CloseReason::DaemonRestart,
+        ] {
             assert_eq!(CloseReason::parse(r.as_str()), Some(r));
         }
         assert_eq!(CloseReason::DaemonRestart.as_str(), "daemon-restart");

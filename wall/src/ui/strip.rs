@@ -105,7 +105,9 @@ pub fn pet_slot_item(p: &PetRender) -> SlotItem {
         text.push(if p.bang_lit {
             Span::styled(
                 "!",
-                Style::default().fg(colors::AMBER).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(colors::AMBER)
+                    .add_modifier(Modifier::BOLD),
             )
         } else {
             // Unlit: still a column-wide space (spec "bang unlit still
@@ -224,8 +226,15 @@ pub fn strip_line(
         // The install hint rides the same notice slot but reads dim, never
         // the bright color an ordinary notice gets (spec: "never amber",
         // and dim per the mockup's quiet-affordance tone).
-        let color = if notice == STATUSLINE_HINT { colors::DIM } else { colors::FG };
-        right.push(Span::styled(format!(" {notice} "), Style::default().fg(color)));
+        let color = if notice == STATUSLINE_HINT {
+            colors::DIM
+        } else {
+            colors::FG
+        };
+        right.push(Span::styled(
+            format!(" {notice} "),
+            Style::default().fg(color),
+        ));
     }
     // Usage chip (spec tui-context-meters "Strip usage chip"): additive only
     // — inserted between the notice and the badge/keys chip so it never
@@ -454,7 +463,12 @@ mod tests {
     #[test]
     fn notice_renders_before_the_badge() {
         let store = store();
-        let s = strip_line(store.state(), &SlotRegistry::core(), Some("closed ghost"), 120);
+        let s = strip_line(
+            store.state(),
+            &SlotRegistry::core(),
+            Some("closed ghost"),
+            120,
+        );
         let text = s.line.to_string();
         assert!(
             text.ends_with(" closed ghost  ● 1 blocked  keys → garage "),
@@ -465,7 +479,12 @@ mod tests {
     #[test]
     fn overflow_keeps_positions_consistent_with_the_clipped_paint() {
         let store = store();
-        let s = strip_line(store.state(), &SlotRegistry::core(), Some("a very long notice that overflows"), 30);
+        let s = strip_line(
+            store.state(),
+            &SlotRegistry::core(),
+            Some("a very long notice that overflows"),
+            30,
+        );
         // Whatever fits, the badge range never exceeds the width.
         if let Some(badge) = s.badge {
             assert!(badge.end <= 30);
@@ -477,7 +496,9 @@ mod tests {
     #[test]
     fn usage_chip_hidden_entirely_when_both_windows_are_null() {
         let store = store(); // fresh: no /api/usage post yet
-        let text = strip_line(store.state(), &SlotRegistry::core(), None, 120).line.to_string();
+        let text = strip_line(store.state(), &SlotRegistry::core(), None, 120)
+            .line
+            .to_string();
         assert!(!text.contains("5h"));
         assert!(!text.contains("wk"));
     }
@@ -486,8 +507,14 @@ mod tests {
     fn usage_chip_shows_both_windows_dim() {
         let mut store = store();
         store.usage_fetched(UsageInfo {
-            five_hour: Some(UsageWindow { used_percentage: 24, resets_at: None }),
-            seven_day: Some(UsageWindow { used_percentage: 61, resets_at: None }),
+            five_hour: Some(UsageWindow {
+                used_percentage: 24,
+                resets_at: None,
+            }),
+            seven_day: Some(UsageWindow {
+                used_percentage: 61,
+                resets_at: None,
+            }),
         });
         let s = strip_line(store.state(), &SlotRegistry::core(), None, 120);
         let text = s.line.to_string();
@@ -505,19 +532,29 @@ mod tests {
     fn usage_chip_omits_a_null_window() {
         let mut five_only = store();
         five_only.usage_fetched(UsageInfo {
-            five_hour: Some(UsageWindow { used_percentage: 24, resets_at: None }),
+            five_hour: Some(UsageWindow {
+                used_percentage: 24,
+                resets_at: None,
+            }),
             seven_day: None,
         });
-        let text = strip_line(five_only.state(), &SlotRegistry::core(), None, 120).line.to_string();
+        let text = strip_line(five_only.state(), &SlotRegistry::core(), None, 120)
+            .line
+            .to_string();
         assert!(text.contains("5h 24%"), "{text}");
         assert!(!text.contains("wk"), "{text}");
 
         let mut week_only = store();
         week_only.usage_fetched(UsageInfo {
             five_hour: None,
-            seven_day: Some(UsageWindow { used_percentage: 61, resets_at: None }),
+            seven_day: Some(UsageWindow {
+                used_percentage: 61,
+                resets_at: None,
+            }),
         });
-        let text = strip_line(week_only.state(), &SlotRegistry::core(), None, 120).line.to_string();
+        let text = strip_line(week_only.state(), &SlotRegistry::core(), None, 120)
+            .line
+            .to_string();
         assert!(text.contains("wk 61%"), "{text}");
         assert!(!text.contains("5h"), "{text}");
     }
@@ -526,10 +563,21 @@ mod tests {
     fn usage_chip_never_displaces_the_notice_badge_or_keys_chip() {
         let mut store = store(); // one blocked session (beta/blocked) baked in
         store.usage_fetched(UsageInfo {
-            five_hour: Some(UsageWindow { used_percentage: 24, resets_at: None }),
-            seven_day: Some(UsageWindow { used_percentage: 61, resets_at: None }),
+            five_hour: Some(UsageWindow {
+                used_percentage: 24,
+                resets_at: None,
+            }),
+            seven_day: Some(UsageWindow {
+                used_percentage: 61,
+                resets_at: None,
+            }),
         });
-        let s = strip_line(store.state(), &SlotRegistry::core(), Some("closed ghost"), 140);
+        let s = strip_line(
+            store.state(),
+            &SlotRegistry::core(),
+            Some("closed ghost"),
+            140,
+        );
         let text = s.line.to_string();
         assert!(text.contains("closed ghost"), "{text}");
         assert!(text.contains("5h 24% · wk 61%"), "{text}");
@@ -543,7 +591,10 @@ mod tests {
             .skip(usize::from(badge.start))
             .take(usize::from(badge.end - badge.start))
             .collect();
-        assert_eq!(badge_text, " ● 1 blocked ", "badge range still matches the paint");
+        assert_eq!(
+            badge_text, " ● 1 blocked ",
+            "badge range still matches the paint"
+        );
     }
 
     // ── p11: install hint styling (spec tui-context-meters "Install
@@ -552,7 +603,12 @@ mod tests {
     #[test]
     fn install_hint_notice_renders_dim_never_bright_or_amber() {
         let store = store();
-        let s = strip_line(store.state(), &SlotRegistry::core(), Some(STATUSLINE_HINT), 120);
+        let s = strip_line(
+            store.state(),
+            &SlotRegistry::core(),
+            Some(STATUSLINE_HINT),
+            120,
+        );
         let hint_span = s
             .line
             .spans
@@ -566,7 +622,12 @@ mod tests {
     #[test]
     fn an_ordinary_notice_still_renders_bright() {
         let store = store();
-        let s = strip_line(store.state(), &SlotRegistry::core(), Some("closed ghost"), 120);
+        let s = strip_line(
+            store.state(),
+            &SlotRegistry::core(),
+            Some("closed ghost"),
+            120,
+        );
         let notice_span = s
             .line
             .spans
@@ -581,25 +642,43 @@ mod tests {
     /// The core registry plus a provider that serves `p` as the pet's item.
     fn with_pet(p: PetRender) -> SlotRegistry {
         let mut registry = SlotRegistry::core();
-        registry.register(SlotId::StripRight, move |_: &SlotCtx| vec![pet_slot_item(&p)]);
+        registry.register(SlotId::StripRight, move |_: &SlotCtx| {
+            vec![pet_slot_item(&p)]
+        });
         registry
     }
 
     /// The pet's click range, when the strip showed it.
     fn pet_range(s: &StripLine) -> Option<Range<u16>> {
-        s.slots.iter().find(|(_, t)| t.action == ids::PET_PET).map(|(r, _)| r.clone())
+        s.slots
+            .iter()
+            .find(|(_, t)| t.action == ids::PET_PET)
+            .map(|(r, _)| r.clone())
     }
 
     fn pet_render(x: u16) -> PetRender {
-        PetRender { text: "=o.o=", bang: false, bang_lit: false, x, dim: false, say: None }
+        PetRender {
+            text: "=o.o=",
+            bang: false,
+            bang_lit: false,
+            x,
+            dim: false,
+            say: None,
+        }
     }
 
     // ── p24: more than one filler item ──────────────────────────────────
 
     fn filler_item(text: &str, x: u16, priority: i16, caption: Option<&str>) -> SlotItem {
         SlotItem {
-            on_click: Some(ClickTarget::new(ActionId::intern(&format!("t:{}", &text[..text.len().min(8)])))),
-            placement: Placement::Filler { x, caption: caption.map(str::to_owned) },
+            on_click: Some(ClickTarget::new(ActionId::intern(&format!(
+                "t:{}",
+                &text[..text.len().min(8)]
+            )))),
+            placement: Placement::Filler {
+                x,
+                caption: caption.map(str::to_owned),
+            },
             ..SlotItem::new(vec![Span::raw(text.to_owned())], priority)
         }
     }
@@ -615,7 +694,11 @@ mod tests {
         let chars: Vec<char> = s.line.to_string().chars().collect();
         s.slots
             .iter()
-            .map(|(r, _)| chars[usize::from(r.start)..usize::from(r.end)].iter().collect())
+            .map(|(r, _)| {
+                chars[usize::from(r.start)..usize::from(r.end)]
+                    .iter()
+                    .collect()
+            })
             .collect()
     }
 
@@ -640,13 +723,19 @@ mod tests {
             filler_item("KEEPER", 10, 9, None),
             filler_item("LOSER", 12, 1, None),
         ]);
-        assert_eq!(painted(&strip_line(store.state(), &high_first, None, 200)), ["KEEPER"]);
+        assert_eq!(
+            painted(&strip_line(store.state(), &high_first, None, 200)),
+            ["KEEPER"]
+        );
         // Same overlap, the later column is the higher priority: it wins.
         let high_second = with_fillers(vec![
             filler_item("LOSER", 10, 1, None),
             filler_item("KEEPER", 12, 9, None),
         ]);
-        assert_eq!(painted(&strip_line(store.state(), &high_second, None, 200)), ["KEEPER"]);
+        assert_eq!(
+            painted(&strip_line(store.state(), &high_second, None, 200)),
+            ["KEEPER"]
+        );
     }
 
     #[test]
@@ -656,7 +745,10 @@ mod tests {
             filler_item("FIRST", 10, 5, None),
             filler_item("SECOND", 12, 5, None),
         ]);
-        assert_eq!(painted(&strip_line(store.state(), &registry, None, 200)), ["FIRST"]);
+        assert_eq!(
+            painted(&strip_line(store.state(), &registry, None, 200)),
+            ["FIRST"]
+        );
     }
 
     #[test]
@@ -666,7 +758,10 @@ mod tests {
             filler_item("AAAAA", 10, 1, None),
             filler_item("BBBBB", 15, 1, None),
         ]);
-        assert_eq!(painted(&strip_line(store.state(), &registry, None, 200)), ["AAAAA", "BBBBB"]);
+        assert_eq!(
+            painted(&strip_line(store.state(), &registry, None, 200)),
+            ["AAAAA", "BBBBB"]
+        );
     }
 
     #[test]
@@ -676,7 +771,10 @@ mod tests {
             filler_item(&"W".repeat(400), 0, 9, None),
             filler_item("OK", 20, 1, None),
         ]);
-        assert_eq!(painted(&strip_line(store.state(), &registry, None, 200)), ["OK"]);
+        assert_eq!(
+            painted(&strip_line(store.state(), &registry, None, 200)),
+            ["OK"]
+        );
     }
 
     #[test]
@@ -696,7 +794,10 @@ mod tests {
         // No room left of A, so its caption reads to its right; B's caption
         // sits to B's left, after A's, without touching it.
         assert!(a < hello && hello + 5 <= world && world + 5 <= b, "{text}");
-        assert!(text.contains("  hello") && text.contains("world  "), "{text}");
+        assert!(
+            text.contains("  hello") && text.contains("world  "),
+            "{text}"
+        );
     }
 
     #[test]
@@ -711,8 +812,14 @@ mod tests {
             store.state(),
             &with_fillers(vec![SlotItem {
                 on_click: Some(ids::PET_PET.into()),
-                placement: Placement::Filler { x: 30, caption: Some("hi there".into()) },
-                ..SlotItem::new(vec![Span::styled("=o.o=", Style::default().fg(colors::FG))], 100)
+                placement: Placement::Filler {
+                    x: 30,
+                    caption: Some("hi there".into()),
+                },
+                ..SlotItem::new(
+                    vec![Span::styled("=o.o=", Style::default().fg(colors::FG))],
+                    100,
+                )
             }]),
             None,
             150,
@@ -732,7 +839,10 @@ mod tests {
             .skip(usize::from(pet.start))
             .take(usize::from(pet.end - pet.start))
             .collect();
-        assert_eq!(sprite, "=o.o=", "no bang: the reserved range is exactly the sprite text");
+        assert_eq!(
+            sprite, "=o.o=",
+            "no bang: the reserved range is exactly the sprite text"
+        );
     }
 
     #[test]
@@ -743,7 +853,11 @@ mod tests {
         let text: Vec<char> = s.line.to_string().chars().collect();
         let start = usize::from(pet.start);
         assert_eq!(text[start - 1], ' ', "one blank column before the sprite");
-        assert_ne!(text[start - 2], ' ', "…and the tab text sits right before that gutter");
+        assert_ne!(
+            text[start - 2],
+            ' ',
+            "…and the tab text sits right before that gutter"
+        );
     }
 
     #[test]
@@ -755,8 +869,14 @@ mod tests {
         let text = s.line.to_string();
         let pet = pet_range(&s).expect("room at 200 cols");
         let before: String = text.chars().take(usize::from(pet.start)).collect();
-        assert!(before.trim_end().ends_with("you're doing great!!"), "speech reads toward the sprite: {before:?}");
-        assert!(before.ends_with("  "), "two-column gap between speech and sprite");
+        assert!(
+            before.trim_end().ends_with("you're doing great!!"),
+            "speech reads toward the sprite: {before:?}"
+        );
+        assert!(
+            before.ends_with("  "),
+            "two-column gap between speech and sprite"
+        );
 
         let mut left_home = pet_render(0);
         left_home.say = Some("quack.".to_owned());
@@ -764,7 +884,10 @@ mod tests {
         let text = s.line.to_string();
         let pet = pet_range(&s).expect("room at 200 cols");
         let after: String = text.chars().skip(usize::from(pet.end)).collect();
-        assert!(after.starts_with("  quack."), "no room on the left: speech goes right: {after:?}");
+        assert!(
+            after.starts_with("  quack."),
+            "no room on the left: speech goes right: {after:?}"
+        );
     }
 
     #[test]
@@ -775,7 +898,10 @@ mod tests {
         let s = strip_line(store.state(), &with_pet(p), None, 200);
         let text = s.line.to_string();
         assert!(pet_range(&s).is_some(), "sprite still renders");
-        assert!(!text.contains("xxxx"), "oversized speech dropped for the frame");
+        assert!(
+            !text.contains("xxxx"),
+            "oversized speech dropped for the frame"
+        );
     }
 
     #[test]
@@ -793,7 +919,10 @@ mod tests {
             Some("a longish strip notice sits here"),
             80,
         );
-        assert!(pet_range(&s).is_none(), "six tabs + a notice leave no filler room at 80 cols");
+        assert!(
+            pet_range(&s).is_none(),
+            "six tabs + a notice leave no filler room at 80 cols"
+        );
         assert!(!s.line.to_string().contains("=o.o="));
     }
 
@@ -802,17 +931,41 @@ mod tests {
         let store = store(); // one blocked session baked in (beta/blocked)
         let without = strip_line(store.state(), &SlotRegistry::core(), None, 120);
         let with = strip_line(store.state(), &with_pet(pet_render(2)), None, 120);
-        assert_eq!(without.badge, with.badge, "badge sits at the same absolute columns either way");
+        assert_eq!(
+            without.badge, with.badge,
+            "badge sits at the same absolute columns either way"
+        );
     }
 
     #[test]
     fn bang_unlit_still_reserves_the_column() {
         let store = store();
-        let lit = PetRender { text: "(O.O)", bang: true, bang_lit: true, x: 0, dim: false, say: None };
-        let unlit = PetRender { text: "(O.O)", bang: true, bang_lit: false, x: 0, dim: false, say: None };
+        let lit = PetRender {
+            text: "(O.O)",
+            bang: true,
+            bang_lit: true,
+            x: 0,
+            dim: false,
+            say: None,
+        };
+        let unlit = PetRender {
+            text: "(O.O)",
+            bang: true,
+            bang_lit: false,
+            x: 0,
+            dim: false,
+            say: None,
+        };
         let s_lit = strip_line(store.state(), &with_pet(lit), None, 120);
         let s_unlit = strip_line(store.state(), &with_pet(unlit), None, 120);
-        assert_eq!(pet_range(&s_lit), pet_range(&s_unlit), "the bang column's width never changes on blink");
-        assert_eq!(s_lit.badge, s_unlit.badge, "and nothing downstream shifts either");
+        assert_eq!(
+            pet_range(&s_lit),
+            pet_range(&s_unlit),
+            "the bang column's width never changes on blink"
+        );
+        assert_eq!(
+            s_lit.badge, s_unlit.badge,
+            "and nothing downstream shifts either"
+        );
     }
 }

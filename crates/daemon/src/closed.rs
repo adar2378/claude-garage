@@ -19,22 +19,35 @@ use crate::git::resolve_branch;
 use crate::state::registry::{ClosedRecord, Registry};
 use crate::state::status::now_ms;
 
-pub fn spawn(bus: &EventBus, registry: Registry, backend: Arc<dyn SessionBackend>) -> JoinHandle<()> {
+pub fn spawn(
+    bus: &EventBus,
+    registry: Registry,
+    backend: Arc<dyn SessionBackend>,
+) -> JoinHandle<()> {
     let mut rx = bus.subscribe();
     tokio::spawn(async move {
         loop {
             match rx.recv().await {
-                Ok(DaemonEvent::SessionClosed { id, dir, workspace, reason, last_status }) => {
+                Ok(DaemonEvent::SessionClosed {
+                    id,
+                    dir,
+                    workspace,
+                    reason,
+                    last_status,
+                }) => {
                     // The resume id lives in the session's metadata, which a
                     // deliberate close has already removed; the record the
                     // close path wrote first still has it.
                     let meta = registry.get_session_meta(&id).await;
                     let prior = registry.get_closed(&id).await;
-                    let claude_session_id = match meta.as_ref().and_then(|m| m.claude_session_id.clone()) {
-                        Some(c) => Some(c),
-                        None => prior.as_ref().and_then(|r| r.claude_session_id.clone()),
-                    };
-                    let worktree = meta.and_then(|m| m.worktree).or_else(|| prior.and_then(|r| r.worktree));
+                    let claude_session_id =
+                        match meta.as_ref().and_then(|m| m.claude_session_id.clone()) {
+                            Some(c) => Some(c),
+                            None => prior.as_ref().and_then(|r| r.claude_session_id.clone()),
+                        };
+                    let worktree = meta
+                        .and_then(|m| m.worktree)
+                        .or_else(|| prior.and_then(|r| r.worktree));
                     let branch = resolve_branch(&dir).await;
                     let rec = ClosedRecord {
                         id,
@@ -54,7 +67,9 @@ pub fn spawn(bus: &EventBus, registry: Registry, backend: Arc<dyn SessionBackend
                 }
                 Ok(_) => {}
                 Err(tokio::sync::broadcast::error::RecvError::Lagged(missed)) => {
-                    eprintln!("closed: fell behind the bus and missed {missed} events; reconciling closed records with the backend");
+                    eprintln!(
+                        "closed: fell behind the bus and missed {missed} events; reconciling closed records with the backend"
+                    );
                     reconcile(&registry, backend.as_ref()).await;
                 }
                 Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
@@ -69,7 +84,9 @@ pub fn spawn(bus: &EventBus, registry: Registry, backend: Arc<dyn SessionBackend
 /// `SessionClosed` was lost; the real reason is unknown). A failing backend
 /// listing changes nothing.
 pub async fn reconcile(registry: &Registry, backend: &dyn SessionBackend) {
-    let Ok(live) = backend.list().await else { return };
+    let Ok(live) = backend.list().await else {
+        return;
+    };
     let live: HashSet<String> = live.into_iter().map(|s| s.id).collect();
     let workspaces = registry.list_workspaces().await;
     for ws in &workspaces {
@@ -86,7 +103,10 @@ pub async fn reconcile(registry: &Registry, backend: &dyn SessionBackend) {
         let (workspace, _) = crate::backend::tmux::split_session_id(&id);
         let dir = match meta.worktree.as_ref().map(|w| w.path.clone()) {
             Some(d) => Some(d),
-            None => workspaces.iter().find(|w| w.name == workspace).and_then(|w| w.dir.clone()),
+            None => workspaces
+                .iter()
+                .find(|w| w.name == workspace)
+                .and_then(|w| w.dir.clone()),
         };
         let Some(dir) = dir else { continue };
         let branch = resolve_branch(&dir).await;
@@ -121,7 +141,12 @@ mod tests {
 
     fn rig(capacity: usize) -> Rig {
         let dir = tempfile::tempdir().unwrap();
-        Rig { registry: Registry::new(dir.path()), _dir: dir, backend: Arc::new(FakeBackend::new()), bus: EventBus::new(capacity) }
+        Rig {
+            registry: Registry::new(dir.path()),
+            _dir: dir,
+            backend: Arc::new(FakeBackend::new()),
+            bus: EventBus::new(capacity),
+        }
     }
 
     fn closed_event(id: &str) -> DaemonEvent {
@@ -136,7 +161,14 @@ mod tests {
 
     async fn meta(r: &Rig, id: &str, csid: &str) {
         r.registry
-            .upsert_session_meta(id, MetaUpdate { claude_session_id: Some(Some(csid.into())), workspace: Some("ws".into()), ..Default::default() })
+            .upsert_session_meta(
+                id,
+                MetaUpdate {
+                    claude_session_id: Some(Some(csid.into())),
+                    workspace: Some("ws".into()),
+                    ..Default::default()
+                },
+            )
             .await
             .unwrap();
     }
@@ -158,7 +190,10 @@ mod tests {
         r.bus.publish(closed_event("garage/ws/a"));
         until(|| async { r.registry.get_closed("garage/ws/a").await.is_some() }).await;
         let rec = r.registry.get_closed("garage/ws/a").await.unwrap();
-        assert_eq!((rec.claude_session_id.as_deref(), rec.reason.as_str()), (Some("conv-1"), "crash"));
+        assert_eq!(
+            (rec.claude_session_id.as_deref(), rec.reason.as_str()),
+            (Some("conv-1"), "crash")
+        );
     }
 
     #[tokio::test]
@@ -167,7 +202,11 @@ mod tests {
         let _t = spawn(&r.bus, r.registry.clone(), r.backend.clone());
         r.bus.publish(closed_event("garage/ws/a"));
         until(|| async { r.registry.get_closed("garage/ws/a").await.is_some() }).await;
-        r.bus.publish(DaemonEvent::SessionCreated { id: "garage/ws/a".into(), dir: "/d".into(), workspace: "ws".into() });
+        r.bus.publish(DaemonEvent::SessionCreated {
+            id: "garage/ws/a".into(),
+            dir: "/d".into(),
+            workspace: "ws".into(),
+        });
         until(|| async { r.registry.get_closed("garage/ws/a").await.is_none() }).await;
     }
 
@@ -201,11 +240,25 @@ mod tests {
         for i in 0..10 {
             r.bus.publish(closed_event(&format!("garage/ws/noise{i}")));
         }
-        until(|| async { r.registry.get_closed("garage/ws/lost1").await.is_some() && r.registry.get_closed("garage/ws/lost2").await.is_some() }).await;
+        until(|| async {
+            r.registry.get_closed("garage/ws/lost1").await.is_some()
+                && r.registry.get_closed("garage/ws/lost2").await.is_some()
+        })
+        .await;
         let lost = r.registry.get_closed("garage/ws/lost1").await.unwrap();
-        assert_eq!((lost.claude_session_id.as_deref(), lost.reason.as_str(), lost.dir.as_str()), (Some("conv-a"), "crash", "/w"));
+        assert_eq!(
+            (
+                lost.claude_session_id.as_deref(),
+                lost.reason.as_str(),
+                lost.dir.as_str()
+            ),
+            (Some("conv-a"), "crash", "/w")
+        );
         until(|| async { r.registry.get_closed("garage/ws/back").await.is_none() }).await;
-        assert!(r.registry.get_closed("garage/ws/back").await.is_none(), "a live session has no closed record");
+        assert!(
+            r.registry.get_closed("garage/ws/back").await.is_none(),
+            "a live session has no closed record"
+        );
     }
 
     #[tokio::test]
@@ -213,7 +266,9 @@ mod tests {
         let r = rig(8);
         r.registry.upsert_workspace("ws", "/w").await.unwrap();
         meta(&r, "garage/ws/a", "c").await;
-        r.backend.fail_list.store(true, std::sync::atomic::Ordering::SeqCst);
+        r.backend
+            .fail_list
+            .store(true, std::sync::atomic::Ordering::SeqCst);
         reconcile(&r.registry, r.backend.as_ref()).await;
         assert!(r.registry.list_closed("ws").await.is_empty());
     }

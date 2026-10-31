@@ -2,10 +2,10 @@
 //! running backend, as an `AttachSpec` (a tmux socket name, or the id of a session host; never a host's token, which the
 //! client reads from the user-private registry file). The session id has slashes, so it rides in the query string.
 
+use axum::Json;
 use axum::extract::{Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use axum::Json;
 use garage_protocol::AttachSpec;
 use serde::Deserialize;
 
@@ -19,8 +19,13 @@ pub struct Params {
 }
 
 pub async fn get(State(state): State<AppState>, Query(p): Query<Params>) -> Response {
-    let Some(id) = p.id.filter(|i| i.starts_with(GARAGE_PREFIX) || i.starts_with(crate::plugins::panes::PANE_PREFIX)) else {
-        return error_response(StatusCode::BAD_REQUEST, "id must be a garage session id or a plugin pane id");
+    let Some(id) = p.id.filter(|i| {
+        i.starts_with(GARAGE_PREFIX) || i.starts_with(crate::plugins::panes::PANE_PREFIX)
+    }) else {
+        return error_response(
+            StatusCode::BAD_REQUEST,
+            "id must be a garage session id or a plugin pane id",
+        );
     };
     match state.backend.attach_spec(&id) {
         // A host backend answers with an empty id when it has no such host.
@@ -38,30 +43,53 @@ mod tests {
     use axum::body::Body;
     use axum::http::Request;
     use http_body_util::BodyExt;
-    use serde_json::{json, Value};
+    use serde_json::{Value, json};
     use tower::ServiceExt;
 
+    use crate::backend::SessionBackend;
     use crate::backend::host::HostBackend;
     use crate::backend::tmux::TmuxBackend;
-    use crate::backend::SessionBackend;
-    use crate::{app, AppState, Config};
+    use crate::{AppState, Config, app};
 
     async fn get(backend: Arc<dyn SessionBackend>, uri: &str) -> (StatusCode, Value) {
-        let config = Config { port: 0, garage_dir: "/nonexistent".into(), tmux_socket: None, tmux_control: false, ui_origins: vec![] };
+        let config = Config {
+            port: 0,
+            garage_dir: "/nonexistent".into(),
+            tmux_socket: None,
+            tmux_control: false,
+            ui_origins: vec![],
+        };
         let state = AppState::new(config, backend, Arc::new(crate::os::UnsupportedOs));
-        let res = app(state).oneshot(Request::builder().uri(uri).body(Body::empty()).unwrap()).await.unwrap();
+        let res = app(state)
+            .oneshot(Request::builder().uri(uri).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
         let status = res.status();
         let bytes = res.into_body().collect().await.unwrap().to_bytes();
-        (status, serde_json::from_slice(&bytes).unwrap_or(Value::Null))
+        (
+            status,
+            serde_json::from_slice(&bytes).unwrap_or(Value::Null),
+        )
     }
 
     use axum::http::StatusCode;
 
     #[tokio::test]
     async fn tmux_backend_answers_with_data_only_the_socket_name_when_there_is_one() {
-        let (s, body) = get(Arc::new(TmuxBackend::new(Some("t1".into()))), "/api/attach?id=garage/ws/a").await;
-        assert_eq!((s, body), (StatusCode::OK, json!({"kind": "tmux", "socket": "t1"})));
-        let (s, body) = get(Arc::new(TmuxBackend::new(None)), "/api/attach?id=garage/ws/a").await;
+        let (s, body) = get(
+            Arc::new(TmuxBackend::new(Some("t1".into()))),
+            "/api/attach?id=garage/ws/a",
+        )
+        .await;
+        assert_eq!(
+            (s, body),
+            (StatusCode::OK, json!({"kind": "tmux", "socket": "t1"}))
+        );
+        let (s, body) = get(
+            Arc::new(TmuxBackend::new(None)),
+            "/api/attach?id=garage/ws/a",
+        )
+        .await;
         assert_eq!((s, body), (StatusCode::OK, json!({"kind": "tmux"})));
     }
 
@@ -84,12 +112,22 @@ mod tests {
         garage_host::registry::write(
             dir.path(),
             &garage_host::registry::Entry {
-                id: "garage/ws/a".into(), pid: 1, child_pid: 2, port: 5555, token: token.clone(),
-                dir: "/w".into(), created_at: 1, title: String::new(),
+                id: "garage/ws/a".into(),
+                pid: 1,
+                child_pid: 2,
+                port: 5555,
+                token: token.clone(),
+                dir: "/w".into(),
+                created_at: 1,
+                title: String::new(),
             },
         )
         .unwrap();
-        let (s, body) = get(Arc::new(HostBackend::new(dir.path().to_path_buf(), vec![])), "/api/attach?id=garage/ws/a").await;
+        let (s, body) = get(
+            Arc::new(HostBackend::new(dir.path().to_path_buf(), vec![])),
+            "/api/attach?id=garage/ws/a",
+        )
+        .await;
         assert_eq!(s, StatusCode::OK);
         assert_eq!(body, json!({"kind": "host", "id": "garage/ws/a"}));
         assert!(!body.to_string().contains(&token) && !body.to_string().contains("5555"));

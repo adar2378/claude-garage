@@ -87,11 +87,17 @@ pub fn compute_views(sessions: &[WallSession], named: &[View]) -> Vec<ViewSummar
         }
     }
 
-    let mut buckets: HashMap<String, Vec<String>> =
-        order.iter().cloned().map(|name| (name, Vec::new())).collect();
+    let mut buckets: HashMap<String, Vec<String>> = order
+        .iter()
+        .cloned()
+        .map(|name| (name, Vec::new()))
+        .collect();
     let mut needs_input: HashSet<&str> = HashSet::new();
     for s in sessions {
-        buckets.entry(view_of(named, &s.id)).or_default().push(s.id.clone());
+        buckets
+            .entry(view_of(named, &s.id))
+            .or_default()
+            .push(s.id.clone());
         if s.needs_input() {
             needs_input.insert(s.id.as_str());
         }
@@ -104,9 +110,15 @@ pub fn compute_views(sessions: &[WallSession], named: &[View]) -> Vec<ViewSummar
             if session_ids.is_empty() {
                 return None;
             }
-            let needs_input_count =
-                session_ids.iter().filter(|id| needs_input.contains(id.as_str())).count();
-            Some(ViewSummary { name, session_ids, needs_input_count })
+            let needs_input_count = session_ids
+                .iter()
+                .filter(|id| needs_input.contains(id.as_str()))
+                .count();
+            Some(ViewSummary {
+                name,
+                session_ids,
+                needs_input_count,
+            })
         })
         .collect()
 }
@@ -138,7 +150,9 @@ pub fn derive_view_name(label: &str, existing_names: &[String]) -> String {
 /// that pruning just orphaned (store.rs `reconcile`).
 pub fn view_exists(views: &ViewsByWorkspace, workspace: &str, view: &str) -> bool {
     view == DEFAULT_VIEW
-        || views.get(workspace).is_some_and(|list| list.iter().any(|v| v.name == view))
+        || views
+            .get(workspace)
+            .is_some_and(|list| list.iter().any(|v| v.name == view))
 }
 
 /// Remove ids that no longer exist from every named view, then drop any
@@ -185,7 +199,10 @@ mod tests {
     }
 
     fn view(name: &str, ids: &[&str]) -> View {
-        View { name: name.to_owned(), session_ids: ids.iter().map(|s| s.to_owned().to_owned()).collect() }
+        View {
+            name: name.to_owned(),
+            session_ids: ids.iter().map(|s| s.to_owned().to_owned()).collect(),
+        }
     }
 
     // ── computeViews parity (views.test.js) ────────────────────────────
@@ -221,7 +238,11 @@ mod tests {
     #[test]
     fn needs_count_aggregates_per_view() {
         let named = [view("solo", &["c"])];
-        let sessions = [session("a", "needs-input"), idle("b"), session("c", "needs-input")];
+        let sessions = [
+            session("a", "needs-input"),
+            idle("b"),
+            session("c", "needs-input"),
+        ];
         let views = compute_views(&sessions, &named);
         let by_name = |n: &str| views.iter().find(|v| v.name == n).unwrap();
         assert_eq!(by_name(DEFAULT_VIEW).needs_input_count, 1);
@@ -256,7 +277,10 @@ mod tests {
         prune_views(&mut views, &valid);
 
         assert_eq!(views.get("a").unwrap(), &[view("solo", &["live"])]);
-        assert!(!views.contains_key("b"), "an all-dead workspace is dropped entirely");
+        assert!(
+            !views.contains_key("b"),
+            "an all-dead workspace is dropped entirely"
+        );
     }
 
     #[test]

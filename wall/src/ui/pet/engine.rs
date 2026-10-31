@@ -138,7 +138,12 @@ pub enum Mood {
 
 /// Mood from wall state only, never stored (spec "One-row sprites and
 /// derived mood"): box > sleep-when-empty > alert > watch > sleep.
-pub fn mood(daemon_live: bool, any_needs_input: bool, any_working: bool, session_count: usize) -> Mood {
+pub fn mood(
+    daemon_live: bool,
+    any_needs_input: bool,
+    any_working: bool,
+    session_count: usize,
+) -> Mood {
     if !daemon_live {
         return Mood::Box;
     }
@@ -227,7 +232,10 @@ fn frames_for(species: Species, mood: Mood, ascii_pup: bool) -> &'static [&'stat
 pub fn sprite(species: Species, mood: Mood, frame: usize, ascii_pup: bool) -> Sprite {
     let frames = frames_for(species, mood, ascii_pup);
     let text = frames[frame % frames.len()];
-    Sprite { text, bang: mood == Mood::Alert }
+    Sprite {
+        text,
+        bang: mood == Mood::Alert,
+    }
 }
 
 // ── Motion ──────────────────────────────────────────────────────────────
@@ -374,7 +382,11 @@ impl PetSim {
         self.target = self.target.min(max_x);
 
         let zoomies = species == Species::Pup && effective == Mood::Celebrate;
-        let speed = if zoomies { species.base_speed() * 2 } else { species.base_speed() };
+        let speed = if zoomies {
+            species.base_speed() * 2
+        } else {
+            species.base_speed()
+        };
         if self.x < self.target {
             self.x = (self.x + speed).min(self.target);
         } else if self.x > self.target {
@@ -398,7 +410,8 @@ impl PetSim {
         let bang = effective == Mood::Alert;
         let bang_lit = bang && Self::bang_lit(species, self.tick);
 
-        let changed = self.x != old_x || Some(text) != self.last_text || bang_lit != self.last_bang_lit;
+        let changed =
+            self.x != old_x || Some(text) != self.last_text || bang_lit != self.last_bang_lit;
         self.last_text = Some(text);
         self.last_bang_lit = bang_lit;
 
@@ -452,92 +465,200 @@ pub const PET_TICK_MS: i64 = 300;
 /// terse, Segan is eager and loud.
 pub const LINES: &[(Species, Intent, &[&str])] = &[
     // Arthur the shop cat — aloof, dry.
-    (Species::Cat, Intent::Hydrate, &[
-        "water. now. i'm not asking.",
-        "hydrate. i'll wait.",
-        "the bowl's right there. use it.",
-    ]),
-    (Species::Cat, Intent::Encourage, &[
-        "...fine. this is going okay.",
-        "not bad. don't get used to praise.",
-        "acceptable pace. carry on.",
-    ]),
-    (Species::Cat, Intent::Proud, &[
-        "i suppose i'm proud. don't tell anyone.",
-        "hm. good work. that's all you get.",
-        "fine. i'm impressed. barely.",
-    ]),
-    (Species::Cat, Intent::Stretch, &[
-        "get up. stretch. i'll watch the shop.",
-        "your spine will thank you. eventually.",
-        "stand up before you fuse to that chair.",
-    ]),
-    (Species::Cat, Intent::LateNight, &[
-        "it's late. even i'm not judging you. much.",
-        "the shop's closed. you're not.",
-        "go to bed. i mean it. sort of.",
-    ]),
-    (Species::Cat, Intent::Usage, &[
-        "you're burning through your window. pace it.",
-        "budget check: slow down.",
-        "easy on the tokens, champ.",
-    ]),
-    (Species::Cat, Intent::Back, &[
-        "oh. you're back. i wasn't worried.",
-        "there you are. the shop survived.",
-        "welcome back. i didn't move.",
-    ]),
-    (Species::Cat, Intent::Petting, &[
-        "...fine. two seconds of this.",
-        "don't make this a habit.",
-        "acceptable. proceed.",
-    ]),
+    (
+        Species::Cat,
+        Intent::Hydrate,
+        &[
+            "water. now. i'm not asking.",
+            "hydrate. i'll wait.",
+            "the bowl's right there. use it.",
+        ],
+    ),
+    (
+        Species::Cat,
+        Intent::Encourage,
+        &[
+            "...fine. this is going okay.",
+            "not bad. don't get used to praise.",
+            "acceptable pace. carry on.",
+        ],
+    ),
+    (
+        Species::Cat,
+        Intent::Proud,
+        &[
+            "i suppose i'm proud. don't tell anyone.",
+            "hm. good work. that's all you get.",
+            "fine. i'm impressed. barely.",
+        ],
+    ),
+    (
+        Species::Cat,
+        Intent::Stretch,
+        &[
+            "get up. stretch. i'll watch the shop.",
+            "your spine will thank you. eventually.",
+            "stand up before you fuse to that chair.",
+        ],
+    ),
+    (
+        Species::Cat,
+        Intent::LateNight,
+        &[
+            "it's late. even i'm not judging you. much.",
+            "the shop's closed. you're not.",
+            "go to bed. i mean it. sort of.",
+        ],
+    ),
+    (
+        Species::Cat,
+        Intent::Usage,
+        &[
+            "you're burning through your window. pace it.",
+            "budget check: slow down.",
+            "easy on the tokens, champ.",
+        ],
+    ),
+    (
+        Species::Cat,
+        Intent::Back,
+        &[
+            "oh. you're back. i wasn't worried.",
+            "there you are. the shop survived.",
+            "welcome back. i didn't move.",
+        ],
+    ),
+    (
+        Species::Cat,
+        Intent::Petting,
+        &[
+            "...fine. two seconds of this.",
+            "don't make this a habit.",
+            "acceptable. proceed.",
+        ],
+    ),
     // Papito the rubber duck — deadpan, terse.
-    (Species::Duck, Intent::Hydrate, &["drink water.", "hydrate.", "water. now."]),
-    (Species::Duck, Intent::Encourage, &["acceptable.", "fine progress.", "quack. good."]),
-    (Species::Duck, Intent::Proud, &["proud of you. quack.", "well done. quack.", "good. quack."]),
-    (Species::Duck, Intent::Stretch, &["stand up.", "stretch. quack.", "move your legs."]),
-    (Species::Duck, Intent::LateNight, &["late. quack.", "go to sleep.", "it is night. quack."]),
-    (Species::Duck, Intent::Usage, &["usage high. slow down.", "pace yourself. quack.", "tokens low. quack."]),
-    (Species::Duck, Intent::Back, &["you returned. quack.", "welcome back.", "connection restored. quack."]),
-    (Species::Duck, Intent::Petting, &["quack.", "acknowledged. quack.", "..quack."]),
+    (
+        Species::Duck,
+        Intent::Hydrate,
+        &["drink water.", "hydrate.", "water. now."],
+    ),
+    (
+        Species::Duck,
+        Intent::Encourage,
+        &["acceptable.", "fine progress.", "quack. good."],
+    ),
+    (
+        Species::Duck,
+        Intent::Proud,
+        &["proud of you. quack.", "well done. quack.", "good. quack."],
+    ),
+    (
+        Species::Duck,
+        Intent::Stretch,
+        &["stand up.", "stretch. quack.", "move your legs."],
+    ),
+    (
+        Species::Duck,
+        Intent::LateNight,
+        &["late. quack.", "go to sleep.", "it is night. quack."],
+    ),
+    (
+        Species::Duck,
+        Intent::Usage,
+        &[
+            "usage high. slow down.",
+            "pace yourself. quack.",
+            "tokens low. quack.",
+        ],
+    ),
+    (
+        Species::Duck,
+        Intent::Back,
+        &[
+            "you returned. quack.",
+            "welcome back.",
+            "connection restored. quack.",
+        ],
+    ),
+    (
+        Species::Duck,
+        Intent::Petting,
+        &["quack.", "acknowledged. quack.", "..quack."],
+    ),
     // Segan the pit pup — eager, loud.
-    (Species::Pup, Intent::Hydrate, &[
-        "WATER BREAK!! then back to it!",
-        "DRINK SOME WATER!! you got this!",
-        "H2O TIME!! go go go!",
-    ]),
-    (Species::Pup, Intent::Encourage, &[
-        "you're doing great!!",
-        "KEEP GOING!! you got this!!",
-        "look at you go!!",
-    ]),
-    (Species::Pup, Intent::Proud, &[
-        "SO proud of you!!!",
-        "YOU DID IT!! amazing!!",
-        "best human ever!! proud!!",
-    ]),
-    (Species::Pup, Intent::Stretch, &[
-        "STRETCH BREAK!! wiggle time!!",
-        "get up and shake it out!!",
-        "legs need love too!! stretch!!",
-    ]),
-    (Species::Pup, Intent::LateNight, &[
-        "it's SO late!! sleep soon??",
-        "still up?? okay but sleep after!!",
-        "night owl mode!! don't forget rest!!",
-    ]),
-    (Species::Pup, Intent::Usage, &[
-        "WHOA usage is high!! pace it!!",
-        "tokens getting low!! slow down!!",
-        "careful!! usage climbing fast!!",
-    ]),
-    (Species::Pup, Intent::Back, &[
-        "YOU'RE BACK!! i missed you!!",
-        "THERE YOU ARE!! hi hi hi!!",
-        "welcome back!! zoomies!!",
-    ]),
-    (Species::Pup, Intent::Petting, &["*happy tail noises*", "YES pet me more!!", "best day ever!!"]),
+    (
+        Species::Pup,
+        Intent::Hydrate,
+        &[
+            "WATER BREAK!! then back to it!",
+            "DRINK SOME WATER!! you got this!",
+            "H2O TIME!! go go go!",
+        ],
+    ),
+    (
+        Species::Pup,
+        Intent::Encourage,
+        &[
+            "you're doing great!!",
+            "KEEP GOING!! you got this!!",
+            "look at you go!!",
+        ],
+    ),
+    (
+        Species::Pup,
+        Intent::Proud,
+        &[
+            "SO proud of you!!!",
+            "YOU DID IT!! amazing!!",
+            "best human ever!! proud!!",
+        ],
+    ),
+    (
+        Species::Pup,
+        Intent::Stretch,
+        &[
+            "STRETCH BREAK!! wiggle time!!",
+            "get up and shake it out!!",
+            "legs need love too!! stretch!!",
+        ],
+    ),
+    (
+        Species::Pup,
+        Intent::LateNight,
+        &[
+            "it's SO late!! sleep soon??",
+            "still up?? okay but sleep after!!",
+            "night owl mode!! don't forget rest!!",
+        ],
+    ),
+    (
+        Species::Pup,
+        Intent::Usage,
+        &[
+            "WHOA usage is high!! pace it!!",
+            "tokens getting low!! slow down!!",
+            "careful!! usage climbing fast!!",
+        ],
+    ),
+    (
+        Species::Pup,
+        Intent::Back,
+        &[
+            "YOU'RE BACK!! i missed you!!",
+            "THERE YOU ARE!! hi hi hi!!",
+            "welcome back!! zoomies!!",
+        ],
+    ),
+    (
+        Species::Pup,
+        Intent::Petting,
+        &[
+            "*happy tail noises*",
+            "YES pet me more!!",
+            "best day ever!!",
+        ],
+    ),
 ];
 
 fn lines_for(species: Species, intent: Intent) -> &'static [&'static str] {
@@ -559,7 +680,11 @@ fn pick_line(
         return None;
     }
     // Never repeat the last line said, when there's an alternative.
-    let fresh: Vec<&'static str> = lines.iter().copied().filter(|l| Some(*l) != last_line).collect();
+    let fresh: Vec<&'static str> = lines
+        .iter()
+        .copied()
+        .filter(|l| Some(*l) != last_line)
+        .collect();
     let pool: &[&'static str] = if fresh.is_empty() { lines } else { &fresh };
     let roll = rng().clamp(0.0, 0.999_999);
     let idx = (roll * pool.len() as f64) as usize;
@@ -613,14 +738,22 @@ impl Chatter {
     /// is otherwise unaffected: alert suppression, the user-notice gate, and
     /// the event-bound exemptions all still apply).
     pub fn with_floor_ms(floor_ms: i64) -> Chatter {
-        Chatter { floor_ms, ..Default::default() }
+        Chatter {
+            floor_ms,
+            ..Default::default()
+        }
     }
 
     /// One chatter decision per tick. `None` when nothing is due. Event-
     /// bound lines (Back, Proud-on-celebrate) are exempt from the 3-minute
     /// floor (spec "Rate limit": "except the 'you're back' and
     /// proud-on-celebrate lines").
-    pub fn next_line(&mut self, species: Species, ctx: &ChatterCtx, rng: &mut impl FnMut() -> f64) -> Option<&'static str> {
+    pub fn next_line(
+        &mut self,
+        species: Species,
+        ctx: &ChatterCtx,
+        rng: &mut impl FnMut() -> f64,
+    ) -> Option<&'static str> {
         if ctx.alert || ctx.user_notice_active {
             return None;
         }
@@ -631,18 +764,21 @@ impl Chatter {
             self.said_back = false;
         }
 
-        if ctx.just_back_live && !self.said_back
-            && let Some(line) = pick_line(species, Intent::Back, self.last_line, rng) {
-                self.said_back = true;
-                self.commit(ctx.now_ms, line);
-                return Some(line);
-            }
+        if ctx.just_back_live
+            && !self.said_back
+            && let Some(line) = pick_line(species, Intent::Back, self.last_line, rng)
+        {
+            self.said_back = true;
+            self.commit(ctx.now_ms, line);
+            return Some(line);
+        }
 
         if ctx.just_celebrated
-            && let Some(line) = pick_line(species, Intent::Proud, self.last_line, rng) {
-                self.commit(ctx.now_ms, line);
-                return Some(line);
-            }
+            && let Some(line) = pick_line(species, Intent::Proud, self.last_line, rng)
+        {
+            self.commit(ctx.now_ms, line);
+            return Some(line);
+        }
 
         if ctx.now_ms - self.last_said_ms < self.floor_ms {
             return None;
@@ -765,7 +901,12 @@ mod tests {
     #[test]
     fn cycle_goes_off_cat_duck_pup_off() {
         let mut cur = None;
-        let order = [Some(Species::Cat), Some(Species::Duck), Some(Species::Pup), None];
+        let order = [
+            Some(Species::Cat),
+            Some(Species::Duck),
+            Some(Species::Pup),
+            None,
+        ];
         for expected in order {
             cur = Species::cycle(cur);
             assert_eq!(cur, expected);
@@ -784,13 +925,22 @@ mod tests {
 
     #[test]
     fn every_species_mood_has_a_single_line_sprite() {
-        let moods = [Mood::Sleep, Mood::Watch, Mood::Alert, Mood::Box, Mood::Celebrate];
+        let moods = [
+            Mood::Sleep,
+            Mood::Watch,
+            Mood::Alert,
+            Mood::Box,
+            Mood::Celebrate,
+        ];
         for species in [Species::Cat, Species::Duck, Species::Pup] {
             for m in moods {
                 let frames = frames_for(species, m, false);
                 assert!(!frames.is_empty(), "{species:?} {m:?} has no frames");
                 for f in frames {
-                    assert!(!f.contains('\n'), "{species:?} {m:?} frame is multi-line: {f:?}");
+                    assert!(
+                        !f.contains('\n'),
+                        "{species:?} {m:?} frame is multi-line: {f:?}"
+                    );
                 }
             }
         }
@@ -806,9 +956,18 @@ mod tests {
 
     #[test]
     fn ascii_fallback_avoids_the_pup_face_glyphs() {
-        for m in [Mood::Sleep, Mood::Watch, Mood::Alert, Mood::Box, Mood::Celebrate] {
+        for m in [
+            Mood::Sleep,
+            Mood::Watch,
+            Mood::Alert,
+            Mood::Box,
+            Mood::Celebrate,
+        ] {
             for f in pup_frames(m, true) {
-                assert!(!f.contains('ᴥ') && !f.contains('°') && !f.contains('·'), "{f:?}");
+                assert!(
+                    !f.contains('ᴥ') && !f.contains('°') && !f.contains('·'),
+                    "{f:?}"
+                );
             }
         }
     }
@@ -839,7 +998,10 @@ mod tests {
                 seen_unlit = true;
             }
         }
-        assert!(seen_lit && seen_unlit, "pup bang should alternate lit/unlit");
+        assert!(
+            seen_lit && seen_unlit,
+            "pup bang should alternate lit/unlit"
+        );
     }
 
     #[test]
@@ -847,7 +1009,12 @@ mod tests {
         // rng() == 0.0 always: the 5% stroll roll always fires (0.0 < 0.05)
         // but the aloof check (rng() >= 0.4) always fails, so the cat
         // always ignores it.
-        let mut sim = PetSim { x: 5, target: 5, placed: true, ..Default::default() };
+        let mut sim = PetSim {
+            x: 5,
+            target: 5,
+            placed: true,
+            ..Default::default()
+        };
         let mut rng = constant(0.0);
         for _ in 0..20 {
             sim.step(Species::Cat, Mood::Sleep, 0, 1, 40, 0, false, &mut rng);
@@ -870,12 +1037,20 @@ mod tests {
             sim.step(Species::Duck, Mood::Watch, 0, 1, 40, 0, false, &mut zero);
         }
         let max_x = 40 - width;
-        assert!(sim.target >= max_x - (f64::from(max_x) * 0.4) as u16, "target {} in right 40%", sim.target);
+        assert!(
+            sim.target >= max_x - (f64::from(max_x) * 0.4) as u16,
+            "target {} in right 40%",
+            sim.target
+        );
     }
 
     #[test]
     fn alert_moves_toward_zero() {
-        let mut sim = PetSim { x: 10, placed: true, ..Default::default() };
+        let mut sim = PetSim {
+            x: 10,
+            placed: true,
+            ..Default::default()
+        };
         let mut rng = constant(0.9);
         let mut last_x = 10;
         for _ in 0..15 {
@@ -888,14 +1063,26 @@ mod tests {
 
     #[test]
     fn celebrate_triggers_on_blocked_transition_and_expires() {
-        let mut sim = PetSim { prev_blocked: 1, ..Default::default() };
+        let mut sim = PetSim {
+            prev_blocked: 1,
+            ..Default::default()
+        };
         let mut rng = constant(0.9);
 
         let r = sim.step(Species::Cat, Mood::Sleep, 0, 1, 40, 1_000, false, &mut rng);
         assert_eq!(r.mood, Mood::Celebrate);
         assert_eq!(sim.celebrate_until_ms, 1_000 + Species::Cat.celebrate_ms());
 
-        let r = sim.step(Species::Cat, Mood::Sleep, 0, 1, 40, 1_000 + Species::Cat.celebrate_ms() + 1, false, &mut rng);
+        let r = sim.step(
+            Species::Cat,
+            Mood::Sleep,
+            0,
+            1,
+            40,
+            1_000 + Species::Cat.celebrate_ms() + 1,
+            false,
+            &mut rng,
+        );
         assert_eq!(r.mood, Mood::Sleep, "celebrate should expire");
     }
 
@@ -911,7 +1098,10 @@ mod tests {
 
     #[test]
     fn duck_celebrate_flaps_once_then_holds() {
-        let mut sim = PetSim { prev_blocked: 1, ..Default::default() };
+        let mut sim = PetSim {
+            prev_blocked: 1,
+            ..Default::default()
+        };
         let mut rng = constant(0.9);
         let r0 = sim.step(Species::Duck, Mood::Sleep, 0, 1, 40, 0, false, &mut rng);
         assert_eq!(r0.mood, Mood::Celebrate);
@@ -964,7 +1154,10 @@ mod tests {
 
     #[test]
     fn floor_is_enforced() {
-        let mut chatter = Chatter { last_said_ms: 1_000_000, ..Default::default() };
+        let mut chatter = Chatter {
+            last_said_ms: 1_000_000,
+            ..Default::default()
+        };
         let c = ctx(1_000_000 + CHATTER_FLOOR_MS - 1);
         let mut rng = constant(0.0); // would always fire if floor let it through
         assert_eq!(chatter.next_line(Species::Cat, &c, &mut rng), None);
@@ -973,7 +1166,10 @@ mod tests {
     #[test]
     fn back_line_is_exempt_from_the_floor_and_said_once() {
         // Floor would otherwise block.
-        let mut chatter = Chatter { last_said_ms: 1_000_000, ..Default::default() };
+        let mut chatter = Chatter {
+            last_said_ms: 1_000_000,
+            ..Default::default()
+        };
         let mut c = ctx(1_000_000 + 1);
         c.just_back_live = true;
         let mut rng = constant(0.0);
@@ -981,7 +1177,12 @@ mod tests {
         assert!(line.is_some());
         // Immediately again: said_back is now true, no repeat Back line.
         let line2 = chatter.next_line(Species::Cat, &c, &mut rng);
-        assert!(lines_for(Species::Cat, Intent::Back).iter().all(|l| Some(*l) != line2) || line2.is_none());
+        assert!(
+            lines_for(Species::Cat, Intent::Back)
+                .iter()
+                .all(|l| Some(*l) != line2)
+                || line2.is_none()
+        );
     }
 
     #[test]
@@ -1019,7 +1220,10 @@ mod tests {
 
     #[test]
     fn chatter_never_repeats_the_last_line() {
-        let chatter = Chatter { last_line: Some("water. now. i'm not asking."), ..Default::default() };
+        let chatter = Chatter {
+            last_line: Some("water. now. i'm not asking."),
+            ..Default::default()
+        };
         let mut rng = constant(0.0);
         let line = pick_line(Species::Cat, Intent::Hydrate, chatter.last_line, &mut rng);
         assert_ne!(line, chatter.last_line);

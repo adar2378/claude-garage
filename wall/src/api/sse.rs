@@ -15,8 +15,8 @@
 //!    (run it on a `spawn_blocking` task feeding the app event channel).
 
 use std::io::Read;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 /// One dispatched server-sent event.

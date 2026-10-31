@@ -69,7 +69,9 @@ fn parse(text: &str) -> Option<Entry> {
 
 /// Every parseable record. Unreadable or half-written files are skipped.
 pub fn read_all(hosts_dir: &Path) -> Vec<Entry> {
-    let Ok(dir) = std::fs::read_dir(hosts_dir) else { return Vec::new() };
+    let Ok(dir) = std::fs::read_dir(hosts_dir) else {
+        return Vec::new();
+    };
     let mut out: Vec<Entry> = dir
         .flatten()
         .filter(|e| e.path().extension().is_some_and(|x| x == "json"))
@@ -111,13 +113,17 @@ pub fn ensure_dir(hosts_dir: &Path) -> std::io::Result<()> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
-        std::fs::DirBuilder::new().recursive(true).mode(0o700).create(hosts_dir)?;
+        std::fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(hosts_dir)?;
         std::fs::set_permissions(hosts_dir, std::fs::Permissions::from_mode(0o700))
     }
     #[cfg(windows)]
     {
         std::fs::create_dir_all(hosts_dir)?;
-        let inside = std::env::var_os("USERPROFILE").is_some_and(|p| is_under_profile(hosts_dir, Path::new(&p)));
+        let inside = std::env::var_os("USERPROFILE")
+            .is_some_and(|p| is_under_profile(hosts_dir, Path::new(&p)));
         if inside {
             return Ok(());
         }
@@ -138,31 +144,52 @@ mod windows_acl {
     use std::os::windows::ffi::OsStrExt;
     use std::path::Path;
 
-    use windows_sys::Win32::Foundation::{LocalFree, ERROR_SUCCESS};
+    use windows_sys::Win32::Foundation::{ERROR_SUCCESS, LocalFree};
     use windows_sys::Win32::Security::Authorization::{
-        ConvertStringSecurityDescriptorToSecurityDescriptorW, SetNamedSecurityInfoW, SDDL_REVISION_1, SE_FILE_OBJECT,
+        ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1, SE_FILE_OBJECT,
+        SetNamedSecurityInfoW,
     };
     use windows_sys::Win32::Security::{
-        GetSecurityDescriptorDacl, ACL, DACL_SECURITY_INFORMATION, PROTECTED_DACL_SECURITY_INFORMATION,
+        ACL, DACL_SECURITY_INFORMATION, GetSecurityDescriptorDacl,
+        PROTECTED_DACL_SECURITY_INFORMATION,
     };
 
     /// Replace the directory's ACL with one that grants full control to the
     /// owner only (SDDL `OW` = OWNER RIGHTS) and does not inherit from the
     /// parent, so files created inside inherit the same owner-only access.
     pub fn restrict_to_owner(dir: &Path) -> Result<(), String> {
-        let path: Vec<u16> = dir.as_os_str().encode_wide().chain(std::iter::once(0)).collect();
-        let sddl: Vec<u16> = "D:PAI(A;OICI;FA;;;OW)".encode_utf16().chain(std::iter::once(0)).collect();
+        let path: Vec<u16> = dir
+            .as_os_str()
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect();
+        let sddl: Vec<u16> = "D:PAI(A;OICI;FA;;;OW)"
+            .encode_utf16()
+            .chain(std::iter::once(0))
+            .collect();
         // SAFETY: FFI. `sd` is allocated by the call and freed with LocalFree
         // on every path; the DACL pointer points into `sd` and is used only
         // before that free; `path` and `sddl` are NUL-terminated.
         unsafe {
             let mut sd = std::ptr::null_mut();
-            if ConvertStringSecurityDescriptorToSecurityDescriptorW(sddl.as_ptr(), SDDL_REVISION_1, &mut sd, std::ptr::null_mut()) == 0 {
-                return Err(format!("security descriptor: {}", std::io::Error::last_os_error()));
+            if ConvertStringSecurityDescriptorToSecurityDescriptorW(
+                sddl.as_ptr(),
+                SDDL_REVISION_1,
+                &mut sd,
+                std::ptr::null_mut(),
+            ) == 0
+            {
+                return Err(format!(
+                    "security descriptor: {}",
+                    std::io::Error::last_os_error()
+                ));
             }
             let (mut present, mut defaulted) = (0i32, 0i32);
             let mut dacl: *mut ACL = std::ptr::null_mut();
-            let result = if GetSecurityDescriptorDacl(sd, &mut present, &mut dacl, &mut defaulted) == 0 || present == 0 {
+            let result = if GetSecurityDescriptorDacl(sd, &mut present, &mut dacl, &mut defaulted)
+                == 0
+                || present == 0
+            {
                 Err(format!("dacl: {}", std::io::Error::last_os_error()))
             } else {
                 let rc = SetNamedSecurityInfoW(
@@ -174,7 +201,11 @@ mod windows_acl {
                     dacl,
                     std::ptr::null_mut(),
                 );
-                if rc == ERROR_SUCCESS { Ok(()) } else { Err(format!("SetNamedSecurityInfo error {rc}")) }
+                if rc == ERROR_SUCCESS {
+                    Ok(())
+                } else {
+                    Err(format!("SetNamedSecurityInfo error {rc}"))
+                }
             };
             LocalFree(sd);
             result
@@ -199,7 +230,11 @@ pub fn write(hosts_dir: &Path, entry: &Entry) -> std::io::Result<()> {
         opts.mode(0o600);
     }
     let mut f = opts.open(&tmp)?;
-    f.write_all(serde_json::to_string(entry).map_err(std::io::Error::other)?.as_bytes())?;
+    f.write_all(
+        serde_json::to_string(entry)
+            .map_err(std::io::Error::other)?
+            .as_bytes(),
+    )?;
     drop(f);
     std::fs::rename(&tmp, &path)
 }
@@ -228,17 +263,24 @@ pub fn remove_if_same(hosts_dir: &Path, seen: &Entry) -> bool {
 pub fn pid_alive(pid: u32) -> bool {
     #[cfg(unix)]
     {
-        let Ok(p) = i32::try_from(pid) else { return false };
+        let Ok(p) = i32::try_from(pid) else {
+            return false;
+        };
         if p <= 0 {
             return false;
         }
         // SAFETY: signal 0 only checks that the pid can be signalled.
-        unsafe { libc::kill(p, 0) == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM) }
+        unsafe {
+            libc::kill(p, 0) == 0
+                || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+        }
     }
     #[cfg(windows)]
     {
         use windows_sys::Win32::Foundation::{CloseHandle, ERROR_ACCESS_DENIED, STILL_ACTIVE};
-        use windows_sys::Win32::System::Threading::{GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION};
+        use windows_sys::Win32::System::Threading::{
+            GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
+        };
         if pid == 0 {
             return false;
         }
@@ -246,7 +288,8 @@ pub fn pid_alive(pid: u32) -> bool {
         unsafe {
             let h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
             if h.is_null() {
-                return std::io::Error::last_os_error().raw_os_error() == Some(ERROR_ACCESS_DENIED as i32);
+                return std::io::Error::last_os_error().raw_os_error()
+                    == Some(ERROR_ACCESS_DENIED as i32);
             }
             let mut code = 0u32;
             let ok = GetExitCodeProcess(h, &mut code) != 0;
@@ -261,7 +304,16 @@ mod tests {
     use super::*;
 
     fn entry(id: &str) -> Entry {
-        Entry { id: id.into(), pid: 1, child_pid: 2, port: 4000, token: "t".repeat(32), dir: "/w".into(), created_at: 5, title: String::new() }
+        Entry {
+            id: id.into(),
+            pid: 1,
+            child_pid: 2,
+            port: 4000,
+            token: "t".repeat(32),
+            dir: "/w".into(),
+            created_at: 5,
+            title: String::new(),
+        }
     }
 
     #[test]
@@ -280,12 +332,25 @@ mod tests {
     #[test]
     fn stems_never_contain_separators_dots_or_colons_and_never_collide() {
         for id in [
-            "garage/ws/a", "../../etc/passwd", "..\\..\\x", "C:\\Windows\\x", "a/../b", "/abs", "x:y", "a.b", "%2F", "é",
-            "con", "", "a\0b", "..",
+            "garage/ws/a",
+            "../../etc/passwd",
+            "..\\..\\x",
+            "C:\\Windows\\x",
+            "a/../b",
+            "/abs",
+            "x:y",
+            "a.b",
+            "%2F",
+            "é",
+            "con",
+            "",
+            "a\0b",
+            "..",
         ] {
             let stem = file_stem(id);
             assert!(
-                stem.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-' | b'%')),
+                stem.bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-' | b'%')),
                 "{id:?} -> {stem:?}"
             );
             assert!(!stem.contains(".."), "{id:?} -> {stem:?}");
@@ -302,7 +367,11 @@ mod tests {
     fn a_record_filed_under_another_ids_name_is_not_that_ids_record() {
         let d = tempfile::tempdir().unwrap();
         write(d.path(), &entry("garage/ws/real")).unwrap();
-        std::fs::copy(path_for(d.path(), "garage/ws/real"), path_for(d.path(), "garage/ws/alias")).unwrap();
+        std::fs::copy(
+            path_for(d.path(), "garage/ws/real"),
+            path_for(d.path(), "garage/ws/alias"),
+        )
+        .unwrap();
         assert_eq!(read(d.path(), "garage/ws/alias"), None);
         assert!(read(d.path(), "garage/ws/real").is_some());
     }
@@ -338,7 +407,16 @@ mod tests {
         assert_eq!(read(d.path(), "garage/ws/a"), None);
         assert!(!remove_if_same(d.path(), &old), "already gone");
         // A respawn replaced it: a different pid or a different token both survive.
-        for fresh in [Entry { pid: 99, ..entry("garage/ws/a") }, Entry { token: "z".repeat(32), ..entry("garage/ws/a") }] {
+        for fresh in [
+            Entry {
+                pid: 99,
+                ..entry("garage/ws/a")
+            },
+            Entry {
+                token: "z".repeat(32),
+                ..entry("garage/ws/a")
+            },
+        ] {
             write(d.path(), &fresh).unwrap();
             assert!(!remove_if_same(d.path(), &old));
             assert_eq!(read(d.path(), "garage/ws/a"), Some(fresh));
@@ -357,8 +435,14 @@ mod tests {
         assert!(is_under_profile(Path::new("C:/Users/Me/.garage/hosts"), p));
         assert!(is_under_profile(Path::new("c:/users/me/.garage"), p));
         assert!(!is_under_profile(Path::new("D:/garage/hosts"), p));
-        assert!(!is_under_profile(Path::new("C:/Users/Meagan/.garage"), p), "prefix of a name is not a parent");
-        assert!(!is_under_profile(Path::new("C:/Users/Me/../Other/.garage"), p));
+        assert!(
+            !is_under_profile(Path::new("C:/Users/Meagan/.garage"), p),
+            "prefix of a name is not a parent"
+        );
+        assert!(!is_under_profile(
+            Path::new("C:/Users/Me/../Other/.garage"),
+            p
+        ));
         assert!(!is_under_profile(Path::new("anything"), Path::new("")));
     }
 

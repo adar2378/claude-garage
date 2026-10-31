@@ -18,7 +18,10 @@ mod tests {
     use super::*;
     use serde_json::Value;
 
-    const COMMITTED: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../schemas/garage-plugin.schema.json");
+    const COMMITTED: &str = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../schemas/garage-plugin.schema.json"
+    );
 
     /// The committed schema must match the types. After changing a manifest
     /// type, regenerate with `UPDATE_SCHEMA=1 cargo test -p garage-plugin`.
@@ -66,15 +69,33 @@ priority = 5
     #[test]
     fn the_schema_accepts_the_close_button_example_and_rejects_bad_manifests() {
         let v = validator();
-        assert!(v.is_valid(&toml_as_json(CLOSE_BUTTON)), "close-button must validate");
+        assert!(
+            v.is_valid(&toml_as_json(CLOSE_BUTTON)),
+            "close-button must validate"
+        );
         for (what, bad) in [
             ("a typo'd key", CLOSE_BUTTON.replace("priority", "prority")),
-            ("a bad slot", CLOSE_BUTTON.replace("tile.title.right", "tile.nowhere")),
-            ("a bad permission", CLOSE_BUTTON.replace("core.actions", "root")),
-            ("a missing id", CLOSE_BUTTON.replace("id = \"close-button\"\n", "")),
-            ("a string api_version", CLOSE_BUTTON.replace("api_version = 1", "api_version = \"1\"")),
+            (
+                "a bad slot",
+                CLOSE_BUTTON.replace("tile.title.right", "tile.nowhere"),
+            ),
+            (
+                "a bad permission",
+                CLOSE_BUTTON.replace("core.actions", "root"),
+            ),
+            (
+                "a missing id",
+                CLOSE_BUTTON.replace("id = \"close-button\"\n", ""),
+            ),
+            (
+                "a string api_version",
+                CLOSE_BUTTON.replace("api_version = 1", "api_version = \"1\""),
+            ),
         ] {
-            assert!(!v.is_valid(&toml_as_json(&bad)), "schema should reject {what}");
+            assert!(
+                !v.is_valid(&toml_as_json(&bad)),
+                "schema should reject {what}"
+            );
         }
     }
 }

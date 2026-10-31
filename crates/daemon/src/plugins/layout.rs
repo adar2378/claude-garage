@@ -36,7 +36,9 @@ pub struct Paths {
 
 impl Paths {
     pub fn new(garage_dir: &Path) -> Self {
-        Self { root: garage_dir.join("plugins") }
+        Self {
+            root: garage_dir.join("plugins"),
+        }
     }
 
     pub fn root(&self) -> &Path {
@@ -81,7 +83,14 @@ impl Paths {
 pub fn github_plugin_dir(paths: &Paths, id: &str, subdir: Option<&str>) -> PathBuf {
     let base = paths.installed(id);
     match subdir {
-        Some(s) if !s.is_empty() && Path::new(s).components().all(|c| matches!(c, std::path::Component::Normal(_))) => base.join(s),
+        Some(s)
+            if !s.is_empty()
+                && Path::new(s)
+                    .components()
+                    .all(|c| matches!(c, std::path::Component::Normal(_))) =>
+        {
+            base.join(s)
+        }
         _ => base,
     }
 }
@@ -161,7 +170,11 @@ pub struct PluginsFile {
 
 impl Default for PluginsFile {
     fn default() -> Self {
-        Self { version: FILE_VERSION, plugins: Vec::new(), extra: Map::new() }
+        Self {
+            version: FILE_VERSION,
+            plugins: Vec::new(),
+            extra: Map::new(),
+        }
     }
 }
 
@@ -175,8 +188,12 @@ impl PluginsFile {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Self::default()),
             Err(e) => return Err(format!("cannot read {}: {e}", path.display())),
         };
-        let file: Self = serde_json::from_str(&raw)
-            .map_err(|e| format!("{} is corrupt ({e}); fix or delete it and run `claude-garage plugin list`", path.display()))?;
+        let file: Self = serde_json::from_str(&raw).map_err(|e| {
+            format!(
+                "{} is corrupt ({e}); fix or delete it and run `claude-garage plugin list`",
+                path.display()
+            )
+        })?;
         if file.version > FILE_VERSION {
             return Err(format!(
                 "{} is version {}, newer than this garage understands ({FILE_VERSION}); upgrade claude-garage",
@@ -190,12 +207,17 @@ impl PluginsFile {
     /// Read, change and write back under the registry lock. `change` returns
     /// whether it modified anything; an unmodified file is not rewritten.
     /// This is the only supported way to edit the registry.
-    pub fn update<T>(paths: &Paths, change: impl FnOnce(&mut Self) -> (bool, T)) -> Result<T, String> {
-        let _guard = RegistryLock::acquire(paths).map_err(|e| format!("cannot lock {}: {e}", paths.registry_lock().display()))?;
+    pub fn update<T>(
+        paths: &Paths,
+        change: impl FnOnce(&mut Self) -> (bool, T),
+    ) -> Result<T, String> {
+        let _guard = RegistryLock::acquire(paths)
+            .map_err(|e| format!("cannot lock {}: {e}", paths.registry_lock().display()))?;
         let mut file = Self::read(paths)?;
         let (dirty, out) = change(&mut file);
         if dirty {
-            file.write(paths).map_err(|e| format!("cannot write {}: {e}", paths.registry_file().display()))?;
+            file.write(paths)
+                .map_err(|e| format!("cannot write {}: {e}", paths.registry_file().display()))?;
         }
         Ok(out)
     }
@@ -207,7 +229,11 @@ impl PluginsFile {
         static SEQ: AtomicU64 = AtomicU64::new(0);
         let path = paths.registry_file();
         std::fs::create_dir_all(paths.root())?;
-        let tmp = paths.root().join(format!(".plugins.json.{}.{}.tmp", std::process::id(), SEQ.fetch_add(1, Ordering::Relaxed)));
+        let tmp = paths.root().join(format!(
+            ".plugins.json.{}.{}.tmp",
+            std::process::id(),
+            SEQ.fetch_add(1, Ordering::Relaxed)
+        ));
         let body = serde_json::to_string_pretty(self).map_err(std::io::Error::other)?;
         let res = std::fs::write(&tmp, body).and_then(|_| std::fs::rename(&tmp, &path));
         if res.is_err() {
@@ -230,12 +256,19 @@ static REGISTRY_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
 impl RegistryLock {
     fn acquire(paths: &Paths) -> std::io::Result<Self> {
         // A panic inside a previous critical section must not wedge the registry.
-        let process = REGISTRY_MUTEX.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let process = REGISTRY_MUTEX
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         std::fs::create_dir_all(paths.root())?;
         #[cfg(unix)]
         {
             use std::os::fd::AsRawFd;
-            let file = std::fs::OpenOptions::new().read(true).write(true).create(true).truncate(false).open(paths.registry_lock())?;
+            let file = std::fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .create(true)
+                .truncate(false)
+                .open(paths.registry_lock())?;
             // SAFETY: flock(2) on a descriptor this function owns.
             if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX) } != 0 {
                 return Err(std::io::Error::last_os_error());
@@ -304,7 +337,10 @@ pub fn create_private_dir(dir: &Path) -> std::io::Result<()> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::DirBuilderExt;
-        std::fs::DirBuilder::new().recursive(true).mode(0o700).create(dir)
+        std::fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(dir)
     }
     #[cfg(not(unix))]
     {
@@ -333,7 +369,12 @@ pub fn restrict(_path: &Path) -> std::io::Result<()> {
 pub fn write_private(path: &Path, body: &str) -> std::io::Result<()> {
     use std::io::Write;
     use std::os::unix::fs::OpenOptionsExt;
-    let mut f = std::fs::OpenOptions::new().write(true).create(true).truncate(true).mode(0o600).open(path)?;
+    let mut f = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(path)?;
     restrict(path)?;
     f.write_all(body.as_bytes())
 }
@@ -381,14 +422,20 @@ mod tests {
         let file = PluginsFile::read(&p).unwrap();
         assert_eq!(file.plugins.len(), 2);
         assert_eq!(file.plugins[0].bindings["close-button:close"], "x");
-        assert!(matches!(&file.plugins[0].source, Source::Github { git_ref: Some(r), .. } if r == "v0.1.0"));
+        assert!(
+            matches!(&file.plugins[0].source, Source::Github { git_ref: Some(r), .. } if r == "v0.1.0")
+        );
         file.write(&p).unwrap();
-        let back: Value = serde_json::from_str(&std::fs::read_to_string(p.registry_file()).unwrap()).unwrap();
+        let back: Value =
+            serde_json::from_str(&std::fs::read_to_string(p.registry_file()).unwrap()).unwrap();
         assert_eq!(back["seeded"], 3);
         assert_eq!(back["plugins"][0]["futureKey"], json!([1]));
         assert_eq!(back["plugins"][0]["source"]["ref"], "v0.1.0");
         assert!(back["plugins"][1].get("manifestSha256").is_none());
-        let names: Vec<_> = std::fs::read_dir(p.root()).unwrap().map(|e| e.unwrap().file_name().into_string().unwrap()).collect();
+        let names: Vec<_> = std::fs::read_dir(p.root())
+            .unwrap()
+            .map(|e| e.unwrap().file_name().into_string().unwrap())
+            .collect();
         assert_eq!(names, ["plugins.json"], "no temp file left behind");
     }
 
@@ -413,7 +460,8 @@ mod tests {
                     for i in 0..10 {
                         let id = format!("p{t}-{i}");
                         PluginsFile::update(&p, |f| {
-                            f.plugins.push(Entry::new(&id, Source::Link { path: "/x".into() }));
+                            f.plugins
+                                .push(Entry::new(&id, Source::Link { path: "/x".into() }));
                             (true, ())
                         })
                         .unwrap();
@@ -437,7 +485,10 @@ mod tests {
         })
         .unwrap_err();
         assert!(e.contains("corrupt"), "{e}");
-        assert_eq!(std::fs::read_to_string(p.registry_file()).unwrap(), "{broken");
+        assert_eq!(
+            std::fs::read_to_string(p.registry_file()).unwrap(),
+            "{broken"
+        );
     }
 
     #[cfg(unix)]
@@ -448,9 +499,17 @@ mod tests {
         let (d, p) = paths();
         let tok = ensure_token(&p, "loose").unwrap();
         std::fs::set_permissions(p.token("loose"), std::fs::Permissions::from_mode(0o644)).unwrap();
-        assert_eq!(ensure_token(&p, "loose").unwrap(), tok, "the token itself is kept");
+        assert_eq!(
+            ensure_token(&p, "loose").unwrap(),
+            tok,
+            "the token itself is kept"
+        );
         assert_eq!(mode(&p.token("loose")), 0o600);
-        assert_eq!(mode(p.token("loose").parent().unwrap()), 0o700, "the tokens dir is private");
+        assert_eq!(
+            mode(p.token("loose").parent().unwrap()),
+            0o700,
+            "the tokens dir is private"
+        );
         let ui = ensure_ui_token(d.path()).unwrap();
         assert_eq!(ui.len(), 64);
         assert_eq!(mode(&ui_token_path(d.path())), 0o600);
@@ -468,6 +527,13 @@ mod tests {
         assert_eq!(a.len(), 64);
         assert_eq!(ensure_token(&p, "one").unwrap(), a, "stable across calls");
         assert_ne!(ensure_token(&p, "two").unwrap(), a);
-        assert_eq!(std::fs::metadata(p.token("one")).unwrap().permissions().mode() & 0o777, 0o600);
+        assert_eq!(
+            std::fs::metadata(p.token("one"))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o600
+        );
     }
 }

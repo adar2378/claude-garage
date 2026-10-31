@@ -125,7 +125,11 @@ fn queue_j_k_wrap_the_selection_and_esc_closes() {
 fn queue_enter_jump_engages_the_selected_session() {
     let mut store = store_with(
         vec![ws("a"), ws("b")],
-        vec![si("a", "one"), si_blocked("b", "old", 100), si_blocked("a", "young", 900)],
+        vec![
+            si("a", "one"),
+            si_blocked("b", "old", 100),
+            si_blocked("a", "young", 900),
+        ],
     );
     store.open_overlay(OverlayKind::TriageQueue);
     let (mut sel, mut form) = (1, WorkspaceAddForm::default());
@@ -312,7 +316,11 @@ fn d_rejoining_shows_no_notice() {
     let mut router = GarageRouter::default();
     key_at(&mut router, &mut store, "d", 1000); // detach: notice shown, ttl 2000ms
     key_at(&mut router, &mut store, "d", 3500); // rejoin, well after that notice expired
-    assert_eq!(router.notices.current(3600), None, "a rejoin raises no notice of its own");
+    assert_eq!(
+        router.notices.current(3600),
+        None,
+        "a rejoin raises no notice of its own"
+    );
 }
 
 #[test]
@@ -353,8 +361,10 @@ fn picker_entries_exclude_the_focused_sessions_current_view() {
 
 #[test]
 fn picker_enter_on_an_existing_view_moves_and_shows_the_moved_notice() {
-    let mut store =
-        store_with(vec![ws("a")], vec![si("a", "one"), si("a", "two"), si("a", "three")]);
+    let mut store = store_with(
+        vec![ws("a")],
+        vec![si("a", "one"), si("a", "two"), si("a", "three")],
+    );
     store.focus_session(&id("a", "two"));
     store.detach_focused(); // "two" -> solo view "two"
     store.focus_view_of(&id("a", "three"));
@@ -363,9 +373,11 @@ fn picker_enter_on_an_existing_view_moves_and_shows_the_moved_notice() {
     // Focused session "three" sits in "main" — its own current view, so
     // "main" is excluded. Entries are ["two", "new group…"]; select
     // "two" (index 0).
-    let mut view_picker = ViewPickerState { selected: 0, ..Default::default() };
-    let notice =
-        handle_view_picker_key(&mut store, &plain(KeyCode::Enter), None, &mut view_picker);
+    let mut view_picker = ViewPickerState {
+        selected: 0,
+        ..Default::default()
+    };
+    let notice = handle_view_picker_key(&mut store, &plain(KeyCode::Enter), None, &mut view_picker);
     assert_eq!(notice.as_deref(), Some("moved three → two"));
     assert_eq!(store.state().overlay, None, "picker closes on selection");
     let view = store
@@ -385,7 +397,10 @@ fn picker_new_group_flow_creates_a_named_group_and_shows_the_moved_notice() {
 
     // "one" and "two" are both still in "main" — the focused session's
     // own current view, so it's excluded, leaving just ["new group…"].
-    let mut view_picker = ViewPickerState { selected: 0, ..Default::default() };
+    let mut view_picker = ViewPickerState {
+        selected: 0,
+        ..Default::default()
+    };
     assert_eq!(
         handle_view_picker_key(&mut store, &plain(KeyCode::Enter), None, &mut view_picker),
         None,
@@ -401,8 +416,7 @@ fn picker_new_group_flow_creates_a_named_group_and_shows_the_moved_notice() {
             &mut view_picker,
         );
     }
-    let notice =
-        handle_view_picker_key(&mut store, &plain(KeyCode::Enter), None, &mut view_picker);
+    let notice = handle_view_picker_key(&mut store, &plain(KeyCode::Enter), None, &mut view_picker);
     assert_eq!(notice.as_deref(), Some("moved one → backend"));
     assert_eq!(store.state().focused_view_name("a"), "backend");
 }

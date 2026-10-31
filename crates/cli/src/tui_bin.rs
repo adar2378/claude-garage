@@ -63,7 +63,9 @@ fn newest_mtime_under(dir: &Path) -> Option<SystemTime> {
     let mut newest: Option<SystemTime> = None;
     let mut stack = vec![dir.to_path_buf()];
     while let Some(cur) = stack.pop() {
-        let Ok(entries) = std::fs::read_dir(&cur) else { continue };
+        let Ok(entries) = std::fs::read_dir(&cur) else {
+            continue;
+        };
         for e in entries.flatten() {
             let path = e.path();
             if e.file_type().is_ok_and(|t| t.is_dir()) {
@@ -79,7 +81,9 @@ fn newest_mtime_under(dir: &Path) -> Option<SystemTime> {
 /// p11 staleness guard: wall/Cargo.toml, Cargo.lock, wall/src or crates/
 /// newer than the built binary.
 fn wall_sources_newer_than(root: &Path, binary: &Path) -> bool {
-    let Some(bin_m) = mtime(binary) else { return false };
+    let Some(bin_m) = mtime(binary) else {
+        return false;
+    };
     for f in [root.join("wall/Cargo.toml"), root.join("Cargo.lock")] {
         if mtime(&f).is_some_and(|m| m > bin_m) {
             return true;
@@ -91,7 +95,9 @@ fn wall_sources_newer_than(root: &Path, binary: &Path) -> bool {
 }
 
 fn cargo_build_tui_binary(root: &Path, dist_bin: &Path, builder: &dyn Builder) -> Result<(), Fail> {
-    let built = root.join("target/release").join(format!("garage-wall{EXE}"));
+    let built = root
+        .join("target/release")
+        .join(format!("garage-wall{EXE}"));
     if !builder.build(root) || !built.exists() {
         return Err(Fail("cargo build failed — see the output above".into()));
     }
@@ -107,7 +113,12 @@ fn cargo_build_tui_binary(root: &Path, dist_bin: &Path, builder: &dyn Builder) -
         }
         Ok(())
     };
-    copy().map_err(|e| Fail(format!("could not install the built TUI binary at {}: {e}", dist_bin.display())))
+    copy().map_err(|e| {
+        Fail(format!(
+            "could not install the built TUI binary at {}: {e}",
+            dist_bin.display()
+        ))
+    })
 }
 
 /// Lookup order: `GARAGE_TUI_BIN` (verbatim, hard error if unusable);
@@ -122,11 +133,16 @@ pub fn resolve(inp: &Inputs, builder: &dyn Builder, out: &dyn Out) -> Result<Pat
         if is_executable(o) {
             return Ok(PathBuf::from(o));
         }
-        return Err(Fail(format!("GARAGE_TUI_BIN is set but not an executable file: {o}")));
+        return Err(Fail(format!(
+            "GARAGE_TUI_BIN is set but not an executable file: {o}"
+        )));
     }
 
     let target = &inp.target;
-    let dist_bin = inp.root.join("wall/dist").join(format!("garage-wall-{target}{EXE}"));
+    let dist_bin = inp
+        .root
+        .join("wall/dist")
+        .join(format!("garage-wall-{target}{EXE}"));
     let wall_src = inp.root.join("wall/Cargo.toml");
     let in_checkout = wall_src.exists();
 
@@ -146,9 +162,14 @@ pub fn resolve(inp: &Inputs, builder: &dyn Builder, out: &dyn Out) -> Result<Pat
     }
 
     if !in_checkout
-        && let Some(sib) = inp.exe_dir.as_ref().map(|d| d.join(format!("garage-wall{EXE}"))).filter(|p| p.exists()) {
-            return Ok(sib);
-        }
+        && let Some(sib) = inp
+            .exe_dir
+            .as_ref()
+            .map(|d| d.join(format!("garage-wall{EXE}")))
+            .filter(|p| p.exists())
+    {
+        return Ok(sib);
+    }
 
     if in_checkout && builder.have_cargo() {
         out.say(&format!(
@@ -226,14 +247,25 @@ mod tests {
         }
     }
     fn cargo(have: bool, ok: bool) -> FakeCargo {
-        FakeCargo { have, builds: Cell::new(0), ok }
+        FakeCargo {
+            have,
+            builds: Cell::new(0),
+            ok,
+        }
     }
 
     /// A unique scratch dir under the system temp dir, removed on drop.
     struct Tmp(PathBuf);
     impl Tmp {
         fn new(tag: &str) -> Self {
-            let p = std::env::temp_dir().join(format!("cg-cli-{tag}-{}-{:?}", std::process::id(), std::thread::current().id()).replace(['(', ')'], ""));
+            let p = std::env::temp_dir().join(
+                format!(
+                    "cg-cli-{tag}-{}-{:?}",
+                    std::process::id(),
+                    std::thread::current().id()
+                )
+                .replace(['(', ')'], ""),
+            );
             let _ = std::fs::remove_dir_all(&p);
             std::fs::create_dir_all(&p).unwrap();
             Tmp(p)
@@ -244,7 +276,12 @@ mod tests {
             std::fs::write(&p, b"x").unwrap();
             chmod(&p, 0o755);
             let t = SystemTime::now() - Duration::from_secs(age_secs);
-            std::fs::File::options().write(true).open(&p).unwrap().set_modified(t).unwrap();
+            std::fs::File::options()
+                .write(true)
+                .open(&p)
+                .unwrap()
+                .set_modified(t)
+                .unwrap();
             p
         }
     }
@@ -255,7 +292,12 @@ mod tests {
     }
 
     fn inputs(root: &Path) -> Inputs {
-        Inputs { override_bin: None, root: root.to_path_buf(), exe_dir: None, target: "darwin-arm64".into() }
+        Inputs {
+            override_bin: None,
+            root: root.to_path_buf(),
+            exe_dir: None,
+            target: "darwin-arm64".into(),
+        }
     }
 
     #[test]
@@ -278,7 +320,12 @@ mod tests {
         let mut i = inputs(&t.0);
         i.override_bin = Some(t.0.join("nope").display().to_string());
         let err = resolve(&i, &cargo(true, true), &Sink(Default::default())).unwrap_err();
-        assert!(err.0.starts_with("GARAGE_TUI_BIN is set but not an executable file: "), "{}", err.0);
+        assert!(
+            err.0
+                .starts_with("GARAGE_TUI_BIN is set but not an executable file: "),
+            "{}",
+            err.0
+        );
 
         // present but not executable
         if cfg!(unix) {
@@ -298,14 +345,22 @@ mod tests {
         t.file("Cargo.lock", 100);
         let bin = t.file("wall/dist/garage-wall-darwin-arm64", 10);
         let c = cargo(true, true);
-        assert_eq!(resolve(&inputs(&t.0), &c, &Sink(Default::default())).unwrap(), bin);
+        assert_eq!(
+            resolve(&inputs(&t.0), &c, &Sink(Default::default())).unwrap(),
+            bin
+        );
         assert_eq!(c.builds.get(), 0);
     }
 
     #[test]
     fn a_source_newer_than_the_binary_triggers_one_rebuild_that_refreshes_dist() {
         // each of the watched inputs, in turn (the invisible-picker regression)
-        for newer in ["wall/Cargo.toml", "wall/src/deep/ui.rs", "Cargo.lock", "crates/protocol/src/lib.rs"] {
+        for newer in [
+            "wall/Cargo.toml",
+            "wall/src/deep/ui.rs",
+            "Cargo.lock",
+            "crates/protocol/src/lib.rs",
+        ] {
             let t = Tmp::new("stale");
             t.file("wall/Cargo.toml", 100);
             t.file("wall/src/main.rs", 100);
@@ -315,9 +370,16 @@ mod tests {
             let sink = Sink(Default::default());
             assert_eq!(resolve(&inputs(&t.0), &c, &sink).unwrap(), bin, "{newer}");
             assert_eq!(c.builds.get(), 1, "{newer}");
-            assert_eq!(std::fs::read(&bin).unwrap(), b"built", "{newer}: dist replaced by the build");
+            assert_eq!(
+                std::fs::read(&bin).unwrap(),
+                b"built",
+                "{newer}: dist replaced by the build"
+            );
             assert!(is_exec(&bin));
-            assert_eq!(sink.0.borrow()[0], "wall sources newer than the built binary — rebuilding");
+            assert_eq!(
+                sink.0.borrow()[0],
+                "wall sources newer than the built binary — rebuilding"
+            );
         }
     }
 
@@ -327,8 +389,14 @@ mod tests {
         t.file("wall/Cargo.toml", 1);
         let bin = t.file("wall/dist/garage-wall-darwin-arm64", 50);
         let sink = Sink(Default::default());
-        assert_eq!(resolve(&inputs(&t.0), &cargo(false, true), &sink).unwrap(), bin);
-        assert!(sink.0.borrow()[0].starts_with("warn: warning: wall/src is newer than the built TUI binary"));
+        assert_eq!(
+            resolve(&inputs(&t.0), &cargo(false, true), &sink).unwrap(),
+            bin
+        );
+        assert!(
+            sink.0.borrow()[0]
+                .starts_with("warn: warning: wall/src is newer than the built TUI binary")
+        );
     }
 
     #[test]
@@ -338,7 +406,10 @@ mod tests {
         let bin = t.file("wall/dist/garage-wall-darwin-arm64", 50);
         t.file("crates/x/lib.rs", 1);
         let c = cargo(true, true);
-        assert_eq!(resolve(&inputs(&t.0), &c, &Sink(Default::default())).unwrap(), bin);
+        assert_eq!(
+            resolve(&inputs(&t.0), &c, &Sink(Default::default())).unwrap(),
+            bin
+        );
         assert_eq!(c.builds.get(), 0);
     }
 
@@ -352,14 +423,22 @@ mod tests {
         assert_eq!(got, t.0.join("wall/dist/garage-wall-darwin-arm64"));
         assert_eq!(std::fs::read(&got).unwrap(), b"built");
         assert_eq!(c.builds.get(), 1);
-        assert!(sink.0.borrow()[0].starts_with("no prebuilt TUI binary for darwin-arm64 — building once with cargo"));
+        assert!(
+            sink.0.borrow()[0]
+                .starts_with("no prebuilt TUI binary for darwin-arm64 — building once with cargo")
+        );
     }
 
     #[test]
     fn a_failed_build_is_fatal() {
         let t = Tmp::new("buildfail");
         t.file("wall/Cargo.toml", 10);
-        let err = resolve(&inputs(&t.0), &cargo(true, false), &Sink(Default::default())).unwrap_err();
+        let err = resolve(
+            &inputs(&t.0),
+            &cargo(true, false),
+            &Sink(Default::default()),
+        )
+        .unwrap_err();
         assert_eq!(err.0, "cargo build failed — see the output above");
     }
 
@@ -367,11 +446,25 @@ mod tests {
     fn no_binary_and_no_way_to_get_one_names_what_is_missing() {
         let t = Tmp::new("nothing");
         t.file("wall/Cargo.toml", 10);
-        let e = resolve(&inputs(&t.0), &cargo(false, true), &Sink(Default::default())).unwrap_err();
-        assert!(e.0.contains("no Rust toolchain (cargo)") && e.0.contains("rustup.rs"), "{}", e.0);
+        let e = resolve(
+            &inputs(&t.0),
+            &cargo(false, true),
+            &Sink(Default::default()),
+        )
+        .unwrap_err();
+        assert!(
+            e.0.contains("no Rust toolchain (cargo)") && e.0.contains("rustup.rs"),
+            "{}",
+            e.0
+        );
 
         let t2 = Tmp::new("nothing2");
-        let e = resolve(&inputs(&t2.0), &cargo(true, true), &Sink(Default::default())).unwrap_err();
+        let e = resolve(
+            &inputs(&t2.0),
+            &cargo(true, true),
+            &Sink(Default::default()),
+        )
+        .unwrap_err();
         assert!(e.0.contains("no wall/ sources to build from"), "{}", e.0);
     }
 
@@ -381,12 +474,18 @@ mod tests {
         let sib = t.file("bin/garage-wall", 10);
         let mut i = inputs(&t.0);
         i.exe_dir = Some(t.0.join("bin"));
-        assert_eq!(resolve(&i, &cargo(true, true), &Sink(Default::default())).unwrap(), sib);
+        assert_eq!(
+            resolve(&i, &cargo(true, true), &Sink(Default::default())).unwrap(),
+            sib
+        );
     }
 
     #[test]
     fn node_target_uses_node_spelling() {
         let t = node_target();
-        assert!(!t.contains("macos") && !t.contains("aarch64") && !t.contains("x86_64"), "{t}");
+        assert!(
+            !t.contains("macos") && !t.contains("aarch64") && !t.contains("x86_64"),
+            "{t}"
+        );
     }
 }

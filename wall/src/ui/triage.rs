@@ -147,7 +147,10 @@ pub fn render_triage(
     let block = Block::bordered()
         .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(colors::DIM))
-        .title(Line::styled(" triage queue ", Style::default().fg(colors::FG)));
+        .title(Line::styled(
+            " triage queue ",
+            Style::default().fg(colors::FG),
+        ));
     let inner = block.inner(rect);
     block.render(rect, buf);
     let padded = Rect {
@@ -166,7 +169,7 @@ mod tests {
     //! Port of `tui/test/triage_overlay_test.dart` — row ordering, wrap
     //! selection, row text with message truncation, the empty state.
     use super::*;
-    use crate::ui::hit_targets::{triage_row_index_at, TRIAGE_MODAL_ROW_OFFSET};
+    use crate::ui::hit_targets::{TRIAGE_MODAL_ROW_OFFSET, triage_row_index_at};
 
     fn session(label: &str, status: &str, since: Option<i64>) -> WallSession {
         WallSession {
@@ -214,7 +217,11 @@ mod tests {
         assert_eq!(wrap_selection(2, 1, 3), 0);
         assert_eq!(wrap_selection(0, -1, 3), 2);
         assert_eq!(wrap_selection(0, 1, 0), 0);
-        assert_eq!(wrap_selection(9, 1, 3), 0, "out-of-range current clamps first");
+        assert_eq!(
+            wrap_selection(9, 1, 3),
+            0,
+            "out-of-range current clamps first"
+        );
     }
 
     #[test]
@@ -285,7 +292,11 @@ mod tests {
         assert_eq!(TRIAGE_MODAL_ROW_OFFSET, 2);
         let rect = triage_modal_rect(Rect::new(0, 0, 100, 40), 3);
         assert_eq!(rect.width, 78);
-        assert_eq!(rect.height, 3 + 2 + 4, "rows + blank/footer + border/padding");
+        assert_eq!(
+            rect.height,
+            3 + 2 + 4,
+            "rows + blank/footer + border/padding"
+        );
         assert_eq!(triage_row_index_at(2, 3), Some(0));
         assert_eq!(triage_row_index_at(4, 3), Some(2));
         assert_eq!(triage_row_index_at(5, 3), None, "blank line");
