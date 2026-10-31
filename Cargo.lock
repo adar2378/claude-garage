@@ -960,6 +960,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "garage-plugin-cli-extras"
+version = "0.6.2"
+dependencies = [
+ "garage-plugin-sdk",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "garage-plugin-closed-chats"
 version = "0.6.2"
 dependencies = [

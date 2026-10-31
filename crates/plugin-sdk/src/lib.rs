@@ -132,6 +132,16 @@ pub fn workspace_of(session_id: &str) -> Option<&str> {
     parts.next().filter(|w| !w.is_empty())
 }
 
+/// Does `sessions` (the `GET /api/sessions` array) hold any entry of
+/// `workspace`? Restorable entries count: they are crashed sessions waiting to
+/// be resumed, so the workspace is not empty.
+pub fn workspace_has_sessions(sessions: &Value, workspace: &str) -> bool {
+    sessions.as_array().into_iter().flatten().any(|s| {
+        s.get("workspace").and_then(Value::as_str) == Some(workspace)
+            || s.get("id").and_then(Value::as_str).and_then(workspace_of) == Some(workspace)
+    })
+}
+
 /// A client for the daemon's plugin routes.
 pub struct Api {
     base: String,
@@ -395,6 +405,20 @@ mod tests {
         assert_eq!(empty.event_name(), None);
         assert!(empty.event_data().is_null());
         assert!(empty.argv().is_empty());
+    }
+
+    #[test]
+    fn a_workspace_has_sessions_when_any_entry_names_it_live_or_restorable() {
+        let list = json!([
+            {"id": "garage/other/a", "workspace": "other"},
+            {"id": "garage/app/b", "workspace": "app", "restorable": true},
+            {"id": "garage/third/c"},
+        ]);
+        assert!(workspace_has_sessions(&list, "app"), "restorable counts");
+        assert!(workspace_has_sessions(&list, "third"), "matched by id when no field");
+        assert!(!workspace_has_sessions(&list, "ap"), "no prefix matching");
+        assert!(!workspace_has_sessions(&json!([]), "app"));
+        assert!(!workspace_has_sessions(&Value::Null, "app"));
     }
 
     #[test]

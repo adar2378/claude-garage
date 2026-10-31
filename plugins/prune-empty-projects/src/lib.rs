@@ -5,7 +5,7 @@
 
 use std::time::Duration;
 
-use garage_plugin_sdk::{Api, Error, Value};
+use garage_plugin_sdk::{Api, Error, Value, workspace_has_sessions};
 
 /// How long to wait after the close before looking: a user who closes one
 /// chat and opens another a moment later keeps the project.
@@ -23,13 +23,7 @@ pub enum Outcome {
 
 /// Does `sessions` (the `GET /api/sessions` array) hold nothing for `workspace`?
 pub fn is_empty(sessions: &Value, workspace: &str) -> bool {
-    !sessions.as_array().into_iter().flatten().any(|s| {
-        s.get("workspace").and_then(Value::as_str) == Some(workspace)
-            || s.get("id")
-                .and_then(Value::as_str)
-                .and_then(garage_plugin_sdk::workspace_of)
-                == Some(workspace)
-    })
+    !workspace_has_sessions(sessions, workspace)
 }
 
 /// Handle one `session.closed` event payload.

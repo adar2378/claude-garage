@@ -1,0 +1,33 @@
+#:schema https://raw.githubusercontent.com/adar2378/claude-garage/main/schemas/garage-plugin.schema.json
+id          = "cli-extras"
+name        = "CLI extras"
+version     = "0.1.0"
+api_version = 1
+platforms   = ["macos", "linux"]
+description = "claude-garage <folder> opens a folder as a project, plus install and prune"
+permissions = ["workspaces.read", "workspaces.write", "sessions.read", "sessions.manage"]
+
+# `claude-garage ~/dev/app` and `claude-garage open ~/dev/app`: register the
+# folder as a project, start a session if it has none, then open the wall.
+# The fallback receives any unknown first word; a word that is not a folder
+# gets the usual "unrecognized subcommand" error.
+[[cli]]
+name         = "open"
+description  = "Open a folder as a project and start a session"
+command      = ["{plugin_dir}/bin/cli-extras", "open"]
+fallback     = true
+needs_daemon = true
+
+# Install the Claude Code hooks and the statusline wrapper.
+[[cli]]
+name         = "install"
+description  = "Install the garage hooks and statusline into Claude Code settings"
+command      = ["{plugin_dir}/bin/cli-extras", "install"]
+needs_daemon = true
+
+# Remove every project that has no session at all (--dry-run lists them).
+[[cli]]
+name         = "prune"
+description  = "Remove projects with no sessions"
+command      = ["{plugin_dir}/bin/cli-extras", "prune"]
+needs_daemon = true

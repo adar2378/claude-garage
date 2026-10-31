@@ -1,0 +1,486 @@
+//! cli-extras: `claude-garage <folder>`, `claude-garage install` and
+//! `claude-garage prune`, as one plugin. Everything goes through the daemon's
+//! HTTP API (the CLI starts the daemon first: `needs_daemon`).
+
+use std::path::{Path, PathBuf};
+
+use garage_plugin_sdk::{Api, Error, Value, json, workspace_has_sessions, workspace_of};
+
+/// What `open` was asked for.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OpenRequest {
+    /// The folder as typed.
+    pub word: String,
+    /// It arrived as an unknown first word (not as `claude-garage open ...`),
+    /// so a non-folder is a mistyped subcommand.
+    pub fallback: bool,
+    pub no_open: bool,
+}
+
+/// Read the words after `claude-garage`: `[open] <folder> [--no-open]`.
+pub fn parse_open(argv: &[String]) -> Option<OpenRequest> {
+    let fallback = argv.first().map(String::as_str) != Some("open");
+    let words = if fallback { argv } else { &argv[1..] };
+    let no_open = words.iter().any(|w| w == "--no-open");
+    let word = words.iter().find(|w| !w.starts_with("--"))?;
+    Some(OpenRequest {
+        word: word.clone(),
+        fallback,
+        no_open,
+    })
+}
+
+/// `~`, relative paths against `cwd`, canonicalised; `None` when it is not an
+/// existing directory.
+pub fn resolve_dir(word: &str, cwd: &Path, home: Option<&Path>) -> Option<PathBuf> {
+    let path = if word == "~" {
+        home?.to_path_buf()
+    } else if let Some(rest) = word.strip_prefix("~/") {
+        home?.join(rest)
+    } else {
+        cwd.join(word)
+    };
+    let path = std::fs::canonicalize(path).ok()?;
+    path.is_dir().then_some(path)
+}
+
+/// The directory's basename as a workspace name: lowercase, every run of
+/// characters outside `[a-z0-9]` becomes one `-`, trimmed of `-`.
+pub fn workspace_name(dir: &Path) -> Option<String> {
+    let base = dir.file_name()?.to_string_lossy().to_lowercase();
+    let mut out = String::new();
+    for c in base.chars() {
+        if c.is_ascii_alphanumeric() {
+            out.push(c);
+        } else if !out.ends_with('-') {
+            out.push('-');
+        }
+    }
+    let out = out.trim_matches('-').to_owned();
+    (!out.is_empty()).then_some(out)
+}
+
+/// The name to use for `dir`: the folder's own workspace if it is registered
+/// already, else the first free of `base`, `base-2`, `base-3` ...
+/// `(name, already registered)`.
+pub fn choose_workspace(workspaces: &Value, base: &str, dir: &str) -> (String, bool) {
+    let registered = |name: &str| {
+        workspaces
+            .as_array()
+            .into_iter()
+            .flatten()
+            .find(|w| w.get("name").and_then(Value::as_str) == Some(name))
+            .map(|w| w.get("dir").and_then(Value::as_str).unwrap_or(""))
+    };
+    // the same folder under any name wins
+    if let Some(w) = workspaces
+        .as_array()
+        .into_iter()
+        .flatten()
+        .find(|w| w.get("dir").and_then(Value::as_str).map(trim_slash) == Some(trim_slash(dir)))
+        && let Some(name) = w.get("name").and_then(Value::as_str)
+    {
+        return (name.to_owned(), true);
+    }
+    for n in 1u32.. {
+        let name = if n == 1 {
+            base.to_owned()
+        } else {
+            format!("{base}-{n}")
+        };
+        if registered(&name).is_none() {
+            return (name, false);
+        }
+    }
+    unreachable!("an unbounded range finds a free name")
+}
+
+fn trim_slash(s: &str) -> &str {
+    if s.len() > 1 {
+        s.trim_end_matches('/')
+    } else {
+        s
+    }
+}
+
+/// First free `claude-N` in the workspace (the wall's default label family).
+pub fn next_label(sessions: &Value, workspace: &str) -> String {
+    let taken: Vec<u32> = sessions
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|s| s.get("id").and_then(Value::as_str))
+        .filter(|id| workspace_of(id) == Some(workspace))
+        .filter_map(|id| id.rsplit('/').next()?.strip_prefix("claude-")?.parse().ok())
+        .collect();
+    let n = (1u32..).find(|n| !taken.contains(n)).unwrap_or(1);
+    format!("claude-{n}")
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Opened {
+    pub workspace: String,
+    pub dir: String,
+    pub registered_now: bool,
+    /// The session this call started; `None` when the project already had one.
+    pub started: Option<String>,
+}
+
+impl Opened {
+    pub fn summary(&self) -> String {
+        let how = if self.registered_now {
+            "added"
+        } else {
+            "found"
+        };
+        match &self.started {
+            Some(id) => format!("{how} {} ({}), started {id}", self.workspace, self.dir),
+            None => format!(
+                "{how} {} ({}), already has sessions",
+                self.workspace, self.dir
+            ),
+        }
+    }
+}
+
+/// Register `dir` as a project (if it is not one) and start a session in it
+/// (if it has none).
+pub fn open_folder(api: &Api, dir: &Path) -> Result<Opened, Error> {
+    let dir_s = dir.to_string_lossy().into_owned();
+    let base = workspace_name(dir).ok_or_else(|| {
+        Error::Context(format!(
+            "{dir_s}: the folder name has no letters or digits to make a project name from"
+        ))
+    })?;
+    let (name, existed) = choose_workspace(&api.get("/api/workspaces")?, &base, &dir_s);
+    if !existed {
+        api.put("/api/workspaces", &json!({"name": name, "dir": dir_s}))?;
+    }
+    let sessions = api.get("/api/sessions")?;
+    let live = sessions.as_array().into_iter().flatten().any(|s| {
+        s.get("restorable").and_then(Value::as_bool) != Some(true)
+            && s.get("workspace").and_then(Value::as_str) == Some(name.as_str())
+    });
+    let mut started = None;
+    if !live {
+        let label = next_label(&sessions, &name);
+        match api.post("/api/sessions", &json!({"workspace": name, "label": label})) {
+            Ok(_) => started = Some(format!("garage/{name}/{label}")),
+            // somebody started it between our two calls
+            Err(Error::Http { status: 409, .. }) => {}
+            Err(e) => return Err(e),
+        }
+    }
+    Ok(Opened {
+        workspace: name,
+        dir: dir_s,
+        registered_now: !existed,
+        started,
+    })
+}
+
+fn reason(e: &Error) -> String {
+    match e {
+        Error::Http { body, status } => serde_json::from_str::<Value>(body)
+            .ok()
+            .and_then(|v| v.get("error").and_then(Value::as_str).map(str::to_owned))
+            .unwrap_or_else(|| format!("daemon answered {status}")),
+        other => other.to_string(),
+    }
+}
+
+/// Install the hooks and the statusline wrapper; one result line each.
+pub fn install(api: &Api) -> Vec<String> {
+    [
+        ("hooks", "/api/hooks/install"),
+        ("statusline", "/api/statusline/install"),
+    ]
+    .into_iter()
+    .map(|(what, path)| match api.post(path, &json!({})) {
+        Ok(v) if v.get("alreadyInstalled").and_then(Value::as_bool) == Some(true) => {
+            format!("{what}: already installed")
+        }
+        Ok(_) => format!("{what}: installed"),
+        Err(e) => format!("{what}: FAILED: {}", reason(&e)),
+    })
+    .collect()
+}
+
+/// Projects with no session at all (live or restorable), by name.
+pub fn empty_workspaces(workspaces: &Value, sessions: &Value) -> Vec<String> {
+    let mut names: Vec<String> = workspaces
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|w| w.get("name").and_then(Value::as_str))
+        .filter(|n| !workspace_has_sessions(sessions, n))
+        .map(str::to_owned)
+        .collect();
+    names.sort();
+    names
+}
+
+/// Remove every empty project (or only list them with `dry_run`); returns
+/// the names. A project removed meanwhile (404) still counts as done.
+pub fn prune(api: &Api, dry_run: bool) -> Result<Vec<String>, Error> {
+    let names = empty_workspaces(&api.get("/api/workspaces")?, &api.get("/api/sessions")?);
+    if !dry_run {
+        for n in &names {
+            match api.delete(&format!("/api/workspaces/{n}")) {
+                Ok(_) | Err(Error::Http { status: 404, .. }) => {}
+                Err(e) => return Err(e),
+            }
+        }
+    }
+    Ok(names)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use garage_plugin_sdk::testing::FakeDaemon;
+
+    fn s(v: &[&str]) -> Vec<String> {
+        v.iter().map(|x| (*x).to_owned()).collect()
+    }
+
+    #[test]
+    fn a_bare_word_is_the_fallback_and_open_is_explicit() {
+        let r = parse_open(&s(&["~/dev/app"])).unwrap();
+        assert_eq!(
+            (r.word.as_str(), r.fallback, r.no_open),
+            ("~/dev/app", true, false)
+        );
+        let r = parse_open(&s(&["open", "app", "--no-open"])).unwrap();
+        assert_eq!(
+            (r.word.as_str(), r.fallback, r.no_open),
+            ("app", false, true)
+        );
+        let r = parse_open(&s(&["--no-open", "x"])).unwrap();
+        assert_eq!((r.word.as_str(), r.no_open), ("x", true));
+        assert_eq!(parse_open(&s(&["open"])), None);
+        assert_eq!(parse_open(&[]), None);
+    }
+
+    #[test]
+    fn folders_resolve_from_tilde_relative_and_absolute_and_non_folders_do_not() {
+        let home = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(home.path().join("dev/app")).unwrap();
+        std::fs::write(home.path().join("dev/file.txt"), "x").unwrap();
+        let canon = |p: PathBuf| std::fs::canonicalize(p).unwrap();
+        let cwd = home.path().join("dev");
+        let h = Some(home.path());
+        assert_eq!(
+            resolve_dir("~/dev/app", &cwd, h),
+            Some(canon(home.path().join("dev/app")))
+        );
+        assert_eq!(
+            resolve_dir("app", &cwd, h),
+            Some(canon(home.path().join("dev/app")))
+        );
+        assert_eq!(
+            resolve_dir("./app/", &cwd, h),
+            Some(canon(home.path().join("dev/app")))
+        );
+        assert_eq!(
+            resolve_dir("~", &cwd, h),
+            Some(canon(home.path().to_path_buf()))
+        );
+        let abs = home.path().join("dev/app").to_string_lossy().into_owned();
+        assert!(resolve_dir(&abs, Path::new("/"), None).is_some());
+        assert_eq!(
+            resolve_dir("file.txt", &cwd, h),
+            None,
+            "a file is not a folder"
+        );
+        assert_eq!(resolve_dir("typo", &cwd, h), None);
+        assert_eq!(resolve_dir("~/dev", &cwd, None), None, "no HOME, no tilde");
+    }
+
+    #[test]
+    fn names_are_lowercase_dashed_and_never_empty() {
+        for (dir, want) in [
+            ("/dev/MyApp", Some("myapp")),
+            ("/dev/my app_v2", Some("my-app-v2")),
+            ("/dev/--a..b--", Some("a-b")),
+            ("/dev/日本", None),
+            ("/", None),
+        ] {
+            assert_eq!(workspace_name(Path::new(dir)).as_deref(), want, "{dir}");
+        }
+    }
+
+    #[test]
+    fn a_registered_folder_is_reused_a_clash_gets_a_suffix() {
+        let ws = json!([
+            {"name": "app", "dir": "/dev/app"},
+            {"name": "app-2", "dir": "/work/app"},
+        ]);
+        assert_eq!(
+            choose_workspace(&ws, "app", "/dev/app/"),
+            ("app".into(), true)
+        );
+        assert_eq!(
+            choose_workspace(&ws, "app", "/work/app"),
+            ("app-2".into(), true)
+        );
+        assert_eq!(
+            choose_workspace(&ws, "app", "/third/app"),
+            ("app-3".into(), false)
+        );
+        assert_eq!(choose_workspace(&json!([]), "x", "/x"), ("x".into(), false));
+    }
+
+    #[test]
+    fn labels_follow_the_walls_claude_n_family() {
+        let sessions = json!([
+            {"id": "garage/app/claude-1"},
+            {"id": "garage/app/claude-3"},
+            {"id": "garage/app/notes"},
+            {"id": "garage/other/claude-2"},
+        ]);
+        assert_eq!(next_label(&sessions, "app"), "claude-2");
+        assert_eq!(next_label(&sessions, "other"), "claude-1");
+        assert_eq!(next_label(&json!([]), "app"), "claude-1");
+    }
+
+    fn folder_daemon(workspaces: &'static str, sessions: &'static str, create: u16) -> FakeDaemon {
+        FakeDaemon::start(move |req| match (req.method.as_str(), req.path.as_str()) {
+            ("GET", "/api/workspaces") => (200, workspaces.into()),
+            ("GET", "/api/sessions") => (200, sessions.into()),
+            ("PUT", "/api/workspaces") => (200, "{}".into()),
+            ("POST", "/api/sessions") => (create, r#"{"error":"x"}"#.into()),
+            _ => (500, "{}".into()),
+        })
+    }
+
+    #[test]
+    fn a_new_folder_is_registered_and_gets_a_first_session() {
+        let d = folder_daemon("[]", "[]", 200);
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("My App");
+        std::fs::create_dir(&dir).unwrap();
+        let o = open_folder(&d.api("cli-extras"), &dir).unwrap();
+        assert_eq!((o.workspace.as_str(), o.registered_now), ("my-app", true));
+        assert_eq!(o.started.as_deref(), Some("garage/my-app/claude-1"));
+        let reqs = d.requests();
+        let put = reqs.iter().find(|r| r.method == "PUT").unwrap();
+        assert_eq!(put.body["name"], "my-app");
+        assert_eq!(put.body["dir"], dir.to_string_lossy().as_ref());
+        let post = reqs.iter().find(|r| r.method == "POST").unwrap();
+        assert_eq!(
+            post.body,
+            json!({"workspace": "my-app", "label": "claude-1"})
+        );
+        assert!(o.summary().starts_with("added my-app"), "{}", o.summary());
+    }
+
+    #[test]
+    fn a_project_that_already_has_a_live_session_gets_no_second_one() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("app");
+        std::fs::create_dir(&dir).unwrap();
+        let ws: &'static str = Box::leak(
+            format!(r#"[{{"name":"app","dir":{:?}}}]"#, dir.to_string_lossy()).into_boxed_str(),
+        );
+        let d = folder_daemon(
+            ws,
+            r#"[{"id":"garage/app/claude-1","workspace":"app","status":"idle"}]"#,
+            200,
+        );
+        let o = open_folder(&d.api("cli-extras"), &dir).unwrap();
+        assert!(!o.registered_now && o.started.is_none());
+        assert!(
+            d.requests().iter().all(|r| r.method == "GET"),
+            "{:?}",
+            d.log()
+        );
+        assert!(o.summary().contains("already has sessions"));
+    }
+
+    #[test]
+    fn a_session_that_appears_meanwhile_is_not_an_error_but_a_real_failure_is() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("app");
+        std::fs::create_dir(&dir).unwrap();
+        let o = open_folder(&folder_daemon("[]", "[]", 409).api("p"), &dir).unwrap();
+        assert!(o.started.is_none());
+        let err = open_folder(&folder_daemon("[]", "[]", 500).api("p"), &dir).unwrap_err();
+        assert!(matches!(err, Error::Http { status: 500, .. }));
+    }
+
+    #[test]
+    fn install_reports_each_step_and_the_daemons_own_error_text() {
+        let d = FakeDaemon::start(|req| match req.path.as_str() {
+            "/api/hooks/install" => (
+                200,
+                r#"{"ok":true,"installed":true,"alreadyInstalled":true}"#.into(),
+            ),
+            _ => (
+                422,
+                r#"{"error":"settings.json: `statusLine` is not an object"}"#.into(),
+            ),
+        });
+        assert_eq!(
+            install(&d.api("p")),
+            [
+                "hooks: already installed",
+                "statusline: FAILED: settings.json: `statusLine` is not an object"
+            ]
+        );
+        let d = FakeDaemon::start(|_| {
+            (
+                200,
+                r#"{"ok":true,"installed":true,"alreadyInstalled":false}"#.into(),
+            )
+        });
+        assert_eq!(
+            install(&d.api("p")),
+            ["hooks: installed", "statusline: installed"]
+        );
+    }
+
+    #[test]
+    fn prune_removes_only_projects_with_no_session_at_all() {
+        let d = FakeDaemon::start(|req| {
+            match (req.method.as_str(), req.path.as_str()) {
+            ("GET", "/api/workspaces") => (
+                200,
+                r#"[{"name":"live"},{"name":"crashed"},{"name":"empty-b"},{"name":"empty-a"}]"#.into(),
+            ),
+            ("GET", "/api/sessions") => (
+                200,
+                r#"[{"id":"garage/live/claude-1","workspace":"live"},{"id":"garage/crashed/claude-1","workspace":"crashed","restorable":true}]"#.into(),
+            ),
+            ("DELETE", "/api/workspaces/empty-b") => (404, "{}".into()),
+            ("DELETE", _) => (204, "".into()),
+            _ => (500, "{}".into()),
+        }
+        });
+        let removed = prune(&d.api("p"), false).unwrap();
+        assert_eq!(removed, ["empty-a", "empty-b"]);
+        let deletes: Vec<_> = d
+            .log()
+            .into_iter()
+            .filter(|l| l.starts_with("DELETE"))
+            .collect();
+        assert_eq!(
+            deletes,
+            [
+                "DELETE /api/workspaces/empty-a",
+                "DELETE /api/workspaces/empty-b"
+            ]
+        );
+    }
+
+    #[test]
+    fn a_dry_run_lists_and_deletes_nothing() {
+        let d = FakeDaemon::start(|req| match req.path.as_str() {
+            "/api/workspaces" => (200, r#"[{"name":"gone"}]"#.into()),
+            "/api/sessions" => (200, "[]".into()),
+            _ => (500, "{}".into()),
+        });
+        assert_eq!(prune(&d.api("p"), true).unwrap(), ["gone"]);
+        assert!(d.log().iter().all(|l| l.starts_with("GET")));
+    }
+}

@@ -228,6 +228,36 @@ mod tests {
     }
 
     #[test]
+    fn the_shipped_cli_extras_manifest_routes_folders_install_and_prune() {
+        let real = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../plugins/cli-extras/garage-plugin.toml"),
+        )
+        .unwrap();
+        // the test kit writes the header; the shipped body starts at its permissions
+        let body = &real[real.find("permissions").unwrap()..];
+        let d = tempfile::tempdir().unwrap();
+        let paths = Paths::new(d.path());
+        link_plugin(&paths, d.path(), "cli-extras", body, true);
+        let all = load_all(&paths).unwrap();
+
+        let r = route(&all, &argv(&["~/dev/app", "--no-open"])).unwrap();
+        assert!((r.plugin_id.as_str(), r.fallback) == ("cli-extras", true));
+        assert_eq!(r.args, argv(&["~/dev/app", "--no-open"]), "the word is included");
+        assert!(r.command.ends_with(&argv(&["open"])));
+        assert!(r.needs_daemon, "the folder command needs the daemon up");
+
+        let r = route(&all, &argv(&["open", "~/dev/app"])).unwrap();
+        assert!(!r.fallback && r.args == argv(&["~/dev/app"]));
+
+        let r = route(&all, &argv(&["install"])).unwrap();
+        assert!(!r.fallback && r.command.ends_with(&argv(&["install"])) && r.needs_daemon);
+        let r = route(&all, &argv(&["prune", "--dry-run"])).unwrap();
+        assert_eq!(r.args, argv(&["--dry-run"]));
+        assert!(r.command.ends_with(&argv(&["prune"])));
+    }
+
+    #[test]
     fn without_a_fallback_an_unknown_word_has_no_route_so_clap_reports_it() {
         let d = tempfile::tempdir().unwrap();
         let paths = Paths::new(d.path());
