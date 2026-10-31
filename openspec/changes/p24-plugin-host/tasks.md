@@ -12,7 +12,7 @@ Order matters: group 1 changes the existing core seams and must pass the full ex
 - [x] 1.7 New slot `tile.gutter`: one-column gutter allocated only when a session has gutter items, row-addressed items mapped through the scrollback offset, click regions; tiles with no gutter items lay out byte-identically (snapshot tests)
 - [x] 1.8 New slot `rail.extra_rows`: extra rows per workspace with style and click region; `rail_target_at` row maths counts them; no-extra-rows case unchanged (snapshot tests)
 - [x] 1.9 Animated `SlotItem` (frame list + interval clamped 100..=2000 ms): frame chosen from the TUI tick, redraw tick only while a visible animated item exists; test no extra wake-ups without animated items
-- [ ] 1.10 Slot geometry (`strip.right` width and filler range, max item columns for other slots) computed by the renderer and exposed for the plugin snapshot; tests on narrow and wide terminals
+- [x] 1.10 Slot geometry (`strip.right` width and filler range, max item columns for other slots) computed by the renderer and exposed for the plugin snapshot; tests on narrow and wide terminals
 
 ## 2. Contract: manifest crate, protocol types, schema
 - [ ] 2.1 New crate `crates/plugin` (`garage-plugin`): manifest types (header, actions, events, panes, widgets, buttons, cli incl. `fallback`, build, release), `deny_unknown_fields`, field-path error messages

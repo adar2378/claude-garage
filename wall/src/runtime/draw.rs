@@ -10,7 +10,7 @@ use crate::slots::{SlotClickRegion, SlotCtx, SlotId};
 use crate::state::views::ViewSummary;
 use crate::state::wall_state::{KeyLayer, OverlayKind};
 use crate::ui::help::render_help;
-use crate::ui::layout::{tile_inner, wall_layout};
+use crate::ui::layout::{slot_geometry, tile_inner, wall_layout};
 use crate::ui::rail::render_rail;
 use crate::ui::strip::render_strip;
 use crate::ui::theme::colors;
@@ -148,6 +148,9 @@ impl App {
         }));
         self.slot_clicks = slot_clicks;
         self.last_strip_filler = strip_cols.filler_width;
+        // What each slot had room for this frame: providers read it (via
+        // `SlotCtx::geometry`) the next time they are asked.
+        self.slots.set_geometry(slot_geometry(&layout, &strip_cols.filler));
 
         self.triage_rect = None;
         self.ws_add_rect = None;

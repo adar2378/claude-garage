@@ -175,6 +175,9 @@ pub struct StripCols {
     /// The filler's width this frame — the room available for the pet,
     /// independent of whether a pet is currently selected.
     pub filler_width: u16,
+    /// The filler's absolute column range (`x0..x1`); empty when there is no
+    /// room.
+    pub filler: Range<u16>,
 }
 
 pub struct StripLine {
@@ -187,6 +190,8 @@ pub struct StripLine {
     /// any of it (spec tui-pit-pet: the tick pass needs this for the next
     /// step's `filler_width`).
     pub filler_width: u16,
+    /// Strip-local column range of the filler.
+    pub filler: Range<u16>,
 }
 
 /// Build the strip's line for `width` columns: tabs left, then a filler
@@ -322,6 +327,8 @@ pub fn strip_line(
             click_ranges
         },
         filler_width: filler as u16,
+        filler: left_w.min(usize::from(width)) as u16
+            ..(left_w + filler).min(usize::from(width)) as u16,
     }
 }
 
@@ -347,6 +354,7 @@ pub fn render_strip(
             .map(|(r, target)| (rect.x + r.start..rect.x + r.end, target))
             .collect(),
         filler_width: built.filler_width,
+        filler: rect.x + built.filler.start..rect.x + built.filler.end,
     }
 }
 

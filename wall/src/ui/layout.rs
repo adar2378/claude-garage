@@ -7,6 +7,7 @@
 
 use ratatui::layout::{Constraint, Layout, Rect};
 
+use crate::slots::SlotGeometry;
 use crate::ui::grid_layout::grid_cell_rect;
 
 /// The rail's fixed column width (the Dart `Rail.width` default).
@@ -36,6 +37,31 @@ pub struct WallLayout {
     pub tiles: Vec<Rect>,
     /// Index into `tiles` of the maximized tile, if any.
     pub maximized: Option<usize>,
+}
+
+/// Columns of a tile's title that are never `tile.title.right` room: the two
+/// border corners, the status glyph with its padding (3), the trailing space
+/// and at least one column of name.
+const TITLE_FIXED_COLS: u16 = 2 + 3 + 1 + 1;
+
+/// The geometry the slots are told about, from this frame's layout and the
+/// strip's filler range (absolute columns, as `render_strip` reports them).
+pub fn slot_geometry(layout: &WallLayout, strip_filler: &std::ops::Range<u16>) -> SlotGeometry {
+    // Only drawn tiles count: with a maximized tile, siblings are not painted.
+    let drawn: Vec<&Rect> = match layout.maximized {
+        Some(i) => layout.tiles.get(i).into_iter().collect(),
+        None => layout.tiles.iter().collect(),
+    };
+    let narrowest = drawn.iter().map(|r| r.width).min();
+    SlotGeometry {
+        strip_width: layout.strip.width,
+        strip_filler: (strip_filler.start < strip_filler.end)
+            .then(|| strip_filler.start - layout.strip.x..strip_filler.end - layout.strip.x),
+        tile_title_max: narrowest.map_or(0, |w| w.saturating_sub(TITLE_FIXED_COLS)),
+        tile_gutter_max: u16::from(narrowest.is_some()),
+        // The rail's right border is not content.
+        rail_width: layout.rail.width.saturating_sub(1),
+    }
 }
 
 /// Split the frame and place every tile. `maximized` must already be
@@ -143,6 +169,66 @@ mod tests {
 
     fn area(w: u16, h: u16) -> Rect {
         Rect::new(0, 0, w, h)
+    }
+
+    // ── p24: slot geometry ──────────────────────────────────────────────
+
+    #[test]
+    fn a_wide_terminal_gives_every_slot_room() {
+        let l = wall_layout(area(200, 50), 2, None, false, false);
+        let g = slot_geometry(&l, &(40..150));
+        assert_eq!(g.strip_width, 200);
+        assert_eq!(g.strip_filler, Some(40..150));
+        assert_eq!(g.rail_width, 27, "the rail minus its right border");
+        // Two tiles side by side in a 172-wide grid: 86 each.
+        assert_eq!(g.tile_title_max, 86 - TITLE_FIXED_COLS);
+        assert_eq!(g.tile_gutter_max, 1);
+    }
+
+    #[test]
+    fn a_narrow_terminal_shrinks_the_room_and_a_full_strip_has_no_filler() {
+        let l = wall_layout(area(40, 20), 4, None, false, false);
+        let g = slot_geometry(&l, &(40..40));
+        assert_eq!(g.strip_width, 40);
+        assert_eq!(g.strip_filler, None, "tabs and the right cluster take it all");
+        assert_eq!(g.rail_width, 27);
+        // 12-wide grid, four tiles in 2 columns: 6 wide each.
+        assert_eq!(g.tile_title_max, 0, "6-wide tiles have no room beyond the fixed title parts");
+        // Narrower than the rail: the rail shrinks with the terminal.
+        let l = wall_layout(area(20, 10), 1, None, false, false);
+        let g = slot_geometry(&l, &(5..8));
+        assert_eq!((g.rail_width, g.strip_filler), (19, Some(5..8)));
+    }
+
+    #[test]
+    fn no_tiles_means_no_title_or_gutter_room_and_a_maximized_tile_counts_alone() {
+        let l = wall_layout(area(120, 40), 0, None, false, false);
+        let g = slot_geometry(&l, &(0..0));
+        assert_eq!((g.tile_title_max, g.tile_gutter_max), (0, 0));
+
+        let l = wall_layout(area(120, 40), 4, Some(1), false, false);
+        let g = slot_geometry(&l, &(0..0));
+        assert_eq!(g.tile_title_max, 92 - TITLE_FIXED_COLS, "the maximized tile fills the grid");
+    }
+
+    #[test]
+    fn the_wire_shape_matches_the_design_example() {
+        let g = SlotGeometry {
+            strip_width: 38,
+            strip_filler: Some(4..30),
+            tile_title_max: 20,
+            tile_gutter_max: 1,
+            rail_width: 27,
+        };
+        let json = g.to_json();
+        assert_eq!(json["strip.right"], serde_json::json!({"width": 38, "filler": {"x0": 4, "x1": 30}}));
+        assert_eq!(json["tile.title.right"]["max_cols"], 20);
+        assert_eq!(json["tile.gutter"]["max_cols"], 1);
+        for slot in ["rail.row", "rail.extra_rows", "rail.header"] {
+            assert_eq!(json[slot]["max_cols"], 27, "{slot}");
+        }
+        let none = SlotGeometry { strip_filler: None, ..g };
+        assert!(none.to_json()["strip.right"]["filler"].is_null());
     }
 
     #[test]

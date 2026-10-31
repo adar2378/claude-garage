@@ -112,3 +112,30 @@ fn removing_the_animated_item_stops_the_animation_on_the_next_frame() {
     drawn(&mut app, 120, 40, 100);
     assert_eq!(app.slots.animation_interval(), None);
 }
+
+#[test]
+fn a_provider_sees_the_geometry_of_the_frame_that_was_drawn() {
+    use std::sync::{Arc, Mutex};
+    let seen = Arc::new(Mutex::new(None));
+    let mut app = app_with_two_sessions();
+    let sink = seen.clone();
+    app.slots.register(SlotId::StripRight, move |ctx: &SlotCtx| {
+        *sink.lock().unwrap() = ctx.geometry.cloned();
+        Vec::new()
+    });
+    // Frame 1: nothing is known yet (the default geometry).
+    drawn(&mut app, 120, 40, 0);
+    assert_eq!(seen.lock().unwrap().as_ref().unwrap().strip_width, 0);
+    // Frame 2 sees frame 1's real geometry ...
+    drawn(&mut app, 120, 40, 33);
+    let geometry = seen.lock().unwrap().clone().unwrap();
+    assert_eq!(geometry.strip_width, 120);
+    let filler = geometry.strip_filler.clone().expect("a 120-column strip has a filler");
+    assert!(filler.start > 0 && filler.end <= 120 && filler.start < filler.end, "{filler:?}");
+    assert_eq!(geometry.rail_width, 27);
+    assert_eq!(app.slots.geometry(), geometry, "and the registry keeps it for the plugin snapshot");
+    // ... and a resize is picked up on the next draw.
+    drawn(&mut app, 60, 30, 66);
+    drawn(&mut app, 60, 30, 99);
+    assert_eq!(seen.lock().unwrap().as_ref().unwrap().strip_width, 60);
+}

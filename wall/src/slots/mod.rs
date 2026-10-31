@@ -205,14 +205,59 @@ impl SlotItem {
     }
 }
 
+/// The room each slot has, as the renderers last laid it out (p24 design.md
+/// section 5 "Slot geometry"). A provider reads it from
+/// [`SlotCtx::geometry`] to size what it contributes; the TUI still clips and
+/// drops on overlap, so it is advice, never a guarantee.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SlotGeometry {
+    /// `strip.right`: the strip's width in columns.
+    pub strip_width: u16,
+    /// `strip.right`: the columns left free for filler items after the tabs
+    /// and the flow items (`x0..x1`, strip-relative); `None` when there is
+    /// no room at all.
+    pub strip_filler: Option<Range<u16>>,
+    /// `tile.title.right`: the most columns an item can take in the narrowest
+    /// drawn tile before the title's fixed parts are squeezed.
+    pub tile_title_max: u16,
+    /// `tile.gutter`: the gutter is one column wide.
+    pub tile_gutter_max: u16,
+    /// `rail.row`, `rail.extra_rows`, `rail.header`: the rail's usable width.
+    pub rail_width: u16,
+}
+
+impl SlotGeometry {
+    /// The wire shape plugins see under `ui.slots` in their context JSON.
+    pub fn to_json(&self) -> Value {
+        let strip = match &self.strip_filler {
+            Some(r) => serde_json::json!({
+                "width": self.strip_width,
+                "filler": { "x0": r.start, "x1": r.end },
+            }),
+            None => serde_json::json!({ "width": self.strip_width, "filler": null }),
+        };
+        serde_json::json!({
+            "strip.right": strip,
+            "tile.title.right": { "max_cols": self.tile_title_max },
+            "tile.gutter": { "max_cols": self.tile_gutter_max },
+            "rail.row": { "max_cols": self.rail_width },
+            "rail.extra_rows": { "max_cols": self.rail_width },
+            "rail.header": { "max_cols": self.rail_width },
+        })
+    }
+}
+
 /// What a provider may look at. Which fields are set depends on the slot:
 /// tiles supply `session`, rail headers supply `group`; `state` is absent
 /// where the caller has none (a bare tile title).
-#[derive(Default)]
+#[derive(Clone, Copy, Default)]
 pub struct SlotCtx<'a> {
     pub state: Option<&'a WallState>,
     pub session: Option<&'a WallSession>,
     pub group: Option<&'a WorkspaceGroup>,
+    /// The slot geometry of the last drawn frame; filled in by
+    /// [`SlotRegistry::items`], so callers building a ctx leave it `None`.
+    pub geometry: Option<&'a SlotGeometry>,
 }
 
 /// Something that contributes items to a slot. Plain functions and closures
@@ -243,6 +288,8 @@ pub struct SlotRegistry {
     /// The shortest `frame_ms` among animated items asked for since
     /// `begin_frame` (that is, the ones drawn this frame), or 0 for none.
     animation_ms: Cell<u16>,
+    /// Geometry of the last drawn frame, handed to providers via the ctx.
+    geometry: std::cell::RefCell<SlotGeometry>,
 }
 
 impl SlotRegistry {
@@ -267,17 +314,29 @@ impl SlotRegistry {
         }
     }
 
+    /// Record the geometry of the frame just drawn, for providers to read on
+    /// the next one.
+    pub fn set_geometry(&self, geometry: SlotGeometry) {
+        *self.geometry.borrow_mut() = geometry;
+    }
+
+    pub fn geometry(&self) -> SlotGeometry {
+        self.geometry.borrow().clone()
+    }
+
     /// The items every provider of `slot` contributes, in registration order.
     /// Animated items come back showing the frame for the current clock; an
     /// animated item returned here counts as visible for
     /// [`SlotRegistry::animation_interval`] (a renderer that later drops it
     /// for width costs at most one idle redraw per frame interval).
     pub fn items(&self, slot: SlotId, ctx: &SlotCtx) -> Vec<SlotItem> {
+        let geometry = self.geometry.borrow();
+        let ctx = SlotCtx { geometry: Some(&geometry), ..*ctx };
         let mut items: Vec<SlotItem> = self
             .providers
             .iter()
             .filter(|(s, _)| *s == slot)
-            .flat_map(|(_, provider)| provider.items(ctx))
+            .flat_map(|(_, provider)| provider.items(&ctx))
             .collect();
         for item in &mut items {
             if let Some(anim) = &item.animated {

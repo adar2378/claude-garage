@@ -90,6 +90,7 @@ pub fn rail_render(
                 state: Some(state),
                 session: Some(s),
                 group: Some(group),
+                ..SlotCtx::default()
             };
             let items = slots.items(SlotId::RailRow, &row_ctx);
             if !items.is_empty() {
