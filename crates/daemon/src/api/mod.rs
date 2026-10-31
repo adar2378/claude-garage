@@ -30,10 +30,6 @@ pub async fn health(State(_state): State<AppState>) -> Json<Health> {
     })
 }
 
-pub async fn not_implemented() -> Response {
-    error_response(StatusCode::NOT_IMPLEMENTED, "not implemented")
-}
-
 /// Unknown routes (including the removed `GET /api/diff/:workspace`) are 404.
 pub async fn not_found() -> Response {
     error_response(StatusCode::NOT_FOUND, "not found")
@@ -48,8 +44,8 @@ pub fn routes() -> Router<AppState> {
         .route("/api/sessions/restart", post(sessions::restart))
         // The id contains slashes, so capture the whole tail.
         .route("/api/sessions/{*id}", delete(sessions::remove))
-        .route("/api/workspaces", get(not_implemented).put(not_implemented))
-        .route("/api/workspaces/{name}", patch(not_implemented).delete(not_implemented))
+        .route("/api/workspaces", get(workspaces::list).put(workspaces::put))
+        .route("/api/workspaces/{name}", patch(workspaces::patch).delete(workspaces::delete))
         .route("/api/hooks/claude", post(hooks::claude))
         .route("/api/hooks/snippet", get(hooks::snippet))
         .route("/api/hooks/install", post(hooks::install))
@@ -57,10 +53,10 @@ pub fn routes() -> Router<AppState> {
         .route("/api/statusline/snippet", get(statusline::snippet))
         .route("/api/statusline/install", post(statusline::install))
         .route("/api/usage", get(statusline::usage))
-        .route("/api/ui/visibility", post(not_implemented))
-        .route("/api/daemon/restart", post(not_implemented))
-        .route("/api/open-editor", post(not_implemented))
-        .route("/api/pick-directory", post(not_implemented))
-        .route("/api/worktrees/finish", post(not_implemented))
+        .route("/api/ui/visibility", post(visibility::post))
+        .route("/api/daemon/restart", post(daemon_restart::restart))
+        .route("/api/open-editor", post(editor::open))
+        .route("/api/pick-directory", post(picker::pick))
+        .route("/api/worktrees/finish", post(worktrees::finish))
         .fallback(not_found)
 }

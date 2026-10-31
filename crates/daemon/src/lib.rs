@@ -15,8 +15,9 @@ pub mod security;
 pub mod session_resolve;
 pub mod state;
 pub mod transcript;
-pub mod worktree_create;
 
+#[cfg(test)]
+mod lane_f_tests;
 #[cfg(test)]
 mod wiring_tests;
 
@@ -47,26 +48,54 @@ pub async fn bind(config: &Config) -> Result<tokio::net::TcpListener> {
     })
 }
 
-/// Serve on 127.0.0.1 until ctrl-c.
+/// How long open connections (SSE streams never drain) get after shutdown
+/// starts before the server is dropped anyway (JS `forceCloseConnections`).
+const SHUTDOWN_GRACE: std::time::Duration = std::time::Duration::from_secs(1);
+
+/// Serve on 127.0.0.1 until ctrl-c or `POST /api/daemon/restart`.
 pub async fn run(config: Config) -> Result<()> {
+    // A successor spawned by the restart route carries GARAGE_PREDECESSOR_PID:
+    // wait for that daemon's port to free before binding, failing loud if it
+    // does not (no race for the port).
+    if let Some(raw) = std::env::var("GARAGE_PREDECESSOR_PID").ok().filter(|s| !s.is_empty()) {
+        // Not a daemon setting: keep it out of the environment tmux and the
+        // sessions' children inherit.
+        std::env::remove_var("GARAGE_PREDECESSOR_PID");
+        let pid = raw.parse::<u32>().ok();
+        api::daemon_restart::wait_for_predecessor_real(config.port, pid).await.map_err(anyhow::Error::msg)?;
+    }
     let listener = bind(&config).await?;
     let backend = Arc::new(backend::tmux::TmuxBackend::new(config.tmux_socket.clone()));
     backend.init().await.context("initialising the tmux server")?;
     let agents: Arc<dyn poller::AgentSource> = Arc::new(poller::CommandAgents::default());
-    let state = AppState::with_agents(
-        config,
-        backend,
-        Arc::new(os::UnsupportedOs),
-        agents.clone(),
-        install::claude_home_from_env(),
-    );
+    let state = AppState::with_agents(config, backend, os::platform(), agents.clone(), install::claude_home_from_env());
     let poller = state.poller(agents).start();
-    serve(listener, state, async {
-        let _ = tokio::signal::ctrl_c().await;
-    })
-    .await?;
+    let notifier = os::notify::spawn(&state.bus, state.os.clone(), state.visibility.clone());
+    let (poller_stop, notifier_stop) = (poller.abort_handle(), notifier.abort_handle());
+    let lifecycle = state.lifecycle.shutdown.clone();
+    let (begin_tx, begin_rx) = tokio::sync::oneshot::channel::<()>();
+    // One shutdown source: ctrl-c or the restart route. The poller and
+    // notifier stop first, so a successor never overlaps with this daemon's
+    // polling or notifications; then `serve` ends the SSE streams.
+    let signal = async move {
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => {}
+            _ = lifecycle.notified() => {}
+        }
+        poller_stop.abort();
+        notifier_stop.abort();
+        let _ = begin_tx.send(());
+    };
+    let serving = serve(listener, state, signal);
+    tokio::pin!(serving);
+    // Backstop: connections that still hang on after SHUTDOWN_GRACE are dropped.
+    let result = tokio::select! {
+        r = &mut serving => r.map_err(anyhow::Error::from),
+        _ = async { let _ = begin_rx.await; tokio::time::sleep(SHUTDOWN_GRACE).await } => Ok(()),
+    };
     poller.abort();
-    Ok(())
+    notifier.abort();
+    result
 }
 
 /// Serve until `shutdown` resolves. Open SSE streams are told to end first,

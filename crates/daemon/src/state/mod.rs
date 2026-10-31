@@ -11,6 +11,8 @@ use std::sync::{Arc, OnceLock};
 
 use tokio::sync::watch;
 
+use crate::api::daemon_restart::Lifecycle;
+use crate::api::visibility::Visibility;
 use crate::backend::SessionBackend;
 use crate::bus::EventBus;
 use crate::config::Config;
@@ -45,6 +47,10 @@ pub struct AppState {
     /// Flipped to `true` when the daemon starts shutting down, so long-lived
     /// responses (SSE) end and graceful shutdown can complete.
     shutdown: Arc<watch::Sender<bool>>,
+    /// Lane F: which UI clients are in view (notification suppression).
+    pub visibility: Visibility,
+    /// Lane F: shutdown signal and successor command for daemon restart.
+    pub lifecycle: Lifecycle,
 }
 
 impl AppState {
@@ -89,6 +95,8 @@ impl AppState {
             agents,
             poller_cell: Arc::default(),
             shutdown: Arc::new(watch::channel(false).0),
+            visibility: Visibility::default(),
+            lifecycle: Lifecycle::default(),
         }
     }
 

@@ -23,7 +23,7 @@ use crate::error::error_response;
 use crate::git::resolve_branch;
 use crate::state::registry::MetaUpdate;
 use crate::state::AppState;
-use crate::worktree_create::{create_worktree, current_branch, remove_worktree};
+use crate::git::{create_worktree, current_branch, remove_worktree};
 
 /// What sessions run (`GARAGE_CLAUDE_CMD`, default `claude`) and how long a
 /// resume gets to prove it did not die (JS: 1.5 s, then 2 s more if still up).
@@ -326,8 +326,8 @@ pub async fn create(State(st): State<AppState>, body: Bytes) -> Response {
     let mut worktree = None;
     if truthy(body.get("worktree")) {
         match create_worktree(&st.config.garage_dir, &reg_dir, workspace, label).await {
-            Ok(w) => worktree = Some(w),
-            Err(msg) => return error_response(StatusCode::BAD_REQUEST, msg),
+            Ok(w) => worktree = Some((w.path, w.branch)),
+            Err(e) => return error_response(StatusCode::BAD_REQUEST, e.message),
         }
     }
 
