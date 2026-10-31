@@ -115,15 +115,17 @@ impl AttachResolver for DaemonResolver {
     }
 }
 
-/// The daemon's answer, or what to do without one. Only an explicit "no such
-/// running session" is an error; an old daemon (route missing) or an
-/// unreachable one falls back to the pre-spec tmux behaviour. A spec the wall
-/// refuses is an error, never a fallback.
+/// The daemon's answer, or what to do without one. The pre-spec tmux argv is
+/// used ONLY for an old daemon, recognised by its plain 404 (the route does not
+/// exist). Every other failure (daemon down, 5xx, a refused spec, "no running
+/// session") is an attach error: guessing the default tmux server could attach
+/// to a different server than the daemon uses.
 pub fn decide(answer: Result<AttachSpec, ApiError>, session: &str, hosts_dir: &Path) -> Result<Target, String> {
     match answer {
         Ok(spec) => target_from(spec, session, hosts_dir),
         Err(ApiError::Status { status: 404, message }) if message.contains("no running session") => Err(message),
-        Err(_) => Ok(Target::tmux_default()),
+        Err(ApiError::Status { status: 404, .. }) => Ok(Target::tmux_default()),
+        Err(e) => Err(format!("cannot ask the daemon where this session lives: {e}")),
     }
 }
 
@@ -210,6 +212,10 @@ mod tests {
         // An older daemon has no such route: its 404 says "not found".
         let old = ApiError::Status { status: 404, message: "not found".into() };
         assert_eq!(decide(Err(old), "s", d), Ok(Target::tmux_default()));
-        assert_eq!(decide(Err(ApiError::Transport("refused".into())), "s", d), Ok(Target::tmux_default()));
+        // Anything else is an attach error, never a guess at the default tmux server.
+        let e = decide(Err(ApiError::Transport("refused".into())), "s", d).unwrap_err();
+        assert!(e.contains("refused"), "{e}");
+        let five = ApiError::Status { status: 500, message: "boom".into() };
+        assert!(decide(Err(five), "s", d).is_err());
     }
 }
