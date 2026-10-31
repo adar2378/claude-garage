@@ -156,7 +156,8 @@ mod tests {
         let seen = h.join().unwrap();
         assert!(seen.starts_with("PUT /api/plugins/hello/widgets/greeting "), "{seen}");
         assert!(seen.to_ascii_lowercase().contains("authorization: bearer tok"), "{seen}");
-        assert!(seen.ends_with(r#"{"scopes":{"*":[{"priority":0,"placement":{"kind":"flow"},"segments":[{"text":"hi"}]}]}}"#), "{seen}");
+        let body: serde_json::Value = serde_json::from_str(seen.rsplit('\n').next().unwrap()).unwrap();
+        assert_eq!(body, serde_json::json!({"scopes":{"*":[{"priority":0,"placement":{"kind":"flow"},"segments":[{"text":"hi"}]}]}}), "{seen}");
     }
 
     #[test]

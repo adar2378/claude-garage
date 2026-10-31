@@ -536,7 +536,6 @@ pub async fn restore(State(st): State<AppState>, body: Bytes) -> Response {
                             workspace: meta.workspace.clone(),
                             label: meta.label.clone(),
                             worktree: meta.worktree.clone().map(Some),
-                            ..Default::default()
                         },
                     )
                     .await;
