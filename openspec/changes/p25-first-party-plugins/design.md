@@ -67,6 +67,7 @@ Shared pieces added to `crates/plugin-sdk` (kept small):
 - The needs-input `!` is drawn with the `warn` token and bold, not amber. Amber is reserved to the core's needs-input signals and plugins cannot reach it by design; so the `!` cell of the pet snapshot changes colour and nothing else (G2). One new theme token would restore it; that is a policy call left to the maintainer.
 - The species choice moves from `wall.json` to the plugin's state. The plugin reads the old `pet` value from `wall.json` once, on its first run, so existing users keep their pet.
 - The `P` arrival notice ("Arthur the shop cat is on the wall") becomes the pet's caption, and "the strip is quiet again" is not shown: plugins have no notice API (G5).
+- `GARAGE_PET_ASCII=1` cannot reach a plugin (its environment is cleared): the pup's ASCII faces are on when a file named `ascii` exists in the plugin's state dir. `GARAGE_PET_CHATTER_MS` (an E2E-only override) is dropped (G10).
 - The sim ticks every 330 ms instead of 300 ms (so the window covers the 5 s timer). Walking and animation run about 10% slower.
 
 **Pet snapshot.** `strip_with_the_pet_in_the_filler` is rebuilt from golden widget bodies (`plugins/pit-pet/golden/*.json`) via the real path, and the plugin crate asserts it generates them. The text and every column are the same; only the lit `!` cell's colour differs (see above).
