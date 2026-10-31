@@ -5,11 +5,14 @@
 pub mod api;
 pub mod backend;
 pub mod bus;
+pub mod closing;
+pub mod closed;
 pub mod config;
 pub mod error;
 pub mod git;
 pub mod install;
 pub mod os;
+pub mod plugins;
 pub mod poller;
 pub mod security;
 pub mod session_resolve;
@@ -71,6 +74,8 @@ pub async fn run(config: Config) -> Result<()> {
     let state = AppState::with_agents(config, backend, os::platform(), agents.clone(), install::claude_home_from_env());
     let poller = state.poller(agents).start();
     let notifier = os::notify::spawn(&state.bus, state.os.clone(), state.visibility.clone());
+    let plugin_host = state.plugins.start();
+    let closed = closed::spawn(&state.bus, state.registry.clone());
     let (poller_stop, notifier_stop) = (poller.abort_handle(), notifier.abort_handle());
     let lifecycle = state.lifecycle.shutdown.clone();
     let (begin_tx, begin_rx) = tokio::sync::oneshot::channel::<()>();
@@ -95,6 +100,8 @@ pub async fn run(config: Config) -> Result<()> {
     };
     poller.abort();
     notifier.abort();
+    plugin_host.abort();
+    closed.abort();
     result
 }
 

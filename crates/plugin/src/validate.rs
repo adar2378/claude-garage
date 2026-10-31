@@ -30,7 +30,7 @@ impl fmt::Display for Problem {
 /// Ids the host owns; a plugin may not take them.
 pub const RESERVED_IDS: &[&str] = &[
     "session", "workspace", "focus", "jump", "overlay", "view", "hooks", "app", "pet", "daemon", "chord", "plugin", "pane",
-    "core",
+    "core", "ui",
 ];
 
 /// `claude-garage` subcommands a `[[cli]]` entry may not shadow. `install`

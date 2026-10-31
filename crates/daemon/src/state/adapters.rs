@@ -37,6 +37,10 @@ impl PollerSink for StoreSink {
         self.transcripts.clear_cache(id);
     }
 
+    fn last_status(&self, id: &str) -> Option<String> {
+        self.status.has(id).then(|| serde_json::to_value(self.status.get(id)).ok().and_then(|v| v.as_str().map(str::to_owned))).flatten()
+    }
+
     async fn upsert_session_meta(&self, id: &str, claude_session_id: &str, workspace: &str, label: &str) {
         let upd = MetaUpdate {
             claude_session_id: Some(Some(claude_session_id.to_owned())),

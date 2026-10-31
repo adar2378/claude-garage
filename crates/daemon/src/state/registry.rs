@@ -39,6 +39,24 @@ pub struct SessionMeta {
     pub worktree: Option<Worktree>,
 }
 
+/// Most closed-session records kept per workspace (oldest dropped).
+pub const CLOSED_LIMIT: usize = 20;
+
+/// What the core remembers about a session that left the backend, so a plugin
+/// can offer it again (`GET /api/workspaces/{name}/closed`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClosedRecord {
+    pub id: String,
+    pub workspace: String,
+    pub dir: String,
+    pub branch: Option<String>,
+    pub closed_at: i64,
+    /// `user` | `crash` | `daemon-restart`.
+    pub reason: String,
+    pub last_status: Option<String>,
+}
+
 /// Field-level patch for `upsert_session_meta`. Outer `None` is JS
 /// `undefined` (keep what is on disk); `Some(None)` is an explicit `null`.
 #[derive(Debug, Clone, Default)]
@@ -157,6 +175,24 @@ impl Registry {
         }
         state.insert("workspaces".into(), Value::Object(workspaces));
         state.insert("sessions".into(), Value::Object(next));
+        let mut closed = obj_of(&mut state, "closed");
+        if let Some(Value::Array(records)) = closed.shift_remove(old) {
+            let moved = records
+                .into_iter()
+                .map(|mut r| {
+                    if let Some(o) = r.as_object_mut() {
+                        let id = o.get("id").and_then(Value::as_str).unwrap_or("").to_owned();
+                        if let Some(rest) = id.strip_prefix(&old_prefix) {
+                            o.insert("id".into(), Value::String(format!("{new_prefix}{rest}")));
+                        }
+                        o.insert("workspace".into(), Value::String(new.into()));
+                    }
+                    r
+                })
+                .collect();
+            closed.insert(new.into(), Value::Array(moved));
+            state.insert("closed".into(), Value::Object(closed));
+        }
         self.write(&state)?;
         Ok(Some(Workspace { name: new.into(), dir }))
     }
@@ -223,6 +259,58 @@ impl Registry {
         self.write(&state)
     }
 
+    /// Remember a closed session. A record with the same id is replaced, the
+    /// newest [`CLOSED_LIMIT`] per workspace are kept.
+    pub async fn record_closed(&self, rec: ClosedRecord) -> std::io::Result<()> {
+        let _g = self.lock.lock().await;
+        let mut state = self.read();
+        let mut all = obj_of(&mut state, "closed");
+        let mut list: Vec<Value> = match all.remove(&rec.workspace) {
+            Some(Value::Array(a)) => a,
+            _ => Vec::new(),
+        };
+        list.retain(|r| r.get("id").and_then(Value::as_str) != Some(rec.id.as_str()));
+        list.push(serde_json::to_value(&rec).map_err(std::io::Error::other)?);
+        if list.len() > CLOSED_LIMIT {
+            list.drain(..list.len() - CLOSED_LIMIT);
+        }
+        all.insert(rec.workspace.clone(), Value::Array(list));
+        state.insert("closed".into(), Value::Object(all));
+        self.write(&state)
+    }
+
+    /// Closed sessions of a workspace, newest first.
+    pub async fn list_closed(&self, workspace: &str) -> Vec<ClosedRecord> {
+        let _g = self.lock.lock().await;
+        let state = self.read();
+        let list = state.get("closed").and_then(|c| c.get(workspace)).and_then(Value::as_array);
+        list.into_iter()
+            .flatten()
+            .rev()
+            .filter_map(|r| serde_json::from_value(r.clone()).ok())
+            .collect()
+    }
+
+    /// Forget one closed record (restored or deleted). `true` when it existed.
+    pub async fn remove_closed(&self, id: &str) -> std::io::Result<bool> {
+        let _g = self.lock.lock().await;
+        let mut state = self.read();
+        let (workspace, _) = crate::backend::tmux::split_session_id(id);
+        let mut all = obj_of(&mut state, "closed");
+        let Some(Value::Array(list)) = all.get_mut(&workspace) else { return Ok(false) };
+        let before = list.len();
+        list.retain(|r| r.get("id").and_then(Value::as_str) != Some(id));
+        if list.len() == before {
+            return Ok(false);
+        }
+        if list.is_empty() {
+            all.shift_remove(&workspace);
+        }
+        state.insert("closed".into(), Value::Object(all));
+        self.write(&state)?;
+        Ok(true)
+    }
+
     /// Drops the registry entry AND its sessions' resume metadata (they could
     /// never restore without a registered dir); never touches tmux.
     pub async fn remove_workspace(&self, name: &str) -> std::io::Result<()> {
@@ -233,6 +321,9 @@ impl Registry {
         }
         let prefix = format!("{GARAGE_PREFIX}{name}/");
         state["sessions"].as_object_mut().unwrap().retain(|id, _| !id.starts_with(&prefix));
+        if let Some(closed) = state.get_mut("closed").and_then(Value::as_object_mut) {
+            closed.shift_remove(name);
+        }
         self.write(&state)
     }
 
@@ -507,5 +598,70 @@ mod tests {
         raw["hookToken"] = json!("short");
         std::fs::write(s.0.join("state.json"), raw.to_string()).unwrap();
         assert_ne!(s.reg().get_hook_token().await.unwrap(), "short");
+    }
+
+    fn closed(id: &str, at: i64) -> ClosedRecord {
+        let (ws, _) = crate::backend::tmux::split_session_id(id);
+        ClosedRecord {
+            id: id.into(),
+            workspace: ws,
+            dir: "/d".into(),
+            branch: Some("main".into()),
+            closed_at: at,
+            reason: "crash".into(),
+            last_status: Some("idle".into()),
+        }
+    }
+
+    #[tokio::test]
+    async fn closed_records_list_newest_first_are_bounded_and_replace_by_id() {
+        let s = Scratch::new();
+        let r = s.reg();
+        assert!(r.list_closed("w").await.is_empty());
+        for i in 0..(CLOSED_LIMIT as i64 + 5) {
+            r.record_closed(closed(&format!("garage/w/s{i}"), i)).await.unwrap();
+        }
+        r.record_closed(closed("garage/other/x", 1)).await.unwrap();
+        let list = r.list_closed("w").await;
+        assert_eq!(list.len(), CLOSED_LIMIT);
+        assert_eq!(list[0].id, format!("garage/w/s{}", CLOSED_LIMIT + 4), "newest first");
+        assert_eq!(list.last().unwrap().id, "garage/w/s5", "the five oldest were dropped");
+        // the same id again replaces the old record instead of duplicating it
+        r.record_closed(closed("garage/w/s10", 999)).await.unwrap();
+        let list = r.list_closed("w").await;
+        assert_eq!((list.len(), list[0].id.as_str(), list[0].closed_at), (CLOSED_LIMIT, "garage/w/s10", 999));
+        assert_eq!(r.list_closed("other").await.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn removing_a_closed_record_reports_whether_it_existed_and_survives_other_keys() {
+        let s = Scratch::new();
+        let r = s.reg();
+        r.get_hook_token().await.unwrap();
+        r.record_closed(closed("garage/w/a", 1)).await.unwrap();
+        r.record_closed(closed("garage/w/b", 2)).await.unwrap();
+        assert!(r.remove_closed("garage/w/a").await.unwrap());
+        assert!(!r.remove_closed("garage/w/a").await.unwrap());
+        assert!(!r.remove_closed("garage/none/z").await.unwrap());
+        assert_eq!(r.list_closed("w").await.len(), 1);
+        assert!(r.remove_closed("garage/w/b").await.unwrap());
+        assert!(s.raw()["closed"].as_object().unwrap().is_empty(), "an empty workspace entry is dropped");
+        assert_eq!(s.raw()["hookToken"].as_str().map(str::len), Some(64), "other keys untouched");
+    }
+
+    #[tokio::test]
+    async fn workspace_remove_drops_and_rename_moves_its_closed_records() {
+        let s = Scratch::new();
+        let r = s.reg();
+        r.upsert_workspace("old", "/o").await.unwrap();
+        r.upsert_workspace("gone", "/g").await.unwrap();
+        r.record_closed(closed("garage/old/a", 1)).await.unwrap();
+        r.record_closed(closed("garage/gone/b", 1)).await.unwrap();
+        r.rename_workspace("old", "new").await.unwrap();
+        let moved = r.list_closed("new").await;
+        assert_eq!((moved[0].id.as_str(), moved[0].workspace.as_str()), ("garage/new/a", "new"));
+        assert!(r.list_closed("old").await.is_empty());
+        r.remove_workspace("gone").await.unwrap();
+        assert!(r.list_closed("gone").await.is_empty());
     }
 }

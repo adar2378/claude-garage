@@ -161,6 +161,24 @@ pub async fn claude(
     for id in &ids {
         state.telemetry.deps.set_status(id, status, message.clone());
     }
+    if event == Some("Stop") {
+        // One Claude turn ended. The transcript offset is the file's size
+        // right now, when the hook named a transcript we can stat.
+        let offset = payload
+            .get("transcript_path")
+            .and_then(Value::as_str)
+            .and_then(|p| std::fs::metadata(p).ok())
+            .map(|m| m.len());
+        for id in &ids {
+            let (workspace, _) = crate::backend::tmux::split_session_id(id);
+            state.bus.publish(crate::bus::DaemonEvent::SessionTurn {
+                id: id.clone(),
+                workspace,
+                at: crate::state::status::now_ms(),
+                transcript_offset: offset,
+            });
+        }
+    }
     Json(json!({"ok": true, "applied": ids})).into_response()
 }
 

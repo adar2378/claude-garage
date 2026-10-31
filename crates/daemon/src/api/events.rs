@@ -3,6 +3,12 @@
 //! Frames: `: connected` first, `event: status` (`{id, status, since}`) on
 //! every transition, `event: sessions` (`{}`) when the session set or a pane
 //! title changes (and after a restart), `: keepalive` every 15 s.
+//!
+//! Plugin host frames (p24, additive; older clients ignore them):
+//! `session.created`, `session.closed` (with `reason`), `session.turn`,
+//! `worktree.created`, `workspace.added`, `workspace.removed` carry the same
+//! payload a plugin event hook gets; `widgets` (`{plugin, rev}`), `plugins`
+//! (`{}`), `plugin_run_failed` and `plugin_notice` serve the TUI.
 
 use std::convert::Infallible;
 use std::time::Duration;
@@ -25,6 +31,21 @@ fn frame(event: &DaemonEvent) -> Event {
             Event::default().event("status").data(json!({"id": id, "status": to, "since": since}).to_string())
         }
         DaemonEvent::SessionsChanged => Event::default().event("sessions").data("{}"),
+        DaemonEvent::PluginRunFailed { plugin, action, reason } => Event::default()
+            .event("plugin_run_failed")
+            .data(json!({"plugin": plugin, "action": action, "reason": reason}).to_string()),
+        DaemonEvent::PluginNotice { plugin, message } => {
+            Event::default().event("plugin_notice").data(json!({"plugin": plugin, "message": message}).to_string())
+        }
+        DaemonEvent::WidgetsChanged { plugin, rev } => {
+            Event::default().event("widgets").data(json!({"plugin": plugin, "rev": rev}).to_string())
+        }
+        DaemonEvent::PluginsChanged => Event::default().event("plugins").data("{}"),
+        // The typed events keep their plugin-visible names (`session.closed`, ...).
+        typed => match typed.plugin_event() {
+            Some((name, data)) => Event::default().event(name).data(data.to_string()),
+            None => Event::default().comment("unknown"),
+        },
     }
 }
 

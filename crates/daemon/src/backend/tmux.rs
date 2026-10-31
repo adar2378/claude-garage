@@ -281,6 +281,15 @@ impl SessionBackend for TmuxBackend {
         self.run_args(&["capture-pane", "-p", "-t", &format!("{}:", exact(id)), "-S", &start]).await
     }
 
+    /// `send-keys -l` types the text literally (no key-name parsing), then a
+    /// separate Enter so a multi-line paste does not swallow it.
+    async fn send_text(&self, id: &str, text: &str) -> Result<()> {
+        let target = format!("{}:", exact(id));
+        self.run_args(&["send-keys", "-t", &target, "-l", "--", text]).await?;
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        self.run_args(&["send-keys", "-t", &target, "Enter"]).await.map(|_| ())
+    }
+
     fn attach_spec(&self, id: &str) -> AttachSpec {
         // Attaching needs a running server, so `-f` is never relevant here.
         let base = |rest: &[&str]| {
@@ -502,6 +511,21 @@ mod tests {
         assert_ne!(before, after, "a new process runs in the same pane");
         assert_eq!(b.list().await.unwrap()[0].created_at, created, "same tmux session");
         assert!(b.respawn("garage/ws/missing", t.dir(), "sleep", &sleeper(), &[]).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn send_text_types_the_text_literally_then_presses_enter() {
+        let t = TestTmux::new();
+        let b = t.backend();
+        // `read` only returns once Enter arrives; a leading dash and a key name
+        // in the text must reach the pane as plain characters.
+        let args = vec!["-c".to_string(), "read line; printf '%s' \"$line\" > out.txt; sleep 60".to_string()];
+        b.create("garage/ws/s", t.dir(), "sh", &args, &[]).await.unwrap();
+        b.send_text("garage/ws/s", "-l Enter C-c ok").await.unwrap();
+        let out = t.dir().join("out.txt");
+        t.wait_for(|| std::fs::read_to_string(&out).is_ok_and(|s| !s.is_empty())).await;
+        assert_eq!(std::fs::read_to_string(&out).unwrap(), "-l Enter C-c ok");
+        assert!(b.send_text("garage/ws/missing", "x").await.is_err());
     }
 
     #[tokio::test]

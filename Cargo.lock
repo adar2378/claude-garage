@@ -741,6 +741,7 @@ dependencies = [
  "async-trait",
  "axum",
  "futures-util",
+ "garage-plugin",
  "garage-protocol",
  "gethostname",
  "getrandom 0.3.4",

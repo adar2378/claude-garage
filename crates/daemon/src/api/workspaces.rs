@@ -74,8 +74,14 @@ pub async fn put(State(state): State<AppState>, body: Bytes) -> Response {
             format!("dir is not a directory: {}", js_display(body.get("dir"))),
         );
     }
+    let existed = state.registry.get_workspace(name).await.is_some();
     match state.registry.upsert_workspace(name, dir.unwrap()).await {
-        Ok(w) => Json(json!({"name": w.name, "dir": w.dir})).into_response(),
+        Ok(w) => {
+            if !existed {
+                state.bus.publish(crate::bus::DaemonEvent::WorkspaceAdded { name: w.name.clone() });
+            }
+            Json(json!({"name": w.name, "dir": w.dir})).into_response()
+        }
         Err(e) => internal(e.into()),
     }
 }
@@ -122,9 +128,16 @@ pub async fn patch(State(state): State<AppState>, Path(old): Path<String>, body:
     let mut failed = Vec::new();
     for s in live.iter().filter(|s| s.id.starts_with(&old_prefix)) {
         let new_id = format!("{new_prefix}{}", &s.id[old_prefix.len()..]);
+        // Both halves of a rename are silent: the session did not close.
+        state.closing.mark_renamed(&s.id);
+        state.closing.mark_renamed(&new_id);
         match state.backend.rename(&s.id, &new_id).await {
             Ok(()) => renamed.push(RenamedSession { from: s.id.clone(), to: new_id }),
-            Err(e) => failed.push(id_error(&s.id, &e)),
+            Err(e) => {
+                state.closing.clear(&s.id);
+                state.closing.clear(&new_id);
+                failed.push(id_error(&s.id, &e));
+            }
         }
     }
 
@@ -162,7 +175,10 @@ pub async fn delete(
     }
     if query.get("sessions").map(String::as_str) != Some("kill") {
         return match state.registry.remove_workspace(&name).await {
-            Ok(()) => StatusCode::NO_CONTENT.into_response(),
+            Ok(()) => {
+                state.bus.publish(crate::bus::DaemonEvent::WorkspaceRemoved { name: name.clone() });
+                StatusCode::NO_CONTENT.into_response()
+            }
             Err(e) => internal(e.into()),
         };
     }
@@ -172,14 +188,19 @@ pub async fn delete(
     let mut killed = Vec::new();
     let mut failed = Vec::new();
     for s in live.iter().filter(|s| s.id.starts_with(&prefix)) {
+        state.closing.mark(&s.id, crate::closing::CloseReason::User);
         match state.backend.kill(&s.id).await {
             Ok(()) => killed.push(s.id.clone()),
-            Err(e) => failed.push(id_error(&s.id, &e)),
+            Err(e) => {
+                state.closing.clear(&s.id);
+                failed.push(id_error(&s.id, &e));
+            }
         }
     }
     if let Err(e) = state.registry.remove_workspace(&name).await {
         return internal(e.into());
     }
+    state.bus.publish(crate::bus::DaemonEvent::WorkspaceRemoved { name: name.clone() });
     let mut out = Map::new();
     out.insert("removed".into(), json!(name));
     out.insert("killedSessions".into(), json!(killed));

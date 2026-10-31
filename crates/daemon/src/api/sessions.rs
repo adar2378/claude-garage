@@ -359,6 +359,15 @@ pub async fn create(State(st): State<AppState>, body: Bytes) -> Response {
         }
     }
 
+    if let Some((path, branch)) = &worktree {
+        st.bus.publish(crate::bus::DaemonEvent::WorktreeCreated {
+            workspace: workspace.to_owned(),
+            session: id.clone(),
+            path: path.clone(),
+            branch: branch.clone(),
+            repo_dir: reg_dir.clone(),
+        });
+    }
     let wt = worktree.map(|(path, branch)| json!({"path": path, "branch": branch})).unwrap_or(Value::Null);
     (
         StatusCode::CREATED,
@@ -451,6 +460,11 @@ pub async fn restore(State(st): State<AppState>, body: Bytes) -> Response {
             Ok(Outcome::Failed(v)) => failed.push(v),
         }
     }
+    for r in &restored {
+        if let Some(rid) = r.get("id").and_then(Value::as_str) {
+            let _ = st.registry.remove_closed(rid).await;
+        }
+    }
     let code = if restored.is_empty() {
         StatusCode::CONFLICT
     } else if all {
@@ -508,6 +522,12 @@ pub async fn restart(State(st): State<AppState>, body: Bytes) -> Response {
 
     let metas: HashMap<String, _> = st.registry.list_session_metas().await.into_iter().collect();
     let spawner = BackendSpawn { backend: st.backend.as_ref(), kind: Kind::Respawn };
+    // A restart may recreate a session whose resume died: that vanish is part
+    // of the restart, not a crash.
+    for t in &targets {
+        st.closing.mark(t, crate::closing::CloseReason::DaemonRestart);
+    }
+    let marked = targets.clone();
     let results = join_all(targets.into_iter().map(|target| {
         let st = &st;
         let spawner = &spawner;
@@ -546,6 +566,9 @@ pub async fn restart(State(st): State<AppState>, body: Bytes) -> Response {
     }))
     .await;
 
+    for t in &marked {
+        st.closing.clear(t);
+    }
     let (mut restarted, mut failed) = (Vec::new(), Vec::new());
     for r in results {
         match r {
@@ -587,6 +610,7 @@ pub async fn remove(
             return error_response(StatusCode::NOT_FOUND, format!("no resume metadata for: {id}"));
         };
         let _ = st.registry.remove_session_meta(&id).await;
+        let _ = st.registry.remove_closed(&id).await;
         let worktree = match &meta.worktree {
             Some(w) => with_target(w).await,
             None => Value::Null,
@@ -600,7 +624,9 @@ pub async fn remove(
     // Capture the meta BEFORE removing it: the worktree record rides the
     // response so the caller can drive worktrees/finish afterwards.
     let meta = st.registry.get_session_meta(&id).await;
+    st.closing.mark(&id, crate::closing::CloseReason::User);
     if let Err(e) = st.backend.kill(&id).await {
+        st.closing.clear(&id);
         return server_error(e);
     }
     // A deliberate kill: nothing to offer restoring later.

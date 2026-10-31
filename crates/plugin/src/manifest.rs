@@ -338,6 +338,12 @@ pub struct Release {
     pub assets: BTreeMap<String, String>,
 }
 
+/// Lowercase hex sha256, for `manifestSha256` in `plugins.json`.
+pub fn sha256_hex(bytes: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    Sha256::digest(bytes).iter().map(|b| format!("{b:02x}")).collect()
+}
+
 pub const DEFAULT_ACTION_TIMEOUT_SECS: u32 = 30;
 pub const DEFAULT_EVENT_TIMEOUT_SECS: u32 = 10;
 pub const DEFAULT_BUILD_TIMEOUT_SECS: u32 = 600;
