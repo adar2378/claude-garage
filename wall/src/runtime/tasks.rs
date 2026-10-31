@@ -52,8 +52,12 @@ fn plugin_frame(event: &crate::api::sse::SseEvent, client: &GarageClient, tx: &E
         }
         "widgets" => {
             let (Some(plugin), Some(rev)) = (text("plugin"), data.get("rev").and_then(Value::as_u64)) else { return true };
-            if revs.borrow_mut().should_fetch(&plugin, rev) {
+            let news = revs.borrow().should_fetch(&plugin, rev);
+            if news {
+                // The rev counts as held only once its content arrived; a failed
+                // fetch leaves it unseen so the next frame asks again.
                 if let Ok(snapshot) = client.fetch_plugin_widgets(Some(&plugin)) {
+                    revs.borrow_mut().fetched(&plugin, snapshot.plugins.get(&plugin).map_or(rev, |w| w.rev));
                     let _ = tx.send(AppEvent::PluginWidgets { snapshot, full: false });
                 }
             }
@@ -272,4 +276,25 @@ pub(super) fn spawn_signal_task(rt: &tokio::runtime::Runtime, tx: EventSender) {
             }
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::api::sse::SseEvent;
+
+    #[test]
+    fn a_widgets_frame_whose_fetch_failed_is_asked_for_again_on_the_next_frame() {
+        // Nothing listens on port 1: the fetch fails.
+        let client = GarageClient::new(Some("http://127.0.0.1:1".into()));
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let revs = RefCell::new(RevTracker::default());
+        let frame = SseEvent { event: "widgets".into(), data: r#"{"plugin":"bt","rev":3}"#.into() };
+        assert!(plugin_frame(&frame, &client, &tx, &revs));
+        assert!(rx.try_recv().is_err(), "nothing was fetched, so nothing is applied");
+        assert!(revs.borrow().should_fetch("bt", 3), "the rev is not remembered after a failed fetch");
+        // Once the content really arrived the same rev is news no more.
+        revs.borrow_mut().fetched("bt", 3);
+        assert!(!revs.borrow().should_fetch("bt", 3));
+    }
 }

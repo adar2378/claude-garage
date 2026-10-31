@@ -235,6 +235,9 @@ pub struct GarageRouter {
     /// The plugins' declared actions (from the listing): what `plugin:action`
     /// ids run, which need a confirm, which open a pane.
     plugin_actions: std::collections::HashMap<ActionId, crate::plugins::PluginAction>,
+    /// When a plugin last moved the focus (ms): a burst of such requests is
+    /// dropped, only the first lands.
+    plugin_focus_at: Option<i64>,
     pub notices: Notices,
 }
 
@@ -254,7 +257,12 @@ impl GarageRouter {
         }
         let body = crate::plugins::context::run_body(ctx);
         effects.push(match &action.pane {
-            Some(pane) => Effect::OpenPluginPane { plugin: action.plugin.clone(), pane: pane.clone(), body },
+            Some(pane) => Effect::OpenPluginPane {
+                plugin: action.plugin.clone(),
+                pane: pane.clone(),
+                body,
+                human: !matches!(ctx.source, ActionSource::Plugin { .. }),
+            },
             None => Effect::RunPluginAction { plugin: action.plugin.clone(), action: action.local.clone(), body },
         });
     }

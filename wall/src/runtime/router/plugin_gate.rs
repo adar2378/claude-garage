@@ -277,6 +277,26 @@ impl GarageRouter {
                 );
                 return true;
             }
+            if matches!(ctx.source, ActionSource::Plugin { .. }) {
+                // Where the user types is theirs to change: a plugin's request
+                // never engages a session (a click on its button, a human act, may).
+                if id == ids::SESSION_ENGAGE {
+                    self.notices.show(
+                        format!("plugin {} asked to type into a session — only you can engage one", plugin_name(&ctx.source)),
+                        3000,
+                        now_ms,
+                    );
+                    return true;
+                }
+                // Focus moves are for a person to make at a person's pace: a
+                // burst from a plugin lands once and the rest is dropped.
+                if moves_focus(id) {
+                    if self.plugin_focus_at.is_some_and(|t| now_ms - t < PLUGIN_FOCUS_GAP_MS) {
+                        return true;
+                    }
+                    self.plugin_focus_at = Some(now_ms);
+                }
+            }
             if matches!(ctx.source, ActionSource::Widget { .. }) {
                 // A click on a plugin item lands like any click.
                 if store.state().layer == crate::state::wall_state::KeyLayer::Engaged {
@@ -493,6 +513,26 @@ fn arm_prompt(store: &WallStore, id: ActionId, ctx: &ActionCtx) -> Option<(Strin
         _ => return None,
     };
     Some((format!("{subject}{CONFIRM_TAIL}"), false))
+}
+
+/// Least time between two focus moves a plugin may make.
+pub(in crate::runtime) const PLUGIN_FOCUS_GAP_MS: i64 = 500;
+
+/// The ids whose whole point is to move the focus (or the typing target).
+fn moves_focus(id: ActionId) -> bool {
+    matches!(
+        id,
+        ids::SESSION_FOCUS
+            | ids::WORKSPACE_FOCUS
+            | ids::VIEW_FOCUS
+            | ids::VIEW_CYCLE
+            | ids::JUMP_BLOCKED
+            | ids::FOCUS_CYCLE_PREV
+            | ids::FOCUS_CYCLE_NEXT
+            | ids::SESSION_RESTORE
+            | ids::SESSION_MAXIMIZE
+            | ids::OVERLAY_OPEN_VIEW_PICKER
+    )
 }
 
 /// True when running `id` for `ctx` would move the focus (and so the typing

@@ -15,6 +15,24 @@ use crate::ui::registry::TileRegistry;
 /// program never sees Ctrl+Q.
 pub const CLOSE_CHORD_WINDOW: Duration = Duration::from_millis(1500);
 
+/// Longest pane title shown, in characters.
+pub const TITLE_MAX: usize = 40;
+
+/// What the pane's border says: the plugin id first, always, then the title.
+/// Both are the plugin's words, so control and invisible characters are
+/// dropped and the title is cut, which keeps a plugin from dressing its pane
+/// up as something else.
+pub fn label(plugin: &str, title: &str) -> String {
+    let plugin = garage_protocol::widgets::sanitise(plugin);
+    let title = garage_protocol::widgets::sanitise(title);
+    let title = if title.chars().count() > TITLE_MAX {
+        format!("{}…", title.chars().take(TITLE_MAX - 1).collect::<String>())
+    } else {
+        title
+    };
+    format!(" {plugin}: {title} ")
+}
+
 /// Default `popup` size when the manifest gives none.
 const POPUP_DEFAULT: (u16, u16) = (60, 16);
 
@@ -133,6 +151,19 @@ mod tests {
 
     fn ctrl_q() -> KeyEvent {
         KeyEvent::new(KeyCode::Char('q'), KeyModifiers::CONTROL)
+    }
+
+    #[test]
+    fn the_label_names_the_plugin_first_and_cleans_and_cuts_the_title() {
+        assert_eq!(label("bt", "Details"), " bt: Details ");
+        let nasty = format!("\u{1b}[2J{}\u{202e}x\n", "y".repeat(80));
+        let l = label("bt", &nasty);
+        assert!(l.starts_with(" bt: "), "{l:?}");
+        assert!(!l.chars().any(|c| c.is_control() || c == '\u{202e}'), "{l:?}");
+        assert_eq!(l.chars().count(), " bt: ".len() + TITLE_MAX + 1, "{l:?}");
+        assert!(l.trim_end().ends_with('…'));
+        // A title cannot pose as another plugin: the real id is always first.
+        assert!(label("evil", "core: Secure").starts_with(" evil: "));
     }
 
     #[test]

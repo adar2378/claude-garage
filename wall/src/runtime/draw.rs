@@ -241,9 +241,8 @@ impl App {
         let base_url = self.base_url.clone();
         let tx = self.tx.clone();
         drop(tokio::task::spawn_blocking(move || {
-            if let Err(e) = crate::api::client::GarageClient::new(Some(base_url)).put_ui_slots(&body) {
-                super::send_notice(&tx, format!("slot geometry not reported: {e}"), 3000);
-            }
+            let reported = crate::api::client::GarageClient::new(Some(base_url)).put_ui_slots(&body).map_err(|e| e.to_string());
+            let _ = tx.send(super::AppEvent::SlotsReported(reported));
         }));
     }
 
@@ -260,8 +259,8 @@ impl App {
         let hint = if self.pane.close_pending(now_ms) { " ctrl+q again to close " } else { " ctrl+q ctrl+q closes " };
         let block = Block::bordered()
             .border_type(BorderType::Rounded)
-            .border_style(Style::default().fg(colors::DIM))
-            .title(format!(" {}: {} ", pane.plugin, pane.title))
+            .border_style(Style::default().fg(colors::PLUGIN))
+            .title(crate::plugins::panes::label(&pane.plugin, &pane.title))
             .title_bottom(Line::styled(hint, Style::default().fg(colors::FAINT)));
         if let Some(client) = self.registry.client(&pane.session) {
             let parser = client.parser().lock().unwrap();

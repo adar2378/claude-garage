@@ -202,6 +202,8 @@ pub enum AppEvent {
     /// SSE `plugin_notice` / `plugin_run_failed`: a toast about a plugin.
     /// The same text showing now is not stacked again.
     PluginNotice(String),
+    /// The slot geometry report settled (`PUT /api/plugins/ui/slots`).
+    SlotsReported(Result<(), String>),
     /// A plugin pane is open (SSE `pane` frame, then a fetch for the attach info).
     PaneOpened(garage_protocol::plugins::PaneInstance),
     /// A plugin pane closed on the daemon side.
@@ -413,7 +415,20 @@ struct App {
     geometry: crate::plugins::geometry::GeometryReporter,
     /// The open plugin pane, if any.
     pane: crate::plugins::panes::PluginPaneState,
+    /// Panes this TUI asked for from a human key or click, each with the
+    /// instant (ms) the request stops counting: only these may take the screen.
+    pending_panes: Vec<(String, String, i64)>,
+    /// A pane nobody here asked for, waiting for the user to say `p`, and
+    /// until when (ms). It never takes input by itself.
+    offered_pane: Option<(garage_protocol::plugins::PaneInstance, i64)>,
 }
+
+/// How long a human's request for a pane counts when its frame arrives.
+const PANE_REQUEST_WINDOW_MS: i64 = 5_000;
+/// How long an unrequested pane stays on offer.
+const PANE_OFFER_MS: i64 = 30_000;
+/// The garage-layer key that shows an offered pane.
+const PANE_OFFER_KEY: &str = "p";
 
 impl App {
     #[cfg(test)]
@@ -462,6 +477,8 @@ impl App {
             plugin_key_conflicts: Vec::new(),
             geometry: Default::default(),
             pane: Default::default(),
+            pending_panes: Vec::new(),
+            offered_pane: None,
         }
     }
 
@@ -535,6 +552,57 @@ impl App {
         }
     }
 
+    /// A pane exists. It takes the screen only when this TUI asked for it a
+    /// moment ago from a human key or click; any other pane is offered in a
+    /// notice and waits for `p`. Input never moves on a plugin's say-so.
+    fn pane_opened(&mut self, pane: garage_protocol::plugins::PaneInstance, now: i64) {
+        self.pending_panes.retain(|(_, _, until)| *until > now);
+        let asked = self.pending_panes.iter().position(|(plugin, id, _)| *plugin == pane.plugin && *id == pane.pane);
+        let name = garage_protocol::widgets::sanitise(&pane.plugin);
+        if let Some(i) = asked {
+            self.pending_panes.remove(i);
+            // Not over a session the user is typing into, nor another overlay.
+            if self.store.state().layer == KeyLayer::Garage {
+                self.show_pane(pane);
+            } else {
+                let text = format!("{name} opened a pane — run its action again from the wall");
+                self.router.notices.show(text, 4000, now);
+            }
+            return;
+        }
+        let text = format!("plugin {name} opened a pane — press {PANE_OFFER_KEY} to show it");
+        self.offered_pane = Some((pane, now + PANE_OFFER_MS));
+        self.router.notices.show(text, 8000, now);
+    }
+
+    /// Remember that a person asked for a pane, so its frame may take the screen.
+    fn note_pane_request(&mut self, effect: &Effect) {
+        if let Effect::OpenPluginPane { plugin, pane, human: true, .. } = effect {
+            self.pending_panes.push((plugin.clone(), pane.clone(), now_ms() + PANE_REQUEST_WINDOW_MS));
+        }
+    }
+
+    fn show_pane(&mut self, pane: garage_protocol::plugins::PaneInstance) {
+        self.offered_pane = None;
+        self.pane.open(pane, &mut self.registry);
+        self.store.open_overlay(OverlayKind::PluginPane);
+    }
+
+    /// `p` in the garage layer while a pane is on offer: show it. True when
+    /// the key was that.
+    fn take_pane_offer(&mut self, key: &str, now: i64) -> bool {
+        if key != PANE_OFFER_KEY {
+            return false;
+        }
+        match self.offered_pane.take() {
+            Some((pane, until)) if until > now => {
+                self.show_pane(pane);
+                true
+            }
+            _ => false,
+        }
+    }
+
     /// A plugin's request to run an action, as a trigger of source
     /// `Plugin`: it targets only what the request names, and the gate
     /// decides whether it runs, arms or is refused.
@@ -565,23 +633,20 @@ impl App {
             AppEvent::Plugins(list) => self.apply_plugin_listing(list),
             AppEvent::PluginWidgets { snapshot, full } => self.plugins.borrow_mut().apply_widgets(snapshot, full),
             AppEvent::UiAction(frame) => self.handle_ui_action(&frame),
+            AppEvent::SlotsReported(Ok(())) => self.geometry.reported(),
+            AppEvent::SlotsReported(Err(e)) => {
+                // Retried with a growing wait; the user hears of the first failure only.
+                if self.geometry.failed(std::time::Instant::now()) == 1 {
+                    self.router.notices.show(format!("slot geometry not reported: {e} (retrying)"), 3000, now_ms());
+                }
+            }
             AppEvent::PluginNotice(text) => {
                 let now = now_ms();
                 if self.router.notices.current(now) != Some(text.as_str()) {
                     self.router.notices.show(text, 5000, now);
                 }
             }
-            AppEvent::PaneOpened(pane) => {
-                // Never take over the screen while the user is typing into a
-                // session or has another overlay up.
-                if self.store.state().layer == KeyLayer::Garage {
-                    self.pane.open(pane, &mut self.registry);
-                    self.store.open_overlay(OverlayKind::PluginPane);
-                } else {
-                    let text = format!("{} opened a pane — run its action again from the wall", pane.plugin);
-                    self.router.notices.show(text, 4000, now_ms());
-                }
-            }
+            AppEvent::PaneOpened(pane) => self.pane_opened(pane, now_ms()),
             AppEvent::PaneClosed { session } => {
                 if self.pane.session() == Some(session.as_str()) {
                     self.pane.close(&mut self.registry);
@@ -747,6 +812,9 @@ impl App {
                 let Some(key_str) = garage_key_string(key) else {
                     return false; // consumed: garage typing never reaches an agent
                 };
+                if self.take_pane_offer(&key_str, now_ms()) {
+                    return false;
+                }
                 let outcome = self
                     .router
                     .on_garage_key(&mut self.store, &self.keymap, &key_str, now_ms());
@@ -769,6 +837,7 @@ impl App {
                 if matches!(effect, Effect::RestartDaemon) {
                     self.motion.daemon_restart_requested(now_ms());
                 }
+                self.note_pane_request(&effect);
                 run_effect(effect, &self.tx, &self.base_url);
             }
         }

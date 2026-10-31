@@ -36,8 +36,9 @@ pub fn color(spec: &str) -> Option<Color> {
         "dim" => Some(colors::DIM),
         "accent" => Some(Color::Cyan),
         "ok" => Some(colors::GREEN),
-        // Not amber: that colour is reserved for needs-input.
-        "warn" => Some(Color::Yellow),
+        // Not amber, and not ANSI yellow either (terminals draw it amber):
+        // amber is reserved for needs-input.
+        "warn" => Some(colors::WARN),
         "error" => Some(colors::ERROR),
         hex if hex.len() == 7 && hex.starts_with('#') => {
             let n = u32::from_str_radix(&hex[1..], 16).ok()?;
@@ -187,7 +188,14 @@ mod tests {
     fn tokens_map_to_the_palette_and_warn_is_never_amber() {
         assert_eq!(color("text"), Some(colors::FG));
         assert_eq!(color("error"), Some(colors::ERROR));
-        assert_ne!(color("warn"), Some(colors::AMBER));
+        let warn = color("warn").unwrap();
+        for forbidden in [colors::AMBER, Color::Yellow, Color::LightYellow, Color::Rgb(255, 255, 0)] {
+            assert_ne!(warn, forbidden, "warn must not look like needs-input");
+        }
+        // Not a near-miss of amber either.
+        let Color::Rgb(r, g, b) = warn else { panic!("warn is an RGB tone, not an ANSI name: {warn:?}") };
+        let Color::Rgb(ar, ag, ab) = colors::AMBER else { unreachable!() };
+        assert!(distance((r, g, b), (ar, ag, ab)) > 60 * 60, "warn is too close to amber");
         assert_eq!(color("puce"), None);
     }
 
