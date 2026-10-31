@@ -1,0 +1,53 @@
+#:schema https://raw.githubusercontent.com/adar2378/claude-garage/main/schemas/garage-plugin.schema.json
+id = "pit-pet"
+name = "Pit pet"
+version = "0.1.0"
+api_version = 1
+platforms = ["macos", "linux"]
+description = "Arthur, Papito or Segan lives in the status strip and watches your sessions"
+requires = ["widgets.animated", "widgets.frame_x", "widgets.slot_geometry"]
+# core.actions: only for the click on an alerting pet, which jumps to the
+# blocked session (`jump.blocked`); nothing else in this plugin uses it.
+permissions = ["ui.widgets", "ui.invoke", "core.actions", "sessions.read"]
+
+[[actions]]
+id = "cycle"
+title = "Cycle the pit pet"
+contexts = ["global"]
+command = ["{plugin_dir}/bin/pit-pet", "cycle"]
+default_key = "P"
+
+[[actions]]
+id = "pet"
+title = "Pet the pit pet"
+contexts = ["global"]
+command = ["{plugin_dir}/bin/pit-pet", "pet"]
+
+# The sim rolls forward 16 frames at a time; the timer keeps a fresh window
+# arriving before the old one ends. The other events make a mood change show
+# within a few hundred milliseconds.
+[[events]]
+on = "timer"
+every_secs = 5
+timeout_secs = 15
+command = ["{plugin_dir}/bin/pit-pet", "update"]
+
+[[events]]
+on = "daemon.started"
+command = ["{plugin_dir}/bin/pit-pet", "started"]
+
+[[events]]
+on = "session.created"
+command = ["{plugin_dir}/bin/pit-pet", "update"]
+
+[[events]]
+on = "session.closed"
+command = ["{plugin_dir}/bin/pit-pet", "update"]
+
+[[events]]
+on = "session.status_changed"
+command = ["{plugin_dir}/bin/pit-pet", "update"]
+
+[[widgets]]
+id = "pet"
+slot = "strip.right"

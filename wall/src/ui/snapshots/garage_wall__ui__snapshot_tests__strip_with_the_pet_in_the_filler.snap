@@ -15,7 +15,7 @@ r0 c37..54 fg=White bg=Black mod=NONE
 r0 c54..56 fg=Reset bg=Black mod=NONE
 r0 c56..61 fg=White bg=Black mod=NONE
 r0 c61..62 fg=Reset bg=Black mod=NONE
-r0 c62..63 fg=Rgb(255, 179, 64) bg=Black mod=BOLD
+r0 c62..63 fg=Rgb(176, 190, 110) bg=Black mod=BOLD
 r0 c63..82 fg=Reset bg=Black mod=NONE
 r0 c82..95 fg=Rgb(255, 179, 64) bg=Black mod=NONE
 r0 c95..110 fg=Gray bg=Black mod=NONE

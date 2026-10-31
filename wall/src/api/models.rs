@@ -30,17 +30,6 @@ fn as_percentage(v: Option<&Value>) -> Option<u32> {
     }
 }
 
-/// `resetsAt` rides through as whatever JSON scalar the statusline payload
-/// carried (an ISO string in practice) — the wall never interprets it, only
-/// carries it, so a string or a number are both accepted verbatim.
-fn as_resets_at(v: Option<&Value>) -> Option<String> {
-    match v {
-        Some(Value::String(s)) => Some(s.clone()),
-        Some(Value::Number(n)) => Some(n.to_string()),
-        _ => None,
-    }
-}
-
 /// One session's `context` entry (`GET /api/sessions` — see
 /// `daemon/src/sessions.js`'s `{usedPercentage, source: "statusline"|
 /// "transcript"} | null` shape; proposal.md "API").
@@ -61,49 +50,6 @@ impl ContextInfo {
             used_percentage: as_percentage(json.get("usedPercentage"))?,
             source: as_string(json.get("source")).unwrap_or_default(),
         })
-    }
-}
-
-/// One window of `GET /api/usage` (`{usedPercentage, resetsAt} | null`).
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct UsageWindow {
-    pub used_percentage: u32,
-    pub resets_at: Option<String>,
-}
-
-impl UsageWindow {
-    pub fn from_json(json: &Value) -> Option<UsageWindow> {
-        Some(UsageWindow {
-            used_percentage: as_percentage(json.get("usedPercentage"))?,
-            resets_at: as_resets_at(json.get("resetsAt")),
-        })
-    }
-}
-
-/// `GET /api/usage` response (`daemon/src/sessions.js`'s
-/// `{fiveHour: {...}|null, sevenDay: {...}|null}` — account-wide, from the
-/// most recent statusline post; both null until one arrives).
-#[derive(Clone, Debug, PartialEq, Eq, Default)]
-pub struct UsageInfo {
-    pub five_hour: Option<UsageWindow>,
-    pub seven_day: Option<UsageWindow>,
-}
-
-impl UsageInfo {
-    /// Never fails — a missing/malformed body degrades to "both null" so a
-    /// transient parse hiccup never blocks the strip (it just shows no chip
-    /// this tick).
-    pub fn from_json(json: &Value) -> UsageInfo {
-        UsageInfo {
-            five_hour: json
-                .get("fiveHour")
-                .filter(|v| !v.is_null())
-                .and_then(UsageWindow::from_json),
-            seven_day: json
-                .get("sevenDay")
-                .filter(|v| !v.is_null())
-                .and_then(UsageWindow::from_json),
-        }
     }
 }
 
@@ -435,27 +381,6 @@ mod tests {
         assert_eq!(SessionInfo::from_json(&v).unwrap().context, None);
         let v = json!({"id": "i", "workspace": "w", "label": "l"});
         assert_eq!(SessionInfo::from_json(&v).unwrap().context, None);
-    }
-
-    #[test]
-    fn usage_info_parses_both_windows_and_a_null_one() {
-        let v = json!({
-            "fiveHour": {"usedPercentage": 24.0, "resetsAt": "2026-01-01T00:00:00Z"},
-            "sevenDay": null
-        });
-        let u = UsageInfo::from_json(&v);
-        assert_eq!(u.five_hour.as_ref().unwrap().used_percentage, 24);
-        assert_eq!(
-            u.five_hour.as_ref().unwrap().resets_at.as_deref(),
-            Some("2026-01-01T00:00:00Z")
-        );
-        assert_eq!(u.seven_day, None);
-    }
-
-    #[test]
-    fn usage_info_both_null_is_the_default() {
-        let v = json!({"fiveHour": null, "sevenDay": null});
-        assert_eq!(UsageInfo::from_json(&v), UsageInfo::default());
     }
 
     #[test]

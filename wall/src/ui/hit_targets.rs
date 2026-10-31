@@ -251,7 +251,7 @@ pub fn action_at(
             .map(|(_, name)| name.clone())?;
         return Some((ids::VIEW_FOCUS, ctx().with_view(name)));
     }
-    // Plugin and core slot items (the pit pet among them) sit on top of the
+    // Plugin and core slot items (a first-party widget among them) sit on top of the
     // surface they were painted on, so they are tested before it: a
     // clickable item near the badge never gets swallowed by it, and a button
     // in an unfocused tile's title acts on that tile.
@@ -679,7 +679,7 @@ mod tests {
                 badge: 80..95,
                 slots: vec![
                     (30..40, ids::OVERLAY_OPEN_HELP.into()),
-                    (50..60, ids::PET_PET.into()),
+                    (50..60, ids::VIEW_CYCLE.into()),
                     (78..84, ids::OVERLAY_OPEN_HELP.into()),
                 ],
                 regions: Vec::new(),
@@ -807,7 +807,7 @@ mod tests {
         }
 
         #[test]
-        fn strip_badge_is_the_a_key_queue_and_the_pet_slot_item_is_pet_pet() {
+        fn strip_badge_is_the_a_key_queue_and_a_plain_slot_item_is_its_own_action() {
             let store = store();
             let f = fixture(&store);
             let row = f.layout.strip.y;
@@ -815,7 +815,7 @@ mod tests {
                 click(&store, &f, 85, row).unwrap().0,
                 key_id(Layer::Garage, "A")
             );
-            assert_eq!(click(&store, &f, 55, row).unwrap().0, "pet.pet");
+            assert_eq!(click(&store, &f, 55, row).unwrap().0, "view.cycle");
             assert!(click(&store, &f, 70, row).is_none());
         }
 
@@ -843,7 +843,7 @@ mod tests {
             let target = ClickTarget::new(ids::SESSION_CLOSE)
                 .with_args(serde_json::json!({"why": "button"}))
                 .from_plugin("closer");
-            f.slots = vec![(10..14, target.clone()), (20..24, ids::PET_PET.into())];
+            f.slots = vec![(10..14, target.clone()), (20..24, ids::VIEW_CYCLE.into())];
             let row = f.layout.strip.y;
             let (id, ctx) = click(&store, &f, 11, row).unwrap();
             assert_eq!(id, "session.close");

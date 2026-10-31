@@ -10,11 +10,6 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 
-[features]
-default = ["pet"]
-# The pit pet (spec tui-pit-pet). Off: the wall builds and runs without it.
-pet = []
-
 [lib]
 name = "garage_wall"
 path = "src/lib.rs"

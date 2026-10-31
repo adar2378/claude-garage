@@ -967,6 +967,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "garage-plugin-pit-pet"
+version = "0.6.2"
+dependencies = [
+ "garage-plugin-sdk",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "garage-plugin-sdk"
 version = "0.6.2"
 dependencies = [

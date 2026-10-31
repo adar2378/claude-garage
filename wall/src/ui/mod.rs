@@ -4,9 +4,9 @@
 //! `triage`, `workspace_add`), the tile PTY registry with its reattach loop
 //! (`registry`), the capture-pane frozen scrollback (`scroll`), the
 //! off-screen escalation policy (`escalation`), the `t` standalone-window
-//! opener (`window_open`, p12-standalone-window), and the opt-in pit pet
-//! (`pet`, p15-pit-pet — sprites/mood/motion/chatter; pure, no ratatui),
-//! and the p17 worktree merge/discard/keep modal (`worktree_finish`).
+//! opener (`window_open`, p12-standalone-window), and the p17 worktree
+//! merge/discard/keep modal (`worktree_finish`). The pit pet is a plugin
+//! (p25, `plugins/pit-pet`); the wall only draws what it pushes.
 
 pub mod escalation;
 pub mod grid_layout;
@@ -14,7 +14,6 @@ pub mod help;
 pub mod hit_targets;
 pub mod layout;
 pub mod motion;
-pub mod pet;
 pub mod rail;
 pub mod registry;
 pub mod scroll;

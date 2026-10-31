@@ -15,7 +15,7 @@ use crate::plugins::revs::RevTracker;
 use crate::api::client::GarageClient;
 use crate::api::sse::SseClient;
 
-use super::{AppEvent, EventSender, USAGE_POLL_INTERVAL, send_notice};
+use super::{AppEvent, EventSender, send_notice};
 
 /// Refetch both listings and feed them into the channel (the Dart
 /// `_refetchSessions`: workspaces too, so worktree flags never derive from a
@@ -167,32 +167,6 @@ pub(super) fn spawn_fetch_task(
                 let _ = tx.send(AppEvent::Sessions(sessions));
             }
             Err(e) => send_notice(&tx, format!("sessions fetch failed: {e}"), 5000),
-        }
-    });
-}
-
-/// `GET /api/usage`: once at startup, then every [`USAGE_POLL_INTERVAL`]
-/// (spec tui-context-meters "Strip usage chip") — no SSE push exists for
-/// account-wide usage, so polling is the only source. Stops promptly on
-/// `stop` rather than sleeping through the full interval at shutdown.
-pub(super) fn spawn_usage_task(
-    rt: &tokio::runtime::Runtime,
-    tx: EventSender,
-    base_url: String,
-    stop: Arc<AtomicBool>,
-) {
-    rt.spawn(async move {
-        while !stop.load(Ordering::Relaxed) {
-            let base_url = base_url.clone();
-            let tx = tx.clone();
-            let _ = tokio::task::spawn_blocking(move || {
-                let client = GarageClient::new(Some(base_url));
-                if let Ok(usage) = client.fetch_usage() {
-                    let _ = tx.send(AppEvent::Usage(usage));
-                }
-            })
-            .await;
-            tokio::time::sleep(USAGE_POLL_INTERVAL).await;
         }
     });
 }

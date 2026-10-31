@@ -16,7 +16,6 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Paragraph, Widget};
 
-use crate::actions::ids;
 use crate::slots::{self, ClickTarget, Placement, SlotCtx, SlotId, SlotItem, SlotRegistry};
 use crate::state::wall_state::{KeyLayer, WallState};
 use crate::ui::theme::colors;
@@ -29,66 +28,6 @@ use crate::ui::theme::colors;
 /// (see `runtime.rs`'s hint scheduling), so `strip_line` special-cases this
 /// text to pick the dim color instead of an ordinary notice's bright one.
 pub const STATUSLINE_HINT: &str = "press I to install hooks (instant status) + context meter";
-
-/// The pit pet's current frame, as the render layer needs it (spec
-/// tui-pit-pet "One-row sprites and derived mood" / "Species-true one-row
-/// motion") — built by `runtime.rs`'s tick pass from a `pet::StepResult`,
-/// consumed here as plain data so `strip.rs` stays free of `ui::pet`
-/// simulation logic (it only lays the sprite out).
-#[derive(Debug, Clone)]
-pub struct PetRender {
-    /// The sprite frame's text (`pet::Sprite::text` — always single-width
-    /// ASCII/measured glyphs, see `pet.rs`'s width-measurement note).
-    pub text: &'static str,
-    /// Whether this mood carries a `!` column at all (reserved even unlit,
-    /// so the strip never jitters as the bang blinks).
-    pub bang: bool,
-    /// Whether the `!` is lit THIS frame (amber bold) vs reserved-but-blank.
-    pub bang_lit: bool,
-    /// Strip-local column, within the filler, where the sprite starts.
-    pub x: u16,
-    /// True while the mood is Sleep or Box — rendered dim instead of FG.
-    pub dim: bool,
-    /// A chatter/petting line to draw beside the sprite (spec tui-pit-pet
-    /// "Species-voiced chatter"): left of the sprite when there's room,
-    /// else right of it, else dropped for the frame — never in the
-    /// right-aligned notice slot, which can be a hundred columns away.
-    pub say: Option<String>,
-}
-
-/// The pit pet as a `strip.right` item: the sprite then a reserved bang
-/// column (reserved even unlit, so the strip never jitters as the bang
-/// blinks), floated into the filler at the sim's `x`, with the chatter line
-/// as its caption. A click on it is `pet.pet`.
-pub fn pet_slot_item(p: &PetRender) -> SlotItem {
-    let mut text = vec![Span::styled(
-        p.text,
-        Style::default().fg(if p.dim { colors::DIM } else { colors::FG }),
-    )];
-    if p.bang {
-        text.push(Span::raw(" "));
-        text.push(if p.bang_lit {
-            Span::styled(
-                "!",
-                Style::default()
-                    .fg(colors::AMBER)
-                    .add_modifier(Modifier::BOLD),
-            )
-        } else {
-            // Unlit: still a column-wide space (spec "bang unlit still
-            // reserves the column").
-            Span::raw(" ")
-        });
-    }
-    SlotItem {
-        on_click: Some(ids::PET_PET.into()),
-        placement: Placement::Filler {
-            x: p.x,
-            caption: p.say.clone(),
-        },
-        ..SlotItem::new(text, 100)
-    }
-}
 
 /// Where each filler item lands within a filler `filler` columns wide:
 /// `(offset, item)` pairs in column order. An item needs its width plus a
@@ -338,9 +277,66 @@ mod tests {
     //! text with amber dots, the blocked badge and its click range, chip
     //! variants, the notice slot.
     use super::*;
-    use crate::actions::ActionId;
+    use crate::actions::{ActionId, ids};
     use crate::api::models::{SessionInfo, WorkspaceInfo};
     use crate::state::store::WallStore;
+
+    /// A sprite-shaped filler item for the layout tests below (the shape the
+    /// pit-pet plugin pushes: sprite, reserved bang column, caption).
+    #[derive(Debug, Clone)]
+    pub struct PetRender {
+        /// The sprite frame's text (`pet::Sprite::text` — always single-width
+        /// ASCII/measured glyphs, see `pet.rs`'s width-measurement note).
+        pub text: &'static str,
+        /// Whether this mood carries a `!` column at all (reserved even unlit,
+        /// so the strip never jitters as the bang blinks).
+        pub bang: bool,
+        /// Whether the `!` is lit THIS frame (amber bold) vs reserved-but-blank.
+        pub bang_lit: bool,
+        /// Strip-local column, within the filler, where the sprite starts.
+        pub x: u16,
+        /// True while the mood is Sleep or Box — rendered dim instead of FG.
+        pub dim: bool,
+        /// A chatter/petting line to draw beside the sprite (spec tui-pit-pet
+        /// "Species-voiced chatter"): left of the sprite when there's room,
+        /// else right of it, else dropped for the frame — never in the
+        /// right-aligned notice slot, which can be a hundred columns away.
+        pub say: Option<String>,
+    }
+
+    /// The pit pet as a `strip.right` item: the sprite then a reserved bang
+    /// column (reserved even unlit, so the strip never jitters as the bang
+    /// blinks), floated into the filler at the sim's `x`, with the chatter line
+    /// as its caption. A click on it is `pet.pet`.
+    pub fn pet_slot_item(p: &PetRender) -> SlotItem {
+        let mut text = vec![Span::styled(
+            p.text,
+            Style::default().fg(if p.dim { colors::DIM } else { colors::FG }),
+        )];
+        if p.bang {
+            text.push(Span::raw(" "));
+            text.push(if p.bang_lit {
+                Span::styled(
+                    "!",
+                    Style::default()
+                        .fg(colors::AMBER)
+                        .add_modifier(Modifier::BOLD),
+                )
+            } else {
+                // Unlit: still a column-wide space (spec "bang unlit still
+                // reserves the column").
+                Span::raw(" ")
+            });
+        }
+        SlotItem {
+            on_click: Some(ids::VIEW_CYCLE.into()),
+            placement: Placement::Filler {
+                x: p.x,
+                caption: p.say.clone(),
+            },
+            ..SlotItem::new(text, 100)
+        }
+    }
 
     fn ws(name: &str) -> WorkspaceInfo {
         WorkspaceInfo {
@@ -566,7 +562,7 @@ mod tests {
     fn pet_range(s: &StripLine) -> Option<Range<u16>> {
         s.slots
             .iter()
-            .find(|(_, t)| t.action == ids::PET_PET)
+            .find(|(_, t)| t.action == ids::VIEW_CYCLE)
             .map(|(r, _)| r.clone())
     }
 
@@ -725,7 +721,7 @@ mod tests {
         let b = strip_line(
             store.state(),
             &with_fillers(vec![SlotItem {
-                on_click: Some(ids::PET_PET.into()),
+                on_click: Some(ids::VIEW_CYCLE.into()),
                 placement: Placement::Filler {
                     x: 30,
                     caption: Some("hi there".into()),

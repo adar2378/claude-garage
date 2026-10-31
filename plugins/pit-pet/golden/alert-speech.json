@@ -1,0 +1,1 @@
+{"scopes":{"*":[{"priority":100,"placement":{"kind":"filler","x":30,"caption":"someone needs you"},"frames":[[{"text":"(O.O)","style":{"fg":"text"},"click":{"action":"pet"}},{"text":" "},{"text":"!","style":{"fg":"warn","bold":true}}]],"frame_ms":330,"frame_x":[30]}]}}

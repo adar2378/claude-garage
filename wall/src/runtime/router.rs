@@ -11,7 +11,6 @@ use crate::state::store::{ArmedRestart, GarageCommand, WallStore, restart_arm_no
 use crate::state::views;
 use crate::state::wall_state::{KeyLayer, WallState};
 use crate::state::workspace_remove::{confirm_kill_target, remove_arm_notice};
-use crate::ui::pet::PetHost;
 
 use super::Effect;
 
@@ -26,44 +25,22 @@ pub const TYPING_HINT: &str = "enter engages the focused terminal — keys go to
 /// unbound garage keys raise [`TYPING_HINT`] instead of doing nothing.
 pub const RESTART_PREFIX_HINT: &str = "r: r session · a workspace · d daemon";
 
-/// Who put the current strip notice up (spec tui-pit-pet "Species-voiced
-/// chatter": "SHALL NOT replace a non-pet notice that is still showing").
-/// `User` covers everything that existed before p15 — armed-close/-remove
-/// wording, the typing hint, lifecycle results, the statusline hint — all
-/// of which must always win over a pet's chatter line.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
-pub enum NoticeKind {
-    #[default]
-    User,
-    Pet,
-}
-
 /// Transient strip notice with a TTL, plus the Dart TUI's two behaviors the
 /// armed flows depend on: prefix-clearing (disarming clears its own arm
 /// notice, never an unrelated one) and the rate-limited typing hint (a burst
 /// of typing does not restart the hint's timer). Time is injected (ms) so it
 /// unit-tests without timers.
-///
-/// p15 adds a second, lower-priority writer (pit-pet chatter, spec
-/// tui-pit-pet): [`Notices::show_pet`] is the only entry point that checks
-/// before overwriting — every pre-existing call goes through [`Notices::show`]
-/// or [`Notices::show_typing_hint`], which are `NoticeKind::User` and always
-/// win, exactly as they did before chatter existed.
 #[derive(Default)]
 pub struct Notices {
     text: Option<String>,
     expires_at_ms: i64,
-    kind: NoticeKind,
 }
 
 impl Notices {
-    /// Always wins, regardless of what (if anything) is currently showing —
-    /// every call site that predates p15 uses this, so none of that
-    /// behavior changes: a user notice can never be blocked.
+    /// Always wins, regardless of what (if anything) is currently showing.
     pub fn show(&mut self, text: impl Into<String>, ttl_ms: i64, now_ms: i64) {
         self.text = Some(text.into());
         self.expires_at_ms = now_ms + ttl_ms;
-        self.kind = NoticeKind::User;
     }
 
     /// Garage-layer typing hint, rate-limited: while the hint is already up,
@@ -73,40 +50,6 @@ impl Notices {
             return;
         }
         self.show(TYPING_HINT, 2500, now_ms);
-    }
-
-    /// Pit-pet chatter (spec tui-pit-pet "Species-voiced chatter"): refuses
-    /// — leaving whatever is showing untouched — while a live `User` notice
-    /// is up; a pet line freely replaces another pet line (or nothing).
-    /// Returns whether it was shown, so the chatter scheduler knows the line
-    /// wasn't dropped on the floor (it can retry, rather than treat the tick
-    /// as having "said" a line it didn't).
-    pub fn show_pet(&mut self, text: impl Into<String>, ttl_ms: i64, now_ms: i64) -> bool {
-        if self.user_notice_active(now_ms) {
-            return false;
-        }
-        self.text = Some(text.into());
-        self.expires_at_ms = now_ms + ttl_ms;
-        self.kind = NoticeKind::Pet;
-        true
-    }
-
-    /// Drop a showing `Pet`-kind notice (spec tui-pit-pet "Chatter yields
-    /// to attention": a chatter line must not linger once a session needs
-    /// input). User notices are untouched. Returns true when one was cleared.
-    pub fn clear_pet(&mut self) -> bool {
-        if self.text.is_some() && self.kind == NoticeKind::Pet {
-            self.text = None;
-            return true;
-        }
-        false
-    }
-
-    /// True while a live (unexpired) `User`-kind notice is showing — the
-    /// gate [`Notices::show_pet`] checks, exposed for the chatter scheduler
-    /// to consult before even building a line.
-    pub fn user_notice_active(&self, now_ms: i64) -> bool {
-        self.kind == NoticeKind::User && self.text.is_some() && now_ms < self.expires_at_ms
     }
 
     /// Clear the current notice iff it starts with `prefix` (the Dart
@@ -122,15 +65,6 @@ impl Notices {
             return None;
         }
         self.text.as_deref()
-    }
-
-    /// The showing notice split by kind: `User` lines belong in the strip's
-    /// right-aligned slot, `Pet` lines are drawn beside the pet's sprite.
-    pub fn current_of(&self, kind: NoticeKind, now_ms: i64) -> Option<&str> {
-        if self.kind != kind {
-            return None;
-        }
-        self.current(now_ms)
     }
 
     /// Drop an expired notice; returns true when the visible state changed
@@ -432,11 +366,6 @@ impl GarageRouter {
         }
         match id {
             _ if id.is_plugin() => self.run_plugin_action(id, ctx, now_ms, effects),
-            // `P` (spec tui-pit-pet "Opt-in roster cycled by `P`"): not a
-            // `GarageCommand` — `pet.rs` (the render module) has no business
-            // being a store dependency, so this stays here rather than
-            // growing `state::store`'s command enum for one field's cycling.
-            ids::PET_CYCLE_SPECIES => self.cycle_pet_pressed(store, now_ms),
             ids::SESSION_RESTORE => {
                 if let Some(session) = ctx.session.clone() {
                     self.restore(session, effects);
@@ -571,21 +500,6 @@ impl GarageRouter {
             id: session.id.clone(),
             label: session.label.clone(),
         });
-    }
-
-    /// `P`: cycle the pit-pet roster off → Arthur → Papito → Segan → off
-    /// (spec tui-pit-pet), persist the choice, and show the arrival notice
-    /// (or "the strip is quiet again" for off). Resetting `PetSim`/ticking
-    /// the sprite promptly is the caller's job (`App::handle_key` — it owns
-    /// the sim, the router doesn't).
-    fn cycle_pet_pressed(&mut self, store: &mut WallStore, now_ms: i64) {
-        let Some((next, text)) = PetHost::cycle_choice(store.state().pet.as_deref()) else {
-            self.notices
-                .show("the pit pet is not in this build", 3000, now_ms);
-            return;
-        };
-        store.set_pet(next);
-        self.notices.show(text, 3000, now_ms);
     }
 
     /// Restore one session, deduplicated against in-flight restores.

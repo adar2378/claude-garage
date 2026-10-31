@@ -52,6 +52,7 @@ pub fn features() -> Value {
         "widgets.click_args": true,
         "widgets.filler": true,
         "widgets.animated": true,
+        "widgets.frame_x": true,
         "widgets.slot_geometry": true,
         "cli.fallback": true,
         "panes.placements": PANE_PLACEMENTS,

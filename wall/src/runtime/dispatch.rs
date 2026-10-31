@@ -2,7 +2,7 @@
 //! tui-actions "Named actions"). `GarageRouter::on_garage_key` resolves a
 //! key to an action and hands it over; `hit_targets::action_at` does the
 //! same for a click. What the router does not own (the overlay forms and
-//! queue selection, the pit pet) is handled here, keyed on the action id.
+//! queue selection) is handled here, keyed on the action id.
 
 use crate::actions::{ActionCtx, ActionId, ActionSource, ids};
 use crate::state::wall_state::KeyLayer;
@@ -64,10 +64,6 @@ impl App {
             ids::OVERLAY_OPEN_VIEW_PICKER => self.view_picker.reset(),
             _ => {}
         }
-        if id == ids::PET_PET {
-            self.handle_pet_click(now);
-            return Vec::new();
-        }
         let ui = OverlayRefs {
             queue_selection: &mut self.queue_selection,
             form: &mut self.ws_form,
@@ -80,21 +76,9 @@ impl App {
             }
             return Vec::new();
         }
-        // `P` (spec tui-pit-pet): a fresh pet starts its motion sim from
-        // scratch and renders on the very next tick, rather than carrying
-        // over the outgoing (or newly-arriving) species' position/frame
-        // counters. `GarageRouter` owns the choice + persistence + notice;
-        // it doesn't own the sim, so the reset happens here by comparing
-        // before/after.
-        let pet_before = self.store.state().pet.clone();
         let mut effects = Vec::new();
         self.router
             .run_action(&mut self.store, id, ctx, now, &mut effects);
-        if self.store.state().pet != pet_before
-            && let Some(pet) = &mut self.pet
-        {
-            pet.reset_sim();
-        }
         effects
     }
 }

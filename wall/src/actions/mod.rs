@@ -116,9 +116,6 @@ pub mod ids {
     /// Forget a session (`DELETE /api/sessions/{id}?meta=1`). No key; reached
     /// by plugin buttons, always through the confirm rule.
     pub const SESSION_DELETE: ActionId = ActionId("session.delete");
-    pub const PET_PET: ActionId = ActionId("pet.pet");
-    /// `P`: not a [`super::GarageCommand`] (the store has no pet dependency).
-    pub const PET_CYCLE_SPECIES: ActionId = ActionId("pet.cycle_species");
     /// Overlay and view-strip ids (the overlay keys and their clicks).
     pub const OVERLAY_CLOSE: ActionId = ActionId("overlay.close");
     pub const OVERLAY_SELECT_NEXT: ActionId = ActionId("overlay.select.next");
@@ -158,8 +155,6 @@ pub mod ids {
         SESSION_FOCUS,
         SESSION_RESTORE,
         SESSION_DELETE,
-        PET_PET,
-        PET_CYCLE_SPECIES,
         OVERLAY_CLOSE,
         OVERLAY_SELECT_NEXT,
         OVERLAY_SELECT_PREV,
@@ -217,8 +212,6 @@ pub const META: &[ActionMeta] = &[
     meta_row(ids::SESSION_FOCUS, false, true),
     meta_row(ids::SESSION_RESTORE, false, true),
     meta_row(ids::SESSION_DELETE, true, true),
-    meta_row(ids::PET_PET, false, true),
-    meta_row(ids::PET_CYCLE_SPECIES, false, false),
     meta_row(ids::OVERLAY_CLOSE, false, false),
     meta_row(ids::OVERLAY_SELECT_NEXT, false, false),
     meta_row(ids::OVERLAY_SELECT_PREV, false, false),
@@ -436,7 +429,7 @@ pub enum GarageCommand {
 }
 
 /// The [`GarageCommand`] an action id runs through the store/router, or
-/// `None` for ids with their own handling (clicks, overlay keys, the pet).
+/// `None` for ids with their own handling (clicks, overlay keys).
 pub fn command_for_action(id: ActionId, index: Option<usize>) -> Option<GarageCommand> {
     use GarageCommand as C;
     Some(match id {
@@ -493,8 +486,6 @@ mod tests {
             ids::SESSION_FOCUS,
             ids::SESSION_RESTORE,
             ids::SESSION_DELETE,
-            ids::PET_PET,
-            ids::PET_CYCLE_SPECIES,
             ids::OVERLAY_CLOSE,
             ids::OVERLAY_SELECT_NEXT,
             ids::OVERLAY_SELECT_PREV,
@@ -564,7 +555,6 @@ mod tests {
             refused,
             [
                 "app.quit",
-                "pet.cycle_species",
                 "overlay.close",
                 "overlay.select.next",
                 "overlay.select.prev",

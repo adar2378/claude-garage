@@ -21,7 +21,7 @@ use crate::ui::view_strip::render_view_strip;
 use crate::ui::workspace_add::render_workspace_add;
 use crate::ui::worktree_finish::render_worktree_finish;
 
-use super::{App, NoticeKind};
+use super::App;
 
 impl App {
     pub(super) fn draw_frame(&mut self, frame: &mut ratatui::Frame, now_ms: i64) {
@@ -159,15 +159,12 @@ impl App {
             self.motion.spinner_shown();
         }
 
-        if let Some(pet) = &self.pet {
-            pet.publish_frame(&self.router.notices, now_ms);
-        }
         let strip_cols = render_strip(
             buf,
             layout.strip,
             self.store.state(),
             &self.slots,
-            self.router.notices.current_of(NoticeKind::User, now_ms),
+            self.router.notices.current(now_ms),
         );
         self.badge_cols = strip_cols.badge;
         slot_clicks.extend(
@@ -183,7 +180,6 @@ impl App {
                 }),
         );
         self.slot_clicks = slot_clicks;
-        self.last_strip_filler = strip_cols.filler_width;
         // What each slot had room for this frame: providers read it (via
         // `SlotCtx::geometry`) the next time they are asked.
         self.slots

@@ -14,7 +14,7 @@ use crate::ui::theme::colors;
 /// The full binding legend (the Dart `_bindings` list, verbatim — the help
 /// overlay must list every p8.1–p8.4 key, plus the p16-restart `r` chords:
 /// spec restart "TUI chords" requires `?` to list all three).
-pub const BINDINGS: [(&str, &str); 24] = [
+pub const BINDINGS: [(&str, &str); 23] = [
     ("1-9", "focus workspace"),
     ("[ ]", "cycle focused tile"),
     ("Enter", "engage focused tile (restore it when restorable)"),
@@ -23,7 +23,6 @@ pub const BINDINGS: [(&str, &str); 24] = [
     ("t", "open focused session in a new terminal window (macOS)"),
     ("a", "jump to longest-waiting blocked session"),
     ("A", "triage queue"),
-    ("P", "cycle the pit pet: Arthur / Papito / Segan / off"),
     ("n / N", "spawn session / worktree session"),
     ("R", "restore all restorable sessions in workspace"),
     ("I", "install hooks (instant status) + context meter feed"),

@@ -33,7 +33,6 @@ const INVOCABLE: &[&str] = &[
     "jump.blocked",
     "view.cycle",
     "view.focus",
-    "pet.pet",
     "hooks.install",
 ];
 
@@ -60,7 +59,6 @@ const NEVER: &[&str] = &[
     "overlay.select.prev",
     "overlay.view_picker.pick",
     "chord.restart",
-    "pet.cycle_species",
 ];
 
 /// `None` when `id` is not a core id at all.

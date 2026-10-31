@@ -78,7 +78,7 @@ fn store_with(workspaces: Vec<WorkspaceInfo>, sessions: Vec<SessionInfo>) -> Wal
 /// `App` for the call so the tests keep their virtual clock.
 fn key_at(router: &mut GarageRouter, store: &mut WallStore, key: &str, now: i64) -> Vec<Effect> {
     let (tx, _rx) = mpsc::unbounded_channel();
-    let mut app = App::new(tx, "http://127.0.0.1:0", 0);
+    let mut app = App::new(tx, "http://127.0.0.1:0");
     std::mem::swap(&mut app.router, router);
     std::mem::swap(&mut app.store, store);
     let outcome = app

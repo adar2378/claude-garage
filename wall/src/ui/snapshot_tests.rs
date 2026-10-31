@@ -179,39 +179,34 @@ fn strip_narrow_drops_right_side_content() {
     ));
 }
 
-/// The strip with the pet laid into its filler: a lit bang beside speech,
-/// then a dim sleeping pet without one. Guards the p22 move of the pet onto
-/// the `strip.right` slot (the columns and styles must not shift).
-#[cfg(feature = "pet")]
+/// The strip with the pit-pet plugin's frames laid into its filler: an
+/// alerting pup with speech, then a dim sleeping cat. The bodies are the
+/// plugin's golden files, drawn through the real wire-to-slot path (an
+/// animated item with a column per frame). Text and columns are what the
+/// in-wall pet drew; the only change is the lit `!`, which a plugin can only
+/// colour with the `warn` token, never the core's amber.
 #[test]
 fn strip_with_the_pet_in_the_filler() {
-    use crate::slots::{SlotCtx, SlotId};
-    use crate::ui::strip::{PetRender, pet_slot_item};
     let store = strip_store();
     let mut out = String::new();
-    let alert = PetRender {
-        text: "(O.O)",
-        bang: true,
-        bang_lit: true,
-        x: 30,
-        dim: false,
-        say: Some("someone needs you".into()),
-    };
-    let asleep = PetRender {
-        text: "=-.-=",
-        bang: false,
-        bang_lit: false,
-        x: 4,
-        dim: true,
-        say: None,
-    };
-    for (name, pet) in [("alert with speech", alert), ("asleep", asleep)] {
+    for (name, golden) in [
+        (
+            "alert with speech",
+            include_str!("../../../plugins/pit-pet/golden/alert-speech.json"),
+        ),
+        (
+            "asleep",
+            include_str!("../../../plugins/pit-pet/golden/asleep.json"),
+        ),
+    ] {
         let rect = Rect::new(0, 0, 110, 1);
         let mut buf = Buffer::empty(rect);
-        let mut slots = SlotRegistry::core();
-        slots.register(SlotId::StripRight, move |_: &SlotCtx| {
-            vec![pet_slot_item(&pet)]
-        });
+        let slots = crate::plugins::test_support::registry_with(
+            "pit-pet",
+            &["pit-pet:pet"],
+            garage_protocol::widgets::WidgetSlot::StripRight,
+            golden,
+        );
         render_strip(&mut buf, rect, store.state(), &slots, None);
         out.push_str(&format!("## {name}\n{}\n", dump(&buf)));
     }

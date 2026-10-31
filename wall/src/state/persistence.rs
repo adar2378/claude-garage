@@ -1,20 +1,17 @@
 //! `wall.json` — the client-side persistence file for view assignments
-//! (spec tui-views "View persistence") and the pit-pet choice (spec
-//! tui-pit-pet "Opt-in roster cycled by `P`"). Disposable by design: a
-//! missing or invalid file collapses every workspace to its default view
-//! (and the pet to off) with no error; nothing here is authoritative — the
-//! daemon never sees this file and its absence is never a fault.
+//! (spec tui-views "View persistence"). Disposable by design: a missing or
+//! invalid file collapses every workspace to its default view with no error;
+//! nothing here is authoritative — the daemon never sees this file and its
+//! absence is never a fault. (It used to hold the pit-pet choice too; the
+//! pet is a plugin now and reads the old `pet` key once, see `plugins/pit-pet`.)
 //!
 //! Schema: `{"version": 1, "views": {"<workspace>": [{"name", "sessions":
-//! [id, ...]}, ...]}, "pet": "cat"|"duck"|"pup"}`. Only *named* (non-default)
+//! [id, ...]}, ...]}}`. Only *named* (non-default)
 //! views are written — the default view's membership is always the derived
 //! complement (see `state::views` module docs), so an untouched workspace
 //! costs nothing in the file, and a workspace with no named views at all is
-//! omitted rather than written as `[]`. `pet` is optional and omitted
-//! entirely when the pet is off — no version bump: old `wall.json` files
-//! (with no `pet` key) load the pet as off, and old wall builds simply
-//! ignore the field on read/write (spec: "a missing or unrecognized value
-//! SHALL load as `off` with no error").
+//! omitted rather than written as `[]`. Unknown keys (an old `pet`) are ignored
+//! on read and dropped on write.
 //!
 //! **Ownership split** (this module vs. the runtime wave): everything here
 //! is either pure (`serialize`/`deserialize`) or a small, self-contained
@@ -34,20 +31,10 @@ use crate::state::views::{DEFAULT_VIEW, View, ViewsByWorkspace};
 
 pub const SCHEMA_VERSION: u64 = 1;
 
-/// The three valid `pet` field values (spec tui-pit-pet) — kept here as
-/// plain strings rather than an enum: this crate's persistence layer has no
-/// business knowing about `ui::pet::Species`, and the wiring phase maps
-/// these to it. Anything else read from disk is not a pet, per the lenient-
-/// read rule.
-const PET_VALUES: [&str; 3] = ["cat", "duck", "pup"];
-
-/// The full `wall.json` document: view assignments plus the pit-pet choice.
-/// `pet` is `None` for "off" — the default, and the only value never
-/// written to disk (see [`serialize`]).
+/// The full `wall.json` document: view assignments.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct WallFile {
     pub views: ViewsByWorkspace,
-    pub pet: Option<String>,
 }
 
 /// `$GARAGE_DIR`, else `~/.garage` (shared by `wall.json` and `config.toml`).
@@ -98,15 +85,7 @@ pub fn serialize(file: &WallFile) -> String {
             .collect();
         by_workspace.insert(workspace.clone(), Value::Array(entries));
     }
-    let mut doc = json!({ "version": SCHEMA_VERSION, "views": by_workspace });
-    // Written only when not off (spec: off is the default and never takes
-    // disk space) — an unconditional write would also happily persist a
-    // caller's typo, which the lenient reader would then just discard.
-    if let Some(pet) = file.pet.as_deref()
-        && PET_VALUES.contains(&pet)
-    {
-        doc["pet"] = Value::String(pet.to_owned());
-    }
+    let doc = json!({ "version": SCHEMA_VERSION, "views": by_workspace });
     // A `Value` built from owned strings/numbers always serializes; the
     // fallback is unreachable in practice but keeps this function total.
     serde_json::to_string_pretty(&doc).unwrap_or_else(|_| "{}".to_owned())
@@ -114,13 +93,11 @@ pub fn serialize(file: &WallFile) -> String {
 
 /// Parse `raw`; anything that isn't exactly the expected shape — invalid
 /// JSON, an unrecognized `version`, a malformed entry — yields the default
-/// (empty views, pet off). Never errors: spec "View persistence" — "if
+/// (empty views). Never errors: spec "View persistence" — "if
 /// missing or invalid, all sessions collapse into the default view with no
-/// error" — and spec tui-pit-pet — "a missing or unrecognized value SHALL
-/// load as `off` with no error." A malformed *individual* view entry is
-/// skipped rather than invalidating the whole file, so one bad line can't
-/// cost every other workspace its view assignments; the same leniency
-/// applies to `pet` alone without touching `views`.
+/// error". A malformed *individual* view entry is skipped rather than
+/// invalidating the whole file, so one bad line can't cost every other
+/// workspace its view assignments.
 pub fn deserialize(raw: &str) -> WallFile {
     let Ok(value) = serde_json::from_str::<Value>(raw) else {
         return WallFile::default();
@@ -168,16 +145,7 @@ pub fn deserialize(raw: &str) -> WallFile {
         }
     }
 
-    // Lenient: missing, non-string, or anything other than cat/duck/pup all
-    // collapse to `None` (off) — never an error, never rejects the `views`
-    // half of the file (spec tui-pit-pet).
-    let pet = root
-        .get("pet")
-        .and_then(Value::as_str)
-        .filter(|p| PET_VALUES.contains(p))
-        .map(str::to_owned);
-
-    WallFile { views: out, pet }
+    WallFile { views: out }
 }
 
 /// Load `wall.json` from `path`. Missing file, unreadable, or invalid
@@ -226,11 +194,8 @@ mod tests {
         }
     }
 
-    fn file(views: ViewsByWorkspace, pet: Option<&str>) -> WallFile {
-        WallFile {
-            views,
-            pet: pet.map(str::to_owned),
-        }
+    fn file(views: ViewsByWorkspace) -> WallFile {
+        WallFile { views }
     }
 
     // ── path resolution ─────────────────────────────────────────────────
@@ -264,7 +229,7 @@ mod tests {
             "apexlabs".to_owned(),
             vec![view("api-fix", &["garage/apexlabs/api-fix"])],
         );
-        let doc = file(views, None);
+        let doc = file(views);
         let raw = serialize(&doc);
         assert_eq!(deserialize(&raw), doc);
     }
@@ -273,51 +238,22 @@ mod tests {
     fn serialize_omits_workspaces_with_no_named_views() {
         let mut views: ViewsByWorkspace = HashMap::new();
         views.insert("empty".to_owned(), vec![]);
-        let raw = serialize(&file(views, None));
+        let raw = serialize(&file(views));
         let parsed: Value = serde_json::from_str(&raw).unwrap();
         assert_eq!(parsed["views"].as_object().unwrap().len(), 0);
     }
 
-    // ── pet round trip (spec tui-pit-pet "Choice survives restart") ────
-
     #[test]
-    fn serialize_then_deserialize_round_trips_a_pet_choice() {
-        let doc = file(HashMap::new(), Some("duck"));
-        let raw = serialize(&doc);
-        assert_eq!(deserialize(&raw), doc);
-    }
-
-    #[test]
-    fn serialize_omits_the_pet_key_entirely_when_off() {
-        let raw = serialize(&file(HashMap::new(), None));
-        let parsed: Value = serde_json::from_str(&raw).unwrap();
-        assert!(parsed.get("pet").is_none(), "off must not take disk space");
-    }
-
-    #[test]
-    fn deserialize_treats_a_garbage_pet_value_as_off() {
-        let raw = r#"{"version":1,"views":{},"pet":"velociraptor"}"#;
-        assert_eq!(deserialize(raw).pet, None);
-    }
-
-    #[test]
-    fn deserialize_treats_a_non_string_pet_value_as_off() {
-        let raw = r#"{"version":1,"views":{},"pet":42}"#;
-        assert_eq!(deserialize(raw).pet, None);
-    }
-
-    #[test]
-    fn deserialize_of_an_old_file_with_no_pet_field_is_off() {
-        let raw = r#"{"version":1,"views":{}}"#;
-        assert_eq!(deserialize(raw).pet, None);
-    }
-
-    #[test]
-    fn deserialize_accepts_each_valid_pet_value() {
-        for species in ["cat", "duck", "pup"] {
-            let raw = format!(r#"{{"version":1,"views":{{}},"pet":"{species}"}}"#);
-            assert_eq!(deserialize(&raw).pet.as_deref(), Some(species));
-        }
+    fn a_legacy_pet_key_is_ignored_and_not_written_back() {
+        let raw =
+            r#"{"version":1,"views":{"w":[{"name":"v","sessions":["garage/w/a"]}]},"pet":"duck"}"#;
+        let doc = deserialize(raw);
+        assert_eq!(
+            doc.views["w"][0].name, "v",
+            "the views survive the unknown key"
+        );
+        let parsed: Value = serde_json::from_str(&serialize(&doc)).unwrap();
+        assert!(parsed.get("pet").is_none());
     }
 
     // ── invalid file ────────────────────────────────────────────────────
@@ -403,7 +339,7 @@ mod tests {
         let path = dir.join("wall.json");
         let mut views: ViewsByWorkspace = HashMap::new();
         views.insert("a".to_owned(), vec![view("solo", &["garage/a/one"])]);
-        let mut doc = file(views, Some("cat"));
+        let mut doc = file(views);
 
         save(&path, &doc).expect("save should create the dir and write atomically");
         assert_eq!(load(&path), doc);
@@ -425,7 +361,7 @@ mod tests {
         let path = dir.join("wall.json");
         let mut views: ViewsByWorkspace = HashMap::new();
         views.insert("a".to_owned(), vec![view("solo", &["x"])]);
-        save(&path, &file(views, None)).unwrap();
+        save(&path, &file(views)).unwrap();
 
         let names: Vec<String> = std::fs::read_dir(&dir)
             .unwrap()

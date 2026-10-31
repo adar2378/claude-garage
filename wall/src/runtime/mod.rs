@@ -36,7 +36,7 @@ use tokio::sync::mpsc;
 use crate::actions::ActionId;
 use crate::api::client::{ApiError, GarageClient};
 use crate::api::models::{
-    FinishAction, HooksInstallResult, SessionInfo, UsageInfo, WorkspaceInfo, WorktreeRecord,
+    FinishAction, HooksInstallResult, SessionInfo, WorkspaceInfo, WorktreeRecord,
 };
 use crate::attach::DaemonResolver;
 use crate::input::encode::encode_key;
@@ -50,7 +50,6 @@ use crate::state::wall_state::{KeyLayer, OverlayKind, WallSession};
 use crate::ui::escalation::{EscalationPolicy, HEARTBEAT_INTERVAL_MS};
 use crate::ui::layout::WallLayout;
 use crate::ui::motion::Motion;
-use crate::ui::pet::{PetClick, PetHost};
 use crate::ui::registry::{FrozenTile, TileRegistry};
 use crate::ui::scroll::{ScrollModel, capture_frozen, history_size, page_lines};
 use crate::ui::view_picker::ViewPickerState;
@@ -69,7 +68,7 @@ pub use effects::Effect;
 use effects::*;
 pub use overlays::handle_overlay_key;
 use overlays::*;
-pub use router::{GarageRouter, NoticeKind, Notices, RESTART_PREFIX_HINT, TYPING_HINT};
+pub use router::{GarageRouter, Notices, RESTART_PREFIX_HINT, TYPING_HINT};
 use tasks::*;
 
 const FRAME_CAP: Duration = Duration::from_millis(33); // ~30fps render cap (not spec-mandated)
@@ -81,12 +80,6 @@ const ELAPSED_TICK: Duration = Duration::from_secs(10);
 /// Throttle for the frozen `+N lines` counter refresh (one tmux call per
 /// frozen tile).
 const FROZEN_COUNT_REFRESH: Duration = Duration::from_secs(1);
-
-/// `GET /api/usage` poll cadence (spec tui-context-meters "Strip usage
-/// chip": "refreshed at least every 60s"). No SSE push exists for
-/// account-wide usage — polling (plus the once-at-startup fetch) is the
-/// only source.
-const USAGE_POLL_INTERVAL: Duration = Duration::from_secs(60);
 
 /// Delay before the one-time statusline-install hint may appear (spec
 /// tui-context-meters "Install affordance": "~30s after startup").
@@ -146,9 +139,6 @@ pub enum AppEvent {
     TileOutput,
     Workspaces(Vec<WorkspaceInfo>),
     Sessions(Vec<SessionInfo>),
-    /// `GET /api/usage` poll result (spec tui-context-meters "Strip usage
-    /// chip").
-    Usage(UsageInfo),
     /// SSE `status` event.
     Status {
         id: String,
@@ -351,7 +341,6 @@ pub fn run(terminal: &mut crate::term::WallTerminal, base_url: &str) -> std::io:
     spawn_input_task(&rt, tx.clone(), stop.clone());
     spawn_fetch_task(&rt, tx.clone(), base_url.to_owned(), client_id.clone());
     spawn_sse_task(&rt, tx.clone(), base_url.to_owned(), stop.clone());
-    spawn_usage_task(&rt, tx.clone(), base_url.to_owned(), stop.clone());
     spawn_signal_task(&rt, tx.clone());
 
     let result = rt.block_on(state_loop(terminal, tx.clone(), rx, base_url, &client_id));
@@ -412,16 +401,8 @@ struct App {
     ws_add_rect: Option<Rect>,
     view_picker_rect: Option<Rect>,
 
-    // ── p15: pit pet (spec tui-pit-pet) ───────────────────────────────────
-    /// The pit pet behind its feature boundary; `None` when the `pet`
-    /// feature is off.
-    pet: Option<PetHost>,
     /// p23: running effects, spinner flags and the redraw clock.
     motion: Motion,
-    /// The filler width the last-drawn strip had — the room `pet_tick`'s
-    /// next `PetSim::step` has to work with. `0` until the first frame
-    /// (falls back to a conservative default — see `pet_tick`).
-    last_strip_filler: u16,
 
     // ── p24: plugin host ──────────────────────────────────────────────────
     /// What the daemon says plugins offer and have pushed; the slot
@@ -449,19 +430,15 @@ const PANE_OFFER_KEY: &str = "p";
 
 impl App {
     #[cfg(test)]
-    fn new(tx: EventSender, base_url: &str, started_ms: i64) -> App {
-        App::with_motion(tx, base_url, started_ms, false)
+    fn new(tx: EventSender, base_url: &str) -> App {
+        App::with_motion(tx, base_url, false)
     }
 
-    fn with_motion(tx: EventSender, base_url: &str, started_ms: i64, motion_enabled: bool) -> App {
-        let pet = PetHost::new(started_ms);
+    fn with_motion(tx: EventSender, base_url: &str, motion_enabled: bool) -> App {
         let motion = Motion::new(motion_enabled);
         let mut slots = SlotRegistry::core();
         let plugins = crate::plugins::PluginStore::shared();
         crate::plugins::register(&mut slots, &plugins);
-        if let Some(provider) = pet.as_ref().and_then(PetHost::slot_provider) {
-            slots.register(SlotId::StripRight, provider);
-        }
         if let Some(spinner) = motion.strip_spinner() {
             slots.register(SlotId::StripRight, spinner);
         }
@@ -490,9 +467,7 @@ impl App {
             triage_rect: None,
             ws_add_rect: None,
             view_picker_rect: None,
-            pet,
             motion,
-            last_strip_filler: 0,
             plugins,
             plugin_key_conflicts: Vec::new(),
             geometry: Default::default(),
@@ -661,7 +636,6 @@ impl App {
             AppEvent::TileOutput => {}
             AppEvent::Workspaces(w) => self.store.workspaces_fetched(w),
             AppEvent::Sessions(s) => self.store.sessions_fetched(s),
-            AppEvent::Usage(u) => self.store.usage_fetched(u),
             AppEvent::Status { id, status, since } => {
                 self.store.status_changed(&id, &status, since);
             }
@@ -1000,37 +974,6 @@ impl App {
     // tile", tui-triage "or clicking the strip badge", tui-scrollback
     // "Mouse wheel scrolling") ───────────────────────────────────────────
 
-    /// A click on the pet's strip columns (spec tui-pit-pet "Click
-    /// routing"): while alert, the same jump `a` performs; otherwise a
-    /// petting interaction (the host's job).
-    fn handle_pet_click(&mut self, now: i64) {
-        if self.store.state().layer == KeyLayer::Engaged {
-            self.store.disengage();
-        }
-        let Some(pet) = &mut self.pet else { return };
-        if pet.click(now, self.store.state(), &mut self.router.notices) == PetClick::JumpToBlocked
-            && !self.store.jump_to_longest_waiting()
-        {
-            // Same wording as the `a` key's decline (spec tui-triage).
-            self.router.notices.show("no session needs you", 2000, now);
-        }
-    }
-
-    // ── p15: pit pet tick (spec tui-pit-pet) ──────────────────────────────
-
-    /// The 300 ms pet tick; returns whether the frame needs a redraw.
-    fn pet_tick(&mut self, now: i64) -> bool {
-        match &mut self.pet {
-            Some(pet) => pet.tick(
-                now,
-                self.store.state(),
-                &mut self.router.notices,
-                self.last_strip_filler,
-            ),
-            None => false,
-        }
-    }
-
     // ── Downstream of state changes ──────────────────────────────────────
 
     /// Runs after every drained event batch (and on ticks): reconcile the
@@ -1083,14 +1026,12 @@ impl App {
     // ── Draw (task 4.1–4.5: the real wall) ───────────────────────────────
 }
 
-/// Snapshot the two fields `wall.json` persists (spec tui-views "View
-/// persistence" + tui-pit-pet "Opt-in roster cycled by `P`") into a
+/// Snapshot what `wall.json` persists (spec tui-views "View persistence") into a
 /// [`WallFile`] ready for [`persistence::save`]. `daemon_live` and every
 /// other transient field never reach disk.
 fn wall_file_snapshot(store: &WallStore) -> WallFile {
     WallFile {
         views: store.state().views.clone(),
-        pet: store.state().pet.clone(),
     }
 }
 
@@ -1135,8 +1076,7 @@ async fn state_loop(
     base_url: &str,
     client_id: &str,
 ) -> std::io::Result<()> {
-    let started_ms = now_ms();
-    let mut app = App::with_motion(tx, base_url, started_ms, crate::ui::motion::load_enabled());
+    let mut app = App::with_motion(tx, base_url, crate::ui::motion::load_enabled());
     // View persistence (spec tui-views "View persistence"): load whatever
     // wall.json holds, then debounce a save (≥500ms after the last
     // views_revision bump) so a burst of `d`/`D`/Tab presses writes once,
@@ -1230,11 +1170,6 @@ async fn state_loop(
         if app.refresh_frozen_counts() {
             dirty = true;
         }
-        // Pit pet (spec tui-pit-pet): a 300 ms tick while a species is
-        // selected, one cheap `if` otherwise (design.md decision 3).
-        if app.pet_tick(now) {
-            dirty = true;
-        }
         // Debounced wall.json save (spec tui-views "View persistence"):
         // start the timer the moment views_revision moves, fire once it's
         // sat still for VIEWS_SAVE_DEBOUNCE — a burst of view mutations
@@ -1292,12 +1227,9 @@ async fn state_loop(
                 return Ok(());
             }
             // The first Sessions fetch has now populated state().sessions —
-            // safe to load the persisted views (see the comment above). The
-            // pet choice needs no such pruning (it isn't session-shaped), so
-            // it's applied in the same beat, right alongside `load_views`.
+            // safe to load the persisted views (see the comment above).
             if was_sessions && let Some(file) = pending_file.take() {
                 app.store.load_views(file.views);
-                app.store.set_pet(file.pet);
             }
         }
         // Downstream of the batch: registry sync, dead-tile disengage,

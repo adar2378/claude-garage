@@ -145,6 +145,7 @@ pub fn items(plugin: &str, slot: SlotId, item: &WidgetItem) -> Vec<SlotItem> {
             .and_then(|c| resolve_click(plugin, c));
         let ms = item.frame_ms.unwrap_or(250).min(u32::from(u16::MAX)) as u16;
         return SlotItem::animated(spans, ms, priority(item.priority))
+            .map(|it| it.with_frame_x(item.frame_x.as_deref().unwrap_or(&[])))
             .map(|it| finish(it, item_click.or(frame_click)))
             .into_iter()
             .collect();

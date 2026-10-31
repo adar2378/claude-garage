@@ -10,7 +10,7 @@ use crate::ui::motion::{FX_TICK, SPINNER_TICK};
 
 fn app_with(motion: bool, sessions: Vec<SessionInfo>) -> App {
     let (tx, _rx) = mpsc::unbounded_channel();
-    let mut app = App::with_motion(tx, "http://127.0.0.1:0", 0, motion);
+    let mut app = App::with_motion(tx, "http://127.0.0.1:0", motion);
     app.store.workspaces_fetched(vec![ws("a")]);
     app.store.sessions_fetched(sessions);
     app

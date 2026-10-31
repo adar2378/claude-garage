@@ -1,0 +1,20 @@
+[package]
+name = "garage-plugin-pit-pet"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "claude-garage bundled plugin: the pit pet in the status strip"
+publish = false
+
+[[bin]]
+name = "pit-pet"
+path = "src/main.rs"
+
+[lib]
+name = "pit_pet"
+path = "src/lib.rs"
+
+[dependencies]
+garage-plugin-sdk = { path = "../../crates/plugin-sdk" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

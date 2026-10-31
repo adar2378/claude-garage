@@ -197,6 +197,11 @@ pub struct WidgetItem {
     pub frames: Option<Vec<Vec<Segment>>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub frame_ms: Option<u32>,
+    /// `strip.right` filler items only: the filler column of each frame, in
+    /// step with `frames` (same length), overriding `placement.x`. A walking
+    /// pet changes column from frame to frame; a plain `x` cannot say that.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub frame_x: Option<Vec<u16>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub row: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -507,6 +512,20 @@ pub fn validate_put(slot: WidgetSlot, mut put: WidgetPut) -> Result<WidgetPut, L
             if item.segments.is_some() {
                 item.frame_ms = None;
             }
+            if let Some(xs) = &item.frame_x {
+                let frames = item.frames.as_ref().map_or(0, Vec::len);
+                if frames == 0 || xs.len() != frames {
+                    return Err(bad(format!(
+                        "{at}.frame_x: {} columns for {frames} frames; needs one per frame",
+                        xs.len()
+                    )));
+                }
+                if !item.placement.is_filler() {
+                    return Err(bad(format!(
+                        "{at}.frame_x: only valid with a filler placement"
+                    )));
+                }
+            }
             if let Some(st) = &item.row_style {
                 check_style(&format!("{at}.row_style"), st)?;
             }
@@ -612,6 +631,35 @@ mod tests {
         let back: WidgetItem =
             serde_json::from_value(serde_json::to_value(&item).unwrap()).unwrap();
         assert_eq!(back, item);
+    }
+
+    #[test]
+    fn frame_x_needs_one_column_per_frame_and_a_filler() {
+        let item = |frames: usize, xs: &[u16], placement: Value| {
+            put(json!({"scopes": {"*": [{
+                "placement": placement,
+                "frames": vec![json!([{"text": "a"}]); frames],
+                "frame_x": xs
+            }]}}))
+        };
+        let filler = json!({"kind": "filler", "x": 0});
+        let ok = validate_put(WidgetSlot::StripRight, item(3, &[1, 2, 3], filler.clone())).unwrap();
+        assert_eq!(ok.scopes["*"][0].frame_x, Some(vec![1, 2, 3]));
+        for (frames, xs, placement, why) in [
+            (3, &[1u16, 2][..], filler.clone(), "2 columns for 3 frames"),
+            (2, &[1, 2][..], json!({"kind": "flow"}), "filler placement"),
+        ] {
+            let e = validate_put(WidgetSlot::StripRight, item(frames, xs, placement)).unwrap_err();
+            assert_eq!(e.status, 422);
+            assert!(e.message.contains(why), "{}", e.message);
+        }
+        let plain = put(json!({"scopes": {"*": [{
+            "placement": filler, "segments": [{"text": "a"}], "frame_x": [1]
+        }]}}));
+        assert!(
+            validate_put(WidgetSlot::StripRight, plain).is_err(),
+            "no frames, no frame_x"
+        );
     }
 
     #[test]

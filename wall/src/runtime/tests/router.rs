@@ -868,56 +868,6 @@ fn notices_expire_via_tick() {
     assert_eq!(notices.current(3000), None);
 }
 
-// ── pit-pet chatter vs. user notices (spec tui-pit-pet "Species-voiced
-// chatter": "SHALL NOT replace a non-pet notice that is still showing")
-
-#[test]
-fn show_pet_is_refused_over_a_live_user_notice() {
-    let mut notices = Notices::default();
-    notices.show("press x again to close", 3000, 1000);
-    assert!(!notices.show_pet("drink some water", 4000, 1500));
-    // The user notice is untouched, not clobbered nor extended.
-    assert_eq!(notices.current(1500), Some("press x again to close"));
-}
-
-#[test]
-fn show_pet_is_allowed_once_the_user_notice_has_expired() {
-    let mut notices = Notices::default();
-    notices.show("press x again to close", 1000, 1000); // expires at 2000
-    assert!(notices.show_pet("drink some water", 4000, 2500));
-    assert_eq!(notices.current(2500), Some("drink some water"));
-}
-
-#[test]
-fn a_user_notice_always_overrides_a_live_pet_notice_immediately() {
-    let mut notices = Notices::default();
-    assert!(notices.show_pet("drink some water", 4000, 1000));
-    notices.show(TYPING_HINT, 2500, 1500);
-    assert_eq!(notices.current(1500), Some(TYPING_HINT));
-}
-
-#[test]
-fn a_pet_notice_freely_replaces_another_pet_notice() {
-    let mut notices = Notices::default();
-    assert!(notices.show_pet("drink some water", 4000, 1000));
-    assert!(notices.show_pet("proud of you", 4000, 1200));
-    assert_eq!(notices.current(1200), Some("proud of you"));
-}
-
-#[test]
-fn user_notice_active_tracks_kind_and_expiry() {
-    let mut notices = Notices::default();
-    assert!(!notices.user_notice_active(1000), "nothing showing yet");
-    notices.show("press x again to close", 1000, 1000); // expires at 2000
-    assert!(notices.user_notice_active(1500));
-    assert!(!notices.user_notice_active(2000), "expired");
-    notices.show_pet("drink some water", 4000, 2000);
-    assert!(
-        !notices.user_notice_active(2500),
-        "a pet notice is not a user notice"
-    );
-}
-
 // ── key-event reduction ─────────────────────────────────────────────
 
 #[test]
