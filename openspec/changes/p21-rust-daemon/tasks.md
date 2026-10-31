@@ -28,7 +28,7 @@ Rules for every task: tmux tests use an isolated socket (`GARAGE_TMUX_SOCKET`), 
 
 ## 4. Parity
 
-- [ ] 4.1 Run the p20 contract suite against the JS daemon and the Rust daemon side by side (own ports, `GARAGE_DIR`s and tmux sockets); fix every difference or record it as intended in `verification.md`
+- [x] 4.1 Run the p20 contract suite against the JS daemon and the Rust daemon side by side (own ports, `GARAGE_DIR`s and tmux sockets); fix every difference or record it as intended in `verification.md`
 - [ ] 4.2 Run the current `garage-wall` binary (built from `main`) against the Rust daemon in an isolated setup and walk the swap-criterion checklist (design.md)
 
 ## 5. tmux control mode (after 4)

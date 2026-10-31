@@ -6,7 +6,7 @@
 //! /api/hooks/install and /api/statusline/install (rewrite Claude settings;
 //! covered by daemon unit tests), /api/diff (git plumbing, unit tested),
 //! /api/ui/visibility (trivial; notifications are stubbed out instead),
-//! PATCH /api/workspaces (rename; unit tested), and plain 400/404 validation.
+//! and most plain 400/404 validation.
 
 mod common;
 
@@ -272,4 +272,144 @@ fn deleting_a_worktree_session_returns_a_record_that_finish_can_discard() {
     bad["branch"] = json!("main");
     let (st, _) = d.post("/api/worktrees/finish", json!({"worktree": bad, "action": "discard"}));
     assert_eq!(st, 400, "never touches non-garage branches");
+}
+
+#[test]
+fn session_list_entries_have_the_shape_the_tui_reads() {
+    let d = Daemon::start();
+    let repo = d.git_repo("repo");
+    d.add_workspace("repo", &repo);
+    let live_id = d.create_session("repo", "live", false)["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let dead_id = d.create_session("repo", "dead", true)["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert!(d.tmux(&["kill-session", "-t", &format!("={dead_id}")]));
+    d.wait_for(10, || d.session(&dead_id).filter(|s| s["restorable"] == true))
+        .expect("dead session is restorable");
+
+    // live entry: every field the wall renders, with its type
+    let live = d.session(&live_id).unwrap();
+    for k in [
+        "id", "workspace", "label", "dir", "attached", "status", "since", "message", "branch",
+        "title", "context",
+    ] {
+        assert!(live.get(k).is_some(), "live entry lacks `{k}`: {live}");
+    }
+    assert_eq!(live["id"], live_id.as_str());
+    assert_eq!(live["workspace"], "repo");
+    assert_eq!(live["label"], "live");
+    assert!(live["attached"].is_boolean());
+    assert!(live["since"].is_number(), "since falls back to creation time");
+    assert!(live["message"].is_null() && live["title"].is_null() && live["context"].is_null());
+    assert!(live["branch"].is_string(), "branch of the repo checkout");
+    assert!(live.get("restorable").is_none() || live["restorable"].is_null());
+
+    // restorable entry: exact value set, no live-only data
+    let dead = d.session(&dead_id).unwrap();
+    assert_eq!(dead["workspace"], "repo");
+    assert_eq!(dead["label"], "dead");
+    assert_eq!(dead["dir"], repo.to_str().unwrap(), "dir re-resolved from the registry");
+    assert_eq!(dead["attached"], false);
+    assert_eq!(dead["status"], "restorable");
+    assert_eq!(dead["restorable"], true);
+    for k in ["since", "message", "title", "context"] {
+        assert!(dead[k].is_null(), "restorable `{k}` must be null: {dead}");
+    }
+    // live entries come first, restorable ones after
+    let ids: Vec<_> = d.sessions().iter().map(|s| s["id"].as_str().unwrap().to_string()).collect();
+    assert_eq!(ids, vec![live_id, dead_id]);
+}
+
+#[test]
+fn workspace_rename_moves_its_sessions() {
+    let d = Daemon::start();
+    let dir = d.mkdir("proj");
+    let other = d.mkdir("other");
+    d.add_workspace("proj", &dir);
+    d.add_workspace("other", &other);
+    let old = d.create_session("proj", "one", false)["id"].as_str().unwrap().to_string();
+    assert_eq!(old, "garage/proj/one");
+
+    assert_eq!(d.patch("/api/workspaces/nope", json!({"name": "x"})).0, 404);
+    assert_eq!(d.patch("/api/workspaces/proj", json!({"name": "Bad Name"})).0, 400);
+    assert_eq!(d.patch("/api/workspaces/proj", json!({"name": "other"})).0, 409);
+
+    let (st, b) = d.patch("/api/workspaces/proj", json!({"name": "renamed"}));
+    assert_eq!(st, 200, "{b}");
+    assert_eq!(b["name"], "renamed");
+    assert_eq!(b["dir"], dir.to_str().unwrap());
+    assert_eq!(
+        b["renamedSessions"],
+        json!([{"from": "garage/proj/one", "to": "garage/renamed/one"}])
+    );
+    assert!(b.get("failedSessions").is_none());
+
+    let (_, list) = d.get("/api/workspaces");
+    let names: Vec<_> = list.as_array().unwrap().iter().map(|w| w["name"].as_str().unwrap()).collect();
+    assert!(names.contains(&"renamed") && !names.contains(&"proj"));
+    assert!(d.session(&old).is_none());
+    let s = d.session("garage/renamed/one").expect("session follows the rename");
+    assert_eq!(s["workspace"], "renamed");
+    assert!(d.tmux(&["has-session", "-t", "=garage/renamed/one"]), "tmux session really renamed");
+}
+
+#[test]
+fn event_stream_frames_are_byte_exact() {
+    let d = Daemon::start();
+    let dir = d.mkdir("proj");
+    d.add_workspace("proj", &dir);
+    let mut ev = d.events_raw();
+    let head = ev.text().to_lowercase();
+    assert!(head.starts_with("http/1.1 200"), "{head}");
+    assert!(head.contains("content-type: text/event-stream"), "{head}");
+    assert!(head.contains("cache-control: no-cache"), "{head}");
+
+    let id = d.create_session("proj", "e", false)["id"].as_str().unwrap().to_string();
+    assert!(ev.wait_for("event: sessions\ndata: {}\n\n", 10), "{}", ev.text());
+
+    let (st, _) = d.post(
+        &format!("/api/hooks/claude?token={}", d.hook_token()),
+        json!({"hook_event_name": "Stop", "cwd": dir}),
+    );
+    assert_eq!(st, 200);
+    assert!(ev.wait_for("event: status\ndata: {\"id\":", 10), "{}", ev.text());
+    let text = ev.text();
+    let frame_start = text.find("event: status\n").unwrap();
+    let frame = &text[frame_start..];
+    let frame = &frame[..frame.find("\n\n").expect("frame terminator") + 2];
+    // key order and no whitespace: the wall parses these lines as they are
+    let prefix = format!("event: status\ndata: {{\"id\":\"{id}\",\"status\":\"done\",\"since\":");
+    assert!(frame.starts_with(&prefix), "{frame:?}");
+    let since = frame[prefix.len()..].strip_suffix("}\n\n").expect("closing brace");
+    assert!(since.parse::<u64>().is_ok(), "since is epoch ms: {since:?}");
+}
+
+#[test]
+fn discarding_a_worktree_whose_directory_vanished_still_removes_the_branch() {
+    let d = Daemon::start();
+    let repo = d.git_repo("repo");
+    d.add_workspace("repo", &repo);
+    let created = d.create_session("repo", "gone", true);
+    let id = created["id"].as_str().unwrap().to_string();
+    let path = created["worktree"]["path"].as_str().unwrap().to_string();
+
+    let (_, b) = d.delete(&format!("/api/sessions/{id}"));
+    let record = b["worktree"].clone();
+    std::fs::remove_dir_all(&path).unwrap();
+
+    let (st, b) = d.post("/api/worktrees/finish", json!({"worktree": record, "action": "discard"}));
+    assert_eq!(st, 200, "{b}");
+    assert_eq!(b["discarded"], true);
+    let branches = std::process::Command::new("git")
+        .args(["-C", repo.to_str().unwrap(), "branch", "--list", "garage/*"])
+        .output()
+        .unwrap();
+    assert!(
+        String::from_utf8_lossy(&branches.stdout).trim().is_empty(),
+        "the garage branch must be deleted"
+    );
 }

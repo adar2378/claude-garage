@@ -44,6 +44,7 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             wall/target
+            target
             tests/contract/target
           key: cargo-${{ runner.os }}-${{ hashFiles('wall/Cargo.lock', 'tests/contract/Cargo.lock') }}
           restore-keys: cargo-${{ runner.os }}-
@@ -77,3 +78,8 @@ jobs:
       - name: Contract tests
         if: runner.os != 'Windows'
         run: npm run test:contract
+
+      # the same suite against the Rust daemon (p21): proves the swap
+      - name: Contract tests (Rust daemon)
+        if: runner.os != 'Windows'
+        run: npm run test:contract:rust

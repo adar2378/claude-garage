@@ -121,3 +121,12 @@ If any check fails, the JS daemon stays the shipped one, and the Rust daemon sta
 - `~/.garage` stays the data folder on every OS; `GARAGE_DIR` overrides it.
 - The diff route is removed (404); the TUI has not used it since 0.5.0.
 - A fourth crate, `crates/cli`, holds the single `claude-garage` binary.
+
+## Parity deviations
+
+Found by running the p20 contract suite (12 tests) and a throwaway differential probe (about 45 requests, error paths included) against both daemons. Everything not listed here returned the same status and body.
+
+- **Diff route.** `GET /api/diff/:workspace` is 404 in Rust (decision 11). Not in the contract suite, because the JS daemon would fail it; task 6.1 adds it once the JS daemon is gone.
+- **404 body for unmatched routes.** Fastify returns `{"error":"Not Found","message":"Route GET:/api/nope not found","statusCode":404}`; Rust returns `{"error":"not found"}`. Nothing in the TUI reads this body.
+- **Forged worktree records.** `POST /api/worktrees/finish` with `merge` or `discard` in Rust refuses (400) any path that is not under `<GARAGE_DIR>/worktrees/` or whose HEAD is not the claimed branch. The JS daemon trusts the record. Deliberate hardening; a worktree whose directory has vanished is still accepted when the path is literally a clean child of that root (found by the probe and fixed to match JS, covered by a contract test).
+- **`merge` of a worktree whose directory has vanished.** JS skips its uncommitted-changes check and merges the branch; Rust does the same after the fix above, but the path guard also applies, so a forged record gets 400 where JS would run git.
