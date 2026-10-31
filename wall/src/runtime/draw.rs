@@ -25,6 +25,9 @@ use super::{App, NoticeKind};
 
 impl App {
     pub(super) fn draw_frame(&mut self, frame: &mut ratatui::Frame, now_ms: i64) {
+        // Animated slot items read this frame's clock; the loop reads back
+        // which of them were drawn to decide whether to wake for animation.
+        self.slots.begin_frame(now_ms);
         let area = frame.area();
         let (ids, maximized_index) = {
             let state = self.store.state();

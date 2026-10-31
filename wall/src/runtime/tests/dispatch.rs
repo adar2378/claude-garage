@@ -253,3 +253,16 @@ fn the_gutter_history_poll_runs_only_while_a_marker_is_showing() {
     assert!(!history_refresh_due(true, Duration::from_millis(900)));
     assert!(history_refresh_due(true, Duration::from_secs(1)));
 }
+
+#[test]
+fn the_loop_wakes_for_animation_only_when_an_animated_item_is_visible() {
+    use std::time::Duration;
+    let ms = Duration::from_millis;
+    // Nothing animated: no redraw and no wake-up, however long it has been.
+    assert_eq!(animation_wake(None, ms(0)), AnimationWake { redraw: false, next: None });
+    assert_eq!(animation_wake(None, Duration::from_secs(3600)), AnimationWake { redraw: false, next: None });
+    // Animated: not yet due, then due.
+    assert_eq!(animation_wake(Some(ms(250)), ms(100)), AnimationWake { redraw: false, next: Some(ms(150)) });
+    assert_eq!(animation_wake(Some(ms(250)), ms(250)), AnimationWake { redraw: true, next: Some(ms(250)) });
+    assert_eq!(animation_wake(Some(ms(250)), ms(900)), AnimationWake { redraw: true, next: Some(ms(250)) });
+}

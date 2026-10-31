@@ -102,6 +102,27 @@ fn history_refresh_due(gutter_showing: bool, since_last: Duration) -> bool {
     gutter_showing && since_last >= HISTORY_POLL
 }
 
+/// What the loop's animation clock asks for this iteration.
+#[derive(Debug, PartialEq, Eq)]
+struct AnimationWake {
+    /// An animated item's frame is due: mark the frame dirty.
+    redraw: bool,
+    /// Wake no later than this (so the next frame is not a whole idle poll
+    /// late); `None` when nothing animates and the loop adds no wake-up.
+    next: Option<Duration>,
+}
+
+/// The loop's animation decision, given the interval of the animated items
+/// drawn last frame (`None` = none) and the time since the last animation
+/// redraw. Pure, so "no animated item, no extra wake-ups" is a test.
+fn animation_wake(interval: Option<Duration>, since_last: Duration) -> AnimationWake {
+    match interval {
+        None => AnimationWake { redraw: false, next: None },
+        Some(interval) if since_last >= interval => AnimationWake { redraw: true, next: Some(interval) },
+        Some(interval) => AnimationWake { redraw: false, next: Some(interval - since_last) },
+    }
+}
+
 /// How long the install hint stays up if never dismissed by a keypress
 /// (spec: "one-time" — it never reappears after this either).
 const INSTALL_HINT_TTL_MS: i64 = 8000;
@@ -804,6 +825,7 @@ async fn state_loop(
     let mut last_elapsed_tick = Instant::now();
     let mut last_heartbeat = Instant::now();
     let mut last_history_poll = Instant::now();
+    let mut last_animation = Instant::now();
     let startup = Instant::now();
     let mut install_hint_shown = false;
 
@@ -826,6 +848,14 @@ async fn state_loop(
             tokio::task::spawn_blocking(move || {
                 let _ = GarageClient::new(Some(base_url)).post_visibility(&client_id, true);
             });
+        }
+        // Animated slot items (a plugin's frames cycle from this clock): the
+        // loop redraws on the items' own interval, and only while one was
+        // drawn last frame.
+        let animation = animation_wake(app.slots.animation_interval(), last_animation.elapsed());
+        if animation.redraw {
+            last_animation = Instant::now();
+            dirty = true;
         }
         // `tile.gutter` markers on a live tail view need tmux's history size
         // to know which scrollback row the body's top is; poll it only for the
@@ -886,11 +916,14 @@ async fn state_loop(
             last_render = Instant::now();
             dirty = false;
         }
-        let timeout = if dirty {
+        let mut timeout = if dirty {
             FRAME_CAP.saturating_sub(last_render.elapsed())
         } else {
             Duration::from_millis(250)
         };
+        if let Some(next) = animation.next {
+            timeout = timeout.min(next.max(Duration::from_millis(1)));
+        }
         let first = match tokio::time::timeout(timeout, rx.recv()).await {
             Err(_) => continue, // timeout: loop back to tick + render
             Ok(None) => {

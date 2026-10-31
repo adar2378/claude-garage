@@ -5,8 +5,10 @@
 //! Only core providers are registered today; the plugin host fills the same
 //! slots later.
 
+use std::cell::Cell;
 use std::ops::Range;
 use std::sync::Arc;
+use std::time::Duration;
 
 use ratatui::layout::Rect;
 use ratatui::style::Style;
@@ -135,6 +137,27 @@ pub enum Placement {
     Filler { x: u16, caption: Option<String> },
 }
 
+/// Frame interval bounds for an animated item, in milliseconds.
+pub const FRAME_MS_MIN: u16 = 100;
+pub const FRAME_MS_MAX: u16 = 2000;
+
+/// An animated item's frames and interval. The TUI picks the frame from its
+/// own clock, so a plugin pushes the frame set once per state change and no
+/// process ticks (p24 design.md Gap G).
+#[derive(Clone, Debug, PartialEq)]
+pub struct Animated {
+    pub frames: Arc<[Vec<Span<'static>>]>,
+    pub frame_ms: u16,
+}
+
+impl Animated {
+    /// The frame shown at `now_ms`.
+    pub fn frame_at(&self, now_ms: i64) -> &[Span<'static>] {
+        let index = (now_ms.max(0) / i64::from(self.frame_ms)) as usize % self.frames.len();
+        &self.frames[index]
+    }
+}
+
 /// One contribution: styled text, an optional click action, a priority
 /// (higher survives longer when space runs out) and a placement.
 #[derive(Clone, Debug)]
@@ -149,6 +172,9 @@ pub struct SlotItem {
     /// `tile.gutter` only: the absolute scrollback row (counted from the
     /// first line of the session's scrollback) this marker is drawn beside.
     pub gutter_row: Option<u64>,
+    /// Set for an animated item: `text` then holds frame 0 and the registry
+    /// swaps in the frame for the current draw.
+    pub animated: Option<Animated>,
 }
 
 impl SlotItem {
@@ -160,7 +186,18 @@ impl SlotItem {
             placement: Placement::Flow,
             row_style: None,
             gutter_row: None,
+            animated: None,
         }
+    }
+
+    /// An animated item: `frames` cycled every `frame_ms` (clamped to
+    /// 100..=2000 ms). `None` when there are no frames.
+    pub fn animated(frames: Vec<Vec<Span<'static>>>, frame_ms: u16, priority: i16) -> Option<Self> {
+        let first = frames.first()?.clone();
+        let frame_ms = frame_ms.clamp(FRAME_MS_MIN, FRAME_MS_MAX);
+        let mut item = SlotItem::new(first, priority);
+        item.animated = Some(Animated { frames: frames.into(), frame_ms });
+        Some(item)
     }
 
     pub fn width(&self) -> usize {
@@ -200,6 +237,12 @@ impl SlotProvider for Box<dyn SlotProvider> {
 #[derive(Default)]
 pub struct SlotRegistry {
     providers: Vec<(SlotId, Box<dyn SlotProvider>)>,
+    /// The clock animated items read: set once per frame by
+    /// [`SlotRegistry::begin_frame`].
+    clock_ms: Cell<i64>,
+    /// The shortest `frame_ms` among animated items asked for since
+    /// `begin_frame` (that is, the ones drawn this frame), or 0 for none.
+    animation_ms: Cell<u16>,
 }
 
 impl SlotRegistry {
@@ -207,13 +250,44 @@ impl SlotRegistry {
         self.providers.push((slot, Box::new(provider)));
     }
 
+    /// Start a draw: set the clock animated items read and forget which
+    /// animations the previous frame showed.
+    pub fn begin_frame(&self, now_ms: i64) {
+        self.clock_ms.set(now_ms);
+        self.animation_ms.set(0);
+    }
+
+    /// How often the TUI must redraw to keep the animated items of the last
+    /// frame moving; `None` when it drew none. The loop wakes for animation
+    /// only on `Some`, so a wall without animated widgets pays nothing.
+    pub fn animation_interval(&self) -> Option<Duration> {
+        match self.animation_ms.get() {
+            0 => None,
+            ms => Some(Duration::from_millis(u64::from(ms))),
+        }
+    }
+
     /// The items every provider of `slot` contributes, in registration order.
+    /// Animated items come back showing the frame for the current clock; an
+    /// animated item returned here counts as visible for
+    /// [`SlotRegistry::animation_interval`] (a renderer that later drops it
+    /// for width costs at most one idle redraw per frame interval).
     pub fn items(&self, slot: SlotId, ctx: &SlotCtx) -> Vec<SlotItem> {
-        self.providers
+        let mut items: Vec<SlotItem> = self
+            .providers
             .iter()
             .filter(|(s, _)| *s == slot)
             .flat_map(|(_, provider)| provider.items(ctx))
-            .collect()
+            .collect();
+        for item in &mut items {
+            if let Some(anim) = &item.animated {
+                item.text = anim.frame_at(self.clock_ms.get()).to_vec();
+                let current = self.animation_ms.get();
+                self.animation_ms
+                    .set(if current == 0 { anim.frame_ms } else { current.min(anim.frame_ms) });
+            }
+        }
+        items
     }
 
     /// A registry holding the core providers.
@@ -342,6 +416,63 @@ mod tests {
         assert_eq!(laid.clicks(10, 100), vec![(12..15, ids::PET_PET.into())]);
         assert_eq!(laid.clicks(10, 13), vec![(12..13, ids::PET_PET.into())], "clipped to the limit");
         assert!(laid.clicks(10, 12).is_empty(), "fully clipped away");
+    }
+
+    fn spans(text: &str) -> Vec<Span<'static>> {
+        vec![Span::raw(text.to_owned())]
+    }
+
+    #[test]
+    fn animated_frames_cycle_on_the_clock_and_wrap() {
+        let item = SlotItem::animated(vec![spans("a"), spans("b"), spans("c")], 250, 1).unwrap();
+        let anim = item.animated.as_ref().unwrap();
+        let shown = |t: i64| anim.frame_at(t)[0].content.to_string();
+        assert_eq!(
+            [0, 249, 250, 499, 500, 750, 999].map(shown),
+            ["a", "a", "b", "b", "c", "a", "a"]
+        );
+        assert_eq!(shown(-5), "a", "a clock before zero does not panic");
+        assert_eq!(joined(&item.text), "a", "the base text is frame 0");
+    }
+
+    #[test]
+    fn the_frame_interval_is_clamped_and_an_empty_frame_list_is_not_an_item() {
+        let at = |ms| SlotItem::animated(vec![spans("a")], ms, 0).unwrap().animated.unwrap().frame_ms;
+        assert_eq!((at(1), at(99), at(100), at(2000), at(2001), at(u16::MAX)), (100, 100, 100, 2000, 2000, 2000));
+        assert!(SlotItem::animated(Vec::new(), 250, 0).is_none());
+    }
+
+    #[test]
+    fn the_registry_serves_the_frame_for_its_clock_and_reports_the_visible_interval() {
+        let mut registry = SlotRegistry::default();
+        registry.register(SlotId::StripRight, |_: &SlotCtx| {
+            vec![
+                SlotItem::animated(vec![spans("1"), spans("2")], 400, 1).unwrap(),
+                SlotItem::animated(vec![spans("x"), spans("y")], 150, 1).unwrap(),
+                item("static", 1),
+            ]
+        });
+        let ctx = SlotCtx::default();
+        assert_eq!(registry.animation_interval(), None, "nothing drawn yet");
+        registry.begin_frame(0);
+        assert_eq!(joined(&layout(registry.items(SlotId::StripRight, &ctx), None).spans), "1xstatic");
+        assert_eq!(registry.animation_interval(), Some(Duration::from_millis(150)), "the fastest wins");
+        registry.begin_frame(450);
+        assert_eq!(joined(&layout(registry.items(SlotId::StripRight, &ctx), None).spans), "2ystatic");
+        // A frame that asks for no animated slot clears the interval.
+        registry.begin_frame(500);
+        let _ = registry.items(SlotId::RailRow, &ctx);
+        assert_eq!(registry.animation_interval(), None);
+    }
+
+    #[test]
+    fn a_registry_with_only_static_items_never_reports_an_animation() {
+        let registry = SlotRegistry::core();
+        registry.begin_frame(123);
+        for slot in SlotId::ALL {
+            let _ = registry.items(slot, &SlotCtx::default());
+        }
+        assert_eq!(registry.animation_interval(), None);
     }
 
     #[test]
