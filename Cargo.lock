@@ -377,6 +377,7 @@ dependencies = [
  "clap",
  "garage-daemon",
  "garage-host",
+ "garage-plugin",
  "garage-protocol",
  "libc",
  "serde_json",

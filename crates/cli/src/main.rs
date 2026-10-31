@@ -3,10 +3,11 @@
 
 mod host;
 mod launcher;
+mod plugin;
 mod tui_bin;
 
-use anyhow::{bail, Result};
-use clap::{Parser, Subcommand};
+use anyhow::Result;
+use clap::{CommandFactory, Parser, Subcommand};
 
 #[derive(Parser, Debug)]
 #[command(name = "claude-garage", version, about)]
@@ -38,8 +39,15 @@ enum Command {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
-    /// Reserved for the plugin host.
-    Plugin,
+    /// Install, link, update and manage plugins.
+    Plugin {
+        #[command(subcommand)]
+        cmd: plugin::cmd::PluginCmd,
+    },
+    /// A plugin's `[[cli]]` subcommand, or any unknown first word (for
+    /// example a folder) handed to the plugin that declares `fallback = true`.
+    #[command(external_subcommand)]
+    External(Vec<String>),
 }
 
 /// The launcher talks to the daemon on `GARAGE_PORT` (default 4747).
@@ -81,7 +89,23 @@ async fn main() -> Result<()> {
             Ok(())
         }
         Command::Host { .. } => unreachable!("handled before parsing"),
-        Command::Plugin => bail!("plugins: coming in a later release"),
+        Command::Plugin { cmd } => match plugin::cmd::run(cmd) {
+            Ok(code) => std::process::exit(code),
+            Err(e) => {
+                eprintln!("{e}");
+                std::process::exit(1)
+            }
+        },
+        Command::External(argv) => match plugin::cmd::dispatch_external(&argv) {
+            Ok(Some(code)) => std::process::exit(code),
+            Ok(None) => Cli::command()
+                .error(clap::error::ErrorKind::InvalidSubcommand, format!("unrecognized subcommand '{}'", argv[0]))
+                .exit(),
+            Err(e) => {
+                eprintln!("{e}");
+                std::process::exit(1)
+            }
+        },
     }
 }
 
@@ -105,6 +129,15 @@ mod tests {
     fn daemon_port_and_restart_flags_parse() {
         assert_eq!(parse(&["daemon", "--port", "5001"]), Command::Daemon { port: Some(5001) });
         assert_eq!(parse(&["restart", "--sessions", "--all"]), Command::Restart { sessions: true, all: true });
+    }
+
+    #[test]
+    fn unknown_words_reach_the_external_arm_but_core_names_never_do() {
+        assert_eq!(parse(&["/home/me/app", "-x"]), Command::External(vec!["/home/me/app".into(), "-x".into()]));
+        assert_eq!(parse(&["usage", "--week"]), Command::External(vec!["usage".into(), "--week".into()]));
+        assert!(matches!(parse(&["plugin", "list"]), Command::Plugin { .. }));
+        assert!(matches!(parse(&["restart"]), Command::Restart { .. }));
+        assert!(matches!(parse(&["tui"]), Command::Tui));
     }
 
     #[test]
