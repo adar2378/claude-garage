@@ -97,7 +97,7 @@ fn problems_text(file: &str, ps: &[garage_plugin::Problem]) -> String {
 
 /// Read and validate the manifest in `dir` (parse, structure, host checks).
 /// Returns the manifest and its raw text.
-fn read_manifest(dir: &Path) -> Result<(Manifest, String), String> {
+pub(super) fn read_manifest(dir: &Path) -> Result<(Manifest, String), String> {
     let file = dir.join(MANIFEST_FILE);
     let raw = std::fs::read_to_string(&file)
         .map_err(|e| format!("cannot read {}: {e}", file.display()))?;
@@ -356,6 +356,12 @@ pub fn install(
 /// `plugin link <path>`: register a folder in place. No build, no download.
 /// Also the way to approve permissions a changed manifest added.
 pub fn link(cx: &mut Cx, path: &Path, opts: &Opts) -> Result<Done, String> {
+    link_as(cx, path, opts, Mode::Link)
+}
+
+/// `link`, or its `plugin dev` form (`Mode::Dev`): the preview also lists the
+/// `[[build]]` commands, and the approval of that surface is recorded.
+pub fn link_as(cx: &mut Cx, path: &Path, opts: &Opts, mode: Mode) -> Result<Done, String> {
     let abs =
         std::path::absolute(path).map_err(|e| format!("cannot resolve {}: {e}", path.display()))?;
     if !abs.is_dir() {
@@ -398,7 +404,7 @@ pub fn link(cx: &mut Cx, path: &Path, opts: &Opts) -> Result<Done, String> {
     refuse_cli_conflict(&cx.paths, &m)?;
     let text = render(&PreviewInput {
         manifest: &m,
-        mode: Mode::Link,
+        mode,
         source: format!("dev {}", abs.display()),
         license: None,
         release: None,
@@ -406,7 +412,7 @@ pub fn link(cx: &mut Cx, path: &Path, opts: &Opts) -> Result<Done, String> {
         diff: diff.as_ref(),
     });
     cx.ui.say(&text);
-    consent(cx.ui, opts, &m, &Mode::Link)?;
+    consent(cx.ui, opts, &m, &mode)?;
     let reg = Registration {
         id: m.id.clone(),
         source: Source::Link {
@@ -417,6 +423,9 @@ pub fn link(cx: &mut Cx, path: &Path, opts: &Opts) -> Result<Done, String> {
         installed_at: Some(cx.now_ms),
     };
     cx.admin.register(&reg)?;
+    if matches!(mode, Mode::Dev) {
+        super::dev::record_approval(&cx.paths, &m)?;
+    }
     cx.ui.say(&format!(
         "Linked {} {} ({}).",
         m.id,

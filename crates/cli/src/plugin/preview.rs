@@ -178,9 +178,12 @@ fn permission_blurb(p: &str) -> &'static str {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Mode {
     Install,
     Link,
+    /// `plugin dev`: like Link, but the `[[build]]` commands run (at every reload).
+    Dev,
     Update,
 }
 
@@ -207,6 +210,7 @@ pub fn render(i: &PreviewInput) -> String {
     let verb = match i.mode {
         Mode::Install => "Install",
         Mode::Link => "Link",
+        Mode::Dev => "Link (dev)",
         Mode::Update => "Update",
     };
     o.push_str(&format!(
@@ -245,10 +249,16 @@ pub fn render(i: &PreviewInput) -> String {
         any = true;
         o.push_str(&format!("  {kind:<8}{:<22}{}\n", e(name), quote(argv)));
     };
-    let builds_run = !matches!(i.mode, Mode::Link) && i.release.is_none();
+    let dev = matches!(i.mode, Mode::Dev);
+    let builds_run = dev || (!matches!(i.mode, Mode::Link) && i.release.is_none());
     if builds_run {
         for b in builds_for_os(m) {
-            line(&mut o, "build", "(at install)", &b.command);
+            let when = if dev {
+                "(every reload)"
+            } else {
+                "(at install)"
+            };
+            line(&mut o, "build", when, &b.command);
         }
     }
     for a in &m.actions {
@@ -277,7 +287,7 @@ pub fn render(i: &PreviewInput) -> String {
     }
 
     o.push_str("\nDownloads:\n");
-    match (i.release, matches!(i.mode, Mode::Link)) {
+    match (i.release, matches!(i.mode, Mode::Link | Mode::Dev)) {
         (Some(r), false) => {
             o.push_str(&format!(
                 "  {}\n  {}\n  (checked against the checksums file; no [[build]] runs)\n",
@@ -373,6 +383,7 @@ pub fn question(m: &Manifest, mode: &Mode) -> String {
     let verb = match mode {
         Mode::Install => "Install",
         Mode::Link => "Link",
+        Mode::Dev => "Link and build",
         Mode::Update => "Update",
     };
     if has_dangerous(m) {
@@ -523,6 +534,19 @@ Later updates that change only plugin code (no new commands, permissions or URLs
         let got = render(&i);
         assert!(got.starts_with("Link: Close button"), "{got}");
         assert!(got.contains("link runs no [[build]]") && !got.contains("(at install)"));
+    }
+
+    #[test]
+    fn dev_lists_the_build_commands_that_run_at_every_reload() {
+        let man = m("[[build]]\ncommand = [\"make\", \"all\"]\n");
+        let got = render(&input(&man, Mode::Dev, None));
+        assert!(got.starts_with("Link (dev):"), "{got}");
+        assert!(
+            got.contains("build   (every reload)") && got.contains("make all"),
+            "{got}"
+        );
+        assert!(!got.contains("link runs no [[build]]"));
+        assert_eq!(question(&man, &Mode::Dev), "Link and build close-button?");
     }
 
     #[test]

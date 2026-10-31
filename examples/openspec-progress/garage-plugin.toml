@@ -1,0 +1,41 @@
+#:schema https://raw.githubusercontent.com/adar2378/claude-garage/main/schemas/garage-plugin.schema.json
+id          = "openspec-progress"
+name        = "OpenSpec progress"
+version     = "0.1.0"
+api_version = 1
+platforms   = ["macos", "linux"]
+description = "Done/total OpenSpec tasks per workspace in the rail header, and an overlay listing each active change"
+permissions = ["ui.widgets", "ui.panes", "workspaces.read"]
+
+[[build]]
+command = ["cargo", "build", "--release"]
+
+# Re-read every workspace's openspec/changes/*/tasks.md on a timer, so ticking
+# a box in an editor shows up within seconds. 5 seconds is the minimum.
+[[events]]
+on         = "timer"
+every_secs = 5
+command    = ["{plugin_dir}/target/release/openspec-progress", "tick"]
+
+# Widgets live in the daemon's memory: show something right after it starts.
+[[events]]
+on      = "daemon.started"
+command = ["{plugin_dir}/target/release/openspec-progress", "tick"]
+
+[[widgets]]
+id   = "progress"
+slot = "rail.header"
+
+[[panes]]
+id        = "changes"
+title     = "OpenSpec changes"
+placement = "overlay"
+command   = ["{plugin_dir}/target/release/openspec-progress", "overlay"]
+
+# Opens the overlay. Clicking the rail-header widget runs it too.
+# Bind a key with: claude-garage plugin bind openspec-progress:changes <key>
+[[actions]]
+id       = "changes"
+title    = "OpenSpec changes"
+contexts = ["global"]
+pane     = "changes"

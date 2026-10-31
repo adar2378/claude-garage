@@ -1,0 +1,32 @@
+#:schema https://raw.githubusercontent.com/adar2378/claude-garage/main/schemas/garage-plugin.schema.json
+id          = "@@ID@@"
+name        = "@@TITLE@@"
+version     = "0.1.0"
+api_version = 1
+platforms   = ["macos", "linux"]
+description = "A starting point: one action and one status-strip widget"
+permissions = ["ui.widgets"]
+
+# Runs at install and again on every `plugin dev` reload. Needs Node.js 26 (the
+# current LTS) or newer. `npm ci` installs exactly what package-lock.json says
+# and `--ignore-scripts` stops dependencies from running install scripts.
+[[build]]
+command = ["npm", "ci", "--ignore-scripts", "--no-audit", "--no-fund"]
+
+[[build]]
+command = ["npm", "run", "build"]
+
+[[actions]]
+id       = "greet"
+title    = "Say hello"
+contexts = ["global"]
+command  = ["node", "{plugin_dir}/dist/main.js", "greet"]
+
+# Widgets live in the daemon's memory; push again whenever the daemon starts.
+[[events]]
+on      = "daemon.started"
+command = ["node", "{plugin_dir}/dist/main.js", "greet"]
+
+[[widgets]]
+id   = "status"
+slot = "strip.right"

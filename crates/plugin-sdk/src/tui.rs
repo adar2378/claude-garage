@@ -134,7 +134,7 @@ impl Picker {
 /// Cut `s` to `cols` display characters (wide characters count as one: the
 /// texts shown here are ids and paths).
 fn clip(s: &str, cols: usize) -> String {
-    let s: String = s.chars().filter(|c| !c.is_control()).collect();
+    let s = garage_protocol::strip_hostile(s);
     s.chars().take(cols).collect()
 }
 
@@ -292,10 +292,22 @@ impl Drop for Screen {
     }
 }
 
+/// What reaches the terminal: every line without control characters (ESC
+/// would start a sequence that retitles the window or writes the clipboard)
+/// or invisible and direction-changing characters. Done here for every
+/// plugin, so a pane that shows text it did not write (a file name, a log
+/// line, a repository description) cannot be turned against the terminal.
+fn safe_lines(lines: &[String]) -> Vec<String> {
+    lines
+        .iter()
+        .map(|l| garage_protocol::strip_hostile(l))
+        .collect()
+}
+
 fn draw(lines: &[String]) -> io::Result<()> {
     let mut out = io::stdout();
     queue!(out, terminal::Clear(terminal::ClearType::All))?;
-    for (row, line) in lines.iter().enumerate() {
+    for (row, line) in safe_lines(lines).iter().enumerate() {
         queue!(out, cursor::MoveTo(0, row as u16), style::Print(line))?;
     }
     out.flush()
@@ -365,6 +377,18 @@ pub fn show(lines: &[String], wait: Option<std::time::Duration>) -> io::Result<(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn what_is_drawn_never_carries_an_escape_or_a_direction_override() {
+        let lines = vec![
+            "ok \u{1b}]52;c;aGVsbG8=\u{7} \u{1b}[2J \u{9b}0m \u{202E}rtl".to_owned(),
+            "plain ✓".to_owned(),
+        ];
+        let safe = safe_lines(&lines);
+        assert_eq!(safe[0], "ok ]52;c;aGVsbG8= [2J 0m rtl");
+        assert_eq!(safe[1], "plain ✓");
+        assert!(!safe.concat().chars().any(garage_protocol::is_hostile_char));
+    }
 
     fn key(c: KeyCode) -> KeyEvent {
         KeyEvent::new(c, KeyModifiers::NONE)

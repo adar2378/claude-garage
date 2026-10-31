@@ -7,6 +7,7 @@ use std::fmt;
 use crate::core_actions;
 use crate::features::{self, API_VERSIONS};
 use crate::manifest::*;
+pub use garage_protocol::is_hostile_char;
 
 /// One validation failure.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -203,16 +204,7 @@ fn range_problem(path: &str, v: Option<u32>, lo: u32, hi: u32, out: &mut Vec<Pro
     }
 }
 
-/// Structural rules (no host knowledge). See [`check_host`] for the rest.
-/// Control characters (C0, DEL, C1) and invisible or direction-changing
-/// format characters. None may appear in any manifest string: the consent
-/// screen prints them, and an ESC or a right-to-left override could hide or
-/// rewrite what the user is approving.
-pub fn is_hostile_char(c: char) -> bool {
-    c.is_control()
-        || matches!(c, '\u{00AD}' | '\u{061C}' | '\u{180E}' | '\u{200B}'..='\u{200F}' | '\u{2028}'..='\u{202E}' | '\u{2060}'..='\u{206F}' | '\u{FEFF}' | '\u{FFF9}'..='\u{FFFB}' | '\u{E0000}'..='\u{E007F}')
-}
-
+/// Every string in the manifest is free of hostile characters.
 fn check_text(v: &serde_json::Value, path: &str, out: &mut Vec<Problem>) {
     use serde_json::Value;
     let bad = |s: &str| s.chars().find(|c| is_hostile_char(*c));

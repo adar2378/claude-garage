@@ -10,15 +10,19 @@
 //! - [`admin`]: registry writes, through the daemon when it is up;
 //! - [`registry`]: loading what is installed (for `list` and `[[cli]]`);
 //! - [`external`]: routing an unknown first word to the plugin that claims it;
+//! - [`scaffold`], [`dev`], [`search`]: the authoring tools (`plugin new`, `plugin dev`, `plugin search`);
 //! - [`cmd`]: the clap subcommands that tie these to real stdio.
 
 pub mod admin;
 pub mod cmd;
+pub mod dev;
 pub mod external;
 pub mod fetch;
 pub mod install;
 pub mod preview;
 pub mod registry;
+pub mod scaffold;
+pub mod search;
 pub mod source;
 
 #[cfg(test)]

@@ -24,6 +24,7 @@ use serde::de::DeserializeOwned;
 pub use garage_protocol::widgets::{
     Click, Placement, Segment, Style, WidgetItem, WidgetPut, WidgetSlot, validate_put,
 };
+pub use garage_protocol::{is_hostile_char, strip_hostile, strip_hostile_keep_lines};
 pub use serde_json::{Value, json};
 
 #[derive(Debug)]

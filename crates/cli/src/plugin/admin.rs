@@ -22,6 +22,9 @@ pub trait Admin {
     /// caller's job.
     fn remove(&self, id: &str) -> Result<(), String>;
     fn bind(&self, id: &str, action: &str, key: Option<&str>) -> Result<(), String>;
+    /// Ask the daemon to re-read `plugins.json` and every linked manifest now
+    /// (`plugin dev`). With no daemon there is nothing to tell: it loads at start.
+    fn reload(&self) -> Result<(), String>;
 }
 
 pub struct DirectAdmin {
@@ -43,6 +46,9 @@ impl Admin for DirectAdmin {
     }
     fn bind(&self, id: &str, action: &str, key: Option<&str>) -> Result<(), String> {
         direct::set_binding(&self.paths, id, action, key)
+    }
+    fn reload(&self) -> Result<(), String> {
+        Ok(())
     }
 }
 
@@ -127,6 +133,9 @@ impl Admin for DaemonAdmin {
             &format!("/api/plugins/{id}/bind"),
             Some(json!({"action": action, "key": key})),
         )
+    }
+    fn reload(&self) -> Result<(), String> {
+        self.call("POST", "/api/plugins/reload", None)
     }
 }
 

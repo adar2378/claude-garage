@@ -1,0 +1,27 @@
+#:schema https://raw.githubusercontent.com/adar2378/claude-garage/main/schemas/garage-plugin.schema.json
+id          = "@@ID@@"
+name        = "@@TITLE@@"
+version     = "0.1.0"
+api_version = 1
+platforms   = ["macos", "linux"]
+description = "A starting point: one action and one status-strip widget"
+permissions = ["ui.widgets"]
+
+# Runs at install (and in `plugin dev`). Keep paths relative to the plugin folder.
+[[build]]
+command = ["cargo", "build", "--release"]
+
+[[actions]]
+id       = "greet"
+title    = "Say hello"
+contexts = ["global"]
+command  = ["{plugin_dir}/target/release/@@ID@@", "greet"]
+
+# Widgets live in the daemon's memory; push again whenever the daemon starts.
+[[events]]
+on      = "daemon.started"
+command = ["{plugin_dir}/target/release/@@ID@@", "greet"]
+
+[[widgets]]
+id   = "status"
+slot = "strip.right"
