@@ -102,7 +102,7 @@ impl HostBackend {
     async fn find(&self, id: &str) -> Result<Option<Entry>> {
         let (dir, id) = (self.hosts_dir.clone(), id.to_owned());
         blocking(move || {
-            let Some(entry) = registry::read(&dir, &id) else { return None };
+            let entry = registry::read(&dir, &id)?;
             match probe(&entry) {
                 Probe::Alive(_) | Probe::Busy => Some(entry),
                 Probe::Dead => {
