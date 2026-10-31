@@ -53,3 +53,17 @@ Each plugin SHALL declare `api_version`; garage SHALL refuse to load a plugin wh
 #### Scenario: Unsupported API version
 - **WHEN** a plugin declares an `api_version` newer than garage supports
 - **THEN** garage does not load it and tells the user which garage version is needed
+
+### Requirement: Click targets carry a payload on every plugin slot
+Clickable items in `tile.title.right`, `rail.row`, `rail.header` and `strip.right` SHALL carry an action id and an optional JSON `args` payload, and a click SHALL run that action with the clicked item's session or workspace in its context, not the focused one. More than one filler item SHALL be allowed in `strip.right`.
+
+#### Scenario: Button on an unfocused tile
+- **WHEN** the user clicks a plugin button in the title bar of a tile that is not focused
+- **THEN** the action runs with that tile's session in its context and the payload the plugin supplied
+
+### Requirement: Dangerous actions need confirmation from plugins
+A plugin button, key or UI request that targets a dangerous core action (close, restart, remove) SHALL NOT run it on the first trigger; garage SHALL ask for a second confirming trigger first, and a manifest SHALL NOT be able to remove that step. Core actions that are never safe to invoke from a plugin (`app.quit`, overlay-internal actions) SHALL be refused.
+
+#### Scenario: Close needs a second click
+- **WHEN** a plugin button bound to `session.close` is clicked once
+- **THEN** garage asks for confirmation and the session closes only after the confirming click
