@@ -245,3 +245,11 @@ fn the_apps_one_keymap_drives_garage_keys_and_overlay_keys_alike() {
     app.handle_key(&plain(KeyCode::Char('x')));
     assert_eq!(app.store.state().overlay, None, "an overlay key bound on the same keymap");
 }
+
+#[test]
+fn the_gutter_history_poll_runs_only_while_a_marker_is_showing() {
+    use std::time::Duration;
+    assert!(!history_refresh_due(false, Duration::from_secs(3600)), "no marker, no tmux call, ever");
+    assert!(!history_refresh_due(true, Duration::from_millis(900)));
+    assert!(history_refresh_due(true, Duration::from_secs(1)));
+}

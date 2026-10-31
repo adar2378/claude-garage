@@ -6,7 +6,7 @@ use ratatui::style::Style;
 use ratatui::text::Line;
 use ratatui::widgets::{Block, BorderType, Widget as _};
 
-use crate::slots::{SlotClickRegion, SlotId};
+use crate::slots::{SlotClickRegion, SlotCtx, SlotId};
 use crate::state::views::ViewSummary;
 use crate::state::wall_state::{KeyLayer, OverlayKind};
 use crate::ui::help::render_help;
@@ -14,7 +14,7 @@ use crate::ui::layout::{tile_inner, wall_layout};
 use crate::ui::rail::render_rail;
 use crate::ui::strip::render_strip;
 use crate::ui::theme::colors;
-use crate::ui::tile::{TileView, render_centered_lines, render_tile};
+use crate::ui::tile::{Gutter, TileView, render_centered_lines, render_tile};
 use crate::ui::triage::{render_triage, triage_queue_rows};
 use crate::ui::view_picker::{picker_entries, render_view_picker};
 use crate::ui::view_strip::render_view_strip;
@@ -63,6 +63,7 @@ impl App {
             self.registry.apply_size(id, cols, rows);
         }
 
+        self.gutter_sessions.clear(); // refilled by the tiles drawn below
         let buf = frame.buffer_mut();
         let mut slot_clicks =
             render_rail(buf, layout.rail, self.store.state(), &self.slots, now_ms);
@@ -178,7 +179,7 @@ impl App {
     }
 
     pub(super) fn draw_tile(
-        &self,
+        &mut self,
         buf: &mut ratatui::buffer::Buffer,
         rect: Rect,
         id: &str,
@@ -190,6 +191,23 @@ impl App {
         };
         let focused = state.focused_session_id.as_deref() == Some(id);
         let frozen = self.registry.frozen(id);
+        // `tile.gutter` markers and the scrollback row the body's top sits on:
+        // a frozen view knows it, a live tail view needs the polled tmux
+        // history size (and draws no gutter until the first poll lands).
+        let gutter_items = self.slots.items(
+            SlotId::TileGutter,
+            &SlotCtx { session: Some(session), ..SlotCtx::default() },
+        );
+        if !gutter_items.is_empty() {
+            self.gutter_sessions.insert(id.to_owned());
+        }
+        let top_abs = frozen
+            .map(|f| f.model.top_abs())
+            .or_else(|| self.registry.history(id));
+        let gutter = match (gutter_items.is_empty(), top_abs) {
+            (false, Some(top_abs)) => Some(Gutter { items: &gutter_items, top_abs }),
+            _ => None,
+        };
         let view = TileView {
             session,
             focused,
@@ -199,6 +217,7 @@ impl App {
             frozen_new_lines: frozen.map(|f| f.new_lines),
             now_ms,
             slots: &self.slots,
+            gutter,
         };
         if let Some(frozen) = frozen {
             render_tile(buf, rect, &view, Some(frozen.parser.screen()))

@@ -146,6 +146,9 @@ pub struct SlotItem {
     /// `rail.extra_rows` only: a style laid over the whole row (a
     /// background, typically).
     pub row_style: Option<Style>,
+    /// `tile.gutter` only: the absolute scrollback row (counted from the
+    /// first line of the session's scrollback) this marker is drawn beside.
+    pub gutter_row: Option<u64>,
 }
 
 impl SlotItem {
@@ -156,6 +159,7 @@ impl SlotItem {
             priority,
             placement: Placement::Flow,
             row_style: None,
+            gutter_row: None,
         }
     }
 

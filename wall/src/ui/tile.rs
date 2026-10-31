@@ -40,6 +40,61 @@ pub struct TileView<'a> {
     pub now_ms: i64,
     /// The slot registry the title bar asks for its right-hand items.
     pub slots: &'a SlotRegistry,
+    /// `tile.gutter` markers for this session and where the view sits in the
+    /// scrollback; `None` when there are none (the tile then draws exactly as
+    /// before).
+    pub gutter: Option<Gutter<'a>>,
+}
+
+/// The gutter markers of one tile plus the scrollback position they map
+/// through.
+pub struct Gutter<'a> {
+    pub items: &'a [SlotItem],
+    /// Absolute scrollback row of the body's top row: the frozen model's
+    /// `top_abs`, or the tmux history size for a live tail view.
+    pub top_abs: i64,
+}
+
+/// The body row (0-based) a marker at absolute scrollback `row` is drawn on,
+/// when it is inside the visible `height` rows.
+pub fn gutter_screen_row(row: u64, top_abs: i64, height: u16) -> Option<u16> {
+    let offset = i64::try_from(row).ok()?.checked_sub(top_abs)?;
+    (0..i64::from(height)).contains(&offset).then_some(offset as u16)
+}
+
+/// Draw the gutter markers into the tile's left border column (no layout
+/// change, so the PTY never resizes as markers come and go) and return their
+/// click regions. A row holds one marker: the first by priority wins.
+fn render_gutter(buf: &mut Buffer, rect: Rect, v: &TileView, gutter: &Gutter) -> Vec<SlotClickRegion> {
+    let height = rect.height.saturating_sub(2);
+    let mut items: Vec<&SlotItem> = gutter.items.iter().filter(|i| i.gutter_row.is_some()).collect();
+    items.sort_by_key(|i| std::cmp::Reverse(i.priority)); // stable: ties keep provider order
+    let mut taken: Vec<u16> = Vec::new();
+    let mut regions = Vec::new();
+    for item in items {
+        let Some(row) = item.gutter_row.and_then(|r| gutter_screen_row(r, gutter.top_abs, height)) else {
+            continue;
+        };
+        if taken.contains(&row) {
+            continue;
+        }
+        taken.push(row);
+        let y = rect.y + 1 + row;
+        // One column: the first character of the item's text, in its style.
+        let Some(span) = item.text.iter().find(|s| !s.content.is_empty()) else { continue };
+        let glyph: String = span.content.chars().take(1).collect();
+        buf.set_string(rect.x, y, glyph, span.style);
+        if let Some(target) = item.on_click.clone() {
+            regions.push(SlotClickRegion {
+                rect: Rect::new(rect.x, y, 1, 1),
+                target,
+                slot: SlotId::TileGutter,
+                session: Some(v.session.id.clone()),
+                workspace: Some(v.session.workspace.clone()),
+            });
+        }
+    }
+    regions
 }
 
 /// Border color + type per the salience ladder.
@@ -285,7 +340,7 @@ pub fn render_tile(
     }
     let (color, border_type) = border_for(v);
     let (title, title_clicks) = title_parts(v, rect.width);
-    let regions: Vec<SlotClickRegion> = title_clicks
+    let mut regions: Vec<SlotClickRegion> = title_clicks
         .into_iter()
         .map(|(cols, target)| SlotClickRegion {
             rect: Rect::new(rect.x + 1 + cols.start, rect.y, cols.end - cols.start, 1),
@@ -331,6 +386,9 @@ pub fn render_tile(
         .block(block)
         .cursor(cursor)
         .render(rect, buf);
+    if let Some(gutter) = &v.gutter {
+        regions.extend(render_gutter(buf, rect, v, gutter));
+    }
     regions
 }
 
@@ -373,6 +431,7 @@ mod tests {
             frozen_new_lines: None,
             now_ms: 65_000,
             slots: test_slots(),
+            gutter: None,
         }
     }
 
@@ -560,6 +619,102 @@ mod tests {
         let mut buf = Buffer::empty(Rect::new(0, 0, 40, 4));
         let parser = vt100::Parser::new(2, 38, 0);
         assert!(render_tile(&mut buf, Rect::new(0, 0, 40, 4), &v, Some(parser.screen())).is_empty());
+    }
+
+    // ── p24: tile.gutter ────────────────────────────────────────────────
+
+    #[test]
+    fn gutter_rows_map_through_the_scrollback_offset() {
+        // Body rows 0..10 show absolute rows 100..110.
+        assert_eq!(gutter_screen_row(100, 100, 10), Some(0));
+        assert_eq!(gutter_screen_row(109, 100, 10), Some(9));
+        assert_eq!(gutter_screen_row(99, 100, 10), None, "scrolled out above");
+        assert_eq!(gutter_screen_row(110, 100, 10), None, "below the view");
+        assert_eq!(gutter_screen_row(0, 0, 10), Some(0), "a view at the very top of history");
+        assert_eq!(gutter_screen_row(5, 100, 0), None, "no body rows");
+        assert_eq!(gutter_screen_row(u64::MAX, 0, 10), None, "no overflow");
+    }
+
+    fn marker(row: u64, glyph: &str, priority: i16, clickable: bool) -> SlotItem {
+        SlotItem {
+            gutter_row: Some(row),
+            on_click: clickable
+                .then(|| ClickTarget::new(crate::actions::ids::SESSION_FOCUS).from_plugin("turns")),
+            ..SlotItem::new(vec![Span::styled(glyph.to_owned(), Style::default().fg(colors::AMBER))], priority)
+        }
+    }
+
+    /// Render a 20x8 live tile (body 6 rows) and return the buffer + regions.
+    fn render_with_gutter(items: &[SlotItem], top_abs: i64) -> (Buffer, Vec<SlotClickRegion>) {
+        let s = session("working");
+        let mut v = view(&s);
+        v.gutter = Some(Gutter { items, top_abs });
+        let rect = Rect::new(2, 1, 20, 8);
+        let mut buf = Buffer::empty(Rect::new(0, 0, 30, 10));
+        let parser = vt100::Parser::new(6, 18, 0);
+        let regions = render_tile(&mut buf, rect, &v, Some(parser.screen()));
+        (buf, regions)
+    }
+
+    #[test]
+    fn gutter_markers_land_on_their_rows_in_the_left_border_column() {
+        let items = [marker(102, "▌", 1, true), marker(104, "◆", 1, false), marker(50, "x", 1, true)];
+        let (buf, regions) = render_with_gutter(&items, 100);
+        // Tile at x=2,y=1; body starts at y=2. Row 102 -> body row 2 -> y=4.
+        assert_eq!(buf[(2, 4)].symbol(), "▌");
+        assert_eq!(buf[(2, 4)].fg, colors::AMBER);
+        assert_eq!(buf[(2, 6)].symbol(), "◆");
+        assert_eq!(buf[(2, 3)].symbol(), "│", "other rows keep the border");
+        // Only the clickable, visible marker has a region; the off-screen one has none.
+        assert_eq!(regions.len(), 1);
+        assert_eq!(regions[0].rect, Rect::new(2, 4, 1, 1));
+        assert_eq!(regions[0].slot, SlotId::TileGutter);
+        assert_eq!(regions[0].session.as_deref(), Some("garage/ws/lbl"));
+    }
+
+    #[test]
+    fn markers_follow_the_scrollback_offset_when_the_view_moves() {
+        let items = [marker(102, "▌", 1, true)];
+        let (_, at_100) = render_with_gutter(&items, 100);
+        let (_, at_101) = render_with_gutter(&items, 101);
+        assert_eq!(at_100[0].rect.y, 4);
+        assert_eq!(at_101[0].rect.y, 3, "scrolled one line: the marker moves up one row");
+        let (buf, scrolled_out) = render_with_gutter(&items, 103);
+        assert!(scrolled_out.is_empty());
+        assert!((2..8).all(|y| buf[(2, y)].symbol() == "│"), "no marker drawn");
+    }
+
+    #[test]
+    fn one_marker_per_row_the_higher_priority_wins() {
+        let items = [marker(101, "a", 1, false), marker(101, "B", 9, false), marker(101, "c", 9, false)];
+        let (buf, _) = render_with_gutter(&items, 100);
+        assert_eq!(buf[(2, 3)].symbol(), "B", "highest priority, ties keep the earlier");
+    }
+
+    #[test]
+    fn a_tile_with_no_gutter_items_renders_byte_identical_to_one_without_the_feature() {
+        let (plain, plain_regions) = {
+            let s = session("working");
+            let v = view(&s);
+            let rect = Rect::new(2, 1, 20, 8);
+            let mut buf = Buffer::empty(Rect::new(0, 0, 30, 10));
+            let parser = vt100::Parser::new(6, 18, 0);
+            let regions = render_tile(&mut buf, rect, &v, Some(parser.screen()));
+            (buf, regions)
+        };
+        let (with_empty, regions) = render_with_gutter(&[], 100);
+        assert_eq!(plain, with_empty);
+        assert_eq!(plain_regions, regions);
+    }
+
+    #[test]
+    fn a_placeholder_tile_draws_no_gutter() {
+        let s = session("restorable");
+        let items = [marker(100, "▌", 1, true)];
+        let mut v = view(&s);
+        v.gutter = Some(Gutter { items: &items, top_abs: 100 });
+        let mut buf = Buffer::empty(Rect::new(0, 0, 30, 10));
+        assert!(render_tile(&mut buf, Rect::new(2, 1, 20, 8), &v, None).is_empty());
     }
 
     // ── p11: context meter (spec tui-context-meters "Tile context meter") ──
