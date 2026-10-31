@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { listSessions } from "./tmux.js";
+import { listSessions, runTmux } from "./tmux.js";
 
 const run = promisify(execFile);
 
@@ -15,7 +15,7 @@ async function getAgents() {
 
 async function getPanePids() {
   try {
-    const { stdout } = await run("tmux", [
+    const { stdout } = await runTmux([
       "list-panes",
       "-a",
       "-F",

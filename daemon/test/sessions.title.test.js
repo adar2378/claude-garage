@@ -6,13 +6,10 @@
 // so this test never reads or writes the real ~/.garage/state.json.
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-const run = promisify(execFile);
 
 let scratch;
 let app;
@@ -62,7 +59,7 @@ test("a live session's set pane title surfaces normalized on its entry", async (
   await tmux.createSession(id, scratch, "sleep", ["60"]);
   t.after(() => tmux.killSession(id).catch(() => {}));
 
-  await run("tmux", ["select-pane", "-t", id, "-T", "  ✳ Refactoring the poller  "]);
+  await tmux.runTmux(["select-pane", "-t", id, "-T", "  ✳ Refactoring the poller  "]);
 
   const res = await app.inject({ method: "GET", url: "/api/sessions" });
   assert.equal(res.statusCode, 200);

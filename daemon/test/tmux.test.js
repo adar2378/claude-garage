@@ -80,3 +80,20 @@ test("normalizeTitle: works with no hostname supplied (skips that check)", () =>
   assert.equal(normalizeTitle("some title", undefined), "some title");
   assert.equal(normalizeTitle("zsh", undefined), null);
 });
+
+import { tmuxArgs } from "../src/tmux.js";
+
+test("tmuxArgs prepends -L <socket> when GARAGE_TMUX_SOCKET is set", () => {
+  assert.deepEqual(tmuxArgs(["ls", "-F", "x"], { GARAGE_TMUX_SOCKET: "p20-test" }), [
+    "-L",
+    "p20-test",
+    "ls",
+    "-F",
+    "x",
+  ]);
+});
+
+test("tmuxArgs leaves argv unchanged when GARAGE_TMUX_SOCKET is unset or empty", () => {
+  assert.deepEqual(tmuxArgs(["ls"], {}), ["ls"]);
+  assert.deepEqual(tmuxArgs(["ls"], { GARAGE_TMUX_SOCKET: "" }), ["ls"]);
+});

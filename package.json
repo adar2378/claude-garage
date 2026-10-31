@@ -39,7 +39,8 @@
     "daemon"
   ],
   "scripts": {
-    "test": "node --test \"daemon/test/*.test.js\"",
+    "test": "node --import ./daemon/test/helpers/tmux-sandbox.js --test \"daemon/test/*.test.js\"",
+    "test:contract": "cargo test --manifest-path tests/contract/Cargo.toml",
     "build:tui": "cd wall && cargo build --release && mkdir -p dist && rm -f dist/garage-wall-$(node -p \"process.platform+'-'+process.arch\") && cp target/release/garage-wall dist/garage-wall-$(node -p \"process.platform+'-'+process.arch\")"
   },
   "dependencies": {
