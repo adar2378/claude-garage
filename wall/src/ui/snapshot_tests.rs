@@ -152,6 +152,40 @@ fn strip_narrow_drops_right_side_content() {
     insta::assert_snapshot!(strip_dump(&store, Some("a notice"), 60));
 }
 
+/// The strip with the pet laid into its filler: a lit bang beside speech,
+/// then a dim sleeping pet without one. Guards the p22 move of the pet onto
+/// the `strip.right` slot (the columns and styles must not shift).
+#[cfg(feature = "pet")]
+#[test]
+fn strip_with_the_pet_in_the_filler() {
+    use crate::ui::strip::PetRender;
+    let store = strip_store();
+    let mut out = String::new();
+    let alert = PetRender {
+        text: "(O.O)",
+        bang: true,
+        bang_lit: true,
+        x: 30,
+        dim: false,
+        say: Some("someone needs you".into()),
+    };
+    let asleep = PetRender {
+        text: "=-.-=",
+        bang: false,
+        bang_lit: false,
+        x: 4,
+        dim: true,
+        say: None,
+    };
+    for (name, pet) in [("alert with speech", alert), ("asleep", asleep)] {
+        let rect = Rect::new(0, 0, 110, 1);
+        let mut buf = Buffer::empty(rect);
+        render_strip(&mut buf, rect, store.state(), None, Some(pet));
+        out.push_str(&format!("## {name}\n{}\n", dump(&buf)));
+    }
+    insta::assert_snapshot!(out);
+}
+
 fn session(status: &str) -> WallSession {
     WallSession {
         id: "garage/ws/lbl".into(),
