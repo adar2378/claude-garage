@@ -28,17 +28,17 @@ jobs:
       matrix:
         os: [macos-15, ubuntu-latest, windows-latest]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
-          node-version: 22
+          node-version: 26
           cache: npm
 
       # rustup ships on GitHub's runners; no third-party action
       - run: rustup toolchain install stable --profile minimal --component clippy && rustup default stable
 
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: |
             ~/.cargo/registry
@@ -46,7 +46,7 @@ jobs:
             wall/target
             target
             tests/contract/target
-          key: cargo-${{ runner.os }}-${{ hashFiles('wall/Cargo.lock', 'tests/contract/Cargo.lock') }}
+          key: cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'tests/contract/Cargo.lock') }}
           restore-keys: cargo-${{ runner.os }}-
 
       - run: npm ci
