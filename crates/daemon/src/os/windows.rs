@@ -44,13 +44,34 @@ $app = '{{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}}\\WindowsPowerShell\\v1.0\\power
     )
 }
 
+/// Standard base64 (RFC 4648, padded).
+fn base64(bytes: &[u8]) -> String {
+    const T: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for c in bytes.chunks(3) {
+        let n = (u32::from(c[0]) << 16) | (u32::from(*c.get(1).unwrap_or(&0)) << 8) | u32::from(*c.get(2).unwrap_or(&0));
+        out.push(T[(n >> 18) as usize & 63] as char);
+        out.push(T[(n >> 12) as usize & 63] as char);
+        out.push(if c.len() > 1 { T[(n >> 6) as usize & 63] as char } else { '=' });
+        out.push(if c.len() > 2 { T[n as usize & 63] as char } else { '=' });
+    }
+    out
+}
+
+/// What `-EncodedCommand` takes: the script as UTF-16LE, base64-encoded. The
+/// script then never passes through command-line quoting, so no character in
+/// a notification title or body can change what PowerShell parses.
+pub fn encode_command(script: &str) -> String {
+    base64(&script.encode_utf16().flat_map(u16::to_le_bytes).collect::<Vec<u8>>())
+}
+
 /// argv (after `powershell.exe`) that runs `script` without a profile or prompt.
 pub fn powershell_args(script: &str, sta: bool) -> Vec<String> {
     let mut a: Vec<String> = ["-NoProfile", "-NonInteractive"].map(String::from).to_vec();
     if sta {
         a.push("-STA".into());
     }
-    a.extend(["-Command".to_owned(), script.to_owned()]);
+    a.extend(["-EncodedCommand".to_owned(), encode_command(script)]);
     a
 }
 
@@ -122,8 +143,23 @@ mod tests {
 
     #[test]
     fn powershell_runs_without_profile_and_the_picker_needs_sta() {
-        assert_eq!(powershell_args("x", false), ["-NoProfile", "-NonInteractive", "-Command", "x"]);
-        assert_eq!(powershell_args("x", true), ["-NoProfile", "-NonInteractive", "-STA", "-Command", "x"]);
+        assert_eq!(powershell_args("x", false), ["-NoProfile", "-NonInteractive", "-EncodedCommand", "eAA="]);
+        assert_eq!(powershell_args("x", true), ["-NoProfile", "-NonInteractive", "-STA", "-EncodedCommand", "eAA="]);
+    }
+
+    #[test]
+    fn encoded_commands_are_base64_of_utf16le() {
+        // Known vectors: UTF-16LE bytes of "hi" are 68 00 69 00.
+        assert_eq!(encode_command("hi"), "aABpAA==");
+        assert_eq!(encode_command(""), "");
+        assert_eq!(base64(b"f"), "Zg==");
+        assert_eq!(base64(b"fo"), "Zm8=");
+        assert_eq!(base64(b"foo"), "Zm9v");
+        // Non-BMP text becomes a surrogate pair.
+        assert_eq!(encode_command("\u{1F600}"), "PdgA3g==");
+        // No quoting survives into argv: a hostile body is only inside the base64 blob.
+        let a = powershell_args(&toast_script("t", "'; calc; '"), false);
+        assert!(a.iter().all(|x| !x.contains("calc")), "{a:?}");
     }
 
     #[test]
