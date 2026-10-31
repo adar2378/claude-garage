@@ -1,23 +1,32 @@
 //! First-party plugins shipped with garage (design section 12): where they
-//! live, and first-run seeding of `plugins.json`.
+//! live, which ones are trusted, and first-run seeding of `plugins.json`.
 //!
 //! A bundled root holds one directory per plugin:
 //! `<root>/<id>/garage-plugin.toml` and `<root>/<id>/bin/<id>`. Release builds
 //! and the npm package put it next to the `claude-garage` binary
-//! (`scripts/stage-plugins.sh`); a checkout uses `<repo>/plugins`.
+//! (`scripts/stage-plugins.sh`); a debug build also finds the checkout's
+//! `plugins/`.
+//!
+//! Trust: the daemon is built with an allowlist (`build.rs`) of every
+//! first-party plugin's id and the SHA-256 of its manifest. A bundled entry is
+//! auto-granted only when both match; anything else (a changed manifest, an
+//! unknown id, a dev root) is treated like a linked plugin: no grant, stays
+//! disabled until approved. Known limit: the plugin binaries are not hashed.
+//! The p27 / cargo-dist packaging must hash them too.
 //!
 //! Seeding rules:
 //! * The first run registers every bundled plugin; the five default-on ones
-//!   are enabled, the rest are off.
-//! * `bundledSeeded` in `plugins.json` lists every id ever seeded. An id in
-//!   that list is never re-added and its `enabled` is never touched, so a
-//!   plugin the user disabled stays disabled and one they removed from the
-//!   file stays gone.
+//!   are enabled (when trusted), the rest are off.
+//! * `bundledSeeded` in `plugins.json` lists every id ever seeded, even when a
+//!   user entry held the id at the time. An id in that list is never re-added
+//!   and its `enabled` is never touched, so a plugin the user disabled stays
+//!   disabled and one they removed from the file stays gone.
 //! * A plugin new in a later release is added off (nothing is default-on
 //!   after the first run).
-//! * Every start refreshes bundled entries: the path follows the package, and
-//!   a changed manifest drops the recorded grant so the host records the new
-//!   one (first-party code needs no preview).
+//! * Every start refreshes bundled entries: the path follows the package, a
+//!   changed manifest drops the recorded grant (the host records the new one
+//!   only if the allowlist matches), and a bundled entry whose plugin no
+//!   longer ships is removed (its data directory stays).
 //! * A user's own entry with the same id (link, GitHub) is left alone.
 
 use std::path::{Path, PathBuf};
@@ -26,32 +35,62 @@ use garage_plugin::manifest::sha256_hex;
 
 use super::layout::{Entry, Paths, PluginsFile, Source, MANIFEST_FILE};
 
+include!(concat!(env!("OUT_DIR"), "/bundled_allowlist.rs"));
+
 /// On at first run. Every other bundled plugin starts off.
 pub const DEFAULT_ON: [&str; 5] = ["usage-bar", "closed-chats", "quick-send", "tile-buttons", "pit-pet"];
 
 /// `plugins.json` key listing the bundled ids already seeded.
 pub const SEEDED_KEY: &str = "bundledSeeded";
 
-/// Override for the bundled root (tests, unusual packaging).
+/// Dev override for the bundled root (debug builds only).
+#[cfg(debug_assertions)]
 pub const ROOT_ENV: &str = "GARAGE_BUNDLED_PLUGINS";
 
-/// The bundled root: `$GARAGE_BUNDLED_PLUGINS`, then `plugins/` next to the
-/// running binary (and one level up, for `bin/`-style layouts), then the
-/// checkout this binary was built from. The first candidate holding at least
-/// one manifest wins.
+/// Test-only additions to the allowlist (id, manifest sha).
+#[cfg(test)]
+static TEST_TRUST: std::sync::Mutex<Vec<(String, String)>> = std::sync::Mutex::new(Vec::new());
+
+/// Trust a manifest in tests (a content hash, so sharing it across tests is harmless).
+#[cfg(test)]
+pub fn trust_for_tests(id: &str, manifest: &[u8]) {
+    TEST_TRUST.lock().unwrap().push((id.to_owned(), sha256_hex(manifest)));
+}
+
+/// Is `id` with a manifest hashing to `sha` a first-party plugin this build knows?
+pub fn is_trusted(id: &str, sha: &str) -> bool {
+    #[cfg(test)]
+    if TEST_TRUST.lock().unwrap().iter().any(|(i, s)| i == id && s == sha) {
+        return true;
+    }
+    ALLOWLIST.iter().any(|(i, s)| *i == id && *s == sha)
+}
+
+/// Where to look, in order. Release: `plugins/` next to the canonicalized
+/// binary, nothing else. Debug builds add `$GARAGE_BUNDLED_PLUGINS` and the
+/// checkout this binary was built from.
+fn candidates(exe: Option<PathBuf>, dev_env: Option<PathBuf>, dev: bool) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    if dev {
+        out.extend(dev_env.filter(|p| !p.as_os_str().is_empty()));
+    }
+    if let Some(dir) = exe.and_then(|e| e.parent().map(Path::to_path_buf)) {
+        out.push(dir.join("plugins"));
+    }
+    if dev {
+        out.push(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../plugins"));
+    }
+    out
+}
+
+/// The bundled root: the first candidate holding at least one manifest.
 pub fn discover() -> Option<PathBuf> {
-    let mut candidates: Vec<PathBuf> = Vec::new();
-    if let Some(p) = std::env::var_os(ROOT_ENV).filter(|p| !p.is_empty()) {
-        candidates.push(p.into());
-    }
-    if let Some(dir) = std::env::current_exe().ok().and_then(|e| e.parent().map(Path::to_path_buf)) {
-        candidates.push(dir.join("plugins"));
-        if let Some(up) = dir.parent() {
-            candidates.push(up.join("plugins"));
-        }
-    }
-    candidates.push(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../plugins"));
-    candidates.into_iter().find(|c| !plugin_dirs(c).is_empty())
+    let exe = std::env::current_exe().ok().and_then(|e| e.canonicalize().ok());
+    #[cfg(debug_assertions)]
+    let (dev, env) = (true, std::env::var_os(ROOT_ENV).map(PathBuf::from));
+    #[cfg(not(debug_assertions))]
+    let (dev, env) = (false, None);
+    candidates(exe, env, dev).into_iter().find(|c| !plugin_dirs(c).is_empty())
 }
 
 /// `(id, dir)` of every `<root>/<id>/garage-plugin.toml`, sorted by id.
@@ -72,6 +111,7 @@ pub fn plugin_dirs(root: &Path) -> Vec<(String, PathBuf)> {
 pub struct Seeded {
     pub added: Vec<String>,
     pub refreshed: Vec<String>,
+    pub pruned: Vec<String>,
 }
 
 /// Register and refresh the bundled plugins under `root`. Writes
@@ -93,19 +133,26 @@ pub fn seed(paths: &Paths, root: &Path) -> Result<Seeded, String> {
         for (id, dir) in &found {
             let path = dir.to_string_lossy().into_owned();
             let sha = std::fs::read(dir.join(MANIFEST_FILE)).ok().map(|b| sha256_hex(&b));
+            let trusted = sha.as_deref().is_some_and(|s| is_trusted(id, s));
             match file.plugins.iter_mut().find(|e| &e.id == id) {
+                // A user's own entry (link, GitHub) is left alone.
+                Some(Entry { source: Source::Link { .. } | Source::Github { .. }, .. }) => {}
                 Some(entry) => {
                     // Only bundled entries follow the package.
-                    let Source::Bundled { path: old } = &mut entry.source else { continue };
+                    let Source::Bundled { path: old } = &mut entry.source else { unreachable!() };
                     let mut changed = false;
                     if *old != path {
                         *old = path;
                         changed = true;
                     }
-                    if sha.is_some() && entry.manifest_sha256 != sha && entry.granted_permissions.is_some() {
-                        // New manifest: the host re-grants and records the sha.
-                        entry.granted_permissions = None;
-                        changed = true;
+                    if sha.is_some() && entry.granted_permissions.is_some() {
+                        // An unknown manifest never keeps a grant; a trusted
+                        // one that changed gets the host to record the new one.
+                        let moved = entry.manifest_sha256.is_some() && entry.manifest_sha256 != sha;
+                        if !trusted || moved {
+                            entry.granted_permissions = None;
+                            changed = true;
+                        }
                     }
                     if changed {
                         out.refreshed.push(id.clone());
@@ -113,7 +160,7 @@ pub fn seed(paths: &Paths, root: &Path) -> Result<Seeded, String> {
                 }
                 None if !seeded.contains(id) => {
                     let mut entry = Entry::new(id, Source::Bundled { path });
-                    entry.enabled = first_run && DEFAULT_ON.contains(&id.as_str());
+                    entry.enabled = first_run && trusted && DEFAULT_ON.contains(&id.as_str());
                     file.plugins.push(entry);
                     out.added.push(id.clone());
                 }
@@ -123,7 +170,15 @@ pub fn seed(paths: &Paths, root: &Path) -> Result<Seeded, String> {
                 seeded.push(id.clone());
             }
         }
-        let dirty = !out.added.is_empty() || !out.refreshed.is_empty() || file.extra.get(SEEDED_KEY).is_none_or(|v| v.as_array().map(Vec::len) != Some(seeded.len()));
+        // A bundled plugin this release no longer ships: drop the entry, keep its data.
+        file.plugins.retain(|e| {
+            let gone = e.is_first_party() && !found.iter().any(|(id, _)| *id == e.id);
+            if gone {
+                out.pruned.push(e.id.clone());
+            }
+            !gone
+        });
+        let dirty = !out.added.is_empty() || !out.refreshed.is_empty() || !out.pruned.is_empty() || file.extra.get(SEEDED_KEY).is_none_or(|v| v.as_array().map(Vec::len) != Some(seeded.len()));
         file.extra.insert(SEEDED_KEY.into(), seeded.into());
         (dirty, out)
     })
@@ -142,13 +197,17 @@ mod tests {
         d
     }
 
+    /// Write a manifest and put it on the (test) allowlist.
     fn add(root: &Path, id: &str, version: &str) {
+        let bytes = write_manifest(root, id, version);
+        trust_for_tests(id, bytes.as_bytes());
+    }
+
+    fn write_manifest(root: &Path, id: &str, version: &str) -> String {
         std::fs::create_dir_all(root.join(id)).unwrap();
-        std::fs::write(
-            root.join(id).join(MANIFEST_FILE),
-            format!("id = \"{id}\"\nname = \"{id}\"\nversion = \"{version}\"\napi_version = 1\nplatforms = [\"macos\", \"linux\", \"windows\"]\npermissions = []\n"),
-        )
-        .unwrap();
+        let toml = format!("id = \"{id}\"\nname = \"{id}\"\nversion = \"{version}\"\napi_version = 1\nplatforms = [\"macos\", \"linux\", \"windows\"]\npermissions = []\n");
+        std::fs::write(root.join(id).join(MANIFEST_FILE), &toml).unwrap();
+        toml
     }
 
     fn enabled(paths: &Paths) -> Vec<(String, bool)> {
@@ -249,6 +308,76 @@ mod tests {
     }
 
     #[test]
+    fn an_unlisted_or_edited_manifest_is_never_trusted_or_granted() {
+        let (garage, bundle) = (tempfile::tempdir().unwrap(), root(&["usage-bar"]));
+        let paths = Paths::new(garage.path());
+        // not on the allowlist: registered, but off even though usage-bar is a default
+        write_manifest(bundle.path(), "pit-pet", "6.6.6"); // versions no other test trusts
+        write_manifest(bundle.path(), "unknown", "6.6.6");
+        seed(&paths, bundle.path()).unwrap();
+        let now = enabled(&paths);
+        assert!(now.contains(&("usage-bar".into(), true)));
+        assert!(now.contains(&("pit-pet".into(), false)) && now.contains(&("unknown".into(), false)));
+
+        // a trusted plugin whose manifest later changes loses its grant, and stays without it
+        PluginsFile::update(&paths, |f| {
+            let e = f.plugins.iter_mut().find(|e| e.id == "usage-bar").unwrap();
+            e.granted_permissions = Some(vec![]);
+            (true, ())
+        })
+        .unwrap();
+        write_manifest(bundle.path(), "usage-bar", "9.9.9"); // same id, different hash, not trusted
+        assert_eq!(seed(&paths, bundle.path()).unwrap().refreshed, ["usage-bar"]);
+        let e = PluginsFile::read(&paths).unwrap().plugins.into_iter().find(|e| e.id == "usage-bar").unwrap();
+        assert_eq!(e.granted_permissions, None);
+        assert_eq!(seed(&paths, bundle.path()).unwrap(), Seeded::default(), "and a second pass leaves the file alone");
+    }
+
+    #[test]
+    fn the_compiled_allowlist_never_lists_the_hello_fixture() {
+        assert!(ALLOWLIST.iter().all(|(id, _)| *id != "hello"));
+        let hello = std::fs::read(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../plugins/hello").join(MANIFEST_FILE)).unwrap();
+        assert!(!is_trusted("hello", &sha256_hex(&hello)));
+    }
+
+    #[test]
+    fn a_release_build_looks_only_next_to_the_binary() {
+        let exe = Some(PathBuf::from("/opt/garage/bin/claude-garage"));
+        let env = Some(PathBuf::from("/evil"));
+        assert_eq!(candidates(exe.clone(), env.clone(), false), [PathBuf::from("/opt/garage/bin/plugins")]);
+        let dev = candidates(exe, env, true);
+        assert_eq!(dev[0], PathBuf::from("/evil"));
+        assert_eq!(dev.len(), 3);
+    }
+
+    #[test]
+    fn a_plugin_that_stops_shipping_is_pruned_but_a_user_entry_holding_its_id_is_not_and_is_remembered_as_seeded() {
+        let (garage, bundle) = (tempfile::tempdir().unwrap(), root(&["usage-bar", "pit-pet", "extra"]));
+        let paths = Paths::new(garage.path());
+        PluginsFile::update(&paths, |f| {
+            f.plugins.push(Entry::new("extra", Source::Link { path: "/mine".into() }));
+            (true, ())
+        })
+        .unwrap();
+        seed(&paths, bundle.path()).unwrap();
+        let file = PluginsFile::read(&paths).unwrap();
+        assert!(file.extra[SEEDED_KEY].as_array().unwrap().iter().any(|v| v == "extra"), "recorded although the user's entry held it");
+
+        std::fs::remove_dir_all(bundle.path().join("pit-pet")).unwrap();
+        assert_eq!(seed(&paths, bundle.path()).unwrap().pruned, ["pit-pet"]);
+        let ids: Vec<_> = PluginsFile::read(&paths).unwrap().plugins.into_iter().map(|e| e.id).collect();
+        assert_eq!(ids, ["extra", "usage-bar"]);
+
+        // the user drops their link: "extra" was seeded, so the bundle does not re-add it
+        PluginsFile::update(&paths, |f| {
+            f.plugins.retain(|e| e.id != "extra");
+            (true, ())
+        })
+        .unwrap();
+        assert_eq!(seed(&paths, bundle.path()).unwrap(), Seeded::default());
+    }
+
+    #[test]
     fn a_users_own_entry_with_a_bundled_id_is_left_alone_and_no_bundle_means_no_file() {
         let (garage, bundle) = (tempfile::tempdir().unwrap(), root(&["usage-bar"]));
         let paths = Paths::new(garage.path());
@@ -281,8 +410,15 @@ mod end_to_end {
         static BIN: OnceLock<PathBuf> = OnceLock::new();
         BIN.get_or_init(|| {
             let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
+            // Same profile and target dir as this test run (deps/ sits two levels
+            // under the profile dir), so cargo reuses the compiled dependencies.
+            let target = std::env::current_exe().unwrap().ancestors().nth(3).unwrap().to_path_buf();
+            let mut args = vec!["build", "-p", "garage-plugin-hello", "--message-format=json", "--target-dir", target.to_str().unwrap()];
+            if !cfg!(debug_assertions) {
+                args.push("--release");
+            }
             let out = std::process::Command::new(cargo)
-                .args(["build", "-p", "garage-plugin-hello", "--message-format=json"])
+                .args(args)
                 .current_dir(env!("CARGO_MANIFEST_DIR"))
                 .output()
                 .expect("cargo runs");
@@ -302,6 +438,8 @@ mod end_to_end {
         std::fs::create_dir_all(dir.join("bin")).unwrap();
         let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../plugins/hello");
         std::fs::copy(repo.join(MANIFEST_FILE), dir.join(MANIFEST_FILE)).unwrap();
+        // hello is a fixture, not on the build's allowlist: trust it for this test only
+        trust_for_tests("hello", &std::fs::read(repo.join(MANIFEST_FILE)).unwrap());
         std::fs::copy(hello_binary(), dir.join("bin/hello")).unwrap();
         root
     }

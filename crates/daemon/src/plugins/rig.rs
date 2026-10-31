@@ -168,6 +168,12 @@ impl Rig {
 
     /// Register a first-party plugin shipped with garage (no approval needed).
     pub fn bundle(&self, id: &str, toml: &str) -> PathBuf {
+        super::bundled::trust_for_tests(id, toml.as_bytes());
+        self.bundle_untrusted(id, toml)
+    }
+
+    /// A bundled entry whose manifest is not on the build's allowlist.
+    pub fn bundle_untrusted(&self, id: &str, toml: &str) -> PathBuf {
         self.register(id, toml, Source::Bundled { path: self.src.path().join(id).to_string_lossy().into_owned() }, None)
     }
 
