@@ -21,3 +21,70 @@
 
 - On by default: usage bar, closed chats, quick send, close/delete buttons, pet. Off by default: jump palette, turn markers.
 - Two plugins in one slot: both render, in install order; a config setting can reorder them.
+
+## Detailed design: closed-chats, jump-palette, quick-send, tile-buttons, prune-empty-projects, cli-extras
+
+Written at the start of the p25 build (the other plugins, usage-bar, turn-markers and pit-pet, are designed in their own section). All six are bundled Rust plugins in `plugins/<name>/` (binary name = directory name, which `scripts/stage-plugins.sh` and `release.yml` rely on), built on `crates/plugin-sdk`. They use only the public API: manifest, run context, plugin token routes and the existing core HTTP routes.
+
+### Shared pieces
+
+**SDK growth, only what these plugins need.** `Api::get / post / put_json / delete` (thin over `request`), `Api::ui_action(action, target)`, `Api::session_input(id, text)`, a typed `Context` view over the run-context JSON (focus workspace and session, event name and data, CLI argv, cwd), and a `tui` cargo feature with a small raw-mode terminal toolkit for pane plugins: a fuzzy list picker and a one-line prompt. Both are pure state machines (`Picker::on_key`, `Prompt::on_key` return an outcome) with a thin crossterm renderer around them, so the logic is unit-tested without a terminal. The feature is off by default so plugins without a pane do not link crossterm. A `fuzzy` function (subsequence match, scored: prefix and word-start bonuses, shorter is better) is part of the feature.
+
+**Pane lifetime.** A pane is a normal process in a PTY. The plugin reads its context from `GARAGE_CONTEXT`, draws, acts, and exits. The host closes an overlay or popup when the process exits, so "choose, run, exit" is the whole protocol. Esc or Ctrl-C exits with no action. The pane never reads keys outside its own PTY.
+
+**Manifest-only plugins.** `tile-buttons` has no commands. The cargo `plugins/*` member glob refuses a directory with no `Cargo.toml`, so such plugins are listed in the workspace `exclude`; `stage-plugins.sh` and the release check skip the binary when the plugin has no crate.
+
+**Error handling.** A plugin run that cannot do its job prints one line to stderr and exits non-zero; the host toasts "plugin: action failed, see `plugin logs`". Event hooks never retry beyond the small bounded loops named below.
+
+### closed-chats (2.1), on by default
+
+Permissions: `ui.widgets`, `sessions.read`, `core.actions`, `workspaces.read`. Widget `rows` in `rail.extra_rows`; action `recent` with a `recent` overlay pane and `default_key = "H"`.
+
+- **Rows.** A `sync` run lists workspaces (`GET /api/workspaces`), fetches each one's records (`GET /api/workspaces/{name}/closed`), and PUTs one widget with a scope per workspace. The rail allows 8 extra rows per workspace and the daemon keeps 20 records, so the newest 8 show. Each row has `session = <closed session id>` so the click targets it (not the focused session), `row_style = {bg: "dim"}`, and two clickable parts: the label (`click: session.restore`) and a trailing ` x ` (`click: session.delete`, a dangerous core action, so it goes through the confirm gate). `session.restore` is not dangerous. The label is `<label>` plus a reason hint (`closed`, `crashed`, `restart`) in dim.
+- **When `sync` runs.** Event hooks: `session.closed`, `session.created` (a restore or new chat drops its record), `workspace.added`, `workspace.removed`, `daemon.started` (widgets are in memory and lost on daemon restart). Gap: forgetting a record (`DELETE /api/sessions/{id}?meta=1`) publishes no plugin-visible event, so a deleted row would stay. Closed in the host: that route publishes `session.forgotten {id, workspace}` (new additive event, listed in `/api/plugin/features`), and closed-chats subscribes to it. See tasks 4.1.
+- **Race.** The closed record is written by a bus subscriber, concurrently with the event hook starting. On `session.closed` the run retries the fetch up to 5 times, 150 ms apart, until the record for the event's session id appears.
+- **`H` recent list.** An overlay pane showing every workspace's records (up to 20 each, newest first) in a picker: `workspace/label  reason  age`. Enter restores via `POST /api/sessions/restore {id}` (a core route) and exits; `d` is not offered (forget goes through the rail's confirmed delete). With nothing closed the pane shows "no closed chats" and exits on any key.
+- **Tests.** Row building (limit 8, newest first, session and click fields, reason hints); picker item formatting and the age text; retry loop against a fake HTTP server; daemon end-to-end: the real binary behind the real host, a `SessionClosed` on the bus, the `rows` widget appears with the restore click.
+
+### jump-palette (2.2), off by default
+
+Permissions: `sessions.read`, `workspaces.read`, `ui.invoke`, `core.actions`, `ui.panes`. Action `open` (pane `palette`, overlay), `default_key = "/"`.
+
+The pane fetches `GET /api/sessions` (live sessions only; `restorable` entries are skipped) and `GET /api/workspaces`, builds items (`workspace/label  status  branch` for sessions, `workspace  dir` for workspaces, sessions first) and shows the fuzzy picker. Enter calls `POST /api/plugins/ui/action` with `session.focus` and `target.session`, or `workspace.focus` with `target.workspace`, then exits. `session.engage` is refused for plugins by design, so the palette moves focus but never starts typing into a session. The fuzzy query matches against the whole item text.
+
+Tests: `fuzzy` ranking table (prefix beats mid-word, subsequence required, case-insensitive, stable ties); item building from a canned session list; ui/action body shape against a fake server; picker key handling.
+
+### quick-send (2.3), on by default
+
+Permissions: `sessions.input` (DANGEROUS), `sessions.read`, `ui.panes`. Actions `send` (context `session`, pane `send`, `default_key = "s"`) and `send-all` (context `workspace`, pane `send-all`, `default_key = "S"`); both panes are popups.
+
+The text must come from the user, so each action opens a popup that shows the target ("send to garage/app/main" or "send to 3 sessions in app"), a one-line input, and is its own confirmation step: Enter on a non-empty line moves to "Enter again to send, Esc to cancel", the second Enter sends. Nothing is sent without two human key presses in the pane, so the manifest's `confirm = true` (which gates plugin command runs, and for pane actions is not applied by the wall's armed state) is not what protects it. The `S` targets are the live sessions whose id starts with `garage/<workspace>/` from `GET /api/sessions`; each gets `POST /api/sessions/input {id, text}`. A failure on one target is reported in the popup and the others still go. The popup shows the result for a moment (a failed send waits for a key) and exits.
+
+Tests: prompt state machine (typing, backspace, empty line refused, two-step confirm, Esc cancels at both stages); target resolution for one and for all; per-target failure reporting against a fake server.
+
+### tile-buttons (2.4), on by default
+
+Manifest only. Permissions: `core.actions`. Two `[[buttons]]` in `tile.title.right`: ` x ` (`session.close`, priority 5) and ` del ` (`session.delete`, priority 1), both `confirm = true`. Both core actions are dangerous, so a click only arms them ("Close garage/app/main? click again or press y"); the host's confirm rule is the whole safety story and is covered by the wall tests from p24. The delete button is for forgetting a session's saved state; on a live session it is the same core action the `session.delete` key path uses. The only test here is the daemon-side one: the manifest parses, validates, is on the compiled allowlist and seeds as enabled.
+
+### prune-empty-projects (2.7), off by default
+
+Permissions: `sessions.read`, `workspaces.write`. Event `session.closed`.
+
+On an event whose `data.reason` is `user`, wait 1.5 s (a user who closes a chat and opens another a moment later must not lose the project), then read `GET /api/sessions`. "Empty" means no entry with `workspace == data.workspace` at all: not live, and not `restorable: true` (a restorable entry is a crash waiting to be resumed). If empty, `DELETE /api/workspaces/{name}`; 404 counts as success (closing many sessions at once races several events against one delete). `crash` and `daemon-restart` never prune. The workspace delete also drops the workspace's closed records (the core's `remove_workspace`), so with closed-chats enabled a pruned project's closed chats disappear with it; the two are independent and the docs say so.
+
+Tests: the decision function as a table (reason user/crash/daemon-restart, live and restorable entries, other workspaces' sessions); 404 tolerated; daemon end-to-end with the real binary and a fake `session.closed`.
+
+### cli-extras (2.8), off by default
+
+Permissions: `workspaces.read`, `workspaces.write`, `sessions.read`, `sessions.manage`. Three `[[cli]]` entries: `install`, `prune`, and `open` with `fallback = true`. The fallback receives the whole argv, so `claude-garage ~/dev/app` and `claude-garage open ~/dev/app` both work.
+
+- **`<folder>`**. Resolves the word to a directory (`~`, relative paths against the cwd, canonicalised). If it is not an existing directory the plugin prints `unrecognized subcommand '<word>'` and exits 2: a fallback otherwise swallows every typo, which would be the worst UX in the product. Workspace name: the directory's basename, lowercased, every run of characters outside `[a-z0-9]` collapsed to `-`, trimmed of `-`; empty is an error. If a workspace with that name exists for a different directory, `-2`, `-3`, ... are tried; if it exists for the same directory it is reused. Then `PUT /api/workspaces {name, dir}` and `POST /api/sessions {workspace, label: "main"}` (a 409, the session already exists, is fine). It then runs the wall (`$GARAGE_BIN`, set by the CLI; skipped by `--no-open`) with inherited stdio and passes its exit code on.
+- **`install`**: `POST /api/hooks/install` then `POST /api/statusline/install`; prints what each did; non-zero if either failed.
+- **`prune`**: removes every workspace with no entry at all in `GET /api/sessions` (the same "empty" as above); `--dry-run` lists without deleting. Prints each removed name.
+- **Daemon not running.** Each command fails with "claude-garage is not running; start it with `claude-garage` first". No launcher logic lives in a plugin. (Gap: a CLI run does not start the daemon; see tasks 4.1.)
+
+Tests: name derivation table; directory resolution (tilde, relative, not-a-dir fallthrough); the folder flow's HTTP calls against a fake server (including the 409 and the name-collision paths); prune selection; install result handling; CLI end-to-end: the real `claude-garage plugin` dispatch to the fallback is already covered by p24 (6.2), here the plugin's own binary runs against a fake daemon.
+
+### Allowlist and packaging
+
+`build.rs` hashes every `plugins/*/garage-plugin.toml` except `hello`, so each manifest above lands on the compiled allowlist by existing. The daemon tests assert that each id is on the list and that its manifest validates (`bundled.rs` already walks the folder). `DEFAULT_ON` is not touched: closed-chats, quick-send and tile-buttons are on, jump-palette, prune-empty-projects and cli-extras are off.
