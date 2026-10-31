@@ -6,11 +6,18 @@
 //! thin parts that talk to the daemon through the public SDK.
 
 use std::collections::BTreeMap;
+use std::io::Read;
 use std::path::Path;
 
+use garage_plugin_sdk::strip_hostile;
 use garage_plugin_sdk::{Api, Click, Error, Segment, Style, WidgetItem, WidgetPut};
 
 pub const WIDGET: &str = "progress";
+/// A `tasks.md` larger than this is skipped, and never read past it.
+pub const MAX_TASKS_BYTES: u64 = 1024 * 1024;
+/// Directory entries under `openspec/changes` looked at per workspace.
+pub const MAX_CHANGES: usize = 200;
+
 pub const OPEN_ACTION: &str = "openspec-progress:changes";
 
 /// One change under `openspec/changes/` and its task counts.
@@ -63,22 +70,49 @@ pub fn count_tasks(markdown: &str) -> (usize, usize) {
     (done, total)
 }
 
+/// The text of a regular file of at most [`MAX_TASKS_BYTES`]. A symlink (which
+/// could point out of the workspace), a directory, a device and an oversized
+/// file all give `None`; the read itself is capped too, in case the file grows
+/// between the check and the read.
+fn read_small_file(path: &Path) -> Option<String> {
+    let meta = std::fs::symlink_metadata(path).ok()?;
+    if !meta.file_type().is_file() || meta.len() > MAX_TASKS_BYTES {
+        return None;
+    }
+    let mut text = Vec::new();
+    std::fs::File::open(path)
+        .ok()?
+        .take(MAX_TASKS_BYTES + 1)
+        .read_to_end(&mut text)
+        .ok()?;
+    if text.len() as u64 > MAX_TASKS_BYTES {
+        return None;
+    }
+    Some(String::from_utf8_lossy(&text).into_owned())
+}
+
 /// The changes of the workspace folder `dir`, sorted by name. `archive` is
 /// history, not an active change; a change with no checkboxes has no progress
-/// to show and is left out.
+/// to show and is left out. Only real directories and regular files are
+/// followed (no symlinks), and at most [`MAX_CHANGES`] entries are examined.
 pub fn read_changes(dir: &Path) -> Vec<Change> {
-    let Ok(rd) = std::fs::read_dir(dir.join("openspec/changes")) else {
+    let base = dir.join("openspec/changes");
+    if !std::fs::symlink_metadata(&base).is_ok_and(|m| m.file_type().is_dir()) {
+        return vec![];
+    }
+    let Ok(rd) = std::fs::read_dir(&base) else {
         return vec![];
     };
     let mut out: Vec<Change> = rd
         .flatten()
-        .filter(|e| e.path().is_dir())
+        .take(MAX_CHANGES)
+        .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()))
         .filter_map(|e| {
             let name = e.file_name().to_string_lossy().into_owned();
             if name == "archive" || name.starts_with('.') {
                 return None;
             }
-            let text = std::fs::read_to_string(e.path().join("tasks.md")).ok()?;
+            let text = read_small_file(&e.path().join("tasks.md"))?;
             let (done, total) = count_tasks(&text);
             (total > 0).then_some(Change { name, done, total })
         })
@@ -163,6 +197,8 @@ fn fit(s: &str, width: usize) -> String {
 
 /// The text of the overlay, one row per change plus a total.
 pub fn overlay_lines(workspace: &str, dir: &str, changes: &[Change]) -> Vec<String> {
+    // Folder names are written by whoever made the repository.
+    let (workspace, dir) = (strip_hostile(workspace), strip_hostile(dir));
     let mut lines = vec![
         format!("OpenSpec changes in {workspace}"),
         format!("  {dir}"),
@@ -174,7 +210,7 @@ pub fn overlay_lines(workspace: &str, dir: &str, changes: &[Change]) -> Vec<Stri
     for c in changes {
         lines.push(format!(
             "  {} {} {:>3}/{:<3} {:>3}%{}",
-            fit(&c.name, 32),
+            fit(&strip_hostile(&c.name), 32),
             bar(c.done, c.total, 10),
             c.done,
             c.total,
@@ -302,6 +338,80 @@ Text with - [ ] in the middle
             vec![change("p1-a", 1, 1), change("p2-b", 1, 2)]
         );
         assert!(read_changes(&d.path().join("nowhere")).is_empty());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_symlinked_tasks_file_or_folder_is_not_followed_out_of_the_workspace() {
+        let outside = tempfile::tempdir().unwrap();
+        std::fs::write(
+            outside.path().join("secret.md"),
+            "- [x] leaked\n- [ ] too\n",
+        )
+        .unwrap();
+        std::fs::create_dir_all(outside.path().join("elsewhere")).unwrap();
+        std::fs::write(outside.path().join("elsewhere/tasks.md"), "- [x] a\n").unwrap();
+        let d = tempfile::tempdir().unwrap();
+        let base = d.path().join("openspec/changes");
+        std::fs::create_dir_all(base.join("linked-file")).unwrap();
+        std::os::unix::fs::symlink(
+            outside.path().join("secret.md"),
+            base.join("linked-file/tasks.md"),
+        )
+        .unwrap();
+        std::os::unix::fs::symlink(outside.path().join("elsewhere"), base.join("linked-dir"))
+            .unwrap();
+        std::fs::create_dir_all(base.join("real")).unwrap();
+        std::fs::write(base.join("real/tasks.md"), "- [ ] a\n").unwrap();
+        assert_eq!(read_changes(d.path()), vec![change("real", 0, 1)]);
+
+        // The changes folder itself may not be a link either.
+        let e = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(e.path().join("openspec")).unwrap();
+        std::os::unix::fs::symlink(outside.path(), e.path().join("openspec/changes")).unwrap();
+        assert!(read_changes(e.path()).is_empty());
+    }
+
+    #[test]
+    fn a_huge_tasks_file_is_skipped_and_the_scan_is_bounded() {
+        let d = tempfile::tempdir().unwrap();
+        let base = d.path().join("openspec/changes");
+        std::fs::create_dir_all(base.join("big")).unwrap();
+        let line = "- [x] task\n";
+        let big = line.repeat(MAX_TASKS_BYTES as usize / line.len() + 1);
+        assert!(big.len() as u64 > MAX_TASKS_BYTES);
+        std::fs::write(base.join("big/tasks.md"), &big).unwrap();
+        std::fs::create_dir_all(base.join("fits")).unwrap();
+        let fits = line.repeat(MAX_TASKS_BYTES as usize / line.len());
+        assert!(fits.len() as u64 <= MAX_TASKS_BYTES);
+        std::fs::write(base.join("fits/tasks.md"), &fits).unwrap();
+        let got = read_changes(d.path());
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].name, "fits");
+
+        let many = tempfile::tempdir().unwrap();
+        let base = many.path().join("openspec/changes");
+        for i in 0..MAX_CHANGES + 50 {
+            std::fs::create_dir_all(base.join(format!("c{i:04}"))).unwrap();
+            std::fs::write(base.join(format!("c{i:04}/tasks.md")), "- [ ] a\n").unwrap();
+        }
+        assert_eq!(read_changes(many.path()).len(), MAX_CHANGES);
+    }
+
+    #[test]
+    fn the_overlay_strips_escapes_from_folder_names() {
+        let lines = overlay_lines(
+            "ws\u{1b}]0;x\u{7}",
+            "/p\u{202E}ath",
+            &[change("ev\u{1b}[2Jil", 1, 2)],
+        )
+        .join("\n");
+        assert!(
+            !lines
+                .chars()
+                .any(|c| c != '\n' && garage_plugin_sdk::is_hostile_char(c))
+        );
+        assert!(lines.contains("ev[2Jil"));
     }
 
     #[test]
