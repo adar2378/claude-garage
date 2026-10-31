@@ -97,7 +97,7 @@ async fn ui_challenge(State(st): State<AppState>, body: Bytes) -> Response {
     let Some(nonce) = body.get("nonce").and_then(Value::as_str).filter(|n| garage_protocol::auth::nonce_ok(n)) else {
         return error_response(StatusCode::UNPROCESSABLE_ENTITY, "nonce must be 16 to 128 lowercase hex digits");
     };
-    match st.plugins.ui_proof(nonce) {
+    match st.plugins.ui_proof(st.config.port, nonce) {
         Some(proof) => Json(json!({"proof": proof})).into_response(),
         None => error_response(StatusCode::SERVICE_UNAVAILABLE, "this daemon has no UI token"),
     }

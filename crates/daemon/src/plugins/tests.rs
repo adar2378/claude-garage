@@ -1160,9 +1160,10 @@ async fn the_challenge_route_proves_the_ui_token_without_credentials_or_leaking_
     let body = json!({"nonce": nonce}).to_string();
     let (s, _, v) = r.call("POST", "/api/plugins/ui/challenge", None, Some(&body)).await;
     assert_eq!(s, StatusCode::OK, "{v}");
-    assert!(verify_response(&r.ui_token(), &nonce, &v.to_string()), "{v}");
+    assert!(verify_response(&r.ui_token(), 4747, &nonce, &v.to_string()), "{v}");
     assert!(!v.to_string().contains(&r.ui_token()));
-    assert!(!verify_response("a-different-token", &nonce, &v.to_string()), "an impostor without the token cannot match");
+    assert!(!verify_response("a-different-token", 4747, &nonce, &v.to_string()), "an impostor without the token cannot match");
+    assert!(!verify_response(&r.ui_token(), 4748, &nonce, &v.to_string()), "the proof names the daemon's own port");
     for bad in [r#"{}"#, r#"{"nonce":"short"}"#, r#"{"nonce":7}"#, r#"{"nonce":"ZZZZZZZZZZZZZZZZZZZZ"}"#] {
         assert_eq!(r.call("POST", "/api/plugins/ui/challenge", None, Some(bad)).await.0, StatusCode::UNPROCESSABLE_ENTITY, "{bad}");
     }

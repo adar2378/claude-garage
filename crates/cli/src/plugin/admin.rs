@@ -118,7 +118,7 @@ pub fn daemon_up(port: u16) -> bool {
 /// Does the listener at `base` hold the UI token? Sends a random nonce and
 /// no credentials, and checks the keyed proof against our own copy of the
 /// token. Whatever else sits on the port never sees the token.
-pub fn prove_daemon(base: &str, token: &str) -> Result<(), String> {
+pub fn prove_daemon(base: &str, port: u16, token: &str) -> Result<(), String> {
     use garage_protocol::auth::{new_nonce, verify_response, CHALLENGE_PATH};
     let nonce = new_nonce()?;
     let res = ureq::post(&format!("{base}{CHALLENGE_PATH}"))
@@ -127,7 +127,7 @@ pub fn prove_daemon(base: &str, token: &str) -> Result<(), String> {
         .send_string(&json!({"nonce": nonce}).to_string())
         .map_err(|e| format!("the listener did not answer the identity challenge ({e})"))?;
     let body = res.into_string().map_err(|e| e.to_string())?;
-    if verify_response(token, &nonce, &body) {
+    if verify_response(token, port, &nonce, &body) {
         Ok(())
     } else {
         Err("the listener could not prove it holds this install's UI token".into())
@@ -148,7 +148,7 @@ pub fn choose_with(garage_dir: &Path, port: u16, warn: &mut dyn FnMut(&str)) -> 
             .map_err(|e| format!("the daemon is running but {} is unreadable ({e}); fix that or stop the daemon", tok.display()))?;
         let token = token.trim().to_owned();
         let base = format!("http://127.0.0.1:{port}");
-        match prove_daemon(&base, &token) {
+        match prove_daemon(&base, port, &token) {
             Ok(()) => return Ok(Box::new(DaemonAdmin { base, token })),
             Err(why) => warn(&format!("something answers on port {port} as a garage daemon, but {why}; not sending it the UI token. Writing plugins.json directly instead.")),
         }
@@ -228,27 +228,39 @@ mod tests {
     }
 
     /// Answers like a daemon: features, then a challenge proof keyed with `key`.
-    fn fake_daemon(key: &'static str, n: usize) -> (u16, std::thread::JoinHandle<()>) {
-        serve_fn(n, move |req| {
+    fn fake_daemon(key: &'static str, n: usize, claims_port: Option<u16>) -> (u16, std::thread::JoinHandle<()>) {
+        let bound = std::sync::Arc::new(std::sync::atomic::AtomicU16::new(0));
+        let bound2 = bound.clone();
+        let (port, h) = serve_fn(n, move |req| {
+            let real = bound2.load(std::sync::atomic::Ordering::SeqCst);
             if req.starts_with("GET /api/plugin/features") {
                 return r#"{"api_versions":[1]}"#.into();
             }
             assert!(req.starts_with("POST /api/plugins/ui/challenge "), "{req}");
             assert!(!req.to_lowercase().contains("authorization"), "the challenge carries no credentials: {req}");
             let body: Value = serde_json::from_str(req.split("\r\n\r\n").nth(1).unwrap()).unwrap();
-            json!({"proof": garage_protocol::auth::proof_for(key, body["nonce"].as_str().unwrap())}).to_string()
-        })
+            json!({"proof": garage_protocol::auth::proof_for(key, claims_port.unwrap_or(real), body["nonce"].as_str().unwrap())}).to_string()
+        });
+        bound.store(port, std::sync::atomic::Ordering::SeqCst);
+        (port, h)
     }
 
     #[test]
     fn a_daemon_that_proves_the_token_is_used_and_an_impostor_never_sees_it() {
         let d = garage_dir_with_token("real-token");
-        let (port, h) = fake_daemon("real-token", 2);
+        let (port, h) = fake_daemon("real-token", 2, None);
         let mut warned = vec![];
         let a = choose_with(d.path(), port, &mut |w| warned.push(w.to_owned())).unwrap();
         h.join().unwrap();
         assert_eq!(a.via(), "the running daemon");
         assert!(warned.is_empty());
+
+        // A proof computed for another port (a relay) is refused too.
+        let (port, h) = fake_daemon("real-token", 2, Some(1));
+        let mut warned = vec![];
+        let a = choose_with(d.path(), port, &mut |w| warned.push(w.to_owned())).unwrap();
+        h.join().unwrap();
+        assert!(a.via().contains("daemon not running") && warned.len() == 1, "{warned:?}");
 
         // Same port shape, wrong key: the plugin registry is written directly and we warn.
         let seen = std::sync::Arc::new(std::sync::Mutex::new(String::new()));

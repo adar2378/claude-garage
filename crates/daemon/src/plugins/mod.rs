@@ -362,8 +362,8 @@ impl PluginHost {
 
     /// The answer to a client's `ui/challenge`: proof that this daemon holds
     /// the UI token, without revealing it. `None` when no token exists.
-    pub fn ui_proof(&self, nonce: &str) -> Option<String> {
-        (!self.0.ui_token.is_empty()).then(|| garage_protocol::auth::proof_for(&self.0.ui_token, nonce))
+    pub fn ui_proof(&self, port: u16, nonce: &str) -> Option<String> {
+        (!self.0.ui_token.is_empty()).then(|| garage_protocol::auth::proof_for(&self.0.ui_token, port, nonce))
     }
 
     /// Enable or disable via the registry file, then reload (the teardown

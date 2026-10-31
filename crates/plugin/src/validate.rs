@@ -23,8 +23,14 @@ impl Problem {
 
 impl fmt::Display for Problem {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}: {}", self.path, self.message)
+        write!(f, "{}: {}", escape_hostile(&self.path), escape_hostile(&self.message))
     }
+}
+
+/// `text` with every control or invisible character shown as `\u{XXXX}`, so
+/// that echoing manifest text back never carries a terminal escape.
+pub fn escape_hostile(text: &str) -> String {
+    text.chars().map(|c| if is_hostile_char(c) { format!("\\u{{{:04X}}}", c as u32) } else { c.to_string() }).collect()
 }
 
 /// Ids the host owns; a plugin may not take them.
@@ -131,7 +137,8 @@ fn check_text(v: &serde_json::Value, path: &str, out: &mut Vec<Problem>) {
         Value::Array(a) => a.iter().enumerate().for_each(|(i, x)| check_text(x, &format!("{path}[{i}]"), out)),
         Value::Object(o) => {
             for (k, x) in o {
-                let at = if path.is_empty() { k.clone() } else { format!("{path}.{k}") };
+                let k_shown = escape_hostile(k);
+                let at = if path.is_empty() { k_shown } else { format!("{path}.{k_shown}") };
                 if let Some(c) = bad(k) {
                     out.push(Problem::new(&at, format!("key contains a control or invisible character (U+{:04X}); not allowed", c as u32)));
                 }
@@ -524,6 +531,29 @@ checksums = "SHA256SUMS"
         }
         // plain unicode text is fine
         parse_ok(&tweak("api_version = 1", "api_version = 1\ndescription = \"Zeit \\u00fcbersicht \\u2713\""));
+    }
+
+    #[test]
+    fn no_problem_text_ever_carries_a_control_or_invisible_character() {
+        let hostile_key = tweak("\"macos-aarch64\" = \"usage-darwin-arm64\"", "\"macos\\u001b[2J\\u202e\" = \"usage-darwin-arm64\"");
+        let cases = [
+            hostile_key,
+            tweak("api_version = 1", "api_version = 1\ndescription = \"a\\u001b]0;pwned\\u0007\""),
+            tweak("title = \"Refresh\"", "title = \"Refresh\"\n\"bad\\u001bkey\" = 3"),
+            tweak("id = \"usage-bar\"", "id = \"usage\\u001b-bar\""),
+            "id = \"x\\u001b\"\u{1b}".to_owned(),
+        ];
+        for src in cases {
+            for p in parse(&src).expect_err("refused") {
+                let shown = p.to_string();
+                assert!(!shown.chars().any(is_hostile_char), "{shown:?}");
+            }
+        }
+        // the escape is visible, not silent
+        let errs = fail(&tweak("api_version = 1", "api_version = 1\ndescription = \"a\\u001bb\""));
+        assert!(errs.iter().any(|e| e.starts_with("description:")), "{errs:?}");
+        let errs = fail(&tweak("\"macos-aarch64\" = \"usage-darwin-arm64\"", "\"m\\u001b\" = \"usage-darwin-arm64\""));
+        assert!(errs.iter().any(|e| e.contains("m\\u{001B}")), "{errs:?}");
     }
 
     #[test]
