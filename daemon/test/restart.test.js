@@ -130,6 +130,22 @@ test("no claudeSessionId spawns plain claude and reports resumed:false", async (
   ]);
 });
 
+test("resume that takes the session down falls back to create, not spawn", async () => {
+  const calls = [];
+  const rec = (kind) => async (id, dir, command, extraArgs = []) => {
+    calls.push({ kind, id, dir, command, extraArgs });
+  };
+  // No tmux session named this exists, so hasSession is false: the resume
+  // "killed" it and the fallback must create it again.
+  const id = "garage/nosuch/one";
+  const resumed = await spawnClaudeResumed(rec("spawn"), id, "/tmp/one", "abc", rec("create"));
+  assert.equal(resumed, false);
+  assert.deepEqual(calls, [
+    { kind: "spawn", id, dir: "/tmp/one", command: "claude", extraArgs: ["--resume", "abc"] },
+    { kind: "create", id, dir: "/tmp/one", command: "claude", extraArgs: [] },
+  ]);
+});
+
 // ---------------------------------------------------------------------
 // waitForPredecessor
 // ---------------------------------------------------------------------

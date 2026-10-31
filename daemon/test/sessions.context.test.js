@@ -23,6 +23,15 @@ let transcript;
 
 const RUN = `p11-context-${process.pid}`;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+// Poll until fn() resolves truthy (2s cap).
+async function waitFor(fn) {
+  for (let i = 0; i < 200; i++) {
+    if (await fn()) return;
+    await sleep(10);
+  }
+}
+const contextOf = async (id) =>
+  (await app.inject({ method: "GET", url: "/api/sessions" })).json().find((s) => s.id === id)?.context;
 
 before(async () => {
   scratchGarage = await mkdtemp(path.join(tmpdir(), "garage-context-state-"));
@@ -114,7 +123,7 @@ test("a live session with only transcript data shows source 'transcript' after a
   const firstEntry = first.json().find((s) => s.id === id);
   assert.equal(firstEntry.context, null);
 
-  await sleep(80); // let the background refresh complete
+  await waitFor(() => contextOf(id)); // let the background refresh complete
 
   const second = await app.inject({ method: "GET", url: "/api/sessions" });
   const secondEntry = second.json().find((s) => s.id === id);
@@ -136,8 +145,8 @@ test("statusline takes precedence over transcript when both are present", async 
 
   // Give the transcript cache a moment to populate too, so precedence is
   // proven against a populated (not merely absent) alternative.
-  await app.inject({ method: "GET", url: "/api/sessions" });
-  await sleep(80);
+  await waitFor(async () => (await contextOf(id))?.source === "statusline");
+  await waitFor(() => transcript.getCachedContext(id));
 
   const res = await app.inject({ method: "GET", url: "/api/sessions" });
   const entry = res.json().find((s) => s.id === id);

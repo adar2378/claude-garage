@@ -4,11 +4,11 @@ import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { finishWorktree, currentBranch } from "../src/worktrees.js";
 
+let finishWorktree, currentBranch;
 let scratch;
 let repo;
 let wt;
@@ -25,7 +25,11 @@ async function commitFile(dir, name, content, msg) {
 before(async () => {
   scratch = await mkdtemp(path.join(tmpdir(), "garage-finish-"));
   repo = path.join(scratch, "repo");
-  wt = path.join(scratch, "wt");
+  // The finish guard only accepts paths under <GARAGE_DIR>/worktrees/.
+  process.env.GARAGE_DIR = path.join(scratch, "garage");
+  ({ finishWorktree, currentBranch } = await import("../src/worktrees.js"));
+  wt = path.join(scratch, "garage", "worktrees", "ws", "wt");
+  await mkdir(path.dirname(wt), { recursive: true });
   execFileSync("git", ["init", "-q", "-b", "main", repo]);
   git(repo, "config", "user.email", "t@example.com");
   git(repo, "config", "user.name", "t");
@@ -67,4 +71,54 @@ test("merge conflict -> 409 with stderr, merge aborted, worktree and branch kept
   assert.equal(git(repo, "status", "--porcelain").trim(), "");
   assert.ok(existsSync(wt));
   assert.match(git(repo, "branch", "--list", "garage/x"), /garage\/x/);
+});
+
+test("discard refuses a path outside the garage worktrees folder, deleting nothing", async () => {
+  const outside = path.join(scratch, "outside");
+  git(repo, "worktree", "add", "-q", "-b", "garage/outside", outside);
+  await assert.rejects(
+    finishWorktree({ repoDir: repo, path: outside, branch: "garage/outside", action: "discard" }),
+    (err) => err.statusCode === 400
+  );
+  assert.ok(existsSync(outside));
+  assert.match(git(repo, "branch", "--list", "garage/outside"), /garage\/outside/);
+});
+
+test("merge refuses a worktree whose HEAD is on another branch, deleting nothing", async () => {
+  git(wt, "checkout", "-q", "-b", "garage/elsewhere");
+  await assert.rejects(
+    finishWorktree({ repoDir: repo, path: wt, branch: "garage/x", action: "merge" }),
+    (err) => err.statusCode === 400
+  );
+  assert.ok(existsSync(wt));
+  assert.match(git(repo, "branch", "--list", "garage/x"), /garage\/x/);
+  git(wt, "checkout", "-q", "garage/x");
+  git(repo, "branch", "-D", "garage/elsewhere");
+});
+
+test("discard succeeds after the agent checked out another branch", async () => {
+  git(wt, "checkout", "-q", "-b", "garage/elsewhere");
+  const res = await finishWorktree({ repoDir: repo, path: wt, branch: "garage/x", action: "discard" });
+  assert.equal(res.discarded, true);
+  assert.ok(!existsSync(wt));
+  assert.equal(git(repo, "branch", "--list", "garage/x").trim(), "");
+  // The agent's other branch is not ours to delete.
+  assert.match(git(repo, "branch", "--list", "garage/elsewhere"), /garage\/elsewhere/);
+});
+
+test("discard succeeds when the folder is already gone", async () => {
+  const gone = path.join(scratch, "garage", "worktrees", "ws", "gone");
+  git(repo, "worktree", "add", "-q", "-b", "garage/gone", gone);
+  await rm(gone, { recursive: true, force: true });
+  const res = await finishWorktree({ repoDir: repo, path: gone, branch: "garage/gone", action: "discard" });
+  assert.equal(res.discarded, true);
+  assert.equal(git(repo, "branch", "--list", "garage/gone").trim(), "");
+});
+
+test("discard removes a worktree under the garage folder on its branch", async () => {
+  wt = path.join(scratch, "garage", "worktrees", "ws", "wt2");
+  git(repo, "worktree", "add", "-q", "-b", "garage/y", wt);
+  const res = await finishWorktree({ repoDir: repo, path: wt, branch: "garage/y", action: "discard" });
+  assert.equal(res.discarded, true);
+  assert.ok(!existsSync(wt));
 });

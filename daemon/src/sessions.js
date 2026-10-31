@@ -48,7 +48,11 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // branch (no tmux call at all — it never reaches hasSession) is
 // unit-testable with a fake `spawn`, same discipline as the target-
 // selection tests below (daemon/test/restart.test.js).
-export async function spawnClaudeResumed(spawn, id, dir, claudeSessionId) {
+// `create` (defaults to `spawn`) is used for the plain-claude fallback when
+// the resume attempt took the tmux session down with it (a respawned pane
+// that was the only one): respawn-pane has nothing to respawn then, so the
+// session must be created again, exactly like a fresh create.
+export async function spawnClaudeResumed(spawn, id, dir, claudeSessionId, create = spawn) {
   if (!claudeSessionId) {
     await spawn(id, dir, CLAUDE_CMD);
     return false;
@@ -64,7 +68,8 @@ export async function spawnClaudeResumed(spawn, id, dir, claudeSessionId) {
     return true;
   }
 
-  await spawn(id, dir, CLAUDE_CMD);
+  // The session is gone, so there is nothing to respawn into.
+  await create(id, dir, CLAUDE_CMD);
   return false;
 }
 
@@ -425,7 +430,8 @@ export default async function sessionRoutes(app) {
             respawnPane,
             targetId,
             dir,
-            meta?.claudeSessionId ?? null
+            meta?.claudeSessionId ?? null,
+            createSession
           );
 
           // The pane now runs a fresh claude process (a new pid) — the
