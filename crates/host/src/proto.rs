@@ -194,7 +194,8 @@ pub fn send_text(addr: &str, token: &str, text: &str) -> std::io::Result<()> {
     write_frame(&mut s, F_INPUT, b"\r")?;
     s.shutdown(std::net::Shutdown::Write)?;
     let mut sink = [0u8; 4096];
-    while matches!(s.read(&mut sink), Ok(n) if n > 0) {}
+    let deadline = std::time::Instant::now() + REPLY_TIMEOUT;
+    while std::time::Instant::now() < deadline && matches!(s.read(&mut sink), Ok(n) if n > 0) {}
     Ok(())
 }
 

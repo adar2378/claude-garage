@@ -38,6 +38,13 @@ pub enum DaemonEvent {
     WidgetsChanged { plugin: String, rev: u64 },
     /// The installed set, enabled state or bindings changed.
     PluginsChanged,
+    /// A plugin asked the TUI to run an action (`POST /api/plugins/ui/action`).
+    /// There is no `confirmed` here on purpose: the TUI alone decides whether
+    /// a dangerous action runs.
+    UiAction { plugin: String, action: String, args: Option<serde_json::Value>, target: garage_protocol::plugins::UiTarget },
+    /// A plugin pane opened (`open: true`) or closed. `session` is the
+    /// backend session id the TUI attaches to.
+    PaneChanged { plugin: String, pane: String, session: String, open: bool },
 }
 
 impl DaemonEvent {

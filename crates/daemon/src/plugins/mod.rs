@@ -26,8 +26,11 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
 
 use garage_plugin::argv::{self, Vars};
-use garage_plugin::manifest::{sha256_hex, EventName, Manifest, DEFAULT_ACTION_TIMEOUT_SECS, DEFAULT_EVENT_TIMEOUT_SECS};
+use garage_plugin::manifest::{sha256_hex, ActionContext, EventName, PanePlacement, Manifest, DEFAULT_ACTION_TIMEOUT_SECS, DEFAULT_EVENT_TIMEOUT_SECS};
 use garage_plugin::{check_cli_conflicts, check_host, parse};
+use garage_protocol::plugins::{
+    ActionSummary, ButtonSummary, PaneSummary, PluginList, PluginSummary, PluginWidgets, WidgetContent, WidgetSummary, WidgetsSnapshot,
+};
 use serde_json::{json, Value};
 use tokio::task::JoinHandle;
 
@@ -325,6 +328,124 @@ impl PluginHost {
                 problems: p.problems.iter().cloned().chain(p.refused.clone()).collect(),
             })
             .collect()
+    }
+
+    /// `GET /api/plugins`: what the TUI binds and draws, in install order.
+    /// Only an active plugin lists its actions, buttons and widgets; the rest
+    /// show up bare so `plugin list` style views can say why they are off.
+    pub fn list(&self) -> PluginList {
+        let state = self.0.state.lock().unwrap();
+        let plugins = state
+            .plugins
+            .iter()
+            .map(|p| {
+                let manifest = p.manifest().filter(|_| p.active());
+                let id = &p.entry.id;
+                PluginSummary {
+                    id: id.clone(),
+                    name: p.manifest().map_or_else(|| id.clone(), |m| m.name.clone()),
+                    enabled: p.entry.enabled,
+                    active: p.active(),
+                    version: p.manifest().map(|m| m.version.clone()),
+                    permissions: p.manifest().map(|m| m.permission_names()).unwrap_or_default(),
+                    bindings: p.entry.bindings.clone(),
+                    actions: manifest
+                        .map(|m| {
+                            m.actions
+                                .iter()
+                                .map(|a| ActionSummary {
+                                    id: format!("{id}:{}", a.id),
+                                    title: a.title.clone(),
+                                    default_key: a.default_key.clone(),
+                                    contexts: a
+                                        .contexts
+                                        .iter()
+                                        .map(|c| match c {
+                                            ActionContext::Global => "global",
+                                            ActionContext::Workspace => "workspace",
+                                            ActionContext::Session => "session",
+                                        })
+                                        .map(str::to_owned)
+                                        .collect(),
+                                    confirm: a.confirm,
+                                    pane: a.pane.clone(),
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_default(),
+                    buttons: manifest
+                        .map(|m| {
+                            m.buttons
+                                .iter()
+                                .map(|b| ButtonSummary {
+                                    slot: b.slot.to_protocol(),
+                                    label: b.label.clone(),
+                                    tooltip: b.tooltip.clone(),
+                                    on_click: b.on_click.clone(),
+                                    args: b.args.clone(),
+                                    confirm: b.confirm,
+                                    priority: b.priority,
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_default(),
+                    widgets: manifest
+                        .map(|m| m.widgets.iter().map(|w| WidgetSummary { id: w.id.clone(), slot: w.slot.to_protocol() }).collect())
+                        .unwrap_or_default(),
+                    panes: manifest
+                        .map(|m| {
+                            m.panes
+                                .iter()
+                                .map(|pane| PaneSummary {
+                                    id: pane.id.clone(),
+                                    title: pane.title.clone(),
+                                    placement: match pane.placement {
+                                        PanePlacement::Tile => "tile",
+                                        PanePlacement::Overlay => "overlay",
+                                        PanePlacement::Popup => "popup",
+                                    }
+                                    .into(),
+                                    cols: pane.size.as_ref().map(|s| s.cols),
+                                    rows: pane.size.as_ref().map(|s| s.rows),
+                                    pct: pane.size.as_ref().is_some_and(|s| s.pct),
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_default(),
+                }
+            })
+            .collect();
+        PluginList { plugins }
+    }
+
+    /// `GET /api/plugins/widgets[?plugin=]`: the stored content of every
+    /// active plugin (or just `only`), with each plugin's revision.
+    pub fn widget_snapshot(&self, only: Option<&str>) -> WidgetsSnapshot {
+        let active: Vec<String> = self
+            .0
+            .state
+            .lock()
+            .unwrap()
+            .plugins
+            .iter()
+            .filter(|p| p.active() && only.is_none_or(|o| o == p.entry.id))
+            .map(|p| p.entry.id.clone())
+            .collect();
+        let plugins = active
+            .into_iter()
+            .map(|id| {
+                let widgets = self
+                    .0
+                    .widgets
+                    .widgets(&id)
+                    .into_iter()
+                    .map(|(name, w)| (name, WidgetContent { slot: w.slot, scopes: w.scopes }))
+                    .collect();
+                let rev = self.0.widgets.rev(&id);
+                (id, PluginWidgets { rev, widgets })
+            })
+            .collect();
+        WidgetsSnapshot { plugins }
     }
 
     /// The state of one plugin, whether or not it is active.

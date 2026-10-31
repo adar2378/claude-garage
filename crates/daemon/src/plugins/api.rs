@@ -30,6 +30,9 @@ use crate::state::AppState;
 pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/api/plugin/features", get(features))
+        .route("/api/plugins", get(list))
+        .route("/api/plugins/widgets", get(widgets_snapshot))
+        .route("/api/plugins/ui/action", post(ui_action))
         .route("/api/plugins/reload", post(reload))
         .route("/api/plugins/ui/slots", put(put_ui_slots))
         .route("/api/plugins/{id}/widgets/{widget}", put(put_widget).delete(delete_widget))
@@ -159,24 +162,8 @@ async fn put_widget(
         }
     };
     for click in click_actions(&put) {
-        let a = click.action.as_str();
-        if click.is_core() {
-            if !manifest.has_permission(Permission::CoreActions) {
-                return error_response(
-                    StatusCode::FORBIDDEN,
-                    format!("plugin {id} lacks permission core.actions (click.action {a:?} is a core action)"),
-                );
-            }
-            match garage_plugin::core_actions::lookup(a) {
-                Some(c) if c.plugin_invocable => {}
-                Some(_) => return error_response(StatusCode::UNPROCESSABLE_ENTITY, format!("click.action {a:?} cannot be triggered by plugins")),
-                None => return error_response(StatusCode::UNPROCESSABLE_ENTITY, format!("click.action {a:?} is not a core action")),
-            }
-        } else {
-            let (owner, local) = a.split_once(':').unwrap_or((id.as_str(), a));
-            if owner == id && manifest.action(local).is_none() {
-                return error_response(StatusCode::UNPROCESSABLE_ENTITY, format!("click.action {a:?}: plugin {id} has no action {local:?}"));
-            }
+        if let Err(r) = check_action(&manifest, &id, &click.action) {
+            return *r;
         }
     }
     let outcome = st.plugins.widgets().put(&id, &widget, slot, put);
@@ -184,6 +171,79 @@ async fn put_widget(
         crate::plugins::widgets::PutOutcome::Changed { rev } | crate::plugins::widgets::PutOutcome::Unchanged { rev } => rev,
     };
     Json(json!({"ok": true, "rev": rev})).into_response()
+}
+
+/// Whether `plugin` (with `manifest`) may name `action` as a click or UI
+/// action: a core id needs `core.actions` and must be plugin-invocable; a
+/// plugin id must be one this plugin's manifest declares (an id of another
+/// plugin is not checked here, the TUI refuses what no manifest declared).
+fn check_action(manifest: &garage_plugin::manifest::Manifest, id: &str, a: &str) -> Result<(), Box<Response>> {
+    let refuse = |status, msg: String| Err(Box::new(error_response(status, msg)));
+    if garage_protocol::widgets::is_core_action_id(a) {
+        if !manifest.has_permission(Permission::CoreActions) {
+            return refuse(StatusCode::FORBIDDEN, format!("plugin {id} lacks permission core.actions (click.action {a:?} is a core action)"));
+        }
+        return match garage_plugin::core_actions::lookup(a) {
+            Some(c) if c.plugin_invocable => Ok(()),
+            Some(_) => refuse(StatusCode::UNPROCESSABLE_ENTITY, format!("click.action {a:?} cannot be triggered by plugins")),
+            None => refuse(StatusCode::UNPROCESSABLE_ENTITY, format!("click.action {a:?} is not a core action")),
+        };
+    }
+    let (owner, local) = a.split_once(':').unwrap_or((id, a));
+    if owner == id && manifest.action(local).is_none() {
+        return refuse(StatusCode::UNPROCESSABLE_ENTITY, format!("click.action {a:?}: plugin {id} has no action {local:?}"));
+    }
+    Ok(())
+}
+
+async fn list(State(st): State<AppState>) -> Json<garage_protocol::plugins::PluginList> {
+    Json(st.plugins.list())
+}
+
+#[derive(serde::Deserialize)]
+struct WidgetsQuery {
+    plugin: Option<String>,
+}
+
+async fn widgets_snapshot(State(st): State<AppState>, axum::extract::Query(q): axum::extract::Query<WidgetsQuery>) -> Json<garage_protocol::plugins::WidgetsSnapshot> {
+    Json(st.plugins.widget_snapshot(q.plugin.as_deref()))
+}
+
+/// `POST /api/plugins/ui/action`: a plugin asks the TUI to run an action. The
+/// daemon checks the token, `ui.invoke` and the action allowlist, then
+/// forwards the request as an SSE `ui_action` frame; the TUI treats it as a
+/// plugin trigger (it can arm a dangerous action, never confirm one). The body
+/// is read field by field: nothing like `confirmed` is ever taken from it.
+async fn ui_action(State(st): State<AppState>, headers: HeaderMap, body: Bytes) -> Response {
+    let plugin = match authed(&st, &headers, Permission::UiInvoke) {
+        Ok(p) => p,
+        Err(r) => return *r,
+    };
+    let body = match parse_body(&body) {
+        Ok(b) => b,
+        Err(r) => return *r,
+    };
+    let id = plugin.entry.id.clone();
+    let manifest = plugin.manifest().expect("active plugin has a manifest").clone();
+    let Some(action) = body.get("action").and_then(Value::as_str).filter(|a| !a.is_empty() && a.len() <= limits::ACTION_LEN && !a.chars().any(char::is_control)) else {
+        return error_response(StatusCode::BAD_REQUEST, "action must be a non-empty string");
+    };
+    let args = body.get("args").filter(|a| !a.is_null()).cloned();
+    if args.as_ref().is_some_and(|a| serde_json::to_vec(a).map_or(true, |v| v.len() > limits::CLICK_ARGS_BYTES)) {
+        return error_response(StatusCode::PAYLOAD_TOO_LARGE, format!("args: limit is {} bytes", limits::CLICK_ARGS_BYTES));
+    }
+    let text = |v: Option<&Value>| v.and_then(Value::as_str).filter(|s| !s.is_empty() && !s.chars().any(char::is_control)).map(str::to_owned);
+    let target = garage_protocol::plugins::UiTarget {
+        session: text(body.get("target").and_then(|t| t.get("session"))),
+        workspace: text(body.get("target").and_then(|t| t.get("workspace"))),
+    };
+    if let Err(r) = check_action(&manifest, &id, action) {
+        return *r;
+    }
+    // A bare local id is this plugin's own action; frame it in full.
+    let action = if garage_protocol::widgets::is_core_action_id(action) || action.contains(':') { action.to_owned() } else { format!("{id}:{action}") };
+    st.bus.publish(crate::bus::DaemonEvent::UiAction { plugin: id, action, args, target });
+    (StatusCode::ACCEPTED, Json(json!({"ok": true}))).into_response()
 }
 
 async fn delete_widget(State(st): State<AppState>, Path((id, widget)): Path<(String, String)>, headers: HeaderMap) -> Response {

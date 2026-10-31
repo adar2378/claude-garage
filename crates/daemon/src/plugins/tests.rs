@@ -1126,3 +1126,108 @@ async fn the_hosts_registry_edits_survive_a_cli_writing_at_the_same_time() {
     assert_eq!(file.plugins.len(), 26, "no CLI edit was lost to a host write");
     assert!(file.plugins[0].enabled, "and the host's last edit is the last word");
 }
+
+// ---------------------------------------------------------------------
+// What the TUI reads: the listing, the widget snapshot, ui actions
+// ---------------------------------------------------------------------
+
+#[tokio::test]
+async fn the_listing_gives_the_tui_actions_buttons_panes_and_user_bindings_in_install_order() {
+    let r = Rig::new();
+    let extra = format!(
+        "{WIDGETS}[[actions]]\nid = \"go\"\ntitle = \"Go\"\ncommand = [\"./x\"]\ndefault_key = \"u\"\ncontexts = [\"session\"]\nconfirm = true\n\
+         [[actions]]\nid = \"look\"\ntitle = \"Look\"\npane = \"details\"\n\
+         [[panes]]\nid = \"details\"\ntitle = \"Details\"\nplacement = \"overlay\"\ncommand = [\"./p\"]\n\
+         [[buttons]]\nslot = \"tile.title.right\"\nlabel = \"[go]\"\non_click = \"go\"\nargs = {{k = 1}}\npriority = 3\n"
+    );
+    r.install("zeta", &manifest("zeta", &["ui.widgets", "ui.panes"], &extra));
+    r.install("alpha", &manifest("alpha", &[], ""));
+    PluginsFile::update(&r.paths(), |f| {
+        f.plugins.iter_mut().find(|e| e.id == "zeta").unwrap().bindings.insert("go".into(), "g".into());
+        (true, ())
+    })
+    .unwrap();
+    r.st.plugins.reload().unwrap();
+    let (s, _, b) = r.call("GET", "/api/plugins", None, None).await;
+    assert_eq!(s, StatusCode::OK, "core routes need no token");
+    let ids: Vec<&str> = b["plugins"].as_array().unwrap().iter().map(|p| p["id"].as_str().unwrap()).collect();
+    assert_eq!(ids, ["zeta", "alpha"], "registry order, not alphabetical: it is the keymap tiebreak");
+    let z = &b["plugins"][0];
+    assert_eq!(z["bindings"], json!({"go": "g"}));
+    assert_eq!(z["actions"][0], json!({"id": "zeta:go", "title": "Go", "default_key": "u", "contexts": ["session"], "confirm": true, "pane": null}));
+    assert_eq!(z["actions"][1]["pane"], "details");
+    assert_eq!(z["buttons"][0]["on_click"], "go");
+    assert_eq!(z["buttons"][0]["slot"], "tile.title.right");
+    assert_eq!(z["buttons"][0]["args"], json!({"k": 1}));
+    assert_eq!(z["panes"][0]["placement"], "overlay");
+    assert_eq!(z["widgets"][0], json!({"id": "bar", "slot": "strip.right"}));
+
+    // an inactive plugin lists bare: nothing of it may reach the screen
+    r.st.plugins.set_enabled("zeta", false).unwrap();
+    let (_, _, b) = r.call("GET", "/api/plugins", None, None).await;
+    assert_eq!(b["plugins"][0]["active"], false);
+    assert!(b["plugins"][0]["actions"].as_array().unwrap().is_empty() && b["plugins"][0]["buttons"].as_array().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn the_widget_snapshot_carries_revs_and_can_be_asked_for_one_plugin() {
+    let r = Rig::new();
+    r.install("one", &manifest("one", &["ui.widgets"], WIDGETS));
+    r.install("two", &manifest("two", &["ui.widgets"], WIDGETS));
+    pw(&r, "one", Some(&r.token("one")), &put_body("a")).await;
+    pw(&r, "one", Some(&r.token("one")), &put_body("b")).await;
+    pw(&r, "two", Some(&r.token("two")), &put_body("c")).await;
+    let (_, _, all) = r.call("GET", "/api/plugins/widgets", None, None).await;
+    assert_eq!(all["plugins"]["one"]["rev"], 2);
+    assert_eq!(all["plugins"]["two"]["rev"], 1);
+    assert_eq!(all["plugins"]["one"]["widgets"]["bar"]["slot"], "strip.right");
+    assert_eq!(all["plugins"]["one"]["widgets"]["bar"]["scopes"]["*"][0]["segments"][0]["text"], "b");
+    let (_, _, just) = r.call("GET", "/api/plugins/widgets?plugin=two", None, None).await;
+    assert_eq!(just["plugins"].as_object().unwrap().keys().collect::<Vec<_>>(), ["two"], "only the plugin asked for");
+}
+
+async fn ui_post(r: &Rig, t: Option<String>, body: Value) -> (StatusCode, axum::http::HeaderMap, Value) {
+    r.call("POST", "/api/plugins/ui/action", t.as_deref(), Some(&body.to_string())).await
+}
+
+#[tokio::test]
+async fn a_ui_action_needs_ui_invoke_and_an_allowed_action_and_is_forwarded_without_a_confirmed_field() {
+    let mut r = Rig::new();
+    r.install("asker", &manifest("asker", &["ui.invoke", "core.actions"], &action("go", "\"./x\"")));
+    r.install("nopermit", &manifest("nopermit", &["core.actions"], ""));
+    r.install("nocore", &manifest("nocore", &["ui.invoke"], ""));
+    let (ta, tn, tc) = (r.token("asker"), r.token("nopermit"), r.token("nocore"));
+    r.events();
+
+    assert_eq!(ui_post(&r, None, json!({"action": "session.close"})).await.0, StatusCode::UNAUTHORIZED);
+    let (s, _, b) = ui_post(&r, Some(tn), json!({"action": "session.close"})).await;
+    assert_eq!((s, b["error"].as_str().unwrap()), (StatusCode::FORBIDDEN, "plugin nopermit lacks permission ui.invoke"));
+    let (s, _, b) = ui_post(&r, Some(tc), json!({"action": "session.close"})).await;
+    assert_eq!(s, StatusCode::FORBIDDEN, "a core action needs core.actions too");
+    assert!(b["error"].as_str().unwrap().contains("core.actions"), "{b}");
+    for bad in ["app.quit", "overlay.close", "session.teleport"] {
+        assert_eq!(ui_post(&r, Some(ta.clone()), json!({"action": bad})).await.0, StatusCode::UNPROCESSABLE_ENTITY, "{bad}");
+    }
+    assert_eq!(ui_post(&r, Some(ta.clone()), json!({"action": "asker:nope"})).await.0, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(ui_post(&r, Some(ta.clone()), json!({})).await.0, StatusCode::BAD_REQUEST);
+    assert!(r.events().is_empty(), "nothing refused reached the TUI");
+
+    // The body claims it was confirmed, in the body and in the target: neither is read.
+    let (s, _, _) = ui_post(
+        &r,
+        Some(ta.clone()),
+        json!({"action": "session.close", "confirmed": true, "args": {"keep": 1}, "target": {"session": "garage/w/a", "workspace": "w", "confirmed": true}}),
+    )
+    .await;
+    assert_eq!(s, StatusCode::ACCEPTED);
+    let ev = r.events();
+    let [DaemonEvent::UiAction { plugin, action, args, target }] = ev.as_slice() else { panic!("{ev:?}") };
+    assert_eq!((plugin.as_str(), action.as_str()), ("asker", "session.close"));
+    assert_eq!(args, &Some(json!({"keep": 1})));
+    assert_eq!((target.session.as_deref(), target.workspace.as_deref()), (Some("garage/w/a"), Some("w")));
+
+    // a bare local id is the caller's own action, framed in full
+    ui_post(&r, Some(ta), json!({"action": "go"})).await;
+    let ev = r.events();
+    assert!(matches!(ev.as_slice(), [DaemonEvent::UiAction { action, .. }] if action == "asker:go"), "{ev:?}");
+}
