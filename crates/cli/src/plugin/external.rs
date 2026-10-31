@@ -111,7 +111,7 @@ pub fn prepare(
     full.extend(route.args.iter().cloned());
     let parent: Vec<(String, String)> = parent_env.collect();
     let mut env = base_env(parent.iter().cloned());
-    // A CLI plugin may start `claude-garage` itself (`GARAGE_BIN`): it must
+    // A CLI plugin may start a `claude-garage` of its own: it must
     // find the same daemon and state this command found. These are
     // settings, not secrets.
     env.extend(
