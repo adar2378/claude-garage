@@ -6,7 +6,6 @@
 //! plugin host) bind to — rename with care.
 
 use crate::api::models::WorktreeRecord;
-use crate::state::store::GarageCommand;
 use crate::state::wall_state::WallState;
 
 /// A stable, dotted action name (`session.close`, `jump.blocked`, …).
@@ -159,6 +158,82 @@ impl ActionCtx {
         self.view = Some(view);
         self
     }
+}
+
+/// Garage-layer commands (spec tui-key-routing: "Garage-layer bindings" +
+/// "p8.1 session lifecycle bindings" + "p8.3 workspace removal",
+/// `1-9 [ ] a A n N m R x X w Enter ? q`, plus the p16-restart `r` prefix's
+/// `r r` / `r a` / `r d`, which come from [`restart_command_for`] rather
+/// than [`garage_command_for`]).
+/// State-affecting commands are applied by [`WallStore::dispatch`];
+/// [`GarageCommand::Spawn`], [`GarageCommand::RestoreAll`],
+/// [`GarageCommand::Close`], [`GarageCommand::WorkspaceRemove`] and
+/// [`GarageCommand::Quit`] are effects the caller performs (daemon API
+/// calls, process exit) — the store never does IO. [`GarageCommand::Engage`]
+/// is declined when the focused tile is a restorable placeholder, so the
+/// caller can run the restore effect.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GarageCommand {
+    /// Zero-based index into [`WallState::groups`] (`1` → 0).
+    FocusWorkspace(usize),
+    /// `]` → +1, `[` → -1, cycling the focused tile through the grid.
+    CycleFocus(i32),
+    Jump,
+    OpenQueue,
+    Spawn { worktree: bool },
+    Engage,
+    /// `m`: toggle the focused tile full-grid (spec tui-wall "Maximized tile").
+    Maximize,
+    /// `R`: restore every restorable session in the focused workspace — an
+    /// effect (parallel per-id `POST /api/sessions/restore` calls), so the
+    /// store always declines it.
+    RestoreAll,
+    /// `x`: armed double-press close of the focused session — an effect
+    /// (`DELETE /api/sessions/<id>`), so the store always declines it.
+    Close,
+    /// `w`: open the add-workspace overlay.
+    WorkspaceAdd,
+    /// `X`: armed double-press removal of the FOCUSED workspace's
+    /// registration — an effect (`DELETE /api/workspaces/<name>`,
+    /// registry-only: live sessions keep running and reappear as an
+    /// unregistered group), so the store always declines it.
+    WorkspaceRemove,
+    /// `d` (spec tui-views "Detach and rejoin"): move the focused session
+    /// out of a multi-session view into its own solo view (focusing it), or
+    /// — if it's already alone in its view — rejoin it to the default view.
+    DetachFocused,
+    /// `Tab` (spec tui-views "View strip and group frame"; reduced to
+    /// `"\t"` by `garage_key_string` — see `garage_command_for`'s doc note):
+    /// cycle the focused workspace's views.
+    CycleView,
+    /// `D` (shift+d, spec tui-views "Move to a group"): open the view-picker
+    /// overlay for the focused session (its views list + "new group…").
+    OpenViewPicker,
+    ToggleHelp,
+    /// `I` (shift+i, spec tui-context-meters "Install affordance", spec
+    /// tui-hooks-install): `POST /api/statusline/install` then `POST
+    /// /api/hooks/install` — an effect (the store never does IO), so the
+    /// store always declines it.
+    InstallStatusline,
+    /// `t`: open the focused LIVE session in its own OS terminal window
+    /// (macOS only) — a detached `tmux attach` client alongside the wall's
+    /// own, so the store never does IO and always declines it.
+    OpenWindow,
+    /// `r r` (p16-restart, spec restart "TUI chords"): armed double-press
+    /// restart of the focused session in place — an effect
+    /// (`POST /api/sessions/restart {id, force}`), so the store always
+    /// declines it.
+    RestartFocused,
+    /// `r a`: restart every idle/done session of the focused workspace
+    /// ([`WallStore::restart_targets_for_workspace`]) — an effect (one
+    /// `POST /api/sessions/restart` per id, since the daemon has no
+    /// workspace filter), always declined.
+    RestartWorkspace,
+    /// `r d`: restart the daemon itself (`POST /api/daemon/restart`) —
+    /// tmux sessions are untouched and the SSE task's existing reconnect
+    /// carries the wall across the handoff. An effect, always declined.
+    RestartDaemon,
+    Quit,
 }
 
 /// The action id (and `workspace.focus` index) a [`GarageCommand`] maps to.

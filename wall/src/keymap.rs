@@ -11,7 +11,7 @@ use std::sync::OnceLock;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-use crate::actions::{ids, ActionId};
+use crate::actions::{command_for_action, ids, ActionId, GarageCommand};
 use crate::state::wall_state::OverlayKind;
 
 /// Which key table a key is looked up in.
@@ -141,6 +141,39 @@ impl Default for Keymap {
     fn default() -> Self {
         Keymap::defaults()
     }
+}
+
+/// Maps a garage-layer key to its command; `None` for unbound keys (which
+/// are consumed silently — garage typing never reaches an agent). Enter
+/// arrives as `"\n"` or `"\r"` depending on the host terminal.
+///
+/// [`RESTART_PREFIX`] is deliberately absent: on its own `r` is a prefix,
+/// never a command — the router consumes it and resolves the NEXT key
+/// through [`restart_command_for`] (p16-restart, design.md D5).
+///
+/// `Tab` is mapped here as `"\t"` ahead of the UI wave that actually
+/// delivers it: `garage_key_string` (runtime.rs) currently returns `None`
+/// for `KeyCode::Tab` (nothing maps a bare Tab to a string yet), so this
+/// binding is inert until that function grows a
+/// `KeyCode::Tab => Some("\t".to_owned())` arm — the reservation design.md
+/// refers to ("Tab-in-garage was reserved for exactly this").
+pub fn garage_command_for(key: &str) -> Option<GarageCommand> {
+    let resolved = Keymap::shared_defaults().resolve(Layer::Garage, key)?;
+    command_for_action(resolved.action, resolved.index)
+}
+
+/// The one-shot restart prefix key (p16-restart, design.md D5: "`r` opens a
+/// one-shot prefix, same mechanism as `X` → `X`/`K`").
+pub const RESTART_PREFIX: &str = "r";
+
+/// The key AFTER the [`RESTART_PREFIX`]: `r r` the focused session, `r a`
+/// the focused workspace's idle/done sessions, `r d` the daemon. `None` for
+/// anything else — the router then cancels the prefix and swallows the key,
+/// so a mistyped chord can never fire the unrelated binding that key
+/// normally carries (`a` jump, `d` detach…).
+pub fn restart_command_for(key: &str) -> Option<GarageCommand> {
+    let resolved = Keymap::shared_defaults().resolve(Layer::RestartChord, key)?;
+    command_for_action(resolved.action, resolved.index)
 }
 
 /// The overlay-layer key string: `esc` / `enter` / `up` / `down` regardless

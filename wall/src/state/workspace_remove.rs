@@ -71,7 +71,7 @@ mod tests {
     //! Port of `tui/test/workspace_remove_test.dart` — the caller-level `K`
     //! branch and the strip wording.
     use super::*;
-    use crate::state::store::garage_command_for;
+    use crate::keymap::garage_command_for;
     use serde_json::json;
     use std::time::Duration;
 

@@ -7,7 +7,7 @@
 //! caller-side behavior the Dart TUI kept in `bin/garage_tui.dart`.
 use super::*;
 use super::router::next_label;
-use crate::state::store::garage_command_for;
+use crate::keymap::garage_command_for;
 use crate::api::models::{SessionInfo, WorkspaceInfo};
 
 fn ws(name: &str) -> WorkspaceInfo {

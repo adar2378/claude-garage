@@ -5,8 +5,7 @@
 
 use std::collections::HashMap;
 
-use crate::actions::command_for_action;
-use crate::keymap::{Keymap, Layer};
+pub use crate::actions::GarageCommand;
 use crate::api::models::{SessionInfo, UsageInfo, WorkspaceInfo};
 use crate::state::armed_action::ArmedAction;
 use crate::state::salience::jump_target;
@@ -15,115 +14,6 @@ use crate::state::views::{
     DEFAULT_VIEW,
 };
 use crate::state::wall_state::{KeyLayer, OverlayKind, WallSession, WallState};
-
-/// Garage-layer commands (spec tui-key-routing: "Garage-layer bindings" +
-/// "p8.1 session lifecycle bindings" + "p8.3 workspace removal",
-/// `1-9 [ ] a A n N m R x X w Enter ? q`, plus the p16-restart `r` prefix's
-/// `r r` / `r a` / `r d`, which come from [`restart_command_for`] rather
-/// than [`garage_command_for`]).
-/// State-affecting commands are applied by [`WallStore::dispatch`];
-/// [`GarageCommand::Spawn`], [`GarageCommand::RestoreAll`],
-/// [`GarageCommand::Close`], [`GarageCommand::WorkspaceRemove`] and
-/// [`GarageCommand::Quit`] are effects the caller performs (daemon API
-/// calls, process exit) — the store never does IO. [`GarageCommand::Engage`]
-/// is declined when the focused tile is a restorable placeholder, so the
-/// caller can run the restore effect.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum GarageCommand {
-    /// Zero-based index into [`WallState::groups`] (`1` → 0).
-    FocusWorkspace(usize),
-    /// `]` → +1, `[` → -1, cycling the focused tile through the grid.
-    CycleFocus(i32),
-    Jump,
-    OpenQueue,
-    Spawn { worktree: bool },
-    Engage,
-    /// `m`: toggle the focused tile full-grid (spec tui-wall "Maximized tile").
-    Maximize,
-    /// `R`: restore every restorable session in the focused workspace — an
-    /// effect (parallel per-id `POST /api/sessions/restore` calls), so the
-    /// store always declines it.
-    RestoreAll,
-    /// `x`: armed double-press close of the focused session — an effect
-    /// (`DELETE /api/sessions/<id>`), so the store always declines it.
-    Close,
-    /// `w`: open the add-workspace overlay.
-    WorkspaceAdd,
-    /// `X`: armed double-press removal of the FOCUSED workspace's
-    /// registration — an effect (`DELETE /api/workspaces/<name>`,
-    /// registry-only: live sessions keep running and reappear as an
-    /// unregistered group), so the store always declines it.
-    WorkspaceRemove,
-    /// `d` (spec tui-views "Detach and rejoin"): move the focused session
-    /// out of a multi-session view into its own solo view (focusing it), or
-    /// — if it's already alone in its view — rejoin it to the default view.
-    DetachFocused,
-    /// `Tab` (spec tui-views "View strip and group frame"; reduced to
-    /// `"\t"` by `garage_key_string` — see `garage_command_for`'s doc note):
-    /// cycle the focused workspace's views.
-    CycleView,
-    /// `D` (shift+d, spec tui-views "Move to a group"): open the view-picker
-    /// overlay for the focused session (its views list + "new group…").
-    OpenViewPicker,
-    ToggleHelp,
-    /// `I` (shift+i, spec tui-context-meters "Install affordance", spec
-    /// tui-hooks-install): `POST /api/statusline/install` then `POST
-    /// /api/hooks/install` — an effect (the store never does IO), so the
-    /// store always declines it.
-    InstallStatusline,
-    /// `t`: open the focused LIVE session in its own OS terminal window
-    /// (macOS only) — a detached `tmux attach` client alongside the wall's
-    /// own, so the store never does IO and always declines it.
-    OpenWindow,
-    /// `r r` (p16-restart, spec restart "TUI chords"): armed double-press
-    /// restart of the focused session in place — an effect
-    /// (`POST /api/sessions/restart {id, force}`), so the store always
-    /// declines it.
-    RestartFocused,
-    /// `r a`: restart every idle/done session of the focused workspace
-    /// ([`WallStore::restart_targets_for_workspace`]) — an effect (one
-    /// `POST /api/sessions/restart` per id, since the daemon has no
-    /// workspace filter), always declined.
-    RestartWorkspace,
-    /// `r d`: restart the daemon itself (`POST /api/daemon/restart`) —
-    /// tmux sessions are untouched and the SSE task's existing reconnect
-    /// carries the wall across the handoff. An effect, always declined.
-    RestartDaemon,
-    Quit,
-}
-
-/// Maps a garage-layer key to its command; `None` for unbound keys (which
-/// are consumed silently — garage typing never reaches an agent). Enter
-/// arrives as `"\n"` or `"\r"` depending on the host terminal.
-///
-/// [`RESTART_PREFIX`] is deliberately absent: on its own `r` is a prefix,
-/// never a command — the router consumes it and resolves the NEXT key
-/// through [`restart_command_for`] (p16-restart, design.md D5).
-///
-/// `Tab` is mapped here as `"\t"` ahead of the UI wave that actually
-/// delivers it: `garage_key_string` (runtime.rs) currently returns `None`
-/// for `KeyCode::Tab` (nothing maps a bare Tab to a string yet), so this
-/// binding is inert until that function grows a
-/// `KeyCode::Tab => Some("\t".to_owned())` arm — the reservation design.md
-/// refers to ("Tab-in-garage was reserved for exactly this").
-pub fn garage_command_for(key: &str) -> Option<GarageCommand> {
-    let resolved = Keymap::shared_defaults().resolve(Layer::Garage, key)?;
-    command_for_action(resolved.action, resolved.index)
-}
-
-/// The one-shot restart prefix key (p16-restart, design.md D5: "`r` opens a
-/// one-shot prefix, same mechanism as `X` → `X`/`K`").
-pub const RESTART_PREFIX: &str = "r";
-
-/// The key AFTER the [`RESTART_PREFIX`]: `r r` the focused session, `r a`
-/// the focused workspace's idle/done sessions, `r d` the daemon. `None` for
-/// anything else — the router then cancels the prefix and swallows the key,
-/// so a mistyped chord can never fire the unrelated binding that key
-/// normally carries (`a` jump, `d` detach…).
-pub fn restart_command_for(key: &str) -> Option<GarageCommand> {
-    let resolved = Keymap::shared_defaults().resolve(Layer::RestartChord, key)?;
-    command_for_action(resolved.action, resolved.index)
-}
 
 /// The `r r` arming (p16-restart, spec restart "TUI chords"): the generic
 /// [`ArmedAction`] machine (3s window, same as the `x x` close) plus the one
@@ -819,6 +709,7 @@ mod tests {
     //! and SSE-event application. Specs: tui-key-routing (layers, garage
     //! bindings), tui-wall (grid cap), tui-triage (a jump).
     use super::*;
+    use crate::keymap::{garage_command_for, restart_command_for, RESTART_PREFIX};
     use crate::state::salience::restorable_session_ids;
 
     fn ws(name: &str) -> WorkspaceInfo {
