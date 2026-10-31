@@ -16,6 +16,9 @@ pub mod session_resolve;
 pub mod state;
 pub mod transcript;
 
+#[cfg(test)]
+mod wiring_tests;
+
 #[cfg(any(test, feature = "test-support"))]
 pub mod test_support;
 
@@ -23,6 +26,7 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use axum::middleware;
+use backend::SessionBackend;
 
 pub use config::Config;
 pub use state::AppState;
@@ -46,12 +50,22 @@ pub async fn bind(config: &Config) -> Result<tokio::net::TcpListener> {
 pub async fn run(config: Config) -> Result<()> {
     let listener = bind(&config).await?;
     let backend = Arc::new(backend::tmux::TmuxBackend::new(config.tmux_socket.clone()));
-    let state = AppState::new(config, backend, Arc::new(os::UnsupportedOs));
+    backend.init().await.context("initialising the tmux server")?;
+    let agents: Arc<dyn poller::AgentSource> = Arc::new(poller::CommandAgents::default());
+    let state = AppState::with_agents(
+        config,
+        backend,
+        Arc::new(os::UnsupportedOs),
+        agents.clone(),
+        install::claude_home_from_env(),
+    );
+    let poller = state.poller(agents).start();
     axum::serve(listener, app(state))
         .with_graceful_shutdown(async {
             let _ = tokio::signal::ctrl_c().await;
         })
         .await?;
+    poller.abort();
     Ok(())
 }
 
