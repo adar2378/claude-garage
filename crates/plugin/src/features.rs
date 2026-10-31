@@ -63,6 +63,7 @@ pub fn features() -> Value {
             "widget_cols": limits::COLS_PER_ITEM,
             "widget_body_bytes": limits::BODY_BYTES,
             "widget_puts_per_sec": limits::PUTS_PER_SEC,
+            "widget_ttl_secs": limits::TTL_SECS_MAX,
         },
     })
 }

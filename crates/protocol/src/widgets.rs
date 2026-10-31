@@ -31,6 +31,12 @@ pub mod limits {
     pub const PUT_BURST: u32 = 20;
     /// Longest `click.action` string.
     pub const ACTION_LEN: usize = 96;
+    /// Longest `ttl_secs` a push may ask for (one hour).
+    pub const TTL_SECS_MAX: u32 = 3600;
+    /// Largest `PUT /api/plugins/ui/slots` body.
+    pub const SLOTS_BODY_BYTES: usize = 16 * 1024;
+    /// Largest column count a slot geometry value may claim.
+    pub const GEOMETRY_COLS_MAX: u64 = 1000;
 }
 
 /// Where a widget draws. The scope key of its content depends on the slot.
@@ -242,9 +248,65 @@ pub fn check_body_len(len: usize) -> Result<(), LimitError> {
     Ok(())
 }
 
-/// Control characters and newlines are dropped.
+/// Invisible format characters that can reorder or hide text on screen:
+/// zero-width space/joiners and direction marks (U+200B..U+200F), bidi
+/// embeddings and overrides (U+202A..U+202E), bidi isolates (U+2066..U+2069)
+/// and the byte order mark (U+FEFF).
+fn is_invisible_format(c: char) -> bool {
+    matches!(c, '\u{200B}'..='\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}' | '\u{FEFF}')
+}
+
+/// Control characters, newlines and invisible bidi/zero-width characters are
+/// dropped.
 pub fn sanitise(text: &str) -> String {
-    text.chars().filter(|c| !c.is_control()).collect()
+    text.chars().filter(|c| !c.is_control() && !is_invisible_format(*c)).collect()
+}
+
+fn geometry_cols(path: &str, v: &Value) -> Result<u64, LimitError> {
+    match v.as_u64() {
+        Some(n) if n <= limits::GEOMETRY_COLS_MAX => Ok(n),
+        _ => Err(bad(format!("{path}: must be a whole number of columns, 0..={}", limits::GEOMETRY_COLS_MAX))),
+    }
+}
+
+/// Check the body of `PUT /api/plugins/ui/slots` against the slot geometry
+/// schema: an object keyed by slot name, each value an object with only
+/// `width`, `max_cols` (whole column counts) and `filler` (`{x0, x1}` with
+/// `x0 <= x1`). Anything else is rejected, so the stored value is small and
+/// of a known shape however the caller behaves.
+pub fn validate_slot_geometry(v: &Value) -> Result<(), LimitError> {
+    let Some(slots) = v.as_object() else {
+        return Err(bad("body must be an object keyed by slot name"));
+    };
+    for (name, geo) in slots {
+        if !WidgetSlot::ALL.iter().any(|s| s.as_str() == name) {
+            return Err(bad(format!("{name:?} is not a slot")));
+        }
+        let Some(geo) = geo.as_object() else {
+            return Err(bad(format!("{name}: must be an object")));
+        };
+        for (key, val) in geo {
+            let at = format!("{name}.{key}");
+            match key.as_str() {
+                "width" | "max_cols" => {
+                    geometry_cols(&at, val)?;
+                }
+                "filler" => {
+                    let Some(f) = val.as_object() else { return Err(bad(format!("{at}: must be an object {{x0, x1}}"))) };
+                    if let Some(extra) = f.keys().find(|k| *k != "x0" && *k != "x1") {
+                        return Err(bad(format!("{at}.{extra}: unknown field")));
+                    }
+                    let x0 = geometry_cols(&format!("{at}.x0"), f.get("x0").unwrap_or(&Value::Null))?;
+                    let x1 = geometry_cols(&format!("{at}.x1"), f.get("x1").unwrap_or(&Value::Null))?;
+                    if x0 > x1 {
+                        return Err(bad(format!("{at}: x0 ({x0}) is after x1 ({x1})")));
+                    }
+                }
+                _ => return Err(bad(format!("{at}: unknown field (allowed: width, max_cols, filler)"))),
+            }
+        }
+    }
+    Ok(())
 }
 
 fn check_style(path: &str, style: &Style) -> Result<(), LimitError> {
@@ -302,6 +364,9 @@ pub fn validate_put(slot: WidgetSlot, mut put: WidgetPut) -> Result<WidgetPut, L
     if let Some(t) = put.ttl_secs {
         if t == 0 {
             return Err(bad("ttl_secs: must be at least 1"));
+        }
+        if t > limits::TTL_SECS_MAX {
+            return Err(bad(format!("ttl_secs: {t}; limit is {} (re-push to keep a widget alive longer)", limits::TTL_SECS_MAX)));
         }
     }
     let (max_items, limit_name) = slot.item_limit();
@@ -444,6 +509,58 @@ mod tests {
         assert!(e.message.contains("64"), "{}", e.message);
         let ok = "漢".repeat(32);
         assert!(validate_put(WidgetSlot::StripRight, put(json!({"scopes": {"*": [{"segments": [seg(&ok)]}]}}))).is_ok());
+    }
+
+    #[test]
+    fn bidi_and_zero_width_characters_are_stripped_but_ordinary_text_survives() {
+        let nasty = "a\u{200B}b\u{200F}c\u{202E}d\u{202A}e\u{2066}f\u{2069}g\u{FEFF}h\u{202C}i";
+        assert_eq!(sanitise(nasty), "abcdefghi");
+        assert_eq!(sanitise("漢字 \u{1F600} café"), "漢字 \u{1F600} café");
+        let p = validate_put(WidgetSlot::StripRight, put(json!({"scopes": {"*": [{"segments": [seg(nasty)]}]}}))).unwrap();
+        assert_eq!(p.scopes["*"][0].segments.as_ref().unwrap()[0].text, "abcdefghi");
+        let caption = validate_put(
+            WidgetSlot::StripRight,
+            put(json!({"scopes": {"*": [{"placement": {"kind": "filler", "x": 1, "caption": "p\u{202E}et"}, "segments": []}]}})),
+        )
+        .unwrap();
+        assert_eq!(caption.scopes["*"][0].placement, Placement::Filler { x: 1, caption: Some("pet".into()) });
+    }
+
+    #[test]
+    fn ttl_is_capped_at_an_hour() {
+        let with = |t: u32| validate_put(WidgetSlot::StripRight, put(json!({"scopes": {"*": []}, "ttl_secs": t})));
+        assert!(with(limits::TTL_SECS_MAX).is_ok());
+        let e = with(limits::TTL_SECS_MAX + 1).unwrap_err();
+        assert_eq!(e.status, 422);
+        assert!(e.message.contains("3600"), "{}", e.message);
+    }
+
+    #[test]
+    fn slot_geometry_accepts_the_documented_shape_and_nothing_else() {
+        let ok = json!({
+            "strip.right": {"width": 38, "filler": {"x0": 4, "x1": 30}},
+            "tile.title.right": {"max_cols": 12},
+            "rail.row": {"width": 24}, "rail.extra_rows": {"width": 24}
+        });
+        assert!(validate_slot_geometry(&ok).is_ok());
+        assert!(validate_slot_geometry(&json!({})).is_ok());
+        for (bad_body, why) in [
+            (json!([1]), "must be an object"),
+            (json!({"nope": {"width": 1}}), "is not a slot"),
+            (json!({"strip.right": 5}), "must be an object"),
+            (json!({"strip.right": {"width": -1}}), "columns"),
+            (json!({"strip.right": {"width": 1.5}}), "columns"),
+            (json!({"strip.right": {"width": 1001}}), "columns"),
+            (json!({"strip.right": {"width": "wide"}}), "columns"),
+            (json!({"strip.right": {"junk": "x".repeat(8000)}}), "unknown field"),
+            (json!({"strip.right": {"filler": {"x0": 9, "x1": 3}}}), "after"),
+            (json!({"strip.right": {"filler": {"x0": 1}}}), "columns"),
+            (json!({"strip.right": {"filler": {"x0": 1, "x1": 2, "y": 3}}}), "unknown field"),
+        ] {
+            let e = validate_slot_geometry(&bad_body).expect_err(why);
+            assert_eq!(e.status, 422);
+            assert!(e.message.contains(why), "{why}: {}", e.message);
+        }
     }
 
     #[test]
