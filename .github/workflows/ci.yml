@@ -1,0 +1,72 @@
+# Tests on every pull request and every push to main.
+#
+# The release workflow only runs on tags and only on macOS; this one is the
+# safety net before that. Windows is allowed to fail for now: the daemon and
+# TUI assume tmux and a Unix shell, so that job shows the gap without blocking.
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+# a newer push to the same ref makes the older run pointless
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    continue-on-error: ${{ matrix.os == 'windows-latest' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-14, ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      # rustup ships on GitHub's runners; no third-party action
+      - run: rustup toolchain install stable --profile minimal --component clippy && rustup default stable
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            wall/target
+          key: cargo-${{ runner.os }}-${{ hashFiles('wall/Cargo.lock') }}
+          restore-keys: cargo-${{ runner.os }}-
+
+      - run: npm ci
+
+      # --lib --bins: tests/injection.rs needs a tmux server
+      - name: TUI tests
+        working-directory: wall
+        run: cargo test --lib --bins
+
+      - name: TUI clippy
+        working-directory: wall
+        run: cargo clippy --all-targets -- -D warnings
+
+      # some daemon tests start and kill their own scratch tmux sessions
+      - name: Install tmux (macOS)
+        if: runner.os == 'macOS'
+        run: brew install tmux
+
+      - name: Install tmux (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get install -y tmux
+
+      - name: Daemon tests
+        if: runner.os != 'Windows'
+        run: npm test
