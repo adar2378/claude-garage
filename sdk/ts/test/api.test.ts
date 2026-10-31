@@ -179,7 +179,72 @@ describe("Api calls", () => {
     const f = await api.features();
     assert.deepEqual(f.api_versions, [1]);
     assert.equal(f.features["api.v1.frozen"], true);
-    assert.equal(daemon!.seen[0]!.path, "/api/plugin/features");
+    assert.equal(daemon!.seen[0]!.path, "/api/plugins/features");
+  });
+});
+
+describe("tokenless routes", () => {
+  it("sends the plugin token on every read, even on routes that answer without one today", async () => {
+    // /api/events, /api/sessions, /api/workspaces, /api/usage, /api/plugins/widgets
+    // and /api/workspaces/{name}/closed accept a token now; tokenless access is
+    // deprecated and may be removed, so the SDK never goes without.
+    const api = await start(() => [200, "{}"]);
+    await api.health();
+    await api.features();
+    await api.sessions();
+    await api.workspaces();
+    await api.usage();
+    await api.closedChats("repo");
+    await api.plugins();
+    await api.widgets();
+    await api.panes();
+    await api.request("GET", "/api/events");
+    const seen = daemon!.seen;
+    assert.equal(seen.length, 10);
+    for (const s of seen) {
+      assert.equal(s.authorization, "Bearer tok123", `${s.method} ${s.path}`);
+    }
+    for (const path of [
+      "/api/sessions",
+      "/api/workspaces",
+      "/api/usage",
+      "/api/workspaces/repo/closed",
+      "/api/plugins/widgets",
+      "/api/events",
+    ]) {
+      assert.ok(seen.some((s) => s.path === path), path);
+    }
+  });
+});
+
+describe("errors", () => {
+  it("exposes the stable code and the missing permission of an error body", async () => {
+    const api = await start(() => [
+      403,
+      JSON.stringify({
+        error: "plugin usage-bar lacks permission ui.widgets",
+        code: "permission_denied",
+        permission: "ui.widgets",
+      }),
+    ]);
+    await assert.rejects(api.clearWidget("bar"), (e: unknown) => {
+      assert.ok(e instanceof GarageError);
+      assert.equal(e.status, 403);
+      assert.equal(e.code, "permission_denied");
+      assert.equal(e.permission, "ui.widgets");
+      assert.match(e.message, /lacks permission/);
+      return true;
+    });
+  });
+
+  it("leaves code undefined for a body that is not an error object", async () => {
+    const api = await start(() => [502, "bad gateway"]);
+    await assert.rejects(api.sessions(), (e: unknown) => {
+      assert.ok(e instanceof GarageError);
+      assert.equal(e.code, undefined);
+      assert.equal(e.permission, undefined);
+      return true;
+    });
   });
 });
 
@@ -209,7 +274,7 @@ describe("types", () => {
           {
             priority: 5,
             placement: { kind: "filler", x: 20, caption: "hi" },
-            frames: [[{ text: "a" }], [{ text: "b", style: { fg: "needs-input", bold: true } }]],
+            frames: [[{ text: "a" }], [{ text: "b", style: { fg: "needs_input", bold: true } }]],
             frame_ms: 300,
             frame_x: [20, 21],
           },

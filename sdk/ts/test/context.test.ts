@@ -14,10 +14,11 @@ const sample: RunContext = {
   focus: {
     workspace: "garage",
     session: { id: "garage/main", dir: "/dev/garage", status: "idle", branch: "main", worktree: null },
+    dir: null,
   },
   selection: { session: "garage/main", index: 0, view: null },
   worktree: null,
-  event: { name: "session.turn", at: 1700000000000, data: { id: "garage/main", row: 12 } },
+  event: { name: "session.turn", at: 1700000000000, data: { id: "garage/main", workspace: "main", at: 1700000000000, anchor: { transcript_offset: null, row: 12, history_limit: 2000 } } },
   ui: { slots: {} },
 };
 
@@ -29,7 +30,12 @@ describe("readContext", () => {
     assert.equal(ctx.workspace, "garage");
     assert.equal(ctx.session, "garage/main");
     assert.equal(ctx.eventName, "session.turn");
-    assert.deepEqual(ctx.eventData, { id: "garage/main", row: 12 });
+    assert.deepEqual(ctx.eventData, {
+      id: "garage/main",
+      workspace: "main",
+      at: 1700000000000,
+      anchor: { transcript_offset: null, row: 12, history_limit: 2000 },
+    });
     assert.equal(ctx.stateDir, "/data/demo");
     assert.equal(ctx.cwd, "/dev/garage");
     assert.equal(ctx.triggerKind, "event");
@@ -60,7 +66,7 @@ describe("Context accessors", () => {
   it("treat null and empty as undefined", () => {
     const ctx = new Context({
       ...sample,
-      focus: { workspace: null, session: null },
+      focus: { workspace: null, session: null, dir: null },
       event: null,
       trigger: { ...sample.trigger, kind: "palette" },
     });
@@ -68,6 +74,7 @@ describe("Context accessors", () => {
     assert.equal(ctx.session, undefined);
     assert.equal(ctx.event, undefined);
     assert.equal(ctx.eventName, undefined);
+    assert.equal(ctx.cwd, undefined);
   });
 
   it("reads argv of a CLI run", () => {

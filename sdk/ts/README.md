@@ -21,7 +21,7 @@ Your manifest must declare the widget and the permission (`ui.widgets`, `ui.noti
 
 | Call | Route | Needs |
 |---|---|---|
-| `features()` | `GET /api/plugin/features` | nothing |
+| `features()` | `GET /api/plugins/features` | nothing |
 | `sessions()`, `workspaces()`, `usage()`, `health()` | core read routes | nothing |
 | `closedChats(ws)` | `GET /api/workspaces/{ws}/closed` | `sessions.read` |
 | `plugins()`, `widgets()`, `panes()` | `GET /api/plugins...` | nothing |

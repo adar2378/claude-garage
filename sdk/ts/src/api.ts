@@ -19,12 +19,28 @@ export class GarageError extends Error {
   readonly status: number;
   /** The reply body: parsed JSON when it was JSON, else the text. */
   readonly body: unknown;
+  /**
+   * The stable error code of the reply (`permission_denied`, `rate_limited`,
+   * ...), when the body carried one. Match on this, not on the message.
+   */
+  readonly code: string | undefined;
+  /** The permission the plugin lacks, on a `permission_denied` reply. */
+  readonly permission: string | undefined;
 
   constructor(status: number, message: string, body: unknown) {
     super(message);
     this.name = "GarageError";
     this.status = status;
     this.body = body;
+    const field = (name: string): string | undefined => {
+      if (body === null || typeof body !== "object" || !(name in body)) {
+        return undefined;
+      }
+      const v = (body as Record<string, unknown>)[name];
+      return typeof v === "string" ? v : undefined;
+    };
+    this.code = field("code");
+    this.permission = field("permission");
   }
 }
 
@@ -154,9 +170,9 @@ export class Api {
 
   // ---- reading ----
 
-  /** `GET /api/plugin/features`: API versions and optional capabilities. */
+  /** `GET /api/plugins/features`: API versions and optional capabilities. */
   features(): Promise<FeaturesResponse> {
-    return this.request("GET", "/api/plugin/features");
+    return this.request("GET", "/api/plugins/features");
   }
 
   /** `GET /api/health`. */
