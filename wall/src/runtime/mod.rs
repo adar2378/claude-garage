@@ -51,7 +51,7 @@ use crate::input::encode::encode_key;
 use crate::input::links::url_at;
 use crate::input::paste::wrap_bracketed_paste;
 use crate::keymap::{overlay_key_string, Keymap, Layer};
-use crate::slots::SlotRegistry;
+use crate::slots::{SlotId, SlotRegistry};
 use crate::state::armed_action::{ArmedAction, ArmedClose};
 use crate::state::persistence::{self, WallFile};
 use crate::state::salience::restorable_session_ids;
@@ -357,9 +357,6 @@ struct App {
     /// The pit pet behind its feature boundary; `None` when the `pet`
     /// feature is off.
     pet: Option<PetHost>,
-    /// Strip-absolute pet columns from the last frame (like `badge_cols`),
-    /// when the pet rendered.
-    pet_cols: Option<Range<u16>>,
     /// The filler width the last-drawn strip had — the room `pet_tick`'s
     /// next `PetSim::step` has to work with. `0` until the first frame
     /// (falls back to a conservative default — see `pet_tick`).
@@ -368,11 +365,16 @@ struct App {
 
 impl App {
     fn new(tx: EventSender, base_url: &str, started_ms: i64) -> App {
+        let pet = PetHost::new(started_ms);
+        let mut slots = SlotRegistry::core();
+        if let Some(provider) = pet.as_ref().and_then(PetHost::slot_provider) {
+            slots.register(SlotId::StripRight, provider);
+        }
         App {
             store: WallStore::new(),
             router: GarageRouter::default(),
             registry: TileRegistry::new(tx.clone()),
-            slots: SlotRegistry::core(),
+            slots,
             escalation: EscalationPolicy::default(),
             keylog: KeyLog::new(),
             tx,
@@ -388,8 +390,7 @@ impl App {
             triage_rect: None,
             ws_add_rect: None,
             view_picker_rect: None,
-            pet: PetHost::new(started_ms),
-            pet_cols: None,
+            pet,
             last_strip_filler: 0,
         }
     }

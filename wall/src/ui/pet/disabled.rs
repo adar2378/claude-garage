@@ -4,7 +4,7 @@
 use crate::runtime::Notices;
 use crate::state::wall_state::WallState;
 use crate::ui::pet::PetClick;
-use crate::ui::strip::PetRender;
+use crate::slots::SlotProvider;
 
 pub struct PetHost;
 
@@ -24,9 +24,12 @@ impl PetHost {
 
     pub fn reset_sim(&mut self) {}
 
-    pub fn strip_render(&self, _notices: &Notices, _now: i64) -> Option<PetRender> {
+    /// Nothing to put on `strip.right`: the slot stays empty.
+    pub fn slot_provider(&self) -> Option<Box<dyn SlotProvider>> {
         None
     }
+
+    pub fn publish_frame(&self, _notices: &Notices, _now: i64) {}
 
     /// `P` in a build without the pet: nothing to cycle.
     pub fn cycle_choice(_current: Option<&str>) -> Option<(Option<String>, String)> {

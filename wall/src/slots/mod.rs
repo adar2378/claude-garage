@@ -38,13 +38,26 @@ impl SlotId {
     }
 }
 
-/// One contribution: styled text, an optional click action, and a priority
-/// (higher survives longer when space runs out).
+/// Where a slot's renderer puts an item.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub enum Placement {
+    /// In the slot's run of items, in registration order.
+    #[default]
+    Flow,
+    /// `strip.right` only: floated into the strip's filler at column `x`
+    /// (within the filler), with an optional caption drawn beside it where
+    /// there is room. At most one such item shows.
+    Filler { x: u16, caption: Option<String> },
+}
+
+/// One contribution: styled text, an optional click action, a priority
+/// (higher survives longer when space runs out) and a placement.
 #[derive(Clone, Debug)]
 pub struct SlotItem {
     pub text: Vec<Span<'static>>,
     pub on_click: Option<ActionId>,
     pub priority: i16,
+    pub placement: Placement,
 }
 
 impl SlotItem {
@@ -53,6 +66,7 @@ impl SlotItem {
             text,
             on_click: None,
             priority,
+            placement: Placement::Flow,
         }
     }
 

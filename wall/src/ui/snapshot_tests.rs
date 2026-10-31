@@ -108,7 +108,7 @@ fn rail_empty_state() {
 fn strip_dump(store: &WallStore, notice: Option<&str>, w: u16) -> String {
     let rect = Rect::new(0, 0, w, 1);
     let mut buf = Buffer::empty(rect);
-    render_strip(&mut buf, rect, store.state(), &SlotRegistry::core(), notice, None);
+    render_strip(&mut buf, rect, store.state(), &SlotRegistry::core(), notice);
     dump(&buf)
 }
 
@@ -159,7 +159,8 @@ fn strip_narrow_drops_right_side_content() {
 #[cfg(feature = "pet")]
 #[test]
 fn strip_with_the_pet_in_the_filler() {
-    use crate::ui::strip::PetRender;
+    use crate::slots::{SlotCtx, SlotId};
+    use crate::ui::strip::{pet_slot_item, PetRender};
     let store = strip_store();
     let mut out = String::new();
     let alert = PetRender {
@@ -181,7 +182,9 @@ fn strip_with_the_pet_in_the_filler() {
     for (name, pet) in [("alert with speech", alert), ("asleep", asleep)] {
         let rect = Rect::new(0, 0, 110, 1);
         let mut buf = Buffer::empty(rect);
-        render_strip(&mut buf, rect, store.state(), &SlotRegistry::core(), None, Some(pet));
+        let mut slots = SlotRegistry::core();
+        slots.register(SlotId::StripRight, move |_: &SlotCtx| vec![pet_slot_item(&pet)]);
+        render_strip(&mut buf, rect, store.state(), &slots, None);
         out.push_str(&format!("## {name}\n{}\n", dump(&buf)));
     }
     insta::assert_snapshot!(out);

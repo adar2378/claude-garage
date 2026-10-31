@@ -2,10 +2,14 @@
 //! chatter scheduler, mood, PRNG and the frame it last rendered (moved out
 //! of `runtime/mod.rs`, p22 task 5.1).
 
+use std::cell::RefCell;
+use std::rc::Rc;
+
 use crate::runtime::{NoticeKind, Notices};
+use crate::slots::{SlotCtx, SlotItem, SlotProvider};
 use crate::state::wall_state::WallState;
 use crate::ui::pet::{self, PetClick};
-use crate::ui::strip::PetRender;
+use crate::ui::strip::{pet_slot_item, PetRender};
 
 /// A tiny xorshift64 PRNG (the pet module takes time and randomness
 /// injected as `rng: &mut impl FnMut() -> f64`; this is the one concrete
@@ -22,6 +26,19 @@ fn xorshift_next(state: &mut u64) -> f64 {
     (x >> 11) as f64 * (1.0 / (1u64 << 53) as f64)
 }
 
+/// The frame handed from the host to its slot provider.
+type Frame = Rc<RefCell<Option<PetRender>>>;
+
+/// The pet's `strip.right` provider: serves whatever frame the host last
+/// published (its own state, which is why providers are trait objects).
+struct PetSlot(Frame);
+
+impl SlotProvider for PetSlot {
+    fn items(&self, _ctx: &SlotCtx) -> Vec<SlotItem> {
+        self.0.borrow().iter().map(pet_slot_item).collect()
+    }
+}
+
 pub struct PetHost {
     /// Motion state; reset whenever `P` changes the species (a fresh pet
     /// starts centered, not wherever the last one wandered).
@@ -34,6 +51,9 @@ pub struct PetHost {
     next_tick_ms: i64,
     /// This frame's sprite — `None` whenever the pet is off.
     render: Option<PetRender>,
+    /// What the `strip.right` provider serves: the sprite with its chatter
+    /// line, republished by [`PetHost::publish_frame`] before each draw.
+    frame: Frame,
     /// `GARAGE_PET_ASCII=1`, read once at construction (the pup's face
     /// glyphs have an ASCII fallback for fonts that mangle them).
     ascii: bool,
@@ -66,6 +86,7 @@ impl PetHost {
             chatter,
             next_tick_ms: 0,
             render: None,
+            frame: Frame::default(),
             ascii: std::env::var("GARAGE_PET_ASCII").ok().as_deref() == Some("1"),
             started_ms,
             mood: pet::Mood::Sleep,
@@ -91,6 +112,16 @@ impl PetHost {
             None => "the strip is quiet again".to_owned(),
         };
         Some((next.map(|s| s.as_str().to_owned()), text))
+    }
+
+    /// The provider the app registers on `strip.right`.
+    pub fn slot_provider(&self) -> Option<Box<dyn SlotProvider>> {
+        Some(Box::new(PetSlot(self.frame.clone())))
+    }
+
+    /// Hand the provider this frame's sprite (with the live chatter line).
+    pub fn publish_frame(&self, notices: &Notices, now: i64) {
+        *self.frame.borrow_mut() = self.strip_render(notices, now);
     }
 
     /// This frame's sprite with the live pet-notice line as its speech.
@@ -311,6 +342,37 @@ mod tests {
         assert_eq!(calm.click(1_100, on.state(), &mut notices), PetClick::Handled);
         let off = store_with_blocked(None);
         assert_eq!(calm.click(1_200, off.state(), &mut notices), PetClick::Handled);
+    }
+
+    #[test]
+    fn the_published_frame_reaches_the_strip_through_the_slot_provider_with_a_click_range() {
+        use crate::slots::{SlotId, SlotRegistry};
+        use crate::actions::ids;
+        let mut host = PetHost::new(0).unwrap();
+        let mut slots = SlotRegistry::core();
+        slots.register(SlotId::StripRight, host.slot_provider().unwrap());
+        let mut notices = Notices::default();
+        let on = store_with_blocked(Some("cat"));
+        let strip = |slots: &SlotRegistry| crate::ui::strip::strip_line(on.state(), slots, None, 160);
+
+        // Nothing published yet: no pet, no click range.
+        assert!(strip(&slots).slots.iter().all(|(_, id)| *id != ids::PET_PET));
+
+        host.tick(1_000, on.state(), &mut notices, 100);
+        host.publish_frame(&notices, 1_000);
+        let line = strip(&slots);
+        let (range, _) = line.slots.iter().find(|(_, id)| *id == ids::PET_PET).expect("pet is clickable");
+        assert_eq!(
+            usize::from(range.end - range.start),
+            host.strip_render(&notices, 1_000).map(|p| p.text.chars().count() + if p.bang { 2 } else { 0 }).unwrap(),
+            "the item is exactly as wide as the sprite plus its bang column"
+        );
+
+        // Turned off: the next published frame is empty again.
+        let off = store_with_blocked(None);
+        host.tick(2_000, off.state(), &mut notices, 100);
+        host.publish_frame(&notices, 2_000);
+        assert!(strip(&slots).slots.iter().all(|(_, id)| *id != ids::PET_PET));
     }
 
     #[test]

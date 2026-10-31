@@ -103,19 +103,18 @@ impl App {
             }
         }
 
+        if let Some(pet) = &self.pet {
+            pet.publish_frame(&self.router.notices, now_ms);
+        }
         let strip_cols = render_strip(
             buf,
             layout.strip,
             self.store.state(),
             &self.slots,
             self.router.notices.current_of(NoticeKind::User, now_ms),
-            self.pet
-                .as_ref()
-                .and_then(|pet| pet.strip_render(&self.router.notices, now_ms)),
         );
         self.badge_cols = strip_cols.badge;
         self.strip_slots = strip_cols.slots;
-        self.pet_cols = strip_cols.pet;
         self.last_strip_filler = strip_cols.filler_width;
 
         self.triage_rect = None;

@@ -119,7 +119,6 @@ pub struct ClickMap<'a> {
     pub badge_cols: Option<&'a Range<u16>>,
     /// Clickable `strip.right` slot items from the last frame.
     pub strip_slots: &'a [(Range<u16>, ActionId)],
-    pub pet_cols: Option<&'a Range<u16>>,
 }
 
 /// The session id and rect under a grid point, honoring maximize (a
@@ -229,16 +228,13 @@ pub fn action_at(
             RailTarget::Session(id) => Some((ids::SESSION_FOCUS, ctx().with_session(id))),
         };
     }
-    // Slot items first, so a clickable item sitting near the badge never
-    // gets swallowed by it; then the pet; then the strip badge (the `A`
-    // binding).
+    // Slot items first (the pit pet among them), so a clickable item sitting
+    // near the badge never gets swallowed by it; then the strip badge (the
+    // `A` binding).
     if row >= layout.strip.y {
         if let Some((_, id)) = map.strip_slots.iter().find(|(r, _)| r.contains(&col)) {
             return Some((*id, ctx()));
         }
-    }
-    if row >= layout.strip.y && map.pet_cols.is_some_and(|r| r.contains(&col)) {
-        return Some((ids::PET_PET, ctx()));
     }
     if row >= layout.strip.y && map.badge_cols.is_some_and(|r| r.contains(&col)) {
         return Some((ids::OVERLAY_OPEN_QUEUE, ctx()));
@@ -498,7 +494,6 @@ mod tests {
             layout: WallLayout,
             targets: Vec<(Range<u16>, String)>,
             badge: Range<u16>,
-            pet: Range<u16>,
             /// A clickable `strip.right` item, overlapping the badge's start.
             slots: Vec<(Range<u16>, ActionId)>,
         }
@@ -509,8 +504,11 @@ mod tests {
                 layout: wall_layout(Rect::new(0, 0, 120, 40), n, None, false, false),
                 targets: Vec::new(),
                 badge: 80..95,
-                pet: 50..60,
-                slots: vec![(30..40, ids::OVERLAY_OPEN_HELP), (78..84, ids::OVERLAY_OPEN_HELP)],
+                slots: vec![
+                    (30..40, ids::OVERLAY_OPEN_HELP),
+                    (50..60, ids::PET_PET),
+                    (78..84, ids::OVERLAY_OPEN_HELP),
+                ],
             }
         }
 
@@ -525,7 +523,6 @@ mod tests {
                 view_picker_typing: false,
                 badge_cols: Some(&f.badge),
                 strip_slots: &f.slots,
-                pet_cols: Some(&f.pet),
             };
             action_at(&map, store.state(), col, row).map(|(id, ctx)| (id.as_str(), ctx))
         }
@@ -589,7 +586,7 @@ mod tests {
         }
 
         #[test]
-        fn strip_badge_is_the_a_key_queue_and_pet_wins_overlap() {
+        fn strip_badge_is_the_a_key_queue_and_the_pet_slot_item_is_pet_pet() {
             let store = store();
             let f = fixture(&store);
             let row = f.layout.strip.y;
