@@ -10,27 +10,29 @@
 //! by design: it degrades a malformed field to "absent" instead of failing
 //! the whole list), so it does not use these types yet.
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+pub mod api;
 pub mod auth;
 pub mod plugins;
 pub mod widgets;
 
 /// Body of every non-2xx response: `{"error": "..."}`. Routes may add fields.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct ErrorBody {
     pub error: String,
 }
 
 /// `{"ok": true}` acknowledgements.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Ack {
     pub ok: bool,
 }
 
 /// `GET /api/health`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Health {
     pub status: String,
     pub version: Option<String>,
@@ -39,7 +41,7 @@ pub struct Health {
 
 /// Session state. `Restorable` only appears in list entries built from
 /// resume metadata; the status store itself never holds it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "kebab-case")]
 pub enum SessionStatus {
     Idle,
@@ -49,7 +51,7 @@ pub enum SessionStatus {
     Restorable,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum ContextSource {
     Statusline,
@@ -58,7 +60,7 @@ pub enum ContextSource {
 
 /// `context` of a session list entry. The percentage is clamped to 0-100 by
 /// the daemon but may be fractional (statusline) or rounded (transcript).
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct Context {
     pub used_percentage: f64,
@@ -68,7 +70,7 @@ pub struct Context {
 /// A worktree as stored in resume metadata and returned by create/restore.
 /// `target` (the branch checked out in `repo_dir`) is only present on
 /// `DELETE /api/sessions/:id` responses.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct Worktree {
     pub path: String,
@@ -79,7 +81,7 @@ pub struct Worktree {
 }
 
 /// The `{path, branch}` pair create-session answers with.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct WorktreeRef {
     pub path: String,
     pub branch: String,
@@ -87,7 +89,7 @@ pub struct WorktreeRef {
 
 /// One entry of `GET /api/sessions`: live, or restorable (`status` is
 /// `restorable`, `restorable` is `true`, no `createdAt`).
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct Session {
     pub id: String,
@@ -107,7 +109,7 @@ pub struct Session {
     pub restorable: Option<bool>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct CreateSessionRequest {
     pub workspace: String,
     pub label: String,
@@ -115,7 +117,7 @@ pub struct CreateSessionRequest {
     pub worktree: Option<bool>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct CreateSessionResponse {
     pub id: String,
     pub workspace: String,
@@ -125,7 +127,7 @@ pub struct CreateSessionResponse {
 }
 
 /// `DELETE /api/sessions/:id` (`meta` is only present with `?meta=1`).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct DeleteSessionResponse {
     pub deleted: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -135,7 +137,7 @@ pub struct DeleteSessionResponse {
 
 /// Body of `POST /api/sessions/restore` and `/restart`: `{id}` or `{all}`;
 /// `force` is only read by restart.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct SessionTarget {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub id: Option<String>,
@@ -145,7 +147,7 @@ pub struct SessionTarget {
     pub force: Option<bool>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Restored {
     pub id: String,
     pub workspace: String,
@@ -155,37 +157,37 @@ pub struct Restored {
     pub resumed: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct RestoreFailure {
     pub id: String,
     pub reason: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct RestoreResponse {
     pub restored: Vec<Restored>,
     pub failed: Vec<RestoreFailure>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Restarted {
     pub id: String,
     pub resumed: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct RestartSkipped {
     pub id: String,
     pub status: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct IdError {
     pub id: String,
     pub error: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct RestartResponse {
     pub restarted: Vec<Restarted>,
     pub skipped: Vec<RestartSkipped>,
@@ -193,7 +195,7 @@ pub struct RestartResponse {
 }
 
 /// One entry of `GET /api/workspaces`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Workspace {
     pub name: String,
     pub dir: String,
@@ -201,25 +203,25 @@ pub struct Workspace {
 }
 
 /// `PUT /api/workspaces` body and response.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct WorkspaceRef {
     pub name: String,
     pub dir: String,
 }
 
 /// `PATCH /api/workspaces/:name` body.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct RenameWorkspaceRequest {
     pub name: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct RenamedSession {
     pub from: String,
     pub to: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct RenameWorkspaceResponse {
     pub name: String,
@@ -230,7 +232,7 @@ pub struct RenameWorkspaceResponse {
 }
 
 /// `DELETE /api/workspaces/:name?sessions=kill` (plain delete answers 204).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct DeleteWorkspaceResponse {
     pub removed: String,
@@ -241,7 +243,7 @@ pub struct DeleteWorkspaceResponse {
 
 /// `POST /api/hooks/claude` answers `{ok, applied}` or `{ok, ignored}`
 /// (`ignored` is `true` or the string `"idle-reminder"`).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct HookAck {
     pub ok: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -251,7 +253,7 @@ pub struct HookAck {
 }
 
 /// `POST /api/hooks/install`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct HooksInstallResponse {
     pub ok: bool,
@@ -261,7 +263,7 @@ pub struct HooksInstallResponse {
 }
 
 /// `POST /api/statusline/install`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct StatuslineInstallResponse {
     pub ok: bool,
@@ -271,7 +273,7 @@ pub struct StatuslineInstallResponse {
     pub backup: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct StatusLineCommand {
     #[serde(rename = "type")]
     pub kind: String,
@@ -279,7 +281,7 @@ pub struct StatusLineCommand {
 }
 
 /// `GET /api/statusline/snippet`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct StatuslineSnippet {
     pub status_line: StatusLineCommand,
@@ -288,14 +290,14 @@ pub struct StatuslineSnippet {
 
 /// One rate-limit window of `GET /api/usage`. `resetsAt` is whatever scalar
 /// Claude Code's statusline carried (an ISO string in practice), or null.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct UsageWindow {
     pub used_percentage: f64,
     pub resets_at: Value,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct Usage {
     pub five_hour: Option<UsageWindow>,
@@ -303,7 +305,7 @@ pub struct Usage {
 }
 
 /// `POST /api/ui/visibility` body.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct VisibilityRequest {
     pub client_id: String,
@@ -311,13 +313,13 @@ pub struct VisibilityRequest {
 }
 
 /// `POST /api/daemon/restart` answers 202 with the successor's pid.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct DaemonRestartResponse {
     pub pid: u32,
 }
 
 /// `POST /api/open-editor` body.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct OpenEditorRequest {
     pub workspace: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -327,7 +329,7 @@ pub struct OpenEditorRequest {
 }
 
 /// `POST /api/pick-directory`: `{dir}` or `{cancelled: true}`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct PickDirectoryResponse {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dir: Option<String>,
@@ -335,7 +337,7 @@ pub struct PickDirectoryResponse {
     pub cancelled: Option<bool>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum FinishAction {
     Merge,
@@ -344,13 +346,13 @@ pub enum FinishAction {
 }
 
 /// `POST /api/worktrees/finish` body.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct FinishWorktreeRequest {
     pub worktree: Worktree,
     pub action: FinishAction,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct FinishWorktreeResponse {
     pub action: FinishAction,
     pub path: String,
@@ -362,7 +364,7 @@ pub struct FinishWorktreeResponse {
 }
 
 /// Data of `event: status` on `GET /api/events`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct StatusEvent {
     pub id: String,
     pub status: SessionStatus,
@@ -405,7 +407,7 @@ impl Event {
 /// How the TUI attaches to a session. Deliberately data, not a command line:
 /// the TUI builds the fixed command itself, so whatever answers on the daemon
 /// port can never make it run an arbitrary program or dial an arbitrary host.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum AttachSpec {
     /// `tmux [-L <socket>] attach -t =<session>` in a PTY. `socket` matches

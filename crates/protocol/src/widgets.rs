@@ -8,6 +8,7 @@
 
 use std::collections::BTreeMap;
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use unicode_width::UnicodeWidthStr;
@@ -50,7 +51,7 @@ pub mod limits {
 }
 
 /// Where a widget draws. The scope key of its content depends on the slot.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 pub enum WidgetSlot {
     #[serde(rename = "tile.title.right")]
     TileTitleRight,
@@ -121,7 +122,7 @@ impl WidgetSlot {
 pub const GLOBAL_SCOPE: &str = "*";
 
 /// `fg`/`bg`: a theme token or `#rrggbb`.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Style {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fg: Option<String>,
@@ -161,7 +162,7 @@ fn color_ok(c: &str) -> bool {
 
 /// What a click on a segment (or a whole row) runs. `action` is a core id,
 /// `plugin:action`, or a bare local id.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct Click {
     pub action: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -181,7 +182,7 @@ pub fn is_core_action_id(id: &str) -> bool {
     id.contains('.') && !id.contains(':')
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct Segment {
     pub text: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -190,7 +191,7 @@ pub struct Segment {
     pub click: Option<Click>,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "lowercase")]
 pub enum Placement {
     #[default]
@@ -206,7 +207,7 @@ pub enum Placement {
 /// One thing a widget shows. `segments` and `frames` are mutually exclusive;
 /// the gutter fields (`row` / `kind`) apply to `tile.gutter`, and
 /// `row_style` / `click` to `rail.extra_rows` rows (and gutter markers).
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct WidgetItem {
     #[serde(default)]
     pub priority: i32,
@@ -239,7 +240,7 @@ pub struct WidgetItem {
 }
 
 /// Body of `PUT /api/plugins/{id}/widgets/{widget}`.
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct WidgetPut {
     pub scopes: BTreeMap<String, Vec<WidgetItem>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

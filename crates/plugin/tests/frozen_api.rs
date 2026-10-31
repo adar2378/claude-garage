@@ -183,3 +183,18 @@ fn every_frozen_manifest_field_is_still_in_the_schema() {
         );
     }
 }
+
+/// A validator for one named type of the published API schema.
+fn validator_for(def: &str) -> jsonschema::Validator {
+    let mut schema: Value = serde_json::from_str(&garage_protocol::api::api_schema_json()).unwrap();
+    schema["$ref"] = format!("#/definitions/{def}").into();
+    jsonschema::validator_for(&schema).expect("schema compiles")
+}
+
+#[test]
+fn the_features_document_matches_the_published_api_schema() {
+    let v = validator_for("FeaturesResponse");
+    let body = features::features_response("0.7.0");
+    let errors: Vec<String> = v.iter_errors(&body).map(|e| e.to_string()).collect();
+    assert!(errors.is_empty(), "{errors:?}");
+}

@@ -3190,6 +3190,21 @@ fn golden() -> Value {
     serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap()
 }
 
+/// A validator for one named type of the published API schema.
+fn api_validator(def: &str) -> jsonschema::Validator {
+    let mut schema: Value = serde_json::from_str(&garage_protocol::api::api_schema_json()).unwrap();
+    schema["$ref"] = format!("#/definitions/{def}").into();
+    jsonschema::validator_for(&schema).expect("schema compiles")
+}
+
+fn assert_valid(def: &str, v: &Value) {
+    let errors: Vec<String> = api_validator(def)
+        .iter_errors(v)
+        .map(|e| e.to_string())
+        .collect();
+    assert!(errors.is_empty(), "{def}: {errors:?} for {v}");
+}
+
 fn golden_names(v: &Value) -> Vec<String> {
     v.as_array()
         .unwrap()
@@ -3333,6 +3348,8 @@ async fn frozen_api_the_run_context_and_environment_keep_their_names() {
             "context.focus.session lost {key:?}"
         );
     }
+    assert_valid("RunContext", &ctx);
+    assert_valid("RunContext", &ctx2);
     for name in golden_names(&g["env"]) {
         assert!(call.env(&name).is_some(), "environment lost {name}");
     }
@@ -3386,6 +3403,16 @@ fn frozen_api_every_event_keeps_its_payload_keys() {
     for e in &ev {
         let (name, data) = e.plugin_event().expect("a plugin-visible event");
         seen.push(name.to_owned());
+        let def = match name {
+            "session.created" => "SessionCreated",
+            "session.closed" => "SessionClosed",
+            "session.turn" => "SessionTurn",
+            "session.forgotten" => "SessionForgotten",
+            "session.status_changed" => "SessionStatusChanged",
+            "worktree.created" => "WorktreeCreated",
+            _ => "WorkspaceNamed",
+        };
+        assert_valid(def, &data);
         for key in golden_names(&g["event_payload"][name]) {
             assert!(
                 data.get(&key).is_some(),
