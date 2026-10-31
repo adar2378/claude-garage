@@ -131,12 +131,19 @@ async fn a_github_plugin_without_a_grant_is_just_as_inactive_and_bundled_ones_ar
     .unwrap();
     r.bundle("shipped", &manifest("shipped", &["core.actions"], ""));
     r.link_unapproved("devdir", &manifest("devdir", &[], ""));
+    r.bundle_untrusted("tampered", &manifest("tampered", &["core.actions"], ""));
     r.st.plugins.reload().unwrap();
     let active: HashMap<String, bool> = r.st.plugins.infos().into_iter().map(|i| (i.id, i.active)).collect();
-    assert_eq!(active, HashMap::from([("fromgh".to_string(), false), ("shipped".to_string(), true), ("devdir".to_string(), false)]));
+    assert_eq!(
+        active,
+        HashMap::from([("fromgh".to_string(), false), ("shipped".to_string(), true), ("devdir".to_string(), false), ("tampered".to_string(), false)])
+    );
     let file = PluginsFile::read(&paths).unwrap();
     let granted: HashMap<_, _> = file.plugins.iter().map(|e| (e.id.clone(), e.granted_permissions.is_some())).collect();
-    assert_eq!(granted, HashMap::from([("fromgh".to_string(), false), ("shipped".to_string(), true), ("devdir".to_string(), false)]));
+    assert_eq!(
+        granted,
+        HashMap::from([("fromgh".to_string(), false), ("shipped".to_string(), true), ("devdir".to_string(), false), ("tampered".to_string(), false)])
+    );
 }
 
 #[tokio::test]

@@ -66,8 +66,23 @@ jobs:
       - name: Build the TUI binary
         run: npm run build:tui
 
+      - name: Build and stage the bundled plugins
+        run: npm run build:plugins
+
       - name: Package contains the TUI binary
         run: npm pack --dry-run 2>&1 | grep -q "wall/dist/garage-wall-darwin-arm64"
+
+      # The staged plugins ship as wall/dist/plugins/<id>/{garage-plugin.toml,bin/<id>}.
+      # The glob is empty (and the check skipped) while no first-party plugin exists.
+      - name: Package contains the bundled plugins
+        run: |
+          npm pack --dry-run > "$RUNNER_TEMP/pack.txt" 2>&1
+          for dir in plugins/*/; do
+            id=$(basename "$dir")
+            [ "$id" = hello ] && continue
+            grep -q "wall/dist/plugins/$id/garage-plugin.toml" "$RUNNER_TEMP/pack.txt"
+            grep -q "wall/dist/plugins/$id/bin/$id" "$RUNNER_TEMP/pack.txt"
+          done
 
       - run: npm publish
 

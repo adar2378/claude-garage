@@ -9,6 +9,7 @@
 //! queue, timers and the teardown sequence.
 
 pub mod api;
+pub mod bundled;
 pub mod context;
 pub mod layout;
 pub mod runner;
@@ -527,10 +528,12 @@ impl Inner {
             let (mut grant, mut sha) = (None, None);
             if let Some(good) = &state.good {
                 // Approval is never automatic for code the user pointed us at:
-                // only first-party (bundled) plugins are granted at first
-                // load. A linked or GitHub plugin waits for `plugin link` or
-                // `plugin install`, which write the grant.
-                if entry.granted_permissions.is_none() && entry.is_first_party() {
+                // only first-party (bundled) plugins whose id and manifest
+                // hash are on the build's allowlist are granted at first
+                // load. Anything else (a linked or GitHub plugin, a bundled
+                // entry with an unknown or edited manifest) waits for
+                // `plugin link` or `plugin install`, which write the grant.
+                if entry.granted_permissions.is_none() && entry.is_first_party() && bundled::is_trusted(&entry.id, &good.sha) {
                     let names = good.manifest.permission_names();
                     entry.granted_permissions = Some(names.clone());
                     grant = Some(names);

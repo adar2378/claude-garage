@@ -1,0 +1,17 @@
+id = "hello"
+name = "Hello"
+version = "0.1.0"
+api_version = 1
+platforms = ["macos", "linux"]
+description = "Sample bundled plugin: greets the focused session in the status strip"
+permissions = ["ui.widgets"]
+
+[[actions]]
+id = "greet"
+title = "Say hello"
+contexts = ["global"]
+command = ["{plugin_dir}/bin/hello", "greet"]
+
+[[widgets]]
+id = "greeting"
+slot = "strip.right"

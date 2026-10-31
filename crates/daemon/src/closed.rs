@@ -28,10 +28,13 @@ pub fn spawn(bus: &EventBus, registry: Registry, backend: Arc<dyn SessionBackend
                     // The resume id lives in the session's metadata, which a
                     // deliberate close has already removed; the record the
                     // close path wrote first still has it.
-                    let claude_session_id = match registry.get_session_meta(&id).await.and_then(|m| m.claude_session_id) {
+                    let meta = registry.get_session_meta(&id).await;
+                    let prior = registry.get_closed(&id).await;
+                    let claude_session_id = match meta.as_ref().and_then(|m| m.claude_session_id.clone()) {
                         Some(c) => Some(c),
-                        None => registry.get_closed(&id).await.and_then(|r| r.claude_session_id),
+                        None => prior.as_ref().and_then(|r| r.claude_session_id.clone()),
                     };
+                    let worktree = meta.and_then(|m| m.worktree).or_else(|| prior.and_then(|r| r.worktree));
                     let branch = resolve_branch(&dir).await;
                     let rec = ClosedRecord {
                         id,
@@ -42,6 +45,7 @@ pub fn spawn(bus: &EventBus, registry: Registry, backend: Arc<dyn SessionBackend
                         reason: reason.as_str().to_owned(),
                         last_status,
                         claude_session_id,
+                        worktree,
                     };
                     let _ = registry.record_closed(rec).await;
                 }
@@ -95,6 +99,7 @@ pub async fn reconcile(registry: &Registry, backend: &dyn SessionBackend) {
             reason: "crash".into(),
             last_status: None,
             claude_session_id: meta.claude_session_id,
+            worktree: meta.worktree,
         };
         let _ = registry.record_closed(rec).await;
     }
@@ -182,6 +187,7 @@ mod tests {
                 reason: "crash".into(),
                 last_status: None,
                 claude_session_id: None,
+                worktree: None,
             })
             .await
             .unwrap();

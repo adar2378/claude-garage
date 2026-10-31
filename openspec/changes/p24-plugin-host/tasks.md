@@ -34,8 +34,8 @@ Order matters: group 1 changes the existing core seams and must pass the full ex
 - [x] 3.9 `GET /api/plugin/features` and uninstall/disable sequence (stop new triggers, kill process groups, kill panes, clear widgets, publish `PluginsChanged`)
 
 ## 4. Bundled first-party plugins (default path)
-- [ ] 4.1 Workspace layout `plugins/<name>/` crates and a shared tiny helper crate for plugin API calls; release build compiles them; package scripts ship binaries and manifests under `plugins/`; no Node at runtime
-- [ ] 4.2 `bundled` source kind in `plugins.json`; first-run seeding with defaults (on: `usage-bar`, `closed-chats`, `quick-send`, `tile-buttons`, `pit-pet`; off: `jump-palette`, `turn-markers`, `cli-extras`, `prune-empty-projects`), `seeded` marker, user-disabled never re-enabled, bundled not removable (disable only); tests with a temp `GARAGE_DIR`
+- [x] 4.1 Workspace layout `plugins/<name>/` crates and a shared tiny helper crate for plugin API calls; release build compiles them; package scripts ship binaries and manifests under `plugins/`; no Node at runtime
+- [x] 4.2 `bundled` source kind in `plugins.json`; first-run seeding with defaults (on: `usage-bar`, `closed-chats`, `quick-send`, `tile-buttons`, `pit-pet`; off: `jump-palette`, `turn-markers`, `cli-extras`, `prune-empty-projects`), `seeded` marker, user-disabled never re-enabled, bundled not removable (disable only; the guard is `Entry::is_first_party`, enforced by `plugin remove` in 7.5); tests with a temp `GARAGE_DIR`. Infrastructure proven end to end with `plugins/hello` (`plugins::bundled::end_to_end`); the nine plugins are 4.3 / p25
 - [ ] 4.3 First-party plugins implemented against the contract: `usage-bar`, `tile-buttons`, `quick-send`, `closed-chats` (`rail.extra_rows`, restore, `session.delete` with confirm), `pit-pet` (animated frames, slot geometry, pushes on state change only), `turn-markers` (`session.turn`, `tile.gutter`), `jump-palette`, `cli-extras` (`fallback = true`), `prune-empty-projects`
 - [ ] 4.4 `plugin list` shows bundled plugins with source `bundled` and their permissions
 

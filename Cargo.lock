@@ -861,6 +861,7 @@ dependencies = [
  "libc",
  "serde",
  "serde_json",
+ "sha2",
  "tempfile",
  "tokio",
  "tower",
@@ -894,6 +895,22 @@ dependencies = [
  "sha2",
  "tempfile",
  "toml",
+]
+
+[[package]]
+name = "garage-plugin-hello"
+version = "0.6.2"
+dependencies = [
+ "garage-plugin-sdk",
+]
+
+[[package]]
+name = "garage-plugin-sdk"
+version = "0.6.2"
+dependencies = [
+ "garage-protocol",
+ "serde_json",
+ "ureq",
 ]
 
 [[package]]

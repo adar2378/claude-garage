@@ -58,6 +58,10 @@ pub struct ClosedRecord {
     /// The Claude conversation to `--resume` when the record is restored.
     #[serde(default)]
     pub claude_session_id: Option<String>,
+    /// The worktree the session lived in, so a restored worktree chat can
+    /// still be finished (merged or discarded).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub worktree: Option<Worktree>,
 }
 
 /// Field-level patch for `upsert_session_meta`. Outer `None` is JS
@@ -756,6 +760,7 @@ mod tests {
             reason: "crash".into(),
             last_status: Some("idle".into()),
             claude_session_id: Some("c1".into()),
+            worktree: None,
         }
     }
 
