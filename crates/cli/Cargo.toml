@@ -2,6 +2,7 @@
 name = "claude-garage"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 description = "claude-garage: one binary for the TUI, the daemon and the launcher"
 
 [[bin]]

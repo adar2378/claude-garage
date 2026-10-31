@@ -2,6 +2,7 @@
 name = "garage-daemon"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 description = "claude-garage daemon: HTTP API over tmux-owned Claude Code sessions"
 
 [dependencies]

@@ -2,6 +2,7 @@
 name = "garage-plugin-sdk"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 description = "claude-garage plugin helper: read the run context, call the daemon with the plugin token, push widgets"
 
 [dependencies]

@@ -2,6 +2,7 @@
 name = "garage-plugin"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 description = "claude-garage plugin contract: manifest types, validation, JSON schema"
 
 [dependencies]

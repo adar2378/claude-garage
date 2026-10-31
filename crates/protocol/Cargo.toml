@@ -2,6 +2,7 @@
 name = "garage-protocol"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 description = "Wire types for the claude-garage daemon HTTP API"
 
 [dependencies]
