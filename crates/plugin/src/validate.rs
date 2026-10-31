@@ -23,8 +23,14 @@ impl Problem {
 
 impl fmt::Display for Problem {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}: {}", self.path, self.message)
+        write!(f, "{}: {}", escape_hostile(&self.path), escape_hostile(&self.message))
     }
+}
+
+/// `text` with every control or invisible character shown as `\u{XXXX}`, so
+/// that echoing manifest text back never carries a terminal escape.
+pub fn escape_hostile(text: &str) -> String {
+    text.chars().map(|c| if is_hostile_char(c) { format!("\\u{{{:04X}}}", c as u32) } else { c.to_string() }).collect()
 }
 
 /// Ids the host owns; a plugin may not take them.
@@ -110,8 +116,44 @@ fn range_problem(path: &str, v: Option<u32>, lo: u32, hi: u32, out: &mut Vec<Pro
 }
 
 /// Structural rules (no host knowledge). See [`check_host`] for the rest.
+/// Control characters (C0, DEL, C1) and invisible or direction-changing
+/// format characters. None may appear in any manifest string: the consent
+/// screen prints them, and an ESC or a right-to-left override could hide or
+/// rewrite what the user is approving.
+pub fn is_hostile_char(c: char) -> bool {
+    c.is_control()
+        || matches!(c, '\u{00AD}' | '\u{061C}' | '\u{180E}' | '\u{200B}'..='\u{200F}' | '\u{2028}'..='\u{202E}' | '\u{2060}'..='\u{206F}' | '\u{FEFF}' | '\u{FFF9}'..='\u{FFFB}' | '\u{E0000}'..='\u{E007F}')
+}
+
+fn check_text(v: &serde_json::Value, path: &str, out: &mut Vec<Problem>) {
+    use serde_json::Value;
+    let bad = |s: &str| s.chars().find(|c| is_hostile_char(*c));
+    match v {
+        Value::String(s) => {
+            if let Some(c) = bad(s) {
+                out.push(Problem::new(path, format!("contains a control or invisible character (U+{:04X}); not allowed", c as u32)));
+            }
+        }
+        Value::Array(a) => a.iter().enumerate().for_each(|(i, x)| check_text(x, &format!("{path}[{i}]"), out)),
+        Value::Object(o) => {
+            for (k, x) in o {
+                let k_shown = escape_hostile(k);
+                let at = if path.is_empty() { k_shown } else { format!("{path}.{k_shown}") };
+                if let Some(c) = bad(k) {
+                    out.push(Problem::new(&at, format!("key contains a control or invisible character (U+{:04X}); not allowed", c as u32)));
+                }
+                check_text(x, &at, out);
+            }
+        }
+        _ => {}
+    }
+}
+
 pub fn validate(m: &Manifest) -> Vec<Problem> {
     let mut out = Vec::new();
+    if let Ok(v) = serde_json::to_value(m) {
+        check_text(&v, "", &mut out);
+    }
     if !valid_plugin_id(&m.id) {
         out.push(Problem::new("id", "must match ^[a-z][a-z0-9-]{1,30}$"));
     } else if RESERVED_IDS.contains(&m.id.as_str()) {
@@ -469,6 +511,49 @@ checksums = "SHA256SUMS"
         assert!(m.panes[0].singleton, "singleton defaults to true");
         assert_eq!(m.actions[0].contexts, [ActionContext::Global]);
         assert!(check_host(&m).is_empty());
+    }
+
+    #[test]
+    fn control_and_invisible_characters_are_refused_in_every_string() {
+        // (what to replace, replacement as TOML escapes, expected path)
+        let cases = [
+            ("name = \"Usage bar\"", "name = \"Usage \\u001b[2Jbar\"", "name"),
+            ("title = \"Refresh\"", "title = \"Re\\u202efresh\"", "actions[0].title"),
+            ("label = \"r\"", "label = \"r\\u200b\"", "buttons[1].label"),
+            ("command = [\"./cli.sh\"]", "command = [\"./cli.sh\", \"a\\u0007\"]", "cli[0].command[1]"),
+            ("checksums = \"SHA256SUMS\"", "checksums = \"SHA\\u0085SUMS\"", "release.checksums"),
+            ("api_version = 1", "api_version = 1\ndescription = \"nice\\u001b[8mhidden\"", "description"),
+            ("api_version = 1", "api_version = 1\nhomepage = \"https://x.test/\\u009b\"", "homepage"),
+        ];
+        for (from, to, path) in cases {
+            let errs = fail(&tweak(from, to));
+            assert!(errs.iter().any(|e| e.starts_with(&format!("{path}: contains a control or invisible character"))), "{path}: {errs:?}");
+        }
+        // plain unicode text is fine
+        parse_ok(&tweak("api_version = 1", "api_version = 1\ndescription = \"Zeit \\u00fcbersicht \\u2713\""));
+    }
+
+    #[test]
+    fn no_problem_text_ever_carries_a_control_or_invisible_character() {
+        let hostile_key = tweak("\"macos-aarch64\" = \"usage-darwin-arm64\"", "\"macos\\u001b[2J\\u202e\" = \"usage-darwin-arm64\"");
+        let cases = [
+            hostile_key,
+            tweak("api_version = 1", "api_version = 1\ndescription = \"a\\u001b]0;pwned\\u0007\""),
+            tweak("title = \"Refresh\"", "title = \"Refresh\"\n\"bad\\u001bkey\" = 3"),
+            tweak("id = \"usage-bar\"", "id = \"usage\\u001b-bar\""),
+            "id = \"x\\u001b\"\u{1b}".to_owned(),
+        ];
+        for src in cases {
+            for p in parse(&src).expect_err("refused") {
+                let shown = p.to_string();
+                assert!(!shown.chars().any(is_hostile_char), "{shown:?}");
+            }
+        }
+        // the escape is visible, not silent
+        let errs = fail(&tweak("api_version = 1", "api_version = 1\ndescription = \"a\\u001bb\""));
+        assert!(errs.iter().any(|e| e.starts_with("description:")), "{errs:?}");
+        let errs = fail(&tweak("\"macos-aarch64\" = \"usage-darwin-arm64\"", "\"m\\u001b\" = \"usage-darwin-arm64\""));
+        assert!(errs.iter().any(|e| e.contains("m\\u{001B}")), "{errs:?}");
     }
 
     #[test]

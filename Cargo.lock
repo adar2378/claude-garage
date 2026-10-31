@@ -377,6 +377,7 @@ dependencies = [
  "clap",
  "garage-daemon",
  "garage-host",
+ "garage-plugin",
  "garage-protocol",
  "libc",
  "serde_json",
@@ -917,8 +918,10 @@ dependencies = [
 name = "garage-protocol"
 version = "0.6.2"
 dependencies = [
+ "getrandom 0.3.4",
  "serde",
  "serde_json",
+ "sha2",
  "unicode-width",
 ]
 

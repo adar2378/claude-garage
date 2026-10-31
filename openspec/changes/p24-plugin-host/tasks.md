@@ -51,15 +51,15 @@ Order matters: group 1 changes the existing core seams and must pass the full ex
 - [ ] 5.9 Help overlay "Plugins" section (actions, keys, conflicts)
 
 ## 6. CLI
-- [ ] 6.1 Replace the `Plugin` stub in `crates/cli/src/main.rs` with the real subcommands (`list`, `enable|disable`, `bind`, `logs`, `schema`); clap `external_subcommand` dispatch for `[[cli]]` (core names win, interactive stdio, exit code passthrough)
-- [ ] 6.2 `[cli] fallback = true`: unknown first word goes to the single fallback plugin with the full argv; refused when two plugins claim it (first-party wins); no fallback keeps the clap error; `install` is not a reserved core name; tests
+- [x] 6.1 Replace the `Plugin` stub in `crates/cli/src/main.rs` with the real subcommands (`list`, `enable|disable`, `bind`, `logs`, `schema`); clap `external_subcommand` dispatch for `[[cli]]` (core names win, interactive stdio, exit code passthrough)
+- [x] 6.2 `[cli] fallback = true`: unknown first word goes to the single fallback plugin with the full argv; refused when two plugins claim it (first-party wins); no fallback keeps the clap error; `install` is not a reserved core name; tests
 
 ## 7. GitHub install, release and update (ships in 1.0; ecosystem is p27)
-- [ ] 7.1 GitHub source parsing (`owner/repo[/subdir]`, full URL, `--ref`) and shallow clone via `git` with timeout; symlink-escape check; commit pinning
-- [ ] 7.2 Install preview renderer (identity, "not sandboxed" line, permissions with DANGEROUS marks, every command that will run, release URLs, keys/buttons/widgets/panes, update diff, and the plain line that code-only updates apply without a prompt); golden-output tests
-- [ ] 7.3 `plugin install` flow incl. confirmation, `--yes`, `--allow-dangerous`, and "nothing runs before confirm" test with a recording runner
-- [ ] 7.4 Release binary download with checksum verification and per-OS asset selection; `[[build]]` runner with timeout and log capture; failure leaves no partial install; test that a listed asset skips `[[build]]`
-- [ ] 7.5 `plugin link` (no build, preview still shown; also the approval path for added permissions), `remove [--purge]`, `update [id|--all]` (staged swap, prompt only on commands/permissions/URLs change)
+- [x] 7.1 GitHub source parsing (`owner/repo[/subdir]`, full URL, `--ref`) and shallow clone via `git` with timeout; symlink-escape check; commit pinning
+- [x] 7.2 Install preview renderer (identity, "not sandboxed" line, permissions with DANGEROUS marks, every command that will run, release URLs, keys/buttons/widgets/panes, update diff, and the plain line that code-only updates apply without a prompt); golden-output tests
+- [x] 7.3 `plugin install` flow incl. confirmation, `--yes`, `--allow-dangerous`, and "nothing runs before confirm" test with a recording runner
+- [x] 7.4 Release binary download with checksum verification and per-OS asset selection; `[[build]]` runner with timeout and log capture; failure leaves no partial install; test that a listed asset skips `[[build]]`
+- [x] 7.5 `plugin link` (no build, preview still shown; also the approval path for added permissions), `remove [--purge]`, `update [id|--all]` (staged swap, prompt only on commands/permissions/URLs change)
 
 ## 8. Docs and samples
 - [ ] 8.1 Manifest reference and plugin API reference (routes, events incl. `session.turn` and close reasons, context JSON, slot geometry, animated widgets, limits, features), including the security section in plain words

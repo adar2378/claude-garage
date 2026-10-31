@@ -32,6 +32,12 @@ pub fn routes() -> Router<AppState> {
         .route("/api/plugin/features", get(features))
         .route("/api/plugins/reload", post(reload))
         .route("/api/plugins/ui/slots", put(put_ui_slots))
+        .route("/api/plugins/ui/challenge", post(ui_challenge))
+        .route("/api/plugins/{id}", axum::routing::delete(remove_plugin))
+        .route("/api/plugins/{id}/registration", put(register_plugin))
+        .route("/api/plugins/{id}/enable", post(enable_plugin))
+        .route("/api/plugins/{id}/disable", post(disable_plugin))
+        .route("/api/plugins/{id}/bind", post(bind_plugin))
         .route("/api/plugins/{id}/widgets/{widget}", put(put_widget).delete(delete_widget))
         .route("/api/plugins/{id}/actions/{action}/run", post(run_action))
         .route("/api/sessions/input", post(session_input))
@@ -77,6 +83,135 @@ fn require_ui(st: &AppState, headers: &HeaderMap) -> Result<(), Box<Response>> {
         None => Err(Box::new(error_response(StatusCode::UNAUTHORIZED, "missing UI token (Authorization: Bearer <contents of GARAGE_DIR/ui-token>)"))),
         Some(t) if st.plugins.is_ui_token(t) => Ok(()),
         Some(_) => Err(Box::new(error_response(StatusCode::FORBIDDEN, "this route needs the UI token; a plugin token is not enough"))),
+    }
+}
+
+/// Proves this is the real daemon before a client sends it the UI token:
+/// `{"nonce": "<hex>"}` in, `{"proof": HMAC-SHA256(ui_token, ...)}` out. Needs
+/// no credentials and reveals nothing but the keyed digest of the nonce.
+async fn ui_challenge(State(st): State<AppState>, body: Bytes) -> Response {
+    let body = match parse_body(&body) {
+        Ok(b) => b,
+        Err(r) => return *r,
+    };
+    let Some(nonce) = body.get("nonce").and_then(Value::as_str).filter(|n| garage_protocol::auth::nonce_ok(n)) else {
+        return error_response(StatusCode::UNPROCESSABLE_ENTITY, "nonce must be 16 to 128 lowercase hex digits");
+    };
+    match st.plugins.ui_proof(st.config.port, nonce) {
+        Some(proof) => Json(json!({"proof": proof})).into_response(),
+        None => error_response(StatusCode::SERVICE_UNAVAILABLE, "this daemon has no UI token"),
+    }
+}
+
+// ---- registry edits for the CLI lane (UI token) ----
+//
+// The daemon owns `plugins.json`; while it is up the CLI calls these instead
+// of editing the file. Each is one locked read-modify-write followed by a
+// reload, which also runs the teardown sequence when a plugin stops being
+// active.
+
+fn admin_error(e: String) -> Response {
+    let status = if e.starts_with("no plugin") {
+        StatusCode::NOT_FOUND
+    } else if e.contains("bundled") {
+        StatusCode::CONFLICT
+    } else {
+        StatusCode::UNPROCESSABLE_ENTITY
+    };
+    error_response(status, e)
+}
+
+fn reloaded(st: &AppState) -> Response {
+    match st.plugins.reload() {
+        Ok(()) => Json(json!({"ok": true})).into_response(),
+        Err(e) => error_response(StatusCode::CONFLICT, e),
+    }
+}
+
+async fn register_plugin(State(st): State<AppState>, Path(id): Path<String>, headers: HeaderMap, body: Bytes) -> Response {
+    if let Err(r) = require_ui(&st, &headers) {
+        return *r;
+    }
+    let body = match parse_body(&body) {
+        Ok(b) => b,
+        Err(r) => return *r,
+    };
+    let source = match body.get("source").cloned().map(serde_json::from_value::<super::layout::Source>) {
+        Some(Ok(s)) => s,
+        _ => return error_response(StatusCode::UNPROCESSABLE_ENTITY, "source must be {kind: github|link, ...}"),
+    };
+    let Some(granted) = body
+        .get("grantedPermissions")
+        .and_then(Value::as_array)
+        .and_then(|a| a.iter().map(|v| v.as_str().map(str::to_owned)).collect::<Option<Vec<_>>>())
+    else {
+        return error_response(StatusCode::UNPROCESSABLE_ENTITY, "grantedPermissions must be an array of strings");
+    };
+    if let Some(bad) = granted.iter().find(|p| !garage_plugin::features::PERMISSIONS.contains(&p.as_str())) {
+        return error_response(StatusCode::UNPROCESSABLE_ENTITY, format!("unknown permission {bad:?}"));
+    }
+    let reg = super::admin::Registration {
+        id,
+        source,
+        granted_permissions: granted,
+        manifest_sha256: body.get("manifestSha256").and_then(Value::as_str).map(str::to_owned),
+        installed_at: body.get("installedAt").and_then(Value::as_i64),
+    };
+    match super::admin::register(st.plugins.paths(), &reg) {
+        Ok(()) => reloaded(&st),
+        Err(e) => admin_error(e),
+    }
+}
+
+async fn enable_plugin(State(st): State<AppState>, Path(id): Path<String>, headers: HeaderMap) -> Response {
+    set_enabled_route(st, id, headers, true)
+}
+
+async fn disable_plugin(State(st): State<AppState>, Path(id): Path<String>, headers: HeaderMap) -> Response {
+    set_enabled_route(st, id, headers, false)
+}
+
+fn set_enabled_route(st: AppState, id: String, headers: HeaderMap, enabled: bool) -> Response {
+    if let Err(r) = require_ui(&st, &headers) {
+        return *r;
+    }
+    match st.plugins.set_enabled(&id, enabled) {
+        Ok(()) => Json(json!({"ok": true})).into_response(),
+        Err(e) => admin_error(e),
+    }
+}
+
+/// Removes the registry entry and tears the plugin down. The CLI deletes the
+/// files afterwards.
+async fn remove_plugin(State(st): State<AppState>, Path(id): Path<String>, headers: HeaderMap) -> Response {
+    if let Err(r) = require_ui(&st, &headers) {
+        return *r;
+    }
+    match super::admin::remove_entry(st.plugins.paths(), &id) {
+        Ok(_) => reloaded(&st),
+        Err(e) => admin_error(e),
+    }
+}
+
+/// `{action, key}`: `key` null clears the binding.
+async fn bind_plugin(State(st): State<AppState>, Path(id): Path<String>, headers: HeaderMap, body: Bytes) -> Response {
+    if let Err(r) = require_ui(&st, &headers) {
+        return *r;
+    }
+    let body = match parse_body(&body) {
+        Ok(b) => b,
+        Err(r) => return *r,
+    };
+    let Some(action) = body.get("action").and_then(Value::as_str).filter(|a| a.starts_with(&format!("{id}:"))) else {
+        return error_response(StatusCode::UNPROCESSABLE_ENTITY, format!("action must be a full id starting with {id}:"));
+    };
+    let key = body.get("key").and_then(Value::as_str).filter(|k| !k.is_empty());
+    if !body.get("key").is_some_and(Value::is_null) && key.is_none() {
+        return error_response(StatusCode::UNPROCESSABLE_ENTITY, "key must be a non-empty string, or null to clear");
+    }
+    match super::admin::set_binding(st.plugins.paths(), &id, action, key) {
+        Ok(()) => reloaded(&st),
+        Err(e) => admin_error(e),
     }
 }
 

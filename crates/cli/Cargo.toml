@@ -12,6 +12,7 @@ path = "src/main.rs"
 garage-daemon = { path = "../daemon" }
 garage-host = { path = "../host" }
 garage-protocol = { path = "../protocol" }
+garage-plugin = { path = "../plugin" }
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }

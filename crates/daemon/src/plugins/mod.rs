@@ -8,6 +8,7 @@
 //! (routes and token auth). This file owns load/reload, the per-plugin run
 //! queue, timers and the teardown sequence.
 
+pub mod admin;
 pub mod api;
 pub mod bundled;
 pub mod context;
@@ -360,6 +361,12 @@ impl PluginHost {
         !self.0.ui_token.is_empty() && crate::security::token_matches(Some(token), &self.0.ui_token)
     }
 
+    /// The answer to a client's `ui/challenge`: proof that this daemon holds
+    /// the UI token, without revealing it. `None` when no token exists.
+    pub fn ui_proof(&self, port: u16, nonce: &str) -> Option<String> {
+        (!self.0.ui_token.is_empty()).then(|| garage_protocol::auth::proof_for(&self.0.ui_token, port, nonce))
+    }
+
     /// Enable or disable via the registry file, then reload (the teardown
     /// sequence runs when a plugin stops being active).
     pub fn set_enabled(&self, id: &str, enabled: bool) -> Result<(), String> {
@@ -501,7 +508,7 @@ impl Inner {
 
     fn resolve_dir(&self, e: &Entry) -> PathBuf {
         match &e.source {
-            Source::Github { .. } => self.paths.installed(&e.id),
+            Source::Github { subdir, .. } => layout::github_plugin_dir(&self.paths, &e.id, subdir.as_deref()),
             Source::Link { path } | Source::Bundled { path } => PathBuf::from(path),
         }
     }
