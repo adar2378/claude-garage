@@ -518,6 +518,47 @@ mod tests {
     }
 
     #[test]
+    fn a_multi_segment_extra_row_keeps_the_rows_below_it_aligned() {
+        use crate::slots::{SlotCtx, SlotId};
+        use crate::ui::rail::rail_lines;
+        let mut state = WallState::initial();
+        state.groups = groups();
+        let item: garage_protocol::widgets::WidgetItem =
+            serde_json::from_value(serde_json::json!({
+                "segments": [
+                    {"text": " o gone", "click": {"action": "session.restore"}},
+                    {"text": " x ", "click": {"action": "session.close"}},
+                ],
+            }))
+            .unwrap();
+        let built = crate::plugins::build::items("p", SlotId::RailExtraRows, &item);
+        let mut slots = SlotRegistry::core();
+        slots.register(SlotId::RailExtraRows, move |ctx: &SlotCtx| {
+            if ctx.group.is_some_and(|g| g.name == "alpha") {
+                built.clone()
+            } else {
+                Vec::new()
+            }
+        });
+        let rows: Vec<String> = rail_lines(&state, &slots, 0)
+            .iter()
+            .map(ToString::to_string)
+            .collect();
+        // 0 alpha, 1 a1, 2 a2, 3 extra (one row), 4 beta, 5 b1
+        assert_eq!(rows[3], " o gone x ");
+        assert_eq!(rows[4], " 2 beta");
+        assert_eq!(rail_target_at(&state, &slots, 3), None);
+        assert_eq!(
+            rail_target_at(&state, &slots, 4),
+            Some(RailTarget::Workspace(1))
+        );
+        assert_eq!(
+            rail_target_at(&state, &slots, 5),
+            Some(RailTarget::Session("b1".into()))
+        );
+    }
+
+    #[test]
     fn extra_rows_sit_after_their_groups_sessions_and_shift_the_rows_below() {
         use crate::slots::{SlotCtx, SlotId, SlotItem};
         use crate::ui::rail::rail_lines;
