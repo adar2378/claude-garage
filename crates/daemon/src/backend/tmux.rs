@@ -461,21 +461,8 @@ impl SessionBackend for TmuxBackend {
         .await
     }
 
-    fn attach_spec(&self, id: &str) -> AttachSpec {
-        // Attaching needs a running server, so `-f` is never relevant here.
-        let base = |rest: &[&str]| {
-            let mut v = vec!["tmux".to_string()];
-            if let Some(s) = &self.socket {
-                v.extend(["-L".to_string(), s.clone()]);
-            }
-            v.extend(rest.iter().map(|s| s.to_string()));
-            v
-        };
-        let attach = format!("={id}");
-        AttachSpec::Tmux {
-            argv: base(&["attach", "-t", &attach]),
-            detach_argv: base(&["detach-client", "-t"]),
-        }
+    fn attach_spec(&self, _id: &str) -> AttachSpec {
+        AttachSpec::Tmux { socket: self.socket.clone() }
     }
 }
 
@@ -499,21 +486,15 @@ mod tests {
 
     #[test]
     fn attach_spec_carries_the_isolated_socket() {
-        let AttachSpec::Tmux { argv, detach_argv } =
-            TmuxBackend::new(Some("t1".into())).attach_spec("garage/ws/a")
-        else {
-            panic!("tmux backend must yield a Tmux spec");
-        };
-        assert_eq!(argv, ["tmux", "-L", "t1", "attach", "-t", "=garage/ws/a"]);
-        assert_eq!(detach_argv, ["tmux", "-L", "t1", "detach-client", "-t"]);
+        assert_eq!(
+            TmuxBackend::new(Some("t1".into())).attach_spec("garage/ws/a"),
+            AttachSpec::Tmux { socket: Some("t1".into()) }
+        );
     }
 
     #[test]
     fn attach_spec_uses_default_server_without_socket() {
-        let AttachSpec::Tmux { argv, .. } = TmuxBackend::new(None).attach_spec("s") else {
-            panic!()
-        };
-        assert_eq!(argv, ["tmux", "attach", "-t", "=s"]);
+        assert_eq!(TmuxBackend::new(None).attach_spec("s"), AttachSpec::Tmux { socket: None });
     }
 
     #[test]

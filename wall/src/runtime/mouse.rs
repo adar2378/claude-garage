@@ -55,7 +55,7 @@ impl App {
                 if inner.contains((col, row).into()) {
                     if let Some(line) = self.registry.row_text(&id, row - inner.y) {
                         if let Some(url) = url_at(&line, usize::from(col - inner.x)) {
-                            let _ = std::process::Command::new("open").arg(&url).spawn();
+                            let _ = open_url(&url);
                             self.router.notices.show(format!("opened {url}"), 2000, now_ms());
                             return false;
                         }
@@ -134,5 +134,36 @@ impl App {
         if live && up {
             self.scroll_tile(&id, WHEEL_LINES); // frozen peek, layer untouched
         }
+    }
+}
+
+/// Hand `url` to the OS opener: `open` (macOS), `xdg-open` (Linux and other
+/// Unix), `rundll32 url.dll,FileProtocolHandler` (Windows; no shell, so the
+/// URL is never parsed as a command line).
+fn open_url(url: &str) -> std::io::Result<std::process::Child> {
+    let argv = opener_argv(url);
+    std::process::Command::new(&argv[0]).args(&argv[1..]).spawn()
+}
+
+fn opener_argv(url: &str) -> Vec<String> {
+    let v: &[&str] = if cfg!(target_os = "macos") {
+        &["open"]
+    } else if cfg!(windows) {
+        &["rundll32", "url.dll,FileProtocolHandler"]
+    } else {
+        &["xdg-open"]
+    };
+    v.iter().map(|s| s.to_string()).chain([url.to_string()]).collect()
+}
+
+#[cfg(test)]
+mod opener_tests {
+    use super::opener_argv;
+
+    #[test]
+    fn the_url_is_the_last_single_argument() {
+        let argv = opener_argv("https://example.com/a b&c");
+        assert_eq!(argv.last().unwrap(), "https://example.com/a b&c");
+        assert!(argv.len() >= 2);
     }
 }

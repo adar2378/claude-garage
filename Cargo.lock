@@ -335,8 +335,11 @@ dependencies = [
  "anyhow",
  "clap",
  "garage-daemon",
+ "garage-host",
+ "garage-protocol",
  "libc",
  "serde_json",
+ "tempfile",
  "tokio",
  "ureq",
 ]
@@ -761,6 +764,7 @@ dependencies = [
  "async-trait",
  "axum",
  "futures-util",
+ "garage-host",
  "garage-protocol",
  "gethostname",
  "getrandom 0.3.4",
@@ -771,6 +775,20 @@ dependencies = [
  "tempfile",
  "tokio",
  "tower",
+]
+
+[[package]]
+name = "garage-host"
+version = "0.6.2"
+dependencies = [
+ "getrandom 0.3.4",
+ "libc",
+ "portable-pty",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "vt100",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -786,12 +804,15 @@ name = "garage-wall"
 version = "0.6.2"
 dependencies = [
  "crossterm",
+ "garage-host",
+ "garage-protocol",
  "insta",
  "libc",
  "portable-pty",
  "ratatui",
  "serde_json",
  "tachyonfx",
+ "tempfile",
  "throbber-widgets-tui",
  "tokio",
  "tui-big-text",

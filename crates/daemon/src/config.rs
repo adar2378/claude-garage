@@ -48,7 +48,10 @@ impl Config {
         let garage_dir = match get("GARAGE_DIR").filter(|s| !s.is_empty()) {
             Some(d) => PathBuf::from(d),
             None => PathBuf::from(
-                get("HOME").ok_or_else(|| anyhow::anyhow!("HOME is not set; set GARAGE_DIR"))?,
+                get("HOME")
+                    .filter(|h| !h.is_empty())
+                    .or_else(|| get("USERPROFILE"))
+                    .ok_or_else(|| anyhow::anyhow!("HOME is not set; set GARAGE_DIR"))?,
             )
             .join(".garage"),
         };
@@ -96,6 +99,13 @@ mod tests {
         assert_eq!(c.tmux_socket, None);
         assert!(c.tmux_control);
         assert!(c.ui_origins.is_empty());
+    }
+
+    #[test]
+    fn windows_home_comes_from_userprofile_and_home_wins_when_both_are_set() {
+        assert_eq!(cfg(&[("USERPROFILE", r"C:\Users\u")]).unwrap().garage_dir, PathBuf::from(r"C:\Users\u").join(".garage"));
+        assert_eq!(cfg(&[("HOME", "/h"), ("USERPROFILE", "/w")]).unwrap().garage_dir, PathBuf::from("/h/.garage"));
+        assert!(cfg(&[]).is_err());
     }
 
     #[test]

@@ -981,14 +981,13 @@ mod tests {
 
         /// An executable stand-in for `claude`; runs in the session's dir.
         fn script(&mut self, name: &str, body: &str) {
-            use std::os::unix::fs::PermissionsExt;
             let path = self.garage.path().join(name);
             std::fs::write(
                 &path,
                 format!("#!/bin/sh\n[ -n \"$GARAGE_WARM\" ] && exit 0\n{body}\n"),
             )
             .unwrap();
-            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+            crate::test_support::make_executable(&path);
             // macOS scans a new executable on its first exec, which can take
             // longer than the resume timing under test: pay that now.
             let warm = std::process::Command::new(&path)

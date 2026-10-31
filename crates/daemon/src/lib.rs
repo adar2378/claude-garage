@@ -29,7 +29,6 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use axum::middleware;
-use backend::SessionBackend;
 
 pub use config::Config;
 pub use state::AppState;
@@ -40,6 +39,10 @@ pub fn app(state: AppState) -> axum::Router {
         .layer(middleware::from_fn_with_state(
             state.clone(),
             security::origin_guard,
+        ))
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            security::host_guard,
         ))
         .with_state(state)
 }
@@ -79,12 +82,15 @@ pub async fn run(config: Config) -> Result<()> {
             .map_err(anyhow::Error::msg)?;
     }
     let listener = bind(&config).await?;
-    let control_on = config.tmux_control;
-    let backend = Arc::new(backend::tmux::TmuxBackend::new(config.tmux_socket.clone()));
+    // Chosen once, here: nothing else branches on the backend.
+    let kind = backend::Kind::from_env_value(std::env::var("GARAGE_BACKEND").ok().as_deref())?;
+    let control_on = config.tmux_control && kind == backend::Kind::Tmux;
+    let control_backend = backend::tmux::TmuxBackend::new(config.tmux_socket.clone());
+    let backend = backend::select(kind, &config)?;
     backend
         .init()
         .await
-        .context("initialising the tmux server")?;
+        .context("initialising the session backend")?;
     let agents: Arc<dyn poller::AgentSource> = Arc::new(poller::CommandAgents::default());
     let state = AppState::with_agents(
         config,
@@ -96,8 +102,9 @@ pub async fn run(config: Config) -> Result<()> {
     let shared = state.poller(agents);
     // tmux control mode wakes the poller on session changes; the tick stays
     // as the fallback (and carries pane titles, which tmux does not announce).
-    // `GARAGE_TMUX_CONTROL=0` skips it: the plain tick runs alone.
-    let control = control_on.then(|| control::spawn((*backend).clone(), shared.control_link()));
+    // `GARAGE_TMUX_CONTROL=0` skips it: the plain tick runs alone. Only the
+    // tmux backend has a control-mode client.
+    let control = control_on.then(|| control::spawn(control_backend, shared.control_link()));
     let poller = shared.start();
     let notifier = os::notify::spawn(&state.bus, state.os.clone(), state.visibility.clone());
     let (poller_stop, notifier_stop, control_stop) = (
@@ -215,9 +222,7 @@ mod tests {
         }));
 
         let mut conn = tokio::net::TcpStream::connect(addr).await.unwrap();
-        conn.write_all(b"GET /api/events HTTP/1.1\r\nhost: x\r\nconnection: close\r\n\r\n")
-            .await
-            .unwrap();
+        conn.write_all(b"GET /api/events HTTP/1.1\r\nhost: 127.0.0.1\r\nconnection: close\r\n\r\n").await.unwrap();
         let mut seen = String::new();
         let mut buf = [0u8; 1024];
         while !seen.contains(": connected") {
@@ -273,6 +278,29 @@ mod tests {
             call(&c, "POST", "/api/sessions", None).await.0,
             StatusCode::BAD_REQUEST
         );
+    }
+
+    #[tokio::test]
+    async fn a_foreign_host_header_is_refused_on_every_route_and_loopback_passes() {
+        let mut c = config(&[]);
+        c.port = 4747;
+        for (m, u) in [("GET", "/api/health"), ("GET", "/api/attach?id=garage/a/b"), ("POST", "/api/sessions"), ("GET", "/nope")] {
+            let req = |host: Option<&str>| {
+                let mut r = Request::builder().method(m).uri(u);
+                if let Some(h) = host {
+                    r = r.header("host", h);
+                }
+                r.body(Body::empty()).unwrap()
+            };
+            let res = app(state(c.clone())).oneshot(req(Some("evil.example:4747"))).await.unwrap();
+            assert_eq!(res.status(), StatusCode::FORBIDDEN, "{m} {u}");
+            let bytes = res.into_body().collect().await.unwrap().to_bytes();
+            assert_eq!(serde_json::from_slice::<Value>(&bytes).unwrap(), json!({"error": "host not allowed"}));
+            let ok = app(state(c.clone())).oneshot(req(Some("127.0.0.1:4747"))).await.unwrap();
+            assert_ne!(ok.status(), StatusCode::FORBIDDEN, "{m} {u}");
+            let none = app(state(c.clone())).oneshot(req(None)).await.unwrap();
+            assert_ne!(none.status(), StatusCode::FORBIDDEN, "{m} {u} without a Host header");
+        }
     }
 
     #[tokio::test]

@@ -111,3 +111,27 @@ impl Drop for TestTmux {
         let _ = std::fs::remove_dir_all(&self.root);
     }
 }
+
+/// `chmod 755` (a no-op where there is no execute bit).
+pub fn make_executable(path: &Path) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    #[cfg(not(unix))]
+    let _ = path;
+}
+
+/// Whether the owner execute bit is set (true where there is none).
+pub fn is_executable(path: &Path) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::metadata(path).unwrap().permissions().mode() & 0o100 != 0
+    }
+    #[cfg(not(unix))]
+    {
+        path.exists()
+    }
+}

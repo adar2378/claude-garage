@@ -27,6 +27,7 @@ pub struct Inputs {
 pub fn node_target() -> String {
     let os = match std::env::consts::OS {
         "macos" => "darwin",
+        "windows" => "win32",
         o => o,
     };
     let arch = match std::env::consts::ARCH {
@@ -37,11 +38,21 @@ pub fn node_target() -> String {
     format!("{os}-{arch}")
 }
 
+#[cfg(unix)]
 fn is_executable(p: &str) -> bool {
     use std::os::unix::ffi::OsStrExt;
     std::ffi::CString::new(std::ffi::OsStr::new(p).as_bytes())
         .is_ok_and(|c| unsafe { libc::access(c.as_ptr(), libc::X_OK) } == 0)
 }
+
+/// Windows has no execute bit: a file is runnable when it is a file.
+#[cfg(not(unix))]
+fn is_executable(p: &str) -> bool {
+    Path::new(p).is_file()
+}
+
+/// `.exe` on Windows, nothing elsewhere.
+const EXE: &str = std::env::consts::EXE_SUFFIX;
 
 fn mtime(p: &Path) -> Option<SystemTime> {
     std::fs::metadata(p).and_then(|m| m.modified()).ok()
@@ -80,17 +91,21 @@ fn wall_sources_newer_than(root: &Path, binary: &Path) -> bool {
 }
 
 fn cargo_build_tui_binary(root: &Path, dist_bin: &Path, builder: &dyn Builder) -> Result<(), Fail> {
-    let built = root.join("target/release/garage-wall");
+    let built = root.join("target/release").join(format!("garage-wall{EXE}"));
     if !builder.build(root) || !built.exists() {
         return Err(Fail("cargo build failed — see the output above".into()));
     }
     let copy = || -> std::io::Result<()> {
-        use std::os::unix::fs::PermissionsExt;
         if let Some(dir) = dist_bin.parent() {
             std::fs::create_dir_all(dir)?;
         }
         std::fs::copy(&built, dist_bin)?;
-        std::fs::set_permissions(dist_bin, std::fs::Permissions::from_mode(0o755))
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(dist_bin, std::fs::Permissions::from_mode(0o755))?;
+        }
+        Ok(())
     };
     copy().map_err(|e| Fail(format!("could not install the built TUI binary at {}: {e}", dist_bin.display())))
 }
@@ -111,7 +126,7 @@ pub fn resolve(inp: &Inputs, builder: &dyn Builder, out: &dyn Out) -> Result<Pat
     }
 
     let target = &inp.target;
-    let dist_bin = inp.root.join("wall/dist").join(format!("garage-wall-{target}"));
+    let dist_bin = inp.root.join("wall/dist").join(format!("garage-wall-{target}{EXE}"));
     let wall_src = inp.root.join("wall/Cargo.toml");
     let in_checkout = wall_src.exists();
 
@@ -131,14 +146,14 @@ pub fn resolve(inp: &Inputs, builder: &dyn Builder, out: &dyn Out) -> Result<Pat
     }
 
     if !in_checkout {
-        if let Some(sib) = inp.exe_dir.as_ref().map(|d| d.join("garage-wall")).filter(|p| p.exists()) {
+        if let Some(sib) = inp.exe_dir.as_ref().map(|d| d.join(format!("garage-wall{EXE}"))).filter(|p| p.exists()) {
             return Ok(sib);
         }
     }
 
     if in_checkout && builder.have_cargo() {
         out.say(&format!(
-            "no prebuilt TUI binary for {target} — building once with cargo (release build; lands at wall/dist/garage-wall-{target})"
+            "no prebuilt TUI binary for {target} — building once with cargo (release build; lands at wall/dist/garage-wall-{target}{EXE})"
         ));
         cargo_build_tui_binary(&inp.root, &dist_bin, builder)?;
         return Ok(dist_bin);
@@ -159,7 +174,27 @@ pub fn resolve(inp: &Inputs, builder: &dyn Builder, out: &dyn Out) -> Result<Pat
 mod tests {
     use super::*;
     use std::cell::{Cell, RefCell};
-    use std::os::unix::fs::PermissionsExt;
+
+    fn chmod(p: &Path, mode: u32) {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(p, std::fs::Permissions::from_mode(mode)).unwrap();
+        }
+        #[cfg(not(unix))]
+        let _ = (p, mode);
+    }
+    fn is_exec(p: &Path) -> bool {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::metadata(p).unwrap().permissions().mode() & 0o777 == 0o755
+        }
+        #[cfg(not(unix))]
+        {
+            p.exists()
+        }
+    }
     use std::time::Duration;
 
     struct Sink(RefCell<Vec<String>>);
@@ -208,7 +243,7 @@ mod tests {
             let p = self.0.join(rel);
             std::fs::create_dir_all(p.parent().unwrap()).unwrap();
             std::fs::write(&p, b"x").unwrap();
-            std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+            chmod(&p, 0o755);
             let t = SystemTime::now() - Duration::from_secs(age_secs);
             std::fs::File::options().write(true).open(&p).unwrap().set_modified(t).unwrap();
             p
@@ -247,11 +282,13 @@ mod tests {
         assert!(err.0.starts_with("GARAGE_TUI_BIN is set but not an executable file: "), "{}", err.0);
 
         // present but not executable
-        let plain = t.0.join("plain");
-        std::fs::write(&plain, b"x").unwrap();
-        std::fs::set_permissions(&plain, std::fs::Permissions::from_mode(0o644)).unwrap();
-        i.override_bin = Some(plain.display().to_string());
-        assert!(resolve(&i, &cargo(true, true), &Sink(Default::default())).is_err());
+        if cfg!(unix) {
+            let plain = t.0.join("plain");
+            std::fs::write(&plain, b"x").unwrap();
+            chmod(&plain, 0o644);
+            i.override_bin = Some(plain.display().to_string());
+            assert!(resolve(&i, &cargo(true, true), &Sink(Default::default())).is_err());
+        }
     }
 
     #[test]
@@ -280,7 +317,7 @@ mod tests {
             assert_eq!(resolve(&inputs(&t.0), &c, &sink).unwrap(), bin, "{newer}");
             assert_eq!(c.builds.get(), 1, "{newer}");
             assert_eq!(std::fs::read(&bin).unwrap(), b"built", "{newer}: dist replaced by the build");
-            assert_eq!(std::fs::metadata(&bin).unwrap().permissions().mode() & 0o777, 0o755);
+            assert!(is_exec(&bin));
             assert_eq!(sink.0.borrow()[0], "wall sources newer than the built binary — rebuilding");
         }
     }

@@ -9,9 +9,11 @@
 //! view; tmux copy-mode is never entered on the underlying session.
 //!
 //! [`ScrollModel`] is the pure paging math (unit-tested); the tmux calls live
-//! in [`tmux_history_size`] / [`capture_frozen`].
+//! in [`history_size`] / [`capture_frozen`].
 
 use std::process::Command;
+
+use crate::attach::Target;
 
 /// Lines scrolled per mouse-wheel notch (the Dart `ScrollAnchor.wheelLines`).
 pub const WHEEL_LINES: i64 = 3;
@@ -71,58 +73,78 @@ impl ScrollModel {
     }
 }
 
-fn tmux(args: &[&str]) -> Option<std::process::Output> {
-    Command::new("tmux").args(args).env_remove("TMUX").output().ok()
+fn tmux(spec: &Target, args: &[&str]) -> Option<std::process::Output> {
+    let base = spec.tmux_base();
+    Command::new(&base[0]).args(&base[1..]).args(args).env_remove("TMUX").output().ok()
 }
 
-/// Current tmux history size of a session (absolute line 0 = oldest retained
-/// history line; the visible top row sits at index history_size).
-pub fn tmux_history_size(session: &str) -> Option<i64> {
-    let out = tmux(&[
-        "display-message",
-        "-p",
-        "-t",
-        &format!("={session}:"),
-        "-F",
-        "#{history_size}",
-    ])?;
+/// Current history size of a session (absolute line 0 = oldest retained
+/// history line; the visible top row sits at index history_size). Asks tmux,
+/// or the session host when the spec is a socket.
+pub fn history_size(spec: &Target, session: &str) -> Option<i64> {
+    if let Target::Socket { addr, token } = spec {
+        return garage_host::proto::history_size(addr, token);
+    }
+    let out = tmux(
+        spec,
+        &["display-message", "-p", "-t", &format!("={session}:"), "-F", "#{history_size}"],
+    )?;
     String::from_utf8_lossy(&out.stdout).trim().parse().ok()
 }
 
 /// Capture `rows` lines starting at absolute line `top_abs` from the
-/// session, with escape sequences (`-e`), rendered into a fresh vt100 parser
-/// sized to the tile. The `-S`/`-E` arguments are relative to the CURRENT
+/// session, with escape sequences, rendered into a fresh vt100 parser sized
+/// to the tile. For tmux the `-S`/`-E` arguments are relative to the CURRENT
 /// history size, recomputed per call — the absolute window stays fixed, so a
-/// re-capture under live load renders identical content.
-pub fn capture_frozen(session: &str, top_abs: i64, cols: u16, rows: u16) -> Option<vt100::Parser> {
-    let hist = tmux_history_size(session)?;
-    let s_rel = top_abs - hist; // <= 0 reaches into history
-    let e_rel = s_rel + i64::from(rows) - 1;
-    let out = tmux(&[
-        "capture-pane",
-        "-p",
-        "-e",
-        "-t",
-        &format!("={session}:"),
-        "-S",
-        &s_rel.to_string(),
-        "-E",
-        &e_rel.to_string(),
-    ])?;
-    if !out.status.success() {
-        return None;
-    }
+/// re-capture under live load renders identical content. A host serves
+/// absolute coordinates directly.
+pub fn capture_frozen(spec: &Target, session: &str, top_abs: i64, cols: u16, rows: u16) -> Option<vt100::Parser> {
+    let text = match spec {
+        Target::Socket { addr, token } => {
+            String::from_utf8_lossy(&garage_host::proto::capture_formatted(addr, token, top_abs, cols, rows)?)
+                .into_owned()
+        }
+        Target::Tmux { .. } => {
+            let hist = history_size(spec, session)?;
+            let s_rel = top_abs - hist; // <= 0 reaches into history
+            let e_rel = s_rel + i64::from(rows) - 1;
+            let out = tmux(
+                spec,
+                &[
+                    "capture-pane",
+                    "-p",
+                    "-e",
+                    "-t",
+                    &format!("={session}:"),
+                    "-S",
+                    &s_rel.to_string(),
+                    "-E",
+                    &e_rel.to_string(),
+                ],
+            )?;
+            if !out.status.success() {
+                return None;
+            }
+            String::from_utf8_lossy(&out.stdout).into_owned()
+        }
+    };
+    Some(render_lines(&text, cols, rows))
+}
+
+/// Feed captured lines into a fresh parser, resetting styles between lines so
+/// one line's colours never bleed into the next.
+fn render_lines(text: &str, cols: u16, rows: u16) -> vt100::Parser {
     let mut parser = vt100::Parser::new(rows, cols, 0);
     let mut first = true;
-    for line in String::from_utf8_lossy(&out.stdout).lines() {
+    for line in text.lines() {
         if !first {
             parser.process(b"\r\n");
         }
         first = false;
         parser.process(line.as_bytes());
-        parser.process(b"\x1b[0m"); // don't bleed styles across lines
+        parser.process(b"\x1b[0m");
     }
-    Some(parser)
+    parser
 }
 
 #[cfg(test)]

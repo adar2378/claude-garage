@@ -32,6 +32,12 @@ enum Command {
         #[arg(long)]
         all: bool,
     },
+    /// Run one session host (started by the daemon, not by hand).
+    #[command(hide = true)]
+    Host {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
     /// Reserved for the plugin host.
     Plugin,
 }
@@ -49,6 +55,12 @@ fn exit_fail(f: launcher::Fail) -> i32 {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // `host` takes its own flags and a `-- <command>` tail: hand them over
+    // untouched instead of letting clap interpret them.
+    let raw: Vec<String> = std::env::args().skip(1).collect();
+    if raw.first().map(String::as_str) == Some("host") {
+        std::process::exit(garage_host::server::run_cli(&raw[1..]));
+    }
     match Cli::parse().command.unwrap_or(Command::Tui) {
         Command::Daemon { port } => {
             let mut config = garage_daemon::Config::from_env()?;
@@ -68,6 +80,7 @@ async fn main() -> Result<()> {
             });
             Ok(())
         }
+        Command::Host { .. } => unreachable!("handled before parsing"),
         Command::Plugin => bail!("plugins: coming in a later release"),
     }
 }

@@ -36,6 +36,21 @@ fn has_meta(m: KeyModifiers) -> bool {
 
 /// Encode `key` as the raw bytes a terminal would send, or `None` when the
 /// event carries nothing forwardable (e.g. a bare modifier keypress).
+/// Shift/Ctrl+Enter. p14 (spec tui-key-routing "Enhanced-keyboard
+/// passthrough"): Shift+Enter is Claude Code's newline, sent in kitty CSI-u
+/// form (ESC[13;<mod>u), which tmux with extended-keys re-encodes for the
+/// pane. A Windows ConPTY carries no such sequence, so there (`conpty`):
+/// Shift+Enter is Alt+Enter (ESC CR, a newline in Claude Code) and Ctrl+Enter
+/// is the chord Ctrl+X Ctrl+S ("send queued message now", works in every
+/// terminal).
+fn modified_enter(shift: bool, ctrl: bool, modn: u8, conpty: bool) -> Vec<u8> {
+    match (conpty, ctrl && !shift) {
+        (true, true) => vec![0x18, 0x13],
+        (true, false) => vec![0x1b, 0x0d],
+        (false, _) => format!("\x1b[13;{modn}u").into_bytes(),
+    }
+}
+
 pub fn encode_key(key: &KeyEvent) -> Option<Vec<u8>> {
     let m = key.modifiers;
     let shift = m.contains(KeyModifiers::SHIFT);
@@ -80,12 +95,7 @@ pub fn encode_key(key: &KeyEvent) -> Option<Vec<u8>> {
         KeyCode::End => csi(b'F'),
         KeyCode::Enter => {
             if shift || ctrl {
-                // p14 (spec tui-key-routing "Enhanced-keyboard
-                // passthrough"): Shift+Enter is Claude Code's newline —
-                // kitty CSI-u form (ESC[13;<mod>u), which tmux with
-                // extended-keys re-encodes for the pane. Legacy \r cannot
-                // carry these modifiers at all.
-                format!("\x1b[13;{modn}u").into_bytes()
+                modified_enter(shift, ctrl, modn, cfg!(windows))
             } else if alt {
                 // Option+Enter stays the legacy ESC CR — Claude Code
                 // accepts it directly, and it works without any protocol.
@@ -451,6 +461,15 @@ mod tests {
         assert_eq!(encode_key(&key(KeyCode::Char('?'), CTRL)), Some(vec![0x7f]));
     }
 
+    #[test]
+    fn conpty_enter_is_alt_enter_for_shift_and_the_send_now_chord_for_ctrl() {
+        assert_eq!(modified_enter(true, false, 2, true), [0x1b, 0x0d]);
+        assert_eq!(modified_enter(false, true, 5, true), [0x18, 0x13]);
+        assert_eq!(modified_enter(true, true, 6, true), [0x1b, 0x0d]);
+        assert_eq!(modified_enter(true, false, 2, false), b"\x1b[13;2u");
+    }
+
+    #[cfg(not(windows))]
     #[test]
     fn modified_enter_takes_the_kitty_csi_u_form_p14() {
         // Shift+Enter is Claude Code's newline; legacy \r cannot carry it.

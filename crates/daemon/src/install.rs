@@ -25,7 +25,7 @@ pub fn claude_home(garage_claude_home: Option<&str>, home: Option<&str>) -> Path
 pub fn claude_home_from_env() -> PathBuf {
     claude_home(
         std::env::var("GARAGE_CLAUDE_HOME").ok().as_deref(),
-        std::env::var("HOME").ok().as_deref(),
+        std::env::var("HOME").ok().filter(|h| !h.is_empty()).or_else(|| std::env::var("USERPROFILE").ok()).as_deref(),
     )
 }
 

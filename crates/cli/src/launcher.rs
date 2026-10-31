@@ -90,6 +90,11 @@ pub trait Host: Out {
     /// Run with inherited stdio; true on exit code 0.
     fn run_inherit(&self, bin: &str, args: &[&str]) -> bool;
     fn listener_pid(&self) -> Option<u32>;
+    /// Whether sessions will live in tmux (false on Windows or with
+    /// `GARAGE_BACKEND=host`, where tmux is not needed).
+    fn uses_tmux(&self) -> bool {
+        true
+    }
     fn terminate(&self, pid: u32) -> Terminate;
     /// Start `claude-garage daemon` detached; returns its log path and pid.
     fn spawn_daemon(&self) -> Result<Starting, String>;
@@ -122,8 +127,8 @@ const MAX_PID: u32 = i32::MAX as u32;
 
 /// Convert to a signalable `pid_t`, refusing 0/1 (kill(0)/init) and anything
 /// that would wrap negative (kill(-1) signals every process we may signal).
-pub fn checked_pid(pid: u32) -> Result<libc::pid_t, String> {
-    let p = libc::pid_t::try_from(pid).map_err(|_| format!("refusing to signal out-of-range pid {pid}"))?;
+pub fn checked_pid(pid: u32) -> Result<i32, String> {
+    let p = i32::try_from(pid).map_err(|_| format!("refusing to signal out-of-range pid {pid}"))?;
     if p <= 1 {
         return Err(format!("refusing to signal pid {pid}"));
     }
@@ -198,9 +203,18 @@ fn offer_tmux_install(host: &dyn Host) -> bool {
     host.probe("tmux", &["-V"]) == Probe::Ok
 }
 
+/// Where to get tmux on this OS.
+pub fn tmux_missing_message() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "tmux not found — install: brew install tmux"
+    } else {
+        "tmux not found — install it with your package manager (apt install tmux, dnf install tmux, pacman -S tmux)"
+    }
+}
+
 pub fn check_prerequisites(host: &dyn Host) -> Result<(), Fail> {
-    if host.probe("tmux", &["-V"]) == Probe::Missing && !offer_tmux_install(host) {
-        return fail("tmux not found — install: brew install tmux");
+    if host.uses_tmux() && host.probe("tmux", &["-V"]) == Probe::Missing && !offer_tmux_install(host) {
+        return fail(tmux_missing_message());
     }
     require_binary(
         host,
@@ -398,6 +412,7 @@ mod tests {
         /// Fake clock cost of each health fetch (a slow probe).
         fetch_cost_ms: u64,
         fetches: RefCell<u64>,
+        host_backend: bool,
     }
 
     impl Fake {
@@ -423,6 +438,7 @@ mod tests {
                 sleeps: Default::default(),
                 fetch_cost_ms: 0,
                 fetches: Default::default(),
+                host_backend: false,
             }
         }
         fn called(&self, prefix: &str) -> usize {
@@ -496,6 +512,9 @@ mod tests {
         fn run_inherit(&self, bin: &str, args: &[&str]) -> bool {
             self.calls.borrow_mut().push(format!("run {bin} {}", args.join(" ")));
             self.brew_install_ok
+        }
+        fn uses_tmux(&self) -> bool {
+            !self.host_backend
         }
         fn listener_pid(&self) -> Option<u32> {
             self.calls.borrow_mut().push("listener_pid".into());
@@ -622,9 +641,18 @@ mod tests {
         let mut f = Fake::new(None);
         f.probes.insert("tmux", Probe::Missing);
         let err = tui_main(&f).unwrap_err();
-        assert_eq!(err.0, "tmux not found — install: brew install tmux");
+        assert_eq!(err.0, tmux_missing_message());
         assert_eq!(f.called("spawn_daemon"), 0);
         assert_eq!(f.called("ask"), 0, "never prompts off a tty");
+    }
+
+    #[test]
+    fn the_host_backend_never_asks_for_tmux() {
+        let mut f = Fake::new(None);
+        f.probes.insert("tmux", Probe::Missing);
+        f.host_backend = true;
+        assert!(check_prerequisites(&f).is_ok());
+        assert_eq!(f.called("probe tmux"), 0, "tmux is not even probed");
     }
 
     #[test]
@@ -655,7 +683,7 @@ mod tests {
         f.interactive = true;
         f.answer = "y";
         f.brew_install_ok = false;
-        assert_eq!(tui_main(&f).unwrap_err().0, "tmux not found — install: brew install tmux");
+        assert_eq!(tui_main(&f).unwrap_err().0, tmux_missing_message());
         assert_eq!(f.called("spawn_daemon"), 0);
     }
 

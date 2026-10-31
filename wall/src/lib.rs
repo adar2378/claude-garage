@@ -10,6 +10,7 @@
 
 pub mod actions;
 pub mod api;
+pub mod attach;
 pub mod input;
 pub mod keymap;
 pub mod pty;

@@ -137,7 +137,7 @@ pub async fn default_probe(port: u16) -> bool {
         let mut s = tokio::net::TcpStream::connect(("127.0.0.1", port))
             .await
             .ok()?;
-        s.write_all(b"GET /api/health HTTP/1.0\r\nHost: 127.0.0.1\r\n\r\n")
+        s.write_all(format!("GET /api/health HTTP/1.0\r\nHost: 127.0.0.1:{port}\r\n\r\n").as_bytes())
             .await
             .ok()?;
         // Only the status line matters; never wait for the body or EOF.
