@@ -95,6 +95,22 @@ fn deserialize_problem(src: &str, e: &serde_path_to_error::Error<toml::de::Error
     Problem::new(path, message)
 }
 
+/// Longest action or pane title, in characters: the TUI shows it in a toast,
+/// a menu and a pane border.
+pub const TITLE_MAX: usize = 40;
+
+/// A title is shown to the user by the wall: it must be text, short, and carry
+/// no control characters (an escape sequence in a title would reach the terminal).
+fn title_problems(path: &str, title: &str, out: &mut Vec<Problem>) {
+    if title.trim().is_empty() {
+        out.push(Problem::new(path, "must not be empty"));
+    } else if title.chars().any(char::is_control) {
+        out.push(Problem::new(path, "must not contain control characters"));
+    } else if title.chars().count() > TITLE_MAX {
+        out.push(Problem::new(path, format!("is {} characters; the limit is {TITLE_MAX}", title.chars().count())));
+    }
+}
+
 fn command_problems(path: &str, cmd: &[String], out: &mut Vec<Problem>) {
     if cmd.is_empty() || cmd[0].is_empty() {
         out.push(Problem::new(path, "must be a non-empty argv array with a program first"));
@@ -141,9 +157,7 @@ pub fn validate(m: &Manifest) -> Vec<Problem> {
         } else if !action_ids.insert(a.id.as_str()) {
             out.push(Problem::new(format!("{at}.id"), format!("duplicate action id {:?}", a.id)));
         }
-        if a.title.trim().is_empty() {
-            out.push(Problem::new(format!("{at}.title"), "must not be empty"));
-        }
+        title_problems(&format!("{at}.title"), &a.title, &mut out);
         if a.contexts.is_empty() {
             out.push(Problem::new(format!("{at}.contexts"), "must not be empty"));
         }
@@ -191,9 +205,7 @@ pub fn validate(m: &Manifest) -> Vec<Problem> {
         } else if !pane_ids.insert(p.id.as_str()) {
             out.push(Problem::new(format!("{at}.id"), format!("duplicate pane id {:?}", p.id)));
         }
-        if p.title.trim().is_empty() {
-            out.push(Problem::new(format!("{at}.title"), "must not be empty"));
-        }
+        title_problems(&format!("{at}.title"), &p.title, &mut out);
         command_problems(&format!("{at}.command"), &p.command, &mut out);
         if p.size.as_ref().is_some_and(|s| s.cols == 0 || s.rows == 0 || (s.pct && (s.cols > 100 || s.rows > 100))) {
             out.push(Problem::new(format!("{at}.size"), "cols and rows must be positive (and at most 100 with pct)"));
@@ -522,6 +534,10 @@ checksums = "SHA256SUMS"
             ("permissions = [\"ui.widgets\", \"ui.panes\", \"core.actions\", \"sessions.read\"]",
              "permissions = [\"ui.widgets\", \"ui.panes\", \"core.actions\", \"root.everything\"]", "permissions[3]", "root.everything"),
             ("id = \"refresh\"", "id = \"details\"", "actions[1].id", "duplicate"),
+            ("title = \"Refresh\"", "title = \"Refresh \\u001b[2J\"", "actions[0].title", "control characters"),
+            ("title = \"Refresh\"", "title = \"Refresh all of the usage numbers right now, please\"", "actions[0].title", "limit is 40"),
+            ("title = \"Usage details\"", "title = \"Usage details\\n\"", "panes[0].title", "control characters"),
+            ("title = \"Usage details\"", "title = \"Details of everything that the plugin knows about\"", "panes[0].title", "limit is 40"),
             ("id = \"refresh\"", "id = \"re.fresh\"", "actions[0].id", "no dots"),
             ("pane = \"details\"", "pane = \"nowhere\"", "actions[1].pane", "no pane"),
             ("pane = \"details\"", "pane = \"details\"\ncommand = [\"x\"]", "actions[1]", "both command and pane"),

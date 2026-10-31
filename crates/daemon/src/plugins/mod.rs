@@ -56,6 +56,10 @@ pub const LINK_POLL: Duration = Duration::from_secs(2);
 /// Event dispatches (context building plus queueing) running at once; past
 /// this an event is dropped with a log line rather than stalling the bus.
 pub const DISPATCH_INFLIGHT: usize = 256;
+/// `POST /api/plugins/ui/action` per plugin (burst and sustained).
+pub const UI_ACTIONS_PER_SEC: u32 = 5;
+/// How often the table of open panes is checked against the backend.
+pub const PANE_REFRESH: Duration = Duration::from_secs(2);
 
 /// One registry entry plus what loading it produced.
 #[derive(Clone)]
@@ -174,6 +178,10 @@ pub struct Inner {
     ui_slots: Mutex<Value>,
     /// Rate limit of `PUT /api/plugins/ui/slots`.
     slots_bucket: Mutex<Bucket>,
+    /// Rate limit of `POST /api/plugins/ui/action`, per plugin.
+    ui_action_buckets: Mutex<HashMap<String, Bucket>>,
+    /// One lock per plugin across a pane open (singleton check, limit, create).
+    pane_locks: Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
     /// The per-install credential of the TUI and CLI; empty when it could not
     /// be created (then nothing matches).
     ui_token: String,
@@ -216,6 +224,8 @@ impl PluginHost {
             logs: Mutex::default(),
             ui_slots: Mutex::new(json!({})),
             slots_bucket: Mutex::new(Bucket::new(std::time::Instant::now())),
+            ui_action_buckets: Mutex::default(),
+            pane_locks: Mutex::default(),
             ui_token,
             dispatch_permits: Arc::new(tokio::sync::Semaphore::new(DISPATCH_INFLIGHT)),
             link_poller: Mutex::new(None),
@@ -257,7 +267,14 @@ impl PluginHost {
         let host = self.clone();
         tokio::spawn({
             let host = host.clone();
-            async move { host.adopt_panes().await }
+            async move {
+                host.adopt_panes().await;
+                // Liveness of panes is cached; this tick is what refreshes it.
+                loop {
+                    tokio::time::sleep(PANE_REFRESH).await;
+                    host.refresh_panes().await;
+                }
+            }
         });
         tokio::spawn({
             let host = host.clone();
@@ -511,6 +528,14 @@ impl PluginHost {
     /// Rate limit one `PUT /api/plugins/ui/slots`.
     pub fn acquire_slots(&self, now: std::time::Instant) -> Result<(), Duration> {
         self.0.slots_bucket.lock().unwrap().take(now)
+    }
+
+    /// Rate limit one `POST /api/plugins/ui/action` of `plugin`: at most
+    /// [`UI_ACTIONS_PER_SEC`] a second (the TUI would otherwise be asked to
+    /// move its focus as fast as a plugin can post).
+    pub fn acquire_ui_action(&self, plugin: &str, now: std::time::Instant) -> Result<(), Duration> {
+        let rate = f64::from(UI_ACTIONS_PER_SEC);
+        self.0.ui_action_buckets.lock().unwrap().entry(plugin.to_owned()).or_insert_with(|| Bucket::with_limits(now, rate, rate)).take(now)
     }
 
     pub fn set_ui_slots(&self, slots: Value) {

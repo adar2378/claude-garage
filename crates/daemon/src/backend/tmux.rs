@@ -289,6 +289,9 @@ impl TmuxBackend {
 
 /// `tmux 3.7b` -> (3, 7); `tmux next-3.5` -> (3, 5). `master` and anything
 /// else unparsable is `None` (callers treat unknown as old).
+/// The tmux user option that marks a session as a plugin pane; its value is the plugin id.
+pub const PANE_TAG: &str = "@garage-pane";
+
 pub fn parse_version(out: &str) -> Option<(u32, u32)> {
     let v = out
         .trim()
@@ -482,13 +485,25 @@ impl SessionBackend for TmuxBackend {
         self.run_args(&["send-keys", "-t", &target, "Enter"]).await.map(|_| ())
     }
 
+    async fn mark_plugin_pane(&self, id: &str, plugin: &str) -> Result<()> {
+        // Like `status` above: set-option rejects the `=` prefix.
+        self.run_args(&["set-option", "-t", id, PANE_TAG, plugin]).await.map(|_| ())
+    }
+
     async fn plugin_pane_sessions(&self) -> Result<Vec<String>> {
-        let out = match self.run_args(&["ls", "-F", "#{session_name}"]).await {
+        let format = format!("#{{session_name}}\t#{{{PANE_TAG}}}");
+        let out = match self.run_args(&["ls", "-F", &format]).await {
             Ok(out) => out,
             Err(e) if is_no_server(&e.to_string()) => return Ok(Vec::new()),
             Err(e) => return Err(e),
         };
-        Ok(out.lines().filter(|l| l.starts_with(crate::plugins::panes::PANE_PREFIX)).map(str::to_owned).collect())
+        // Named like a pane AND tagged with the plugin the name says.
+        Ok(out
+            .lines()
+            .filter_map(|l| l.split_once('\t'))
+            .filter(|(name, tag)| crate::plugins::panes::parse_pane_session(name).is_some_and(|(plugin, _)| plugin == *tag))
+            .map(|(name, _)| name.to_owned())
+            .collect())
     }
 
     fn attach_spec(&self, _id: &str) -> AttachSpec {
@@ -785,6 +800,21 @@ mod tests {
         t.wait_for(|| std::fs::read_to_string(&out).is_ok_and(|s| !s.is_empty()))
             .await;
         assert_eq!(std::fs::read_to_string(&out).unwrap().trim(), "hello x");
+    }
+
+    #[tokio::test]
+    async fn only_sessions_tagged_as_a_plugins_pane_are_listed_as_panes() {
+        let t = TestTmux::new();
+        let b = t.backend();
+        for id in ["plugin/p/a", "plugin/p/b", "plugin/q/c", "garage/ws/x"] {
+            b.create(id, t.dir(), "sleep", &sleeper(), &[]).await.unwrap();
+        }
+        b.mark_plugin_pane("plugin/p/a", "p").await.unwrap();
+        // Tagged for another plugin than its name says: not trusted.
+        b.mark_plugin_pane("plugin/q/c", "p").await.unwrap();
+        // Untagged (`plugin/p/b`) is some other session that happens to be named like a pane.
+        assert_eq!(b.plugin_pane_sessions().await.unwrap(), ["plugin/p/a"]);
+        assert_eq!(t.tmux(&["show-options", "-t", "plugin/p/a", "-v", "@garage-pane"]).trim(), "p");
     }
 
     #[tokio::test]

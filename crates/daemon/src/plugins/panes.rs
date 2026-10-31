@@ -22,6 +22,9 @@ use crate::bus::DaemonEvent;
 /// Backend id prefix of every plugin pane.
 pub const PANE_PREFIX: &str = "plugin/";
 
+/// Most panes one plugin may have open at once.
+pub const MAX_PANES_PER_PLUGIN: usize = 4;
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct PaneRec {
     pub plugin: String,
@@ -39,6 +42,7 @@ pub enum PaneError {
     UnknownPlugin,
     Disabled,
     UnknownPane,
+    TooMany,
     NoBackend,
     Backend(String),
 }
@@ -49,6 +53,7 @@ impl std::fmt::Display for PaneError {
             PaneError::UnknownPlugin => write!(f, "no such plugin"),
             PaneError::Disabled => write!(f, "the plugin is disabled"),
             PaneError::UnknownPane => write!(f, "the plugin declares no such pane"),
+            PaneError::TooMany => write!(f, "the plugin already has {MAX_PANES_PER_PLUGIN} panes open"),
             PaneError::NoBackend => write!(f, "no session backend"),
             PaneError::Backend(e) => write!(f, "{e}"),
         }
@@ -62,7 +67,49 @@ pub fn parse_pane_session(id: &str) -> Option<(&str, &str)> {
     (!plugin.is_empty() && !pane.is_empty()).then_some((plugin, pane))
 }
 
+/// The environment names a pane inherits from the daemon, as for a run.
+fn parent_env() -> Vec<(String, String)> {
+    super::runner::base_env(std::env::vars())
+}
+
+/// How a pane's process is started. tmux gives a new session the tmux
+/// server's whole environment, so on unix the command is wrapped as
+/// `env -i <allowlist> <plugin vars> cmd args...` and nothing else gets
+/// through. Elsewhere (the host backend on Windows) there is no `env`; the
+/// plugin's variables go through `env` and the host backend starts the
+/// process from a cleared environment.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Launch {
+    pub cmd: String,
+    pub args: Vec<String>,
+    pub env: Vec<(String, String)>,
+}
+
+pub fn pane_launch(argv: &[String], plugin_env: &[(String, String)], parent: &[(String, String)], wrap_env: bool) -> Result<Launch, PaneError> {
+    let Some((cmd, args)) = argv.split_first() else {
+        return Err(PaneError::Backend("the pane has no command".into()));
+    };
+    if !wrap_env {
+        return Ok(Launch { cmd: cmd.clone(), args: args.to_vec(), env: plugin_env.to_vec() });
+    }
+    // `env` would read a program name with `=` as one more assignment.
+    if cmd.contains('=') {
+        return Err(PaneError::Backend("the pane command cannot contain '='".into()));
+    }
+    let mut wrapped = vec!["-i".to_owned(), "--".to_owned()];
+    // The plugin's own variables win over an inherited one of the same name.
+    wrapped.extend(parent.iter().filter(|(k, _)| !plugin_env.iter().any(|(p, _)| p == k)).map(|(k, v)| format!("{k}={v}")));
+    wrapped.extend(plugin_env.iter().map(|(k, v)| format!("{k}={v}")));
+    wrapped.push(cmd.clone());
+    wrapped.extend(args.iter().cloned());
+    Ok(Launch { cmd: "/usr/bin/env".into(), args: wrapped, env: Vec::new() })
+}
+
 impl Inner {
+    fn pane_lock(&self, plugin: &str) -> Arc<tokio::sync::Mutex<()>> {
+        self.pane_locks.lock().unwrap().entry(plugin.to_owned()).or_default().clone()
+    }
+
     fn backend(&self) -> Option<Arc<dyn SessionBackend>> {
         self.backend.get().cloned()
     }
@@ -102,6 +149,11 @@ impl PluginHost {
         let decl = manifest.panes.iter().find(|p| p.id == pane).ok_or(PaneError::UnknownPane)?;
         let backend = self.0.backend().ok_or(PaneError::NoBackend)?;
 
+        // One open at a time per plugin: the singleton check, the limit and
+        // the create are a single step.
+        let lock = self.0.pane_lock(plugin);
+        let _open = lock.lock().await;
+
         if decl.singleton {
             let existing = self.0.panes.lock().unwrap().iter().find(|p| p.plugin == plugin && p.pane == pane).cloned();
             if let Some(rec) = existing {
@@ -109,6 +161,14 @@ impl PluginHost {
                     return Ok((rec, true));
                 }
                 self.0.panes.lock().unwrap().retain(|p| p.session != rec.session);
+            }
+        }
+        let open_now = |this: &Self| this.0.panes.lock().unwrap().iter().filter(|p| p.plugin == plugin).count();
+        if open_now(self) >= MAX_PANES_PER_PLUGIN {
+            // The cache may still list a pane whose process ended.
+            self.refresh_panes().await;
+            if open_now(self) >= MAX_PANES_PER_PLUGIN {
+                return Err(PaneError::TooMany);
             }
         }
         let n = self.0.pane_seq.fetch_add(1, Ordering::Relaxed);
@@ -122,10 +182,13 @@ impl PluginHost {
         let ctx = self.context(&state, req).await;
         let (env, _ctx_file) = self.0.run_env(&state, "pane", &ctx).map_err(PaneError::Backend)?;
         let argv = self.0.argv_for(&state, &decl.command);
-        let Some((cmd, args)) = argv.split_first() else {
-            return Err(PaneError::Backend("the pane has no command".into()));
-        };
-        backend.create(&session, &state.dir, cmd, args, &env).await.map_err(|e| PaneError::Backend(e.to_string()))?;
+        let launch = pane_launch(&argv, &env, &parent_env(), cfg!(unix))?;
+        backend.create(&session, &state.dir, &launch.cmd, &launch.args, &launch.env).await.map_err(|e| PaneError::Backend(e.to_string()))?;
+        if let Err(e) = backend.mark_plugin_pane(&session, plugin).await {
+            // An unmarked pane would never be found again: do not keep it.
+            let _ = backend.kill(&session).await;
+            return Err(PaneError::Backend(format!("cannot mark the pane: {e}")));
+        }
 
         let rec = PaneRec {
             plugin: plugin.to_owned(),
@@ -168,31 +231,42 @@ impl PluginHost {
         Ok(gone.len())
     }
 
-    /// The panes that are still alive, with how to attach. A pane whose
-    /// process ended is dropped from the table here and announced as closed.
+    /// Drop the panes whose process ended and announce them as closed. One
+    /// backend listing per call, however many panes there are; run on a timer
+    /// and before a pane limit is enforced.
+    pub async fn refresh_panes(&self) {
+        let Some(backend) = self.0.backend() else { return };
+        // Snapshot first: a pane recorded while the listing runs is not judged by it.
+        let recs = self.0.panes.lock().unwrap().clone();
+        if recs.is_empty() {
+            return;
+        }
+        let Ok(live) = backend.plugin_pane_sessions().await else { return };
+        let live: std::collections::HashSet<String> = live.into_iter().collect();
+        for rec in recs.into_iter().filter(|r| !live.contains(&r.session)) {
+            self.0.panes.lock().unwrap().retain(|p| p.session != rec.session);
+            self.0.bus.publish(DaemonEvent::PaneChanged { plugin: rec.plugin, pane: rec.pane, session: rec.session, open: false });
+        }
+    }
+
+    /// The open panes with how to attach, from the table: no backend call per
+    /// pane (see [`PluginHost::refresh_panes`] for how it stays true).
     pub async fn live_panes(&self) -> Vec<PaneInstance> {
         let Some(backend) = self.0.backend() else { return Vec::new() };
         let recs = self.0.panes.lock().unwrap().clone();
-        let mut out = Vec::new();
-        for rec in recs {
-            if backend.has(&rec.session).await.unwrap_or(false) {
-                out.push(PaneInstance {
-                    attach: backend.attach_spec(&rec.session),
-                    plugin: rec.plugin,
-                    pane: rec.pane,
-                    title: rec.title,
-                    placement: rec.placement,
-                    session: rec.session,
-                    cols: rec.cols,
-                    rows: rec.rows,
-                    pct: rec.pct,
-                });
-            } else {
-                self.0.panes.lock().unwrap().retain(|p| p.session != rec.session);
-                self.0.bus.publish(DaemonEvent::PaneChanged { plugin: rec.plugin, pane: rec.pane, session: rec.session, open: false });
-            }
-        }
-        out
+        recs.into_iter()
+            .map(|rec| PaneInstance {
+                attach: backend.attach_spec(&rec.session),
+                plugin: rec.plugin,
+                pane: rec.pane,
+                title: rec.title,
+                placement: rec.placement,
+                session: rec.session,
+                cols: rec.cols,
+                rows: rec.rows,
+                pct: rec.pct,
+            })
+            .collect()
     }
 
     /// At daemon start: panes that outlived the daemon are adopted when their

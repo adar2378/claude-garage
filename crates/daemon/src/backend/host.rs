@@ -154,6 +154,13 @@ impl HostBackend {
             .stdout(log.try_clone()?)
             .stderr(log)
             .kill_on_drop(false);
+        if id.starts_with(crate::plugins::panes::PANE_PREFIX) {
+            // A pane starts from the same allowlist a plugin run does, not the
+            // daemon's whole environment (there is no `env` to wrap it with here).
+            c.env_clear()
+                .envs(crate::plugins::runner::base_env(std::env::vars()))
+                .envs(env.iter().map(|(k, v)| (k, v)));
+        }
         detach(&mut c);
         let mut child = c.spawn().with_context(|| format!("cannot start the session host ({program})"))?;
         let pid = child.id();

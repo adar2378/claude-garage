@@ -251,6 +251,10 @@ async fn widgets_snapshot(State(st): State<AppState>, axum::extract::Query(q): a
     Json(st.plugins.widget_snapshot(q.plugin.as_deref()))
 }
 
+/// Core ids a plugin's `ui/action` request may never name, though a widget
+/// click (a human) may: they switch the engaged, typing target.
+const UI_ACTION_REFUSED: &[&str] = &["session.engage"];
+
 /// `POST /api/plugins/ui/action`: a plugin asks the TUI to run an action. The
 /// daemon checks the token, `ui.invoke` and the action allowlist, then
 /// forwards the request as an SSE `ui_action` frame; the TUI treats it as a
@@ -282,8 +286,19 @@ async fn ui_action(State(st): State<AppState>, headers: HeaderMap, body: Bytes) 
     if let Err(r) = check_action(&manifest, &id, action) {
         return *r;
     }
+    // Where the user types is the user's to change: a plugin may not start
+    // typing into a session on their behalf (a widget click, a human act, may).
+    if UI_ACTION_REFUSED.contains(&action) {
+        return error_response(StatusCode::FORBIDDEN, format!("action {action:?} cannot be requested by a plugin (it moves where the user types)"));
+    }
     if let Err(r) = check_target(&st, &target).await {
         return *r;
+    }
+    if let Err(wait) = st.plugins.acquire_ui_action(&id, Instant::now()) {
+        let secs = wait.as_secs_f64().ceil().max(1.0) as u64;
+        let mut res = error_response(StatusCode::TOO_MANY_REQUESTS, format!("ui actions are limited to {} per second per plugin", super::UI_ACTIONS_PER_SEC));
+        res.headers_mut().insert(RETRY_AFTER, secs.to_string().parse().expect("digits"));
+        return res;
     }
     // A bare local id is this plugin's own action; frame it in full.
     let action = if garage_protocol::widgets::is_core_action_id(action) || action.contains(':') { action.to_owned() } else { format!("{id}:{action}") };
@@ -309,6 +324,7 @@ fn pane_error(id: &str, pane: &str, e: PaneError) -> Response {
     let status = match e {
         PaneError::UnknownPlugin | PaneError::UnknownPane => StatusCode::NOT_FOUND,
         PaneError::Disabled => StatusCode::CONFLICT,
+        PaneError::TooMany => StatusCode::TOO_MANY_REQUESTS,
         PaneError::NoBackend | PaneError::Backend(_) => StatusCode::INTERNAL_SERVER_ERROR,
     };
     error_response(status, format!("pane {id}:{pane}: {e}"))
@@ -379,6 +395,10 @@ async fn run_action(State(st): State<AppState>, Path((id, action)): Path<(String
     };
     // An action that opens a pane is the same trigger with a different effect.
     if let Some(pane) = st.plugins.active(&id).and_then(|p| p.manifest().and_then(|m| m.action(&action).and_then(|a| a.pane.clone()))) {
+        // The UI token may open any pane; a plugin's own token needs ui.panes.
+        if let Err(r) = authed_pane_caller(&st, &headers, &id) {
+            return *r;
+        }
         return match st.plugins.open_pane(&id, &pane, &body).await {
             Ok((rec, _)) => (StatusCode::ACCEPTED, Json(json!({"pane": rec.session}))).into_response(),
             Err(e) => pane_error(&id, &pane, e),
