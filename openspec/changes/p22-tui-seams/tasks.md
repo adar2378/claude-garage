@@ -46,7 +46,7 @@
 
 ## 6. Verification
 
-- [x] 6.1 `cd wall && cargo test --lib --bins` green, same or higher count (565 default, 531 without the pet feature); `cargo clippy --all-targets -- -D warnings` clean; snapshots unchanged
+- [x] 6.1 `cd wall && cargo test --lib --bins` green, same or higher count (571 default, 537 without the pet feature); `cargo clippy --all-targets -- -D warnings` clean; snapshots unchanged
 - [x] 6.2 No file under `wall/src/runtime/` or `wall/src/state/` over ~1,200 lines
 - [ ] 6.3 Live check on the user's wall (user relaunches with `GARAGE_TUI_BIN` on the branch build; main session only, ask first): keys `1`-`9`, `[` `]`, `a`, `A`, `n`, `x x`, `X X`, `X K`, `r r`, `r a`, `?`, `m`, `d`, `D`, `Tab`; clicks on tiles, rail rows, triage rows; pet clicks
 - [ ] 6.4 Record results in `verification.md`
