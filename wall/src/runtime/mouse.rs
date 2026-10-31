@@ -67,6 +67,7 @@ impl App {
             view_picker_typing: self.view_picker.new_group_input.is_some(),
             badge_cols: self.badge_cols.as_ref(),
             strip_slots: &self.strip_slots,
+            slots: &self.slots,
         };
         if let Some((id, ctx)) = action_at(&map, self.store.state(), col, row) {
             let effects = self.dispatch_action(id, &ctx);

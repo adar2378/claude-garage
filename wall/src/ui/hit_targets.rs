@@ -9,9 +9,10 @@ use std::ops::Range;
 use ratatui::layout::Rect;
 
 use crate::actions::{ids, ActionCtx, ActionId, ActionSource};
-use crate::state::salience::WorkspaceGroup;
 use crate::state::wall_state::{KeyLayer, OverlayKind, WallState};
+use crate::slots::SlotRegistry;
 use crate::ui::layout::WallLayout;
+use crate::ui::rail::header_items;
 use crate::ui::triage::triage_queue_rows;
 use crate::ui::grid_layout::grid_cell_rect;
 
@@ -44,22 +45,22 @@ pub enum RailTarget {
 }
 
 /// Maps a rail-content row (0-based, local to the rail — the rail renders
-/// one line per row: each group's optional family label, its header, then
-/// its sessions) to its target. `None` for a label row, rows past the last
-/// group, or an empty rail.
-pub fn rail_target_at(groups: &[WorkspaceGroup], row: i32) -> Option<RailTarget> {
+/// one line per row: each group's `rail.header` slot rows, its workspace
+/// row, then its sessions) to its target. The header rows are counted from
+/// the slot registry, exactly as the renderer lays them out. `None` for a
+/// header row, rows past the last group, or an empty rail.
+pub fn rail_target_at(state: &WallState, slots: &SlotRegistry, row: i32) -> Option<RailTarget> {
     if row < 0 {
         return None;
     }
     let row = row as usize;
     let mut line = 0usize;
-    for (g, group) in groups.iter().enumerate() {
-        if group.family_label.is_some() {
-            if row == line {
-                return None;
-            }
-            line += 1;
+    for (g, group) in state.groups.iter().enumerate() {
+        let header_rows = header_items(state, slots, group).len();
+        if row < line + header_rows {
+            return None;
         }
+        line += header_rows;
         if row == line {
             return Some(RailTarget::Workspace(g));
         }
@@ -119,6 +120,8 @@ pub struct ClickMap<'a> {
     pub badge_cols: Option<&'a Range<u16>>,
     /// Clickable `strip.right` slot items from the last frame.
     pub strip_slots: &'a [(Range<u16>, ActionId)],
+    /// The registry the rail was drawn from (its header rows shift clicks).
+    pub slots: &'a SlotRegistry,
 }
 
 /// The session id and rect under a grid point, honoring maximize (a
@@ -221,7 +224,7 @@ pub fn action_at(
     // Rail click: header focuses the workspace, session row focuses the
     // session — never engages.
     if layout.rail.contains(point) {
-        return match rail_target_at(&state.groups, i32::from(row - layout.rail.y))? {
+        return match rail_target_at(state, map.slots, i32::from(row - layout.rail.y))? {
             RailTarget::Workspace(index) => {
                 Some((ids::WORKSPACE_FOCUS, ctx().with_index(Some(index))))
             }
@@ -247,6 +250,7 @@ mod tests {
     //! Port of `tui/test/hit_targets_test.dart` — point→tile index via
     //! gridCellRect, point→rail row, triage modal rows.
     use super::*;
+    use crate::state::salience::WorkspaceGroup;
     use crate::state::wall_state::WallSession;
 
     fn session(id: &str) -> WallSession {
@@ -346,34 +350,41 @@ mod tests {
         ]
     }
 
+    /// The rail target at `row` for these groups, through the core registry.
+    fn target_for(groups: &[WorkspaceGroup], row: i32) -> Option<RailTarget> {
+        let mut state = WallState::initial();
+        state.groups = groups.to_vec();
+        rail_target_at(&state, &SlotRegistry::core(), row)
+    }
+
     #[test]
     fn header_rows_map_to_workspace_targets_with_group_index() {
-        assert_eq!(rail_target_at(&groups(), 0), Some(RailTarget::Workspace(0)));
-        assert_eq!(rail_target_at(&groups(), 3), Some(RailTarget::Workspace(1)));
+        assert_eq!(target_for(&groups(), 0), Some(RailTarget::Workspace(0)));
+        assert_eq!(target_for(&groups(), 3), Some(RailTarget::Workspace(1)));
     }
 
     #[test]
     fn session_rows_map_to_session_ids() {
         assert_eq!(
-            rail_target_at(&groups(), 1),
+            target_for(&groups(), 1),
             Some(RailTarget::Session("a1".to_owned()))
         );
         assert_eq!(
-            rail_target_at(&groups(), 2),
+            target_for(&groups(), 2),
             Some(RailTarget::Session("a2".to_owned()))
         );
         assert_eq!(
-            rail_target_at(&groups(), 4),
+            target_for(&groups(), 4),
             Some(RailTarget::Session("b1".to_owned()))
         );
     }
 
     #[test]
     fn rows_past_the_last_group_and_negatives_map_to_none() {
-        assert_eq!(rail_target_at(&groups(), 5), None);
-        assert_eq!(rail_target_at(&groups(), 99), None);
-        assert_eq!(rail_target_at(&groups(), -1), None);
-        assert_eq!(rail_target_at(&[], 0), None);
+        assert_eq!(target_for(&groups(), 5), None);
+        assert_eq!(target_for(&groups(), 99), None);
+        assert_eq!(target_for(&groups(), -1), None);
+        assert_eq!(target_for(&[], 0), None);
     }
 
     #[test]
@@ -382,10 +393,10 @@ mod tests {
             rail_group("empty", vec![]),
             rail_group("full", vec![session("x")]),
         ];
-        assert_eq!(rail_target_at(&gs, 0), Some(RailTarget::Workspace(0)));
-        assert_eq!(rail_target_at(&gs, 1), Some(RailTarget::Workspace(1)));
+        assert_eq!(target_for(&gs, 0), Some(RailTarget::Workspace(0)));
+        assert_eq!(target_for(&gs, 1), Some(RailTarget::Workspace(1)));
         assert_eq!(
-            rail_target_at(&gs, 2),
+            target_for(&gs, 2),
             Some(RailTarget::Session("x".to_owned()))
         );
     }
@@ -396,18 +407,50 @@ mod tests {
         first.family_label = Some("fam".to_owned());
         let gs = vec![first, rail_group("beta", vec![session("b1")])];
         // rows: 0 label, 1 alpha, 2 a1, 3 beta, 4 b1
-        assert_eq!(rail_target_at(&gs, 0), None);
-        assert_eq!(rail_target_at(&gs, 1), Some(RailTarget::Workspace(0)));
+        assert_eq!(target_for(&gs, 0), None);
+        assert_eq!(target_for(&gs, 1), Some(RailTarget::Workspace(0)));
         assert_eq!(
-            rail_target_at(&gs, 2),
+            target_for(&gs, 2),
             Some(RailTarget::Session("a1".to_owned()))
         );
-        assert_eq!(rail_target_at(&gs, 3), Some(RailTarget::Workspace(1)));
+        assert_eq!(target_for(&gs, 3), Some(RailTarget::Workspace(1)));
         assert_eq!(
-            rail_target_at(&gs, 4),
+            target_for(&gs, 4),
             Some(RailTarget::Session("b1".to_owned()))
         );
-        assert_eq!(rail_target_at(&gs, 5), None);
+        assert_eq!(target_for(&gs, 5), None);
+    }
+
+    #[test]
+    fn a_plugin_header_row_shifts_clicks_exactly_as_the_rail_draws_it() {
+        use crate::slots::{SlotCtx, SlotId, SlotItem};
+        use crate::ui::rail::rail_lines;
+        use ratatui::text::Span;
+        let mut state = WallState::initial();
+        state.groups = groups();
+        // Two extra header rows above `beta` only; none above `alpha`.
+        let mut slots = SlotRegistry::core();
+        slots.register(SlotId::RailHeader, |ctx: &SlotCtx| {
+            if ctx.group.is_some_and(|g| g.name == "beta") {
+                vec![
+                    SlotItem::new(vec![Span::raw(" plugin one")], 0),
+                    SlotItem::new(vec![Span::raw(" plugin two")], 0),
+                ]
+            } else {
+                Vec::new()
+            }
+        });
+        let rows: Vec<String> = rail_lines(&state, &slots, 0).iter().map(ToString::to_string).collect();
+        // rows: 0 alpha, 1 a1, 2 a2, 3 plugin one, 4 plugin two, 5 beta, 6 b1
+        assert_eq!(rows[3], " plugin one");
+        assert_eq!(rail_target_at(&state, &slots, 0), Some(RailTarget::Workspace(0)));
+        assert_eq!(rail_target_at(&state, &slots, 2), Some(RailTarget::Session("a2".into())));
+        assert_eq!(rail_target_at(&state, &slots, 3), None, "header rows are inert");
+        assert_eq!(rail_target_at(&state, &slots, 4), None);
+        assert_eq!(rail_target_at(&state, &slots, 5), Some(RailTarget::Workspace(1)));
+        assert_eq!(rows[5], " 2 beta", "the click mapping and the paint agree on the workspace row");
+        assert_eq!(rail_target_at(&state, &slots, 6), Some(RailTarget::Session("b1".into())));
+        assert_eq!(rail_target_at(&state, &slots, 7), None);
     }
 
     // ── triageRowIndexAt ────────────────────────────────────────────────
@@ -496,6 +539,7 @@ mod tests {
             badge: Range<u16>,
             /// A clickable `strip.right` item, overlapping the badge's start.
             slots: Vec<(Range<u16>, ActionId)>,
+            registry: SlotRegistry,
         }
 
         fn fixture(store: &WallStore) -> Fixture {
@@ -509,6 +553,7 @@ mod tests {
                     (50..60, ids::PET_PET),
                     (78..84, ids::OVERLAY_OPEN_HELP),
                 ],
+                registry: SlotRegistry::core(),
             }
         }
 
@@ -523,6 +568,7 @@ mod tests {
                 view_picker_typing: false,
                 badge_cols: Some(&f.badge),
                 strip_slots: &f.slots,
+                slots: &f.registry,
             };
             action_at(&map, store.state(), col, row).map(|(id, ctx)| (id.as_str(), ctx))
         }

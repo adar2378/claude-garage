@@ -31,15 +31,9 @@ pub fn rail_lines(state: &WallState, slots: &SlotRegistry, now_ms: i64) -> Vec<L
     let mut lines = Vec::new();
     for (i, group) in state.groups.iter().enumerate() {
         let focused_ws = state.focused_workspace.as_deref() == Some(group.name.as_str());
-        // The family label row comes from the `rail.header` slot;
-        // `rail_target_at` counts it by `family_label.is_some()`, which is
-        // exactly when the core provider emits it.
-        let header_ctx = SlotCtx {
-            state: Some(state),
-            group: Some(group),
-            ..SlotCtx::default()
-        };
-        for item in slots.items(SlotId::RailHeader, &header_ctx) {
+        // Rows above the workspace row come from the `rail.header` slot;
+        // `rail_target_at` counts them through the same call.
+        for item in header_items(state, slots, group) {
             lines.push(Line::from(item.text));
         }
         lines.push(workspace_row(group, i, focused_ws));
@@ -59,6 +53,18 @@ pub fn rail_lines(state: &WallState, slots: &SlotRegistry, now_ms: i64) -> Vec<L
         ));
     }
     lines
+}
+
+/// The `rail.header` items above a group's workspace row, one rail row each.
+/// The renderer and the click router both ask here, so a plugin's header row
+/// can never shift clicks.
+pub fn header_items(state: &WallState, slots: &SlotRegistry, group: &WorkspaceGroup) -> Vec<SlotItem> {
+    let ctx = SlotCtx {
+        state: Some(state),
+        group: Some(group),
+        ..SlotCtx::default()
+    };
+    slots.items(SlotId::RailHeader, &ctx)
 }
 
 /// The `rail.header` core provider: the p18 family label row above the first
