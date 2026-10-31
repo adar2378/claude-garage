@@ -6,6 +6,10 @@ rust-version.workspace = true
 description = "claude-garage sample bundled plugin: one action that pushes one widget"
 publish = false
 
+# Not a release artifact of its own: shipped inside the claude-garage archive.
+[package.metadata.dist]
+dist = false
+
 [[bin]]
 name = "hello"
 path = "src/main.rs"

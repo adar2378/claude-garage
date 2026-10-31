@@ -3,7 +3,13 @@ name = "claude-garage"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
+repository.workspace = true
+homepage.workspace = true
+license.workspace = true
 description = "claude-garage: one binary for the TUI, the daemon and the launcher"
+
+[package.metadata.dist]
+dist = true
 
 [[bin]]
 name = "claude-garage"
@@ -13,6 +19,7 @@ path = "src/main.rs"
 garage-daemon = { path = "../daemon" }
 garage-host = { path = "../host" }
 garage-protocol = { path = "../protocol" }
+garage-wall = { path = "../../wall" }
 garage-plugin = { path = "../plugin" }
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
@@ -20,7 +27,11 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 libc = "0.2"
 serde_json = "1"
 ureq = { version = "3", default-features = false }
-garage-plugin-sdk = { version = "0.6.2", path = "../plugin-sdk" }
+garage-plugin-sdk = { version = "1.0.0-rc.1", path = "../plugin-sdk" }
+
+[features]
+# What cargo-dist builds with (dist-workspace.toml).
+bundle-plugins = ["garage-daemon/embed-plugins"]
 
 [dev-dependencies]
 tempfile = "3"

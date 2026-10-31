@@ -396,7 +396,7 @@ checksum = "1c133bc6a41be0d194c306b5506d15e6feeea7b1d6604bd3f8310dfb2ca96486"
 
 [[package]]
 name = "claude-garage"
-version = "0.6.2"
+version = "1.0.0-rc.1"
 dependencies = [
  "anyhow",
  "clap",
@@ -405,6 +405,7 @@ dependencies = [
  "garage-plugin",
  "garage-plugin-sdk",
  "garage-protocol",
+ "garage-wall",
  "libc",
  "serde_json",
  "tempfile",
@@ -919,7 +920,7 @@ dependencies = [
 
 [[package]]
 name = "garage-daemon"
-version = "0.6.2"
+version = "1.0.0-rc.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -942,7 +943,7 @@ dependencies = [
 
 [[package]]
 name = "garage-host"
-version = "0.6.2"
+version = "1.0.0-rc.1"
 dependencies = [
  "getrandom 0.4.3",
  "libc",
@@ -956,7 +957,7 @@ dependencies = [
 
 [[package]]
 name = "garage-plugin"
-version = "0.6.2"
+version = "1.0.0-rc.1"
 dependencies = [
  "garage-protocol",
  "jsonschema",
@@ -972,7 +973,7 @@ dependencies = [
 
 [[package]]
 name = "garage-plugin-cli-extras"
-version = "0.6.2"
+version = "1.0.0-rc.1"
 dependencies = [
  "garage-plugin-sdk",
  "serde_json",
@@ -981,7 +982,7 @@ dependencies = [
 
 [[package]]
 name = "garage-plugin-closed-chats"
-version = "0.6.2"
+version = "1.0.0-rc.1"
 dependencies = [
  "fs4",
  "garage-plugin-sdk",
@@ -990,21 +991,21 @@ dependencies = [
 
 [[package]]
 name = "garage-plugin-hello"
-version = "0.6.2"
+version = "1.0.0-rc.1"
 dependencies = [
  "garage-plugin-sdk",
 ]
 
 [[package]]
 name = "garage-plugin-jump-palette"
-version = "0.6.2"
+version = "1.0.0-rc.1"
 dependencies = [
  "garage-plugin-sdk",
 ]
 
 [[package]]
 name = "garage-plugin-pit-pet"
-version = "0.6.2"
+version = "1.0.0-rc.1"
 dependencies = [
  "garage-plugin-sdk",
  "serde",
@@ -1013,21 +1014,21 @@ dependencies = [
 
 [[package]]
 name = "garage-plugin-prune-empty-projects"
-version = "0.6.2"
+version = "1.0.0-rc.1"
 dependencies = [
  "garage-plugin-sdk",
 ]
 
 [[package]]
 name = "garage-plugin-quick-send"
-version = "0.6.2"
+version = "1.0.0-rc.1"
 dependencies = [
  "garage-plugin-sdk",
 ]
 
 [[package]]
 name = "garage-plugin-sdk"
-version = "0.6.2"
+version = "1.0.0-rc.1"
 dependencies = [
  "crossterm",
  "garage-protocol",
@@ -1040,7 +1041,7 @@ dependencies = [
 
 [[package]]
 name = "garage-plugin-turn-markers"
-version = "0.6.2"
+version = "1.0.0-rc.1"
 dependencies = [
  "garage-plugin-sdk",
  "serde",
@@ -1049,7 +1050,7 @@ dependencies = [
 
 [[package]]
 name = "garage-plugin-usage-bar"
-version = "0.6.2"
+version = "1.0.0-rc.1"
 dependencies = [
  "garage-plugin-sdk",
  "serde",
@@ -1058,7 +1059,7 @@ dependencies = [
 
 [[package]]
 name = "garage-protocol"
-version = "0.6.2"
+version = "1.0.0-rc.1"
 dependencies = [
  "getrandom 0.4.3",
  "serde",
@@ -1069,7 +1070,7 @@ dependencies = [
 
 [[package]]
 name = "garage-wall"
-version = "0.6.2"
+version = "1.0.0-rc.1"
 dependencies = [
  "crossterm",
  "garage-host",
