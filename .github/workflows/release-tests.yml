@@ -15,7 +15,21 @@ permissions:
   contents: read
 
 jobs:
+  # The pushed tag must name the workspace version: a tag typed against the
+  # wrong commit, or a bump that was forgotten, fails here before anything is
+  # built or published.
+  version:
+    if: github.event_name != 'pull_request'
+    name: tag matches the workspace version
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: scripts/check-release-tag.sh "$GITHUB_REF_NAME"
+
   test:
+    needs: version
     # pull requests already run ci.yml
     if: github.event_name != 'pull_request'
     name: test (${{ matrix.os }})
@@ -25,7 +39,7 @@ jobs:
       matrix:
         os: [macos-15, ubuntu-24.04]
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       # rustup ships on GitHub's runners; no third-party action in a job
       # that gates a publish

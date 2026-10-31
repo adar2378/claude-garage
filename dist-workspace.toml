@@ -6,7 +6,15 @@ members = ["cargo:."]
 [dist]
 cargo-dist-version = "0.33.1"
 ci = "github"
-installers = ["shell", "powershell", "npm", "homebrew"]
+# Homebrew is off until the tap exists. TODO(user), then re-enable:
+#   1. create the public repo github.com/adar2378/homebrew-tap
+#   2. create a fine-grained token with Contents: read+write on that repo only
+#      and store it as the HOMEBREW_TAP_TOKEN secret of this repo
+#   3. add "homebrew" back to `installers` below and to `publish-jobs`
+#   4. uncomment `tap`, run `dist generate`, commit the workflow diff
+#   5. re-add the `brew install` line to README.md
+#   tap = "adar2378/homebrew-tap"
+installers = ["shell", "powershell", "npm"]
 targets = [
   "aarch64-apple-darwin",
   "x86_64-apple-darwin",
@@ -17,13 +25,32 @@ targets = [
 # Build the first-party plugins into the binary (crates/daemon/build.rs).
 features = ["bundle-plugins"]
 install-path = "~/.local/bin"
-# TODO(user): create github.com/adar2378/homebrew-tap and give this repo a
-# HOMEBREW_TAP_TOKEN secret that can push to it.
-tap = "adar2378/homebrew-tap"
-publish-jobs = ["homebrew", "./publish-npm"]
+publish-jobs = ["./publish-npm"]
+# Prereleases (1.0.0-rc.N) publish too, to the npm `next` dist-tag (see
+# publish-npm.yml), so an rc exercises the real OIDC + provenance path.
+publish-prereleases = true
+# The custom publish job gets exactly what it needs: contents: read and
+# id-token: write (npm trusted publishing). dist's default for a publish job
+# would add packages: write.
+github-custom-job-permissions = { "publish-npm" = { contents = "read", "id-token" = "write" } }
+# Known limits of the generated release.yml (dist 0.33.1 has no setting for
+# either; `dist generate --check` fails if they are hand-edited):
+#   * custom jobs are called with `secrets: inherit`. ./release-tests and
+#     ./publish-npm are files in this repo and read no secret (npm uses OIDC).
+#   * dist is installed with its own `curl | sh` installer from the pinned
+#     release URL (v0.33.1), which carries no hash.
 # Runs before anything is built or published.
 plan-jobs = ["./release-tests"]
 install-success-msg = "claude-garage installed. Run `claude-garage` (needs tmux and the claude CLI on PATH)."
+
+# Third-party actions in the generated release.yml are pinned by commit. dist
+# renders these as `uses: <action>@<sha>`; the tag is only in this comment, so
+# when bumping, resolve it with
+#   gh api repos/<owner>/<repo>/git/ref/tags/<tag>
+[dist.github-action-commits]
+"actions/checkout" = "3d3c42e5aac5ba805825da76410c181273ba90b1" # v7.0.1
+"actions/upload-artifact" = "cf430e030ddbb5b0abf93d22962f4752f3646cd9" # v7.0.2
+"actions/download-artifact" = "9000827ccba6bdab643e8b6fd33ac0654aef8333" # v8.0.2
 
 [dist.github-custom-runners]
 global = "ubuntu-24.04"
