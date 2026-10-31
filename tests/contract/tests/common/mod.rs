@@ -323,6 +323,61 @@ impl Daemon {
     }
 }
 
+/// A raw HTTP/1.1 connection to /api/events, for byte-exact assertions on the
+/// stream. ureq hides headers' framing and strips line endings, so this talks
+/// TCP directly. Reads accumulate in `buf` (headers included, chunk framing
+/// left in; whole SSE frames are single writes so they stay contiguous).
+pub struct RawEvents {
+    stream: std::net::TcpStream,
+    pub buf: Vec<u8>,
+}
+
+impl RawEvents {
+    /// Read until `needle` shows up in the accumulated bytes (or `secs` pass).
+    pub fn wait_for(&mut self, needle: &str, secs: u64) -> bool {
+        use std::io::Read;
+        let deadline = Instant::now() + Duration::from_secs(secs);
+        loop {
+            if String::from_utf8_lossy(&self.buf).contains(needle) {
+                return true;
+            }
+            if Instant::now() > deadline {
+                return false;
+            }
+            let mut chunk = [0u8; 4096];
+            match self.stream.read(&mut chunk) {
+                Ok(0) => return false,
+                Ok(n) => self.buf.extend_from_slice(&chunk[..n]),
+                Err(_) => {} // read timeout: loop and re-check the deadline
+            }
+        }
+    }
+
+    pub fn text(&self) -> String {
+        String::from_utf8_lossy(&self.buf).into_owned()
+    }
+}
+
+impl Daemon {
+    pub fn events_raw(&self) -> RawEvents {
+        use std::io::Write;
+        let mut stream =
+            std::net::TcpStream::connect(("127.0.0.1", self.port)).expect("connect /api/events");
+        stream
+            .set_read_timeout(Some(Duration::from_millis(200)))
+            .unwrap();
+        write!(
+            stream,
+            "GET /api/events HTTP/1.1\r\nHost: 127.0.0.1:{}\r\nAccept: text/event-stream\r\n\r\n",
+            self.port
+        )
+        .unwrap();
+        let mut ev = RawEvents { stream, buf: vec![] };
+        assert!(ev.wait_for(": connected\n\n", 10), "no connected frame: {}", ev.text());
+        ev
+    }
+}
+
 impl Drop for Daemon {
     fn drop(&mut self) {
         let _ = self.child.kill();
