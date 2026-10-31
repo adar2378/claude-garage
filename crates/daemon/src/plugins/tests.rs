@@ -1126,3 +1126,87 @@ async fn the_hosts_registry_edits_survive_a_cli_writing_at_the_same_time() {
     assert_eq!(file.plugins.len(), 26, "no CLI edit was lost to a host write");
     assert!(file.plugins[0].enabled, "and the host's last edit is the last word");
 }
+
+// ---- registry edits for the CLI lane ----
+
+fn reg_body(path: &std::path::Path, perms: &[&str]) -> String {
+    json!({"source": {"kind": "link", "path": path}, "grantedPermissions": perms, "manifestSha256": "ab", "installedAt": 7}).to_string()
+}
+
+#[tokio::test]
+async fn registration_routes_need_the_ui_token_and_a_plugin_token_is_not_enough() {
+    let r = Rig::new();
+    r.install("held", &manifest("held", &[], ""));
+    let tok = r.token("held");
+    let body = reg_body(&r.src.path().join("held"), &[]);
+    for (m, u, b) in [
+        ("PUT", "/api/plugins/held/registration", Some(body.as_str())),
+        ("POST", "/api/plugins/held/disable", None),
+        ("POST", "/api/plugins/held/enable", None),
+        ("POST", "/api/plugins/held/bind", Some(r#"{"action":"held:a","key":"x"}"#)),
+        ("DELETE", "/api/plugins/held", None),
+    ] {
+        assert_eq!(r.call(m, u, None, b).await.0, StatusCode::UNAUTHORIZED, "{m} {u} anonymous");
+        assert_eq!(r.call(m, u, Some(&tok), b).await.0, StatusCode::FORBIDDEN, "{m} {u} plugin token");
+    }
+    assert!(r.st.plugins.active("held").is_some(), "nothing changed");
+}
+
+#[tokio::test]
+async fn link_approval_through_the_daemon_activates_the_plugin_with_the_recorded_grant() {
+    let r = Rig::new();
+    let dir = r.link_unapproved("fresh", &manifest("fresh", &["ui.widgets"], ""));
+    r.st.plugins.reload().unwrap();
+    assert!(r.st.plugins.active("fresh").is_none(), "not approved yet");
+    let (s, _, b) = r.call_ui("PUT", "/api/plugins/fresh/registration", Some(&reg_body(&dir, &["ui.widgets"]))).await;
+    assert_eq!(s, StatusCode::OK, "{b}");
+    let entry = PluginsFile::read(&r.paths()).unwrap().plugins.remove(0);
+    assert_eq!(entry.granted_permissions.unwrap(), ["ui.widgets"]);
+    assert_eq!(entry.installed_at, Some(7));
+    assert!(r.st.plugins.active("fresh").is_some());
+    assert_eq!(r.token("fresh").len(), 64);
+}
+
+#[tokio::test]
+async fn registration_rejects_bad_bodies_bundled_ids_and_unknown_permissions() {
+    let r = Rig::new();
+    r.install_bundled("shipped", &manifest("shipped", &[], ""));
+    let p = r.src.path();
+    let (s, _, _) = r.call_ui("PUT", "/api/plugins/shipped/registration", Some(&reg_body(p, &[]))).await;
+    assert_eq!(s, StatusCode::CONFLICT, "bundled entries are not replaceable");
+    let (s, _, b) = r.call_ui("PUT", "/api/plugins/x1/registration", Some(&reg_body(p, &["root.everything"]))).await;
+    assert_eq!(s, StatusCode::UNPROCESSABLE_ENTITY, "{b}");
+    let (s, ..) = r.call_ui("PUT", "/api/plugins/x1/registration", Some("{}")).await;
+    assert_eq!(s, StatusCode::UNPROCESSABLE_ENTITY);
+    let (s, ..) = r.call_ui("PUT", "/api/plugins/Bad_Id/registration", Some(&reg_body(p, &[]))).await;
+    assert_eq!(s, StatusCode::UNPROCESSABLE_ENTITY);
+}
+
+#[tokio::test]
+async fn enable_disable_remove_and_bind_go_through_the_locked_registry_and_tear_down() {
+    let mut r = Rig::new();
+    r.install("toggle", &manifest("toggle", &[], ""));
+    r.events();
+    assert_eq!(r.call_ui("POST", "/api/plugins/toggle/disable", None).await.0, StatusCode::OK);
+    assert!(r.st.plugins.active("toggle").is_none());
+    assert!(r.events().contains(&DaemonEvent::PluginsChanged));
+    assert_eq!(r.call_ui("POST", "/api/plugins/toggle/enable", None).await.0, StatusCode::OK);
+    assert!(r.st.plugins.active("toggle").is_some());
+    assert_eq!(r.call_ui("POST", "/api/plugins/nope/disable", None).await.0, StatusCode::NOT_FOUND);
+
+    let (s, ..) = r.call_ui("POST", "/api/plugins/toggle/bind", Some(r#"{"action":"toggle:go","key":"g"}"#)).await;
+    assert_eq!(s, StatusCode::OK);
+    assert_eq!(PluginsFile::read(&r.paths()).unwrap().plugins[0].bindings["toggle:go"], "g");
+    let (s, ..) = r.call_ui("POST", "/api/plugins/toggle/bind", Some(r#"{"action":"other:go","key":"g"}"#)).await;
+    assert_eq!(s, StatusCode::UNPROCESSABLE_ENTITY, "an action of another plugin is refused");
+    r.call_ui("POST", "/api/plugins/toggle/bind", Some(r#"{"action":"toggle:go","key":null}"#)).await;
+    assert!(PluginsFile::read(&r.paths()).unwrap().plugins[0].bindings.is_empty());
+
+    assert_eq!(r.call_ui("DELETE", "/api/plugins/toggle", None).await.0, StatusCode::OK);
+    assert!(r.st.plugins.plugin("toggle").is_none());
+    assert!(PluginsFile::read(&r.paths()).unwrap().plugins.is_empty());
+    assert_eq!(r.call_ui("DELETE", "/api/plugins/toggle", None).await.0, StatusCode::NOT_FOUND);
+    r.install_bundled("shipped", &manifest("shipped", &[], ""));
+    assert_eq!(r.call_ui("DELETE", "/api/plugins/shipped", None).await.0, StatusCode::CONFLICT);
+    assert!(r.st.plugins.plugin("shipped").is_some());
+}

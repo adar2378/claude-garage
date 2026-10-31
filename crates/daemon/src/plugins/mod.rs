@@ -8,6 +8,7 @@
 //! (routes and token auth). This file owns load/reload, the per-plugin run
 //! queue, timers and the teardown sequence.
 
+pub mod admin;
 pub mod api;
 pub mod context;
 pub mod layout;
@@ -500,7 +501,7 @@ impl Inner {
 
     fn resolve_dir(&self, e: &Entry) -> PathBuf {
         match &e.source {
-            Source::Github { .. } => self.paths.installed(&e.id),
+            Source::Github { subdir, .. } => layout::github_plugin_dir(&self.paths, &e.id, subdir.as_deref()),
             Source::Link { path } | Source::Bundled { path } => PathBuf::from(path),
         }
     }

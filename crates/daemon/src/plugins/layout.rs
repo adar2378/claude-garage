@@ -74,6 +74,18 @@ impl Paths {
     }
 }
 
+/// Where a GitHub plugin's manifest lives: the whole checkout is kept under
+/// `installed/<id>` (so a build can reach sibling files) and `subdir` selects
+/// the plugin inside it. A `subdir` that is not a plain relative path is
+/// ignored rather than followed out of the checkout.
+pub fn github_plugin_dir(paths: &Paths, id: &str, subdir: Option<&str>) -> PathBuf {
+    let base = paths.installed(id);
+    match subdir {
+        Some(s) if !s.is_empty() && Path::new(s).components().all(|c| matches!(c, std::path::Component::Normal(_))) => base.join(s),
+        _ => base,
+    }
+}
+
 /// Where a plugin came from.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "lowercase")]
