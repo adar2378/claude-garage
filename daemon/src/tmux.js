@@ -5,10 +5,11 @@ const run = promisify(execFile);
 
 // p20: when GARAGE_TMUX_SOCKET is set, every tmux call targets that private
 // socket (`tmux -L <name>`) instead of the default server, so tests and CI
-// can never touch a developer's live sessions. Unset: argv is unchanged.
+// can never touch a developer's live sessions, and `-f /dev/null` keeps that
+// scratch server from loading the user's tmux config. Unset: argv is unchanged.
 export function tmuxArgs(args, env = process.env) {
   const socket = env.GARAGE_TMUX_SOCKET;
-  return socket ? ["-L", socket, ...args] : args;
+  return socket ? ["-L", socket, "-f", "/dev/null", ...args] : args;
 }
 
 // The one place the daemon (and its tests) invoke tmux.

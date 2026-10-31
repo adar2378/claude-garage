@@ -3,6 +3,8 @@
 // normalizeTitle are both pure).
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import path from "node:path";
+import { execFileSync } from "node:child_process";
 import { parsePaneLine, normalizeTitle } from "../src/tmux.js";
 
 test("parsePaneLine splits the three fixed fields", () => {
@@ -83,10 +85,12 @@ test("normalizeTitle: works with no hostname supplied (skips that check)", () =>
 
 import { tmuxArgs } from "../src/tmux.js";
 
-test("tmuxArgs prepends -L <socket> when GARAGE_TMUX_SOCKET is set", () => {
+test("tmuxArgs prepends -L <socket> -f /dev/null when GARAGE_TMUX_SOCKET is set", () => {
   assert.deepEqual(tmuxArgs(["ls", "-F", "x"], { GARAGE_TMUX_SOCKET: "p20-test" }), [
     "-L",
     "p20-test",
+    "-f",
+    "/dev/null",
     "ls",
     "-F",
     "x",
@@ -96,4 +100,12 @@ test("tmuxArgs prepends -L <socket> when GARAGE_TMUX_SOCKET is set", () => {
 test("tmuxArgs leaves argv unchanged when GARAGE_TMUX_SOCKET is unset or empty", () => {
   assert.deepEqual(tmuxArgs(["ls"], {}), ["ls"]);
   assert.deepEqual(tmuxArgs(["ls"], { GARAGE_TMUX_SOCKET: "" }), ["ls"]);
+});
+
+test("test processes run inside the p20 sandbox", () => {
+  // fails if someone drops `--import ./daemon/test/helpers/tmux-sandbox.js`
+  assert.ok(process.env.GARAGE_TMUX_SOCKET, "GARAGE_TMUX_SOCKET unset");
+  assert.equal(process.env.TMUX, undefined);
+  const first = process.env.PATH.split(path.delimiter)[0];
+  assert.equal(execFileSync(path.join(first, "claude")).toString().trim(), "[]");
 });

@@ -44,7 +44,8 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             wall/target
-          key: cargo-${{ runner.os }}-${{ hashFiles('wall/Cargo.lock') }}
+            tests/contract/target
+          key: cargo-${{ runner.os }}-${{ hashFiles('wall/Cargo.lock', 'tests/contract/Cargo.lock') }}
           restore-keys: cargo-${{ runner.os }}-
 
       - run: npm ci

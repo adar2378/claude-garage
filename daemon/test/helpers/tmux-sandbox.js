@@ -3,7 +3,7 @@
 // TMUX_TMPDIR and drops $TMUX, so no test can reach a developer's live tmux
 // server. On exit the private server is killed and its dir removed.
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -12,6 +12,14 @@ import path from "node:path";
 const base = existsSync("/tmp") ? "/tmp" : tmpdir();
 const dir = mkdtempSync(path.join(base, "gt-"));
 const socket = `gt-${process.pid}`;
+
+// stub `claude` first on PATH (prints `[]`, like tests/contract's harness), so
+// `claude agents --json` never runs the real CLI
+const bin = path.join(dir, "bin");
+mkdirSync(bin);
+writeFileSync(path.join(bin, "claude"), "#!/bin/sh\necho '[]'\n");
+chmodSync(path.join(bin, "claude"), 0o755);
+process.env.PATH = `${bin}${path.delimiter}${process.env.PATH ?? ""}`;
 
 delete process.env.TMUX;
 delete process.env.TMUX_PANE;
@@ -22,7 +30,7 @@ process.on("exit", () => {
   try {
     execFileSync("tmux", ["-L", socket, "kill-server"], {
       stdio: "ignore",
-      env: { ...process.env, TMUX: "" , TMUX_TMPDIR: dir },
+      env: { ...process.env, TMUX: "", TMUX_TMPDIR: dir },
     });
   } catch {
     // no server was started
