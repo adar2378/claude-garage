@@ -158,9 +158,10 @@ pub struct Segment {
     pub click: Option<Click>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "lowercase")]
 pub enum Placement {
+    #[default]
     Flow,
     /// Strip only: drawn at column `x`, after the flow items.
     Filler {
@@ -168,12 +169,6 @@ pub enum Placement {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         caption: Option<String>,
     },
-}
-
-impl Default for Placement {
-    fn default() -> Self {
-        Placement::Flow
-    }
 }
 
 /// One thing a widget shows. `segments` and `frames` are mutually exclusive;
