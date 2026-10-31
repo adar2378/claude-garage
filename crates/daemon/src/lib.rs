@@ -15,6 +15,7 @@ pub mod security;
 pub mod session_resolve;
 pub mod state;
 pub mod transcript;
+pub mod worktree_create;
 
 #[cfg(test)]
 mod wiring_tests;
@@ -121,13 +122,13 @@ mod tests {
         assert_eq!((s, body), (StatusCode::FORBIDDEN, json!({"error": "origin not allowed"})));
         // GET is never guarded; a header-less write reaches the (stub) route.
         assert_eq!(call(&c, "GET", "/api/health", Some("https://evil.example")).await.0, StatusCode::OK);
-        assert_eq!(call(&c, "POST", "/api/sessions", None).await.0, StatusCode::NOT_IMPLEMENTED);
+        assert_eq!(call(&c, "POST", "/api/sessions", None).await.0, StatusCode::BAD_REQUEST);
     }
 
     #[tokio::test]
     async fn listed_origin_passes_the_guard() {
         let c = config(&["http://ok.test"]);
-        assert_eq!(call(&c, "DELETE", "/api/sessions/x", Some("http://ok.test")).await.0, StatusCode::NOT_IMPLEMENTED);
+        assert_eq!(call(&c, "DELETE", "/api/sessions/x", Some("http://ok.test")).await.0, StatusCode::FORBIDDEN);
     }
 
     /// 405 means the path is registered (for another method); 404 means it is

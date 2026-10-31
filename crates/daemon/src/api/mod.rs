@@ -42,11 +42,12 @@ pub async fn not_found() -> Response {
 pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/api/health", get(health))
-        .route("/api/events", get(not_implemented))
-        .route("/api/sessions", get(not_implemented).post(not_implemented))
-        .route("/api/sessions/restore", post(not_implemented))
-        .route("/api/sessions/restart", post(not_implemented))
-        .route("/api/sessions/{id}", delete(not_implemented))
+        .route("/api/events", get(events::stream))
+        .route("/api/sessions", get(sessions::list).post(sessions::create))
+        .route("/api/sessions/restore", post(sessions::restore))
+        .route("/api/sessions/restart", post(sessions::restart))
+        // The id contains slashes, so capture the whole tail.
+        .route("/api/sessions/{*id}", delete(sessions::remove))
         .route("/api/workspaces", get(not_implemented).put(not_implemented))
         .route("/api/workspaces/{name}", patch(not_implemented).delete(not_implemented))
         .route("/api/hooks/claude", post(hooks::claude))

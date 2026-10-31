@@ -83,3 +83,29 @@ Not ported: the "real tmux" variants (session creation in statusline.test.js); s
 | `restartMain` | `launcher::restart_main` | `restart_asks_the_running_daemon_to_swap_and_waits_for_a_new_pid_and_matching_version`, `restart_surfaces_a_daemon_that_predates_the_endpoint`, `restart_with_no_daemon_just_starts_one` |
 
 Deviations from the JS: `garage-wall` beside the running binary is used when there is no `wall/` checkout (installed layout); `help`/unknown-subcommand text and exit code (2) come from clap; `ROOT` is found by walking up from the executable.
+
+## Lane D: sessions routes and the event stream (`api/sessions.rs`, `api/events.rs`, `worktree_create.rs`)
+
+Route tests run against an isolated `TestTmux` server, a temp `GARAGE_DIR` and claude home, and a fake `AgentSource`. `claude` is never run: `AppState.claude` (`ClaudeCmd`, injectable program and resume timing) points at a throwaway `sh` script (pre-executed once, because macOS scans a new executable on its first exec and that would outlast the 250 ms resume timing).
+
+| JS test | Rust test (`api::sessions::tests`) |
+|---|---|
+| restart.test.js: planRestartTargets x6 | `idle_and_done_sessions_are_targets_by_default`, `working_and_needs_input_are_skipped_without_force`, `force_includes_working_needs_input_and_unknown`, `unknown_status_is_skipped_without_force_never_planned_as_idle` (the "restorable never appear" test asserts nothing in `plan_restart_targets` itself, and the force/unknown pair are merged) |
+| restart.test.js: needsPollBeforePlan x3 | `poll_needed_only_when_some_id_has_no_status_entry` (merged) |
+| restart.test.js: spawnClaudeResumed (no id) | `no_claude_session_id_spawns_plain_claude_without_touching_the_backend` |
+| restart.test.js: waitForPredecessor x3 | not ported here: daemon restart (lane F) |
+| sessions.delete-meta.test.js x4 | `meta_delete_without_stored_metadata_is_404`, `plain_delete_of_a_non_live_session_is_404_and_keeps_the_meta`, `meta_delete_drops_the_metadata_and_echoes_the_worktree_with_a_null_target`, `delete_refuses_non_garage_ids_with_and_without_meta` |
+| sessions.title.test.js x3 | `restorable_entries_have_title_null_and_the_documented_shape`, `a_live_sessions_set_pane_title_surfaces_trimmed_and_a_default_title_is_null` (merged; the backend half is lane B) |
+| sessions.context.test.js x5 | `context_is_null_cold_then_statusline_then_transcript_and_statusline_wins` (cold, statusline, transcript, precedence in one sequence; the transcript wait polls instead of sleeping 80 ms), `restorable_entries_ignore_a_statusline_post_for_their_id` |
+| worktrees.finish.test.js | not ported here: lane F |
+
+New (no JS counterpart; the JS suite never ran the create/restore/restart/events routes):
+- `a_resume_that_survives_both_checks_reports_resumed`, `a_resume_that_dies_at_either_check_falls_back_to_plain_claude`: the two-step resume confirmation with a fake spawner.
+- `live_entry_has_every_field_and_since_falls_back_to_created_at`, `restorable_dir_follows_the_registered_workspace_and_is_null_when_unregistered`, `meta_delete_of_a_live_session_is_409_and_keeps_everything`.
+- `create_validates_then_starts_a_detached_session_in_the_registered_dir` (400/404/409/400 and the 201 body), `worktree_session_lifecycle_create_list_delete_and_a_failed_worktree_spawns_nothing` (record saved at spawn, listed branch, delete echoes the record with `target`, caches dropped, non-git workspace spawns nothing), `plain_live_delete_kills_the_session_and_answers_a_null_worktree`.
+- `restore_resumes_in_the_registered_dir_and_a_resume_that_dies_falls_back_to_plain`, `restore_without_a_claude_session_id_starts_plain_and_a_worktree_session_restores_into_its_worktree`, `restore_failures_are_per_target_keep_metadata_and_answer_409_when_nothing_restored` (every failure reason, 200/201/409, 400/404).
+- `restart_polls_first_skips_unknown_and_busy_and_force_respawns_in_place` (one poll before planning, not repeated, skipped sessions untouched, new pid in the same tmux session, status and context cleared, `sessions` event), `restart_input_errors_and_a_dead_resume_on_respawn_is_reported_failed`.
+- `event_stream_greets_then_relays_status_and_sessions_events` (content type, `: connected`, exact `status` / `sessions` frames).
+- `worktree_create::tests` (3): creation under `<GARAGE_DIR>/worktrees/<ws>/<label>`, paired dir+branch suffixing, non-repo error creates nothing, `current_branch`.
+
+Kept JS quirks: the listed `dir` is tmux's `session_path` (the pane cwd only feeds `branch` and `context`; the spec text says pane path, the JS does not); a restart whose resume dies kills the one-pane session so the plain respawn fails and the target lands in `failed`; a tmux failure during restore rejects the whole batch (500) after other targets were already started; restart drops status and statusline context but not the transcript cache; delete (live) does not drop the status entry (the poller does when the session vanishes). Not kept: JS double-decodes the DELETE id (`decodeURIComponent` on an already decoded param), which only matters for ids containing `%`, impossible under `[a-z0-9-]+`.

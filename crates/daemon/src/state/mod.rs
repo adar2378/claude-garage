@@ -7,7 +7,7 @@ pub mod registry;
 pub mod status;
 
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use crate::backend::SessionBackend;
 use crate::bus::EventBus;
@@ -15,6 +15,7 @@ use crate::config::Config;
 use crate::os::Os;
 use crate::poller::{AgentSource, CommandAgents, Poller};
 
+pub use crate::api::sessions::ClaudeCmd;
 pub use context::Telemetry;
 pub use registry::Registry;
 pub use status::StatusStore;
@@ -31,6 +32,14 @@ pub struct AppState {
     pub status: StatusStore,
     /// Lane C: statusline context / rate limits, transcript cache, hook deps.
     pub telemetry: Telemetry,
+    /// Lane D: the claude command sessions are started with, plus the
+    /// resume-confirmation timing (injectable so tests are fast and never run
+    /// the real `claude`).
+    pub claude: ClaudeCmd,
+    /// Shared with the poller, so `POST /api/sessions/restart` can run one
+    /// poll through the same instance (and the same diff state).
+    pub agents: Arc<dyn AgentSource>,
+    poller_cell: Arc<OnceLock<Arc<Poller>>>,
 }
 
 impl AppState {
@@ -60,14 +69,36 @@ impl AppState {
             registry: registry.clone(),
             status: status.clone(),
             backend: backend.clone(),
-            agents,
+            agents: agents.clone(),
         };
         let telemetry = Telemetry::new(claude_home, Arc::new(deps));
-        Self { config: Arc::new(config), bus, backend, os, registry, status, telemetry }
+        Self {
+            config: Arc::new(config),
+            bus,
+            backend,
+            os,
+            registry,
+            status,
+            telemetry,
+            claude: ClaudeCmd::from_env(),
+            agents,
+            poller_cell: Arc::default(),
+        }
     }
 
-    /// The poller (not started) over the real stores.
+    /// The poller (not started) over the real stores. One instance per
+    /// `AppState` (later calls return the first), so the restart route polls
+    /// through the same diff state the background tick uses.
     pub fn poller(&self, agents: Arc<dyn AgentSource>) -> Arc<Poller> {
+        self.poller_cell.get_or_init(|| self.build_poller(agents)).clone()
+    }
+
+    /// The shared poller over this state's own agent source.
+    pub fn shared_poller(&self) -> Arc<Poller> {
+        self.poller(self.agents.clone())
+    }
+
+    fn build_poller(&self, agents: Arc<dyn AgentSource>) -> Arc<Poller> {
         let sink = adapters::StoreSink {
             registry: self.registry.clone(),
             status: self.status.clone(),
