@@ -127,3 +127,16 @@ fn a_keystroke_is_applied_immediately_while_effects_run() {
     assert!(!app.apply(AppEvent::Term(Event::Key(plain(KeyCode::Char('?'))))));
     assert_eq!(app.store.state().overlay, Some(OverlayKind::Help));
 }
+
+#[test]
+fn a_dead_daemon_stops_ticking_after_the_spinner_cap() {
+    let mut app = app_with(true, vec![si_restorable("a", "one")]);
+    draw(&mut app, 0);
+    app.apply(AppEvent::Connection(false));
+    let down_at = crate::runtime::now_ms();
+    assert!(draw(&mut app, down_at + 1_000).contains("reconnecting…"));
+    assert_eq!(app.motion.next_tick(), Some(SPINNER_TICK));
+    let screen = draw(&mut app, down_at + 60_000);
+    assert!(screen.contains("daemon down") && !screen.contains("reconnecting"));
+    assert_eq!(app.motion.next_tick(), None, "a dead daemon leaves the wall idle");
+}

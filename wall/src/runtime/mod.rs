@@ -401,7 +401,7 @@ impl App {
                 self.store.status_changed(&id, &status, since);
             }
             AppEvent::Connection(live) => {
-                self.motion.connection_changed(live);
+                self.motion.connection_changed(live, now_ms());
                 self.store.connection(live);
             }
             AppEvent::Notice { text, ttl_ms } => {

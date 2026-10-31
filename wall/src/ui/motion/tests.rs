@@ -319,11 +319,11 @@ fn strip_spinner_shows_while_down_or_restarting_and_clears_after_the_reconnect()
     assert!(text.contains("daemon restarting"));
 
     state.daemon_live = false;
-    m.connection_changed(false);
+    m.connection_changed(false, 400);
     assert!(!items(&state, 500).is_empty());
 
     state.daemon_live = true;
-    m.connection_changed(true);
+    m.connection_changed(true, 800);
     assert!(items(&state, 900).is_empty(), "back up: spinner gone");
     assert!(!m.strip_spinner_active(true, 900));
 }
@@ -332,7 +332,33 @@ fn strip_spinner_shows_while_down_or_restarting_and_clears_after_the_reconnect()
 fn a_restart_request_that_never_drops_the_stream_times_out() {
     let mut m = Motion::new(true);
     m.daemon_restart_requested(0);
-    m.connection_changed(true); // no drop seen: does not clear
+    m.connection_changed(true, 0); // no drop seen: does not clear
     assert!(m.strip_spinner_active(true, 1_000));
     assert!(!m.strip_spinner_active(true, RESTART_GRACE_MS + 1));
+}
+
+#[test]
+fn a_dead_daemon_stops_the_spinner_after_the_cap_and_shows_a_static_caption() {
+    let mut m = Motion::new(true);
+    let provider = m.strip_spinner().expect("motion on");
+    let mut state = WallState::initial();
+    state.daemon_live = false;
+    m.connection_changed(false, 1_000);
+    let text = |now: i64| -> String {
+        provider.clock.set(now);
+        provider
+            .items(&SlotCtx { state: Some(&state), ..SlotCtx::default() })
+            .remove(0)
+            .text
+            .iter()
+            .map(|s| s.content.to_string())
+            .collect()
+    };
+    assert!(text(1_000 + DOWN_SPIN_MS - 1).contains("reconnecting"));
+    assert!(m.strip_spinner_active(false, 1_000 + DOWN_SPIN_MS - 1));
+    assert_eq!(text(1_000 + DOWN_SPIN_MS), "◌ daemon down");
+    assert!(!m.strip_spinner_active(false, 1_000 + DOWN_SPIN_MS), "no spinner, so no tick");
+    // A later drop-less call must not restart the clock.
+    m.connection_changed(false, 99_000);
+    assert!(!m.strip_spinner_active(false, 100_000));
 }

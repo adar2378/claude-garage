@@ -41,7 +41,11 @@ pub const SPINNER_TICK: Duration = Duration::from_millis(100);
 const MAX_STEP_MS: i64 = 100;
 /// How long a daemon-restart request keeps the strip spinner up if the SSE
 /// stream never reports a drop.
-const RESTART_GRACE_MS: i64 = 20_000;
+const RESTART_GRACE_MS: i64 = 15_000;
+/// How long the strip spinner runs after the stream drops. Past it the strip
+/// shows a static "daemon down" and the wall stops ticking: a dead daemon
+/// must not keep the CPU awake forever.
+const DOWN_SPIN_MS: i64 = 15_000;
 
 /// Fade-in on attach.
 const FADE_IN_MS: u32 = 300;
@@ -212,6 +216,8 @@ pub struct Motion {
     /// Shared with the strip's spinner provider.
     clock: Rc<Cell<i64>>,
     restarting_since: Rc<Cell<Option<i64>>>,
+    /// When the SSE stream last dropped (shared with the strip provider).
+    down_since: Rc<Cell<Option<i64>>>,
     saw_down: bool,
 }
 
@@ -231,6 +237,7 @@ impl Motion {
             spinners: false,
             clock: Rc::new(Cell::new(0)),
             restarting_since: Rc::new(Cell::new(None)),
+            down_since: Rc::new(Cell::new(None)),
             saw_down: false,
         }
     }
@@ -410,10 +417,18 @@ impl Motion {
         }
     }
 
-    /// The SSE connection changed: the restart is over once it comes back
-    /// after having dropped.
-    pub fn connection_changed(&mut self, live: bool) {
-        if !self.enabled || self.restarting_since.get().is_none() {
+    /// The SSE connection changed. Tracks when it dropped (for the spinner
+    /// cap); a restart is over once it comes back after having dropped.
+    pub fn connection_changed(&mut self, live: bool, now_ms: i64) {
+        if !self.enabled {
+            return;
+        }
+        if live {
+            self.down_since.set(None);
+        } else if self.down_since.get().is_none() {
+            self.down_since.set(Some(now_ms));
+        }
+        if self.restarting_since.get().is_none() {
             return;
         }
         if !live {
@@ -428,24 +443,39 @@ impl Motion {
         self.enabled.then(|| StripSpinner {
             clock: self.clock.clone(),
             restarting_since: self.restarting_since.clone(),
+            down_since: self.down_since.clone(),
         })
     }
 
-    /// Whether the strip spinner is showing for this state (so the loop
-    /// keeps ticking). Mirrors [`StripSpinner::items`].
+    /// Whether the strip spinner is animating for this state (so the loop
+    /// keeps ticking). The static "daemon down" caption does not tick.
     pub fn strip_spinner_active(&self, daemon_live: bool, now_ms: i64) -> bool {
-        self.enabled && strip_spinner_label(daemon_live, self.restarting_since.get(), now_ms).is_some()
+        self.enabled
+            && strip_caption(daemon_live, self.restarting_since.get(), self.down_since.get(), now_ms)
+                .is_some_and(|c| c.spinning)
     }
 }
 
-fn strip_spinner_label(daemon_live: bool, restarting_since: Option<i64>, now_ms: i64) -> Option<&'static str> {
-    let restarting = restarting_since.is_some_and(|since| now_ms - since < RESTART_GRACE_MS);
-    if restarting {
-        Some("daemon restarting…")
-    } else if !daemon_live {
-        Some("reconnecting…")
-    } else {
+struct Caption {
+    text: &'static str,
+    spinning: bool,
+}
+
+fn strip_caption(
+    daemon_live: bool,
+    restarting_since: Option<i64>,
+    down_since: Option<i64>,
+    now_ms: i64,
+) -> Option<Caption> {
+    let spin = |text| Some(Caption { text, spinning: true });
+    if restarting_since.is_some_and(|since| now_ms - since < RESTART_GRACE_MS) {
+        spin("daemon restarting…")
+    } else if daemon_live {
         None
+    } else if down_since.is_some_and(|since| now_ms - since < DOWN_SPIN_MS) {
+        spin("reconnecting…")
+    } else {
+        Some(Caption { text: "daemon down", spinning: false })
     }
 }
 
@@ -454,19 +484,21 @@ fn strip_spinner_label(daemon_live: bool, restarting_since: Option<i64>, now_ms:
 pub struct StripSpinner {
     clock: Rc<Cell<i64>>,
     restarting_since: Rc<Cell<Option<i64>>>,
+    down_since: Rc<Cell<Option<i64>>>,
 }
 
 impl SlotProvider for StripSpinner {
     fn items(&self, ctx: &SlotCtx) -> Vec<SlotItem> {
         let live = ctx.state.is_none_or(|s| s.daemon_live);
         let now = self.clock.get();
-        let Some(label) = strip_spinner_label(live, self.restarting_since.get(), now) else {
+        let Some(caption) = strip_caption(live, self.restarting_since.get(), self.down_since.get(), now) else {
             return Vec::new();
         };
+        let glyph = if caption.spinning { spinner_symbol(now) } else { "◌".to_owned() };
         vec![SlotItem::new(
             vec![
-                Span::styled(format!("{} ", spinner_symbol(now)), Style::default().fg(colors::DIM)),
-                Span::styled(label, Style::default().fg(colors::FAINT)),
+                Span::styled(format!("{glyph} "), Style::default().fg(colors::DIM)),
+                Span::styled(caption.text, Style::default().fg(colors::FAINT)),
             ],
             200,
         )]
