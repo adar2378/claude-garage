@@ -1,11 +1,8 @@
 # garage-wall — the claude-garage TUI, ported to ratatui (p9-ratatui-port).
 #
-# Standalone cargo workspace (the [workspace] table keeps it from being
-# absorbed by any parent workspace). Crate pins follow the ratatui spike
-# (spikes/ratatui-wall/SPIKE.md): published crates only, no git deps, no
-# vendoring.
-
-[workspace]
+# Member of the root cargo workspace (p21-rust-daemon). Crate pins follow the
+# ratatui spike (spikes/ratatui-wall/SPIKE.md): published crates only, no git
+# deps, no vendoring.
 
 [package]
 name = "garage-wall"
@@ -44,6 +41,3 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync"
 # 127.0.0.1-only plain HTTP.
 ureq = { version = "2.12.1", default-features = false }
 serde_json = "1.0"
-
-[profile.release]
-debug = false

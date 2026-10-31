@@ -251,11 +251,13 @@ async function waitForHealth(deadlineMs = 15000) {
 // "no prebuilt binary yet" path and the p11 staleness-guard rebuild path
 // below — one cargo invocation, one copy-into-dist step, used both places.
 function cargoBuildTuiBinary(rustBinary) {
-  const build = spawnSync("cargo", ["build", "--release"], {
-    cwd: path.join(ROOT, "wall"),
+  // p21: wall is a member of the root cargo workspace, so build from the
+  // root and read the binary from the shared root target/ dir.
+  const build = spawnSync("cargo", ["build", "--release", "-p", "garage-wall"], {
+    cwd: ROOT,
     stdio: "inherit",
   });
-  const built = path.join(ROOT, "wall", "target", "release", "garage-wall");
+  const built = path.join(ROOT, "target", "release", "garage-wall");
   if (build.status !== 0 || !existsSync(built)) {
     console.error("cargo build failed — see the output above");
     process.exit(1);
@@ -294,7 +296,7 @@ function newestMtimeUnder(dir) {
 }
 
 // p11 staleness guard: true when anything under wall/src, or wall/Cargo.toml
-// / wall/Cargo.lock, has an mtime newer than the built binary — i.e. the
+// / the root Cargo.lock, has an mtime newer than the built binary — i.e. the
 // checkout has source changes the binary predates (the "invisible picker"
 // report's root cause: a stale binary silently missing a fix). Source-file
 // mtimes only; never compares against GARAGE_TUI_BIN (that path never calls
@@ -302,8 +304,8 @@ function newestMtimeUnder(dir) {
 function wallSourcesNewerThan(rustBinary) {
   const binaryMtime = statSync(rustBinary).mtimeMs;
   const wallDir = path.join(ROOT, "wall");
-  for (const f of ["Cargo.toml", "Cargo.lock"]) {
-    const full = path.join(wallDir, f);
+  // Cargo.lock lives at the workspace root since p21.
+  for (const full of [path.join(wallDir, "Cargo.toml"), path.join(ROOT, "Cargo.lock")]) {
     if (existsSync(full) && statSync(full).mtimeMs > binaryMtime) return true;
   }
   return newestMtimeUnder(path.join(wallDir, "src")) > binaryMtime;
