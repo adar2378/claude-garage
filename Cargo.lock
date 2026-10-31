@@ -974,6 +974,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "garage-plugin-jump-palette"
+version = "0.6.2"
+dependencies = [
+ "garage-plugin-sdk",
+]
+
+[[package]]
+name = "garage-plugin-prune-empty-projects"
+version = "0.6.2"
+dependencies = [
+ "garage-plugin-sdk",
+]
+
+[[package]]
+name = "garage-plugin-quick-send"
+version = "0.6.2"
+dependencies = [
+ "garage-plugin-sdk",
+]
+
+[[package]]
 name = "garage-plugin-sdk"
 version = "0.6.2"
 dependencies = [

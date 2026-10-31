@@ -1,0 +1,20 @@
+[package]
+name = "garage-plugin-quick-send"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "claude-garage bundled plugin: s / S send a line to the focused / all sessions of a project"
+publish = false
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "quick-send"
+path = "src/main.rs"
+
+[dependencies]
+garage-plugin-sdk = { path = "../../crates/plugin-sdk", features = ["tui"] }
+
+[dev-dependencies]
+garage-plugin-sdk = { path = "../../crates/plugin-sdk", features = ["tui", "testing"] }

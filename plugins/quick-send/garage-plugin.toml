@@ -1,0 +1,38 @@
+#:schema https://raw.githubusercontent.com/adar2378/claude-garage/main/schemas/garage-plugin.schema.json
+id          = "quick-send"
+name        = "Quick send"
+version     = "0.1.0"
+api_version = 1
+platforms   = ["macos", "linux"]
+description = "s sends one line to the focused session, S to every session of the project"
+permissions = ["sessions.input", "sessions.read", "ui.panes"]
+
+# sessions.input types into your sessions and presses Enter. The popup shows
+# the targets and needs Enter twice, so nothing is sent by accident.
+[[panes]]
+id        = "send-one"
+title     = "Send a line"
+placement = "popup"
+command   = ["{plugin_dir}/bin/quick-send", "one"]
+size      = { cols = 72, rows = 6 }
+
+[[panes]]
+id        = "send-all"
+title     = "Send a line to the project"
+placement = "popup"
+command   = ["{plugin_dir}/bin/quick-send", "all"]
+size      = { cols = 72, rows = 6 }
+
+[[actions]]
+id          = "send"
+title       = "Send a line to this session"
+contexts    = ["session"]
+pane        = "send-one"
+default_key = "s"
+
+[[actions]]
+id          = "send-all"
+title       = "Send a line to every session of this project"
+contexts    = ["workspace"]
+pane        = "send-all"
+default_key = "S"
