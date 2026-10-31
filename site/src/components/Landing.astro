@@ -1,20 +1,272 @@
 ---
-// STUB. The real landing design replaces this component later.
-// Keep the export shape: a single default component with no required props.
+// The approved landing page. Styles: src/styles/landing.css. Behaviour: src/scripts/landing.js (bundled by Astro).
+import '../styles/landing.css';
 ---
-<main class="landing">
-  <h1>claude-garage</h1>
-  <p>A terminal wall for Claude Code. See every session at once and jump to the one that needs you.</p>
-  <p class="actions">
-    <a class="site-btn-primary" href="/docs/getting-started/install/">Get started</a>
-    <a class="secondary" href="/docs/">Read the docs</a>
-  </p>
+<header class="nav">
+  <a class="logo" href="#top" aria-label="claude-garage home">
+    <b data-logo aria-hidden="true">(0.0)</b>
+    claude-garage
+  </a>
+  <nav aria-label="Primary"><ul>
+    <li><a href="#story">How it works</a></li>
+    <li><a href="#plugins">Plugins</a></li>
+    <li><a href="#keys">Keys</a></li>
+    <li><a href="#install">Install</a></li>
+  </ul></nav>
+  <a class="btn btn-dark sm" href="https://github.com/adar2378/claude-garage">GitHub</a>
+</header>
+
+<main id="top">
+<section class="hero" id="hero" aria-labelledby="h1">
+  <canvas id="field" aria-hidden="true"></canvas>
+  <div class="pill rv"><span class="dot" aria-hidden="true"></span>The session waiting on you turns amber</div>
+  <h1 id="h1" class="rv" style="--rd:.06s">Every Claude session. One <em>calm</em> wall.</h1>
+  <p class="sub rv" style="--rd:.14s">claude-garage puts all your Claude Code sessions in a single terminal. See who is busy, spot who needs you, press <span class="inl">a</span> and answer. tmux keeps them all alive.</p>
+  <div class="cta rv" style="--rd:.22s">
+    <button class="copybox" data-copy="npx claude-garage" aria-label="Copy command: npx claude-garage"><span><span class="p">$ </span>npx claude-garage</span><span class="c"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2.5"/><path d="M5 15V6.5A2.5 2.5 0 0 1 7.5 4H15"/></svg><span class="lbl">Copy</span></span></button>
+    <a class="btn btn-line" href="https://github.com/adar2378/claude-garage">View on GitHub <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg></a>
+  </div>
+  <p class="note rv" style="--rd:.3s">macOS and Linux. Windows in preview. MIT licensed.</p>
+  <div class="hwin rv" id="hwin" style="--rd:.36s">
+    <div class="term"><div class="term-bar"><i></i><i></i><i></i><span id="hwt">claude-garage</span>
+      <button class="abtn" id="hattach" type="button" aria-pressed="false" aria-label="Attach to the session that needs you"><kbd>a</kbd><span class="lbl" id="hlbl">needs you</span></button></div>
+      <div class="vw"><svg viewBox="236 450 1204 430" preserveAspectRatio="xMinYMin slice" role="img" aria-label="The bottom of the claude-garage wall: one session asks Do you want to proceed, and the status strip says someone needs you"><image href="/renders/wall-needs-input.svg" width="1440" height="880"/><image id="himg-e" href="/renders/wall-engaged.svg" width="1440" height="880"/></svg></div></div>
+  </div>
+</section>
+
+<!-- ===== pinned story ===== -->
+<section class="story" id="story" aria-label="How claude-garage works, in five steps">
+  <div class="stage-pin">
+    <div class="stage mesh">
+      <i class="b1"></i><i class="b2"></i><i class="b3"></i><i class="b4"></i><i class="b5"></i>
+      <div class="center">
+        <div class="stepper" role="tablist" aria-label="Steps">
+          <button class="sbtn" role="tab" id="t0" aria-controls="s0" aria-selected="true" aria-label="Step 1: Start"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M5 8l4.5 4L5 16M12.5 17H19"/></svg></button>
+          <button class="sbtn" role="tab" id="t1" aria-controls="s1" aria-selected="false" aria-label="Step 2: See them all" tabindex="-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round"><rect x="4" y="4" width="7" height="7" rx="2"/><rect x="13" y="4" width="7" height="7" rx="2"/><rect x="4" y="13" width="7" height="7" rx="2"/><rect x="13" y="13" width="7" height="7" rx="2"/></svg></button>
+          <button class="sbtn" role="tab" id="t2" aria-controls="s2" aria-selected="false" aria-label="Step 3: Spot the amber one" tabindex="-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><circle cx="12" cy="12" r="3.2" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="8"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2" /></svg></button>
+          <button class="sbtn" role="tab" id="t3" aria-controls="s3" aria-selected="false" aria-label="Step 4: Press a and answer" tabindex="-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round"><rect x="3.5" y="3.5" width="17" height="17" rx="5"/><text x="12" y="16.4" text-anchor="middle" font-family="Geist Mono,monospace" font-size="12" font-weight="700" fill="currentColor" stroke="none">a</text></svg></button>
+          <button class="sbtn" role="tab" id="t4" aria-controls="s4" aria-selected="false" aria-label="Step 5: Nothing gets lost" tabindex="-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M19.5 12a7.5 7.5 0 1 1-2.2-5.3M19.5 4.5v4h-4"/></svg></button>
+        </div>
+        <div class="notch" aria-hidden="true"></div>
+
+        <div class="deck">
+          <!-- 1 -->
+          <article class="step on" id="s0" role="tabpanel" aria-labelledby="t0" data-i="0">
+            <div class="copy">
+              <span class="chip"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 8l4.5 4L5 16M12.5 17H19"/></svg></span>Start <span class="num">1 / 5</span></span>
+              <h3>Point it at a folder.</h3>
+              <p>Press <kbd>n</kbd>, or run <span class="inl">claude-garage &lt;folder&gt;</span>. A fresh Claude Code session opens in its own tile, grouped under its project.</p>
+            </div>
+            <div class="vis v-a">
+              <div class="term"><div class="term-bar"><i></i><i></i><i></i><span>claude-garage</span></div>
+                <svg viewBox="250 0 600 340" role="img" aria-label="A Claude Code session tile in claude-garage, showing a diff and passing tests"><image href="/renders/wall-calm.svg" width="1440" height="880"/></svg></div>
+              <div class="fl fl-tl bob" style="--d:.05s"><code>$ claude-garage ~/acme</code></div>
+              <div class="fl fl-br" style="--d:.2s"><span class="key" style="width:46px;height:46px;font-size:21px;border-radius:12px">n</span><span>New session<small>pick a folder</small></span></div>
+            </div>
+          </article>
+          <!-- 2 -->
+          <article class="step" id="s1" role="tabpanel" aria-labelledby="t1" data-i="1">
+            <div class="copy">
+              <span class="chip"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linejoin="round"><rect x="4" y="4" width="7" height="7" rx="2"/><rect x="13" y="4" width="7" height="7" rx="2"/><rect x="4" y="13" width="7" height="7" rx="2"/><rect x="13" y="13" width="7" height="7" rx="2"/></svg></span>See them all <span class="num">2 / 5</span></span>
+              <h3>Every session, one wall.</h3>
+              <p>Each tile is a live Claude Code session. The sidebar groups them by folder, and the status strip keeps your 5h and weekly usage in view.</p>
+            </div>
+            <div class="vis v-b">
+              <div class="term"><div class="term-bar"><i></i><i></i><i></i><span>claude-garage</span></div>
+                <svg viewBox="0 0 1440 880" role="img" aria-label="The claude-garage wall with three project groups and five sessions"><image href="/renders/wall-calm.svg" width="1440" height="880"/></svg></div>
+              <div class="fl fl-tr bob" style="--d:.05s"><span class="gr"></span><span>3 folders<small>5 sessions running</small></span></div>
+              <div class="fl fl-bl" style="--d:.2s"><code>5h 24% · wk 61%</code></div>
+            </div>
+          </article>
+          <!-- 3 -->
+          <article class="step" id="s2" role="tabpanel" aria-labelledby="t2" data-i="2">
+            <div class="copy">
+              <span class="chip"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="12" cy="12" r="3.2" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="8"/></svg></span>Spot the amber one <span class="num">3 / 5</span></span>
+              <h3>The one waiting on you turns amber.</h3>
+              <p>When a tool call needs approval, that tile lights up, its folder gets a dot, and the bar says someone needs you. No tab hunting.</p>
+            </div>
+            <div class="vis v-c">
+              <div class="term"><div class="term-bar"><i></i><i></i><i></i><span>claude-garage</span></div>
+                <svg viewBox="0 0 1440 880" role="img" aria-label="The claude-garage wall with one tile outlined in amber, waiting for approval"><image href="/renders/wall-needs-input.svg" width="1440" height="880"/></svg></div>
+              <div class="fl fl-tr bob" style="--d:.05s"><span class="am"></span><span>web needs you<small>Bash command · claude-1</small></span></div>
+              <div class="fl fl-bl" style="--d:.2s"><span class="am"></span><span>1 blocked</span></div>
+            </div>
+          </article>
+          <!-- 4 -->
+          <article class="step" id="s3" role="tabpanel" aria-labelledby="t3" data-i="3">
+            <div class="copy">
+              <span class="chip"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linejoin="round"><rect x="3.5" y="3.5" width="17" height="17" rx="5"/></svg></span>Press a and answer <span class="num">4 / 5</span></span>
+              <h3>Press a. You are in.</h3>
+              <p>One key jumps to the session that is blocked, right at its prompt. Pick <span class="inl">1. Yes</span> or tell Claude what to do instead, then carry on.</p>
+            </div>
+            <div class="vis v-d">
+              <div class="term"><div class="term-bar"><i></i><i></i><i></i><span>web / claude-1</span></div>
+                <svg viewBox="255 520 600 330" role="img" aria-label="The blocked tile up close: Do you want to proceed? 1. Yes, 2. Yes and do not ask again, 3. No"><image href="/renders/wall-engaged.svg" width="1440" height="880"/></svg></div>
+              <div class="fl fl-tl bob" style="--d:.05s"><span class="key">a</span></div>
+              <div class="fl fl-br" style="--d:.2s"><code>keys → web/claude-1</code></div>
+            </div>
+          </article>
+          <!-- 5 -->
+          <article class="step" id="s4" role="tabpanel" aria-labelledby="t4" data-i="4">
+            <div class="copy">
+              <span class="chip"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M19.5 12a7.5 7.5 0 1 1-2.2-5.3M19.5 4.5v4h-4"/></svg></span>Nothing gets lost <span class="num">5 / 5</span></span>
+              <h3>tmux owns your sessions.</h3>
+              <p>Quit the wall and they keep running. Closed or crashed chats stay in the sidebar; press <kbd>r</kbd> <kbd>r</kbd> to restart and resume the conversation.</p>
+            </div>
+            <div class="vis v-e">
+              <div class="term"><div class="term-bar"><i></i><i></i><i></i><span>claude-garage</span></div>
+                <svg viewBox="0 0 600 290" role="img" aria-label="The sidebar listing closed, crashed and restartable chats next to live sessions"><image href="/renders/wall-plugins.svg" width="1440" height="880"/></svg></div>
+              <div class="fl fl-tr bob" style="--d:.05s"><span class="gr"></span><span id="rest">restored 3 sessions</span></div>
+              <div class="fl fl-br" style="--d:.2s"><span class="key w" style="height:46px;font-size:20px;border-radius:12px">r</span><span class="key w" style="height:46px;font-size:20px;border-radius:12px">r</span><span style="margin-left:4px">resume</span></div>
+            </div>
+          </article>
+        </div>
+        <div style="display:flex;flex-direction:column;align-items:center">
+          <div class="prog" aria-hidden="true"><i></i></div>
+          <div class="hint" aria-hidden="true">scroll, or click an icon</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===== plugins ===== -->
+<section class="s" id="plugins">
+  <div class="wrap">
+    <div class="head">
+      <span class="eyebrow rv">Plugins</span>
+      <h2 class="rv" style="--rd:.05s">Nine in the box. Install more from GitHub.</h2>
+      <p class="lead rv" style="--rd:.1s">Small, switchable add-ons that tune the wall to how you work. The crops below are the real thing.</p>
+    </div>
+
+    <div class="pgrid">
+      <article class="pc rv">
+        <div class="pv"><div class="mini" style="width:62%"><svg viewBox="0 98 250 160" role="img" aria-label="Sidebar rows reading claude-3 closed, claude-4 crashed"><image href="/renders/wall-plugins.svg" width="1440" height="880"/></svg></div></div>
+        <h3>Closed chats</h3><p>Closed sessions stay in the rail. Click one to bring it back.</p>
+      </article>
+      <article class="pc rv" style="--rd:.07s">
+        <div class="pv"><div class="mini"><svg viewBox="268 16 570 110" role="img" aria-label="A tile header with x and del buttons"><image href="/renders/wall-plugins.svg" width="1440" height="880"/></svg></div></div>
+        <h3>Tile buttons</h3><p>Close and delete buttons in each tile title.</p>
+      </article>
+      <article class="pc rv" style="--rd:.14s">
+        <div class="pv"><div class="mini"><svg viewBox="1040 857 400 23" role="img" aria-label="Status bar showing 5h 24% and weekly 61% usage"><image href="/renders/wall-plugins.svg" width="1440" height="880"/></svg></div></div>
+        <h3>Usage bar</h3><p>Your 5 hour and weekly limits in the status strip.</p>
+      </article>
+      <article class="pc rv">
+        <div class="pv"><div class="mini" style="width:88%"><svg viewBox="0 857 300 23" role="img" aria-label="Status bar with folder tabs and a tiny pet"><image href="/renders/wall-plugins.svg" width="1440" height="880"/></svg></div></div>
+        <h3>Pit pet</h3><p>A tiny pet in the status strip. It wakes when a session needs you.</p>
+      </article>
+      <article class="pc rv" style="--rd:.07s">
+        <div class="pv"><div class="keys"><span class="skey">s</span><span class="skey">S</span></div></div>
+        <h3>Quick send</h3><p><span class="inl">s</span> sends a line to one session, <span class="inl">S</span> to every session in the project.</p>
+      </article>
+      <article class="pc rv" style="--rd:.14s">
+        <div class="pv"><div class="keys"><span class="skey">/</span></div></div>
+        <h3>Jump palette</h3><p>Press <span class="inl">/</span> to jump to any session.</p>
+      </article>
+      <article class="pc rv">
+        <div class="pv"><div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M5 5v14M12 9v10M19 13v6"/></svg></div></div>
+        <h3>Turn markers</h3><p>Marks where each Claude turn ended, right in the tile.</p>
+      </article>
+      <article class="pc rv" style="--rd:.07s">
+        <div class="pv"><div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M9 7V5h6v2M6.5 7l1 12h9l1-12"/></svg></div></div>
+        <h3>Prune empty projects <span class="tag">off by default</span></h3><p>Removes a project after you close its last session. Off by default.</p>
+      </article>
+      <article class="pc rv" style="--rd:.14s">
+        <div class="pv"><div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M5 8l4.5 4L5 16M12.5 17H19"/></svg></div></div>
+        <h3>CLI extras</h3><p>Adds <span class="inl">claude-garage &lt;folder&gt;</span>, <span class="inl">open</span>, <span class="inl">install</span> and <span class="inl">prune</span> to your shell.</p>
+      </article>
+    </div>
+
+    <div class="install-row">
+      <div class="box dk rv">
+        <span class="l">Add a plugin from any GitHub repo</span>
+        <div class="cmd"><span>claude-garage plugin install owner/repo</span><button data-copy="claude-garage plugin install owner/repo">Copy</button></div>
+      </div>
+      <div class="box trust rv" style="--rd:.08s">
+        <div class="sh"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5.5c0 4.2-2.9 7.6-7 9.5-4.1-1.9-7-5.3-7-9.5V6z"/><path d="M9 12l2.2 2.2L15.5 10"/></svg></div>
+        <div><h3>You stay in charge.</h3><p>A plugin can never confirm a dangerous action. You do.</p></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===== keys ===== -->
+<section class="s" id="keys">
+  <div class="wrap">
+    <div class="head">
+      <span class="eyebrow rv">Keys</span>
+      <h2 class="rv" style="--rd:.05s">Four habits. That is the whole manual.</h2>
+    </div>
+    <div class="kgrid">
+      <div class="kc rv"><div class="caps"><span class="cap">r</span><span class="cap">r</span></div><h3>Restart and resume</h3><p>Brings a session back and picks the conversation up where it stopped.</p></div>
+      <div class="kc rv" style="--rd:.07s"><div class="caps"><span class="cap">x</span><span class="cap">x</span></div><h3>Close a session</h3><p>Closes the chat and lets you merge or discard its worktree.</p></div>
+      <div class="kc rv" style="--rd:.14s"><div class="caps"><span class="cap">/</span></div><h3>Jump palette</h3><p>Fuzzy-jump to any session without leaving the keyboard.</p></div>
+      <div class="kc rv" style="--rd:.21s"><div class="caps"><span class="cap">s</span><span class="cap">S</span></div><h3>Send a line</h3><p><span class="inl">s</span> to one session, <span class="inl">S</span> to all of them at once.</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- ===== install ===== -->
+<section class="s" id="install">
+  <div class="wrap">
+    <div class="head">
+      <span class="eyebrow rv">Install</span>
+      <h2 class="rv" style="--rd:.05s">One line to your first wall.</h2>
+      <p class="lead rv" style="--rd:.1s">Try it with npx, or install the binary. Pick your shell.</p>
+    </div>
+    <div class="inst rv">
+      <div class="tabs" role="tablist" aria-label="Install method">
+        <button class="tab" role="tab" id="i0" aria-controls="p0" aria-selected="true">npx</button>
+        <button class="tab" role="tab" id="i1" aria-controls="p1" aria-selected="false" tabindex="-1">macOS / Linux</button>
+        <button class="tab" role="tab" id="i2" aria-controls="p2" aria-selected="false" tabindex="-1">PowerShell</button>
+      </div>
+      <div class="panel" role="tabpanel" id="p0" aria-labelledby="i0">
+        <div class="l">Needs Node. Nothing to install first.</div>
+        <div class="cmd"><span>npx claude-garage</span><button data-copy="npx claude-garage">Copy</button></div>
+      </div>
+      <div class="panel" role="tabpanel" id="p1" aria-labelledby="i1" hidden>
+        <div class="l">Shell installer for macOS and Linux.</div>
+        <div class="cmd"><span>curl --proto '=https' --tlsv1.2 -LsSf https://github.com/adar2378/claude-garage/releases/latest/download/claude-garage-installer.sh | sh</span><button data-copy="curl --proto '=https' --tlsv1.2 -LsSf https://github.com/adar2378/claude-garage/releases/latest/download/claude-garage-installer.sh | sh">Copy</button></div>
+      </div>
+      <div class="panel" role="tabpanel" id="p2" aria-labelledby="i2" hidden>
+        <div class="l">PowerShell installer. Windows support is in preview.</div>
+        <div class="cmd"><span>irm https://github.com/adar2378/claude-garage/releases/latest/download/claude-garage-installer.ps1 | iex</span><button data-copy="irm https://github.com/adar2378/claude-garage/releases/latest/download/claude-garage-installer.ps1 | iex">Copy</button></div>
+      </div>
+      <div class="facts"><span class="fact">macOS and Linux</span><span class="fact">Windows in preview</span><span class="fact">MIT licensed</span></div>
+    </div>
+  </div>
+</section>
+
+<!-- ===== closing ===== -->
+<section class="closing mesh" id="closing" aria-labelledby="close-h">
+  <i class="b1"></i><i class="b2"></i><i class="b3"></i><i class="b4"></i><i class="b5"></i>
+  <h2 id="close-h" class="rv">Give your sessions a wall.</h2>
+  <div class="cta rv" style="--rd:.08s">
+    <button class="copybox" data-copy="npx claude-garage" aria-label="Copy command: npx claude-garage"><span><span class="p">$ </span>npx claude-garage</span><span class="c"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2.5"/><path d="M5 15V6.5A2.5 2.5 0 0 1 7.5 4H15"/></svg><span class="lbl">Copy</span></span></button>
+    <a class="btn btn-line" href="https://github.com/adar2378/claude-garage" style="background:rgba(255,255,255,.55)">View on GitHub</a>
+  </div>
+  <div class="peek rv" style="--rd:.16s">
+    <div class="term"><div class="term-bar"><i></i><i></i><i></i><span>claude-garage</span></div>
+      <svg viewBox="0 0 1440 560" role="img" aria-label="The claude-garage wall with one amber tile"><image href="/renders/wall-needs-input.svg" width="1440" height="880"/></svg></div>
+  </div>
+</section>
 </main>
-<style>
-  .landing { max-width: 42rem; margin: 0 auto; padding: 18vh 1.5rem 4rem; }
-  h1 { font-size: clamp(2.2rem, 6vw, 3.5rem); letter-spacing: -0.03em; margin: 0 0 1rem; color: var(--sl-color-white); }
-  p { font-size: 1.15rem; line-height: 1.6; color: var(--sl-color-gray-2); }
-  .actions { display: flex; gap: 1rem; align-items: center; margin-top: 2rem; }
-  .site-btn-primary { padding: 0.65rem 1.2rem; border-radius: 0.5rem; text-decoration: none; border: 1px solid var(--brand); }
-  .secondary { color: var(--brand-high); }
-</style>
+
+<footer>
+  <a class="logo" href="#top" style="color:var(--ink)"><b data-logo aria-hidden="true">(0.0)</b>claude-garage</a>
+  <nav aria-label="Footer"><a href="https://github.com/adar2378/claude-garage">GitHub</a><a href="https://github.com/adar2378/claude-garage/releases">Releases</a><a href="/docs/">Docs</a><a href="#plugins">Plugins</a><a href="#install">Install</a></nav>
+  <span>MIT licensed. macOS and Linux, Windows in preview.</span>
+</footer>
+
+<div class="pet" id="pet" role="button" tabindex="0" aria-label="The pit pet. Press to hear from it."><span class="pg" id="pg" aria-hidden="true">=-.-=</span><span class="ps" id="ps">zzz</span></div>
+<div class="hintbar" id="hintbar" aria-hidden="true"><span><i class="kcap" data-k="a">a</i>jump in</span><span><i class="kcap" data-k="slash">/</i>jump</span><span><i class="kcap" data-k="r">r</i><i class="kcap" data-k="r2">r</i>replay</span><span><i class="kcap" data-k="n">n</i>new</span></div>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+<div class="pal" id="pal" hidden><div class="box2" role="dialog" aria-modal="true" aria-label="Jump to a section">
+  <input id="pq" type="text" autocomplete="off" spellcheck="false" placeholder="Jump to..." aria-label="Jump to a section" aria-controls="pl">
+  <ul id="pl" role="listbox"></ul>
+  <div class="foot"><span><i class="kcap s2">↑</i> <i class="kcap s2">↓</i> move</span><span><i class="kcap s2">↵</i> go</span><span><i class="kcap s2">esc</i> close</span></div>
+</div></div>
+<script>
+  import '../scripts/landing.js';
+</script>

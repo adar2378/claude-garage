@@ -2,9 +2,18 @@
   X-Content-Type-Options: nosniff
   X-Frame-Options: DENY
   Referrer-Policy: strict-origin-when-cross-origin
-  Permissions-Policy: camera=(), microphone=(), geolocation=(), interest-cohort=()
+  Permissions-Policy: camera=(), microphone=(), geolocation=()
   Strict-Transport-Security: max-age=31536000; includeSubDomains
-  Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'
+
+# CSP is set per section because the rules are merged, never overridden.
+# The landing page ships no inline script or inline <style>: scripts and styles are bundled files.
+# It needs inline style ATTRIBUTES only (style="--rd:.1s" reveal delays), hence style-src-attr.
+/
+  Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self'; style-src-attr 'unsafe-inline'; img-src 'self'; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'
+
+# Docs: Starlight emits small inline scripts (theme, sidebar state), and Pagefind search needs WebAssembly.
+/docs/*
+  Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'; style-src 'self'; style-src-attr 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'
 
 # Hashed build output never changes
 /_astro/*
@@ -14,6 +23,9 @@
   Cache-Control: public, max-age=3600
 
 /favicon.svg
+  Cache-Control: public, max-age=86400
+
+/renders/*
   Cache-Control: public, max-age=86400
 
 /og-default.png

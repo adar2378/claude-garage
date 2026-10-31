@@ -3,6 +3,6 @@ import Default from '@astrojs/starlight/components/Head.astro';
 ---
 <Default {...Astro.props}><slot /></Default>
 <script is:inline>
-  // Dark-first: default to dark until the visitor picks a theme.
-  try { if (!localStorage.getItem('starlight-theme')) localStorage.setItem('starlight-theme', 'dark'); } catch (e) {}
+  // Light-first: default to light until the visitor picks a theme.
+  try { if (!localStorage.getItem('starlight-theme')) localStorage.setItem('starlight-theme', 'light'); } catch (e) {}
 </script>

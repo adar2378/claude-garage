@@ -1,7 +1,7 @@
 // Copies the repo docs into the Starlight content folder and adds frontmatter.
 // Runs before every dev/build so the site never drifts from the repo.
 // Generated files are gitignored (see site/.gitignore).
-import { mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -126,5 +126,15 @@ for (const f of readdirSync(pluginsSrc).filter((f) => f.endsWith('.md'))) {
     }),
   );
   console.log(`sync-docs: ${rows.length} key bindings`);
+}
+// 5. Brand renders: the landing page references /renders/*.svg. Copied, never committed twice (gitignored).
+{
+  const from = join(repo, 'docs/brand/renders');
+  const to = resolve(here, '../public/renders');
+  rmSync(to, { recursive: true, force: true });
+  mkdirSync(to, { recursive: true });
+  const files = readdirSync(from).filter((f) => f.endsWith('.svg'));
+  for (const f of files) copyFileSync(join(from, f), join(to, f));
+  console.log(`sync-docs: ${files.length} brand renders`);
 }
 console.log('sync-docs: done');

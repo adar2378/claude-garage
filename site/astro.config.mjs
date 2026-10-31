@@ -11,22 +11,22 @@ const DESCRIPTION =
 export default defineConfig({
   site: SITE,
   output: 'static',
+  build: { inlineStylesheets: 'never' },
   trailingSlash: 'ignore',
   integrations: [
     starlight({
       title: 'claude-garage',
       description: DESCRIPTION,
-      logo: { src: './src/assets/logo.svg', replacesTitle: false },
+      logo: { src: './src/assets/logo.svg', alt: '', replacesTitle: false },
       favicon: '/favicon.svg',
       disable404Route: true,
-      social: [{ icon: 'github', label: 'GitHub', href: 'https://github.com/adar2378/claude-garage' }],
       editLink: { baseUrl: 'https://github.com/adar2378/claude-garage/edit/main/site/' },
       customCss: [
         '@fontsource-variable/geist/index.css',
         '@fontsource-variable/geist-mono/index.css',
         './src/styles/theme.css',
       ],
-      components: { Head: './src/components/Head.astro' },
+      components: { Head: './src/components/Head.astro', SocialIcons: './src/components/SocialIcons.astro' },
       routeMiddleware: './src/routeData.ts',
       sidebar: [
         { label: 'Getting started', items: [
