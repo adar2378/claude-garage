@@ -314,6 +314,35 @@ pub fn tui_main(host: &dyn Host) -> Result<i32, Fail> {
     })
 }
 
+/// A running, current daemon for a command that talks to the API (a CLI
+/// plugin with `needs_daemon`): the TUI launcher's checks and stale-daemon
+/// handling, then wait for health instead of starting the TUI.
+pub fn ensure_daemon(host: &dyn Host) -> Result<(), Fail> {
+    check_prerequisites(host)?;
+    let port = host.port();
+    let health = host.fetch_health(750);
+    let stale = health
+        .as_ref()
+        .is_some_and(|h| daemon_is_stale(h, host.version()));
+    if let (true, Some(h)) = (stale, &health) {
+        stop_stale_daemon(host, h)?;
+    }
+    if health.is_none() || stale {
+        if !stale {
+            host.say(&format!(
+                "no daemon on port {port} — starting one (it outlives this command)"
+            ));
+        }
+        host.spawn_daemon().map_err(Fail)?;
+        if !wait_for_health(host) {
+            return Err(Fail(format!(
+                "claude-garage daemon did not come up on port {port}"
+            )));
+        }
+    }
+    Ok(())
+}
+
 // ── `claude-garage restart` ─────────────────────────────────────────────
 
 fn display(v: Option<&Value>) -> String {
@@ -845,6 +874,32 @@ mod tests {
         assert!(pos("spawn_daemon") < pos("run_tui /fake/garage-wall"));
         assert_eq!(f.called("terminate"), 0);
         assert!(f.said()[0].starts_with("no daemon on port 4747 — starting one"));
+    }
+
+    #[test]
+    fn ensure_daemon_starts_one_when_none_runs_and_leaves_a_current_one_alone() {
+        let f = Fake::new(None);
+        assert_eq!(ensure_daemon(&f), Ok(()));
+        assert_eq!(f.called("spawn_daemon"), 1);
+        assert_eq!(f.called("run_tui /fake/garage-wall"), 0, "never starts the TUI");
+
+        let f = Fake::new(Some(health(Some(V), Some(321))));
+        assert_eq!(ensure_daemon(&f), Ok(()));
+        assert_eq!(f.called("spawn_daemon"), 0);
+        assert_eq!(f.called("terminate"), 0);
+    }
+
+    #[test]
+    fn ensure_daemon_replaces_a_stale_daemon_and_fails_when_it_never_comes_up() {
+        let f = Fake::new(Some(health(Some("0.5.0"), Some(4242))));
+        assert_eq!(ensure_daemon(&f), Ok(()));
+        assert_eq!(f.called("terminate 4242"), 1);
+        assert_eq!(f.called("spawn_daemon"), 1);
+
+        let mut f = Fake::new(None);
+        f.spawn_brings_up = false;
+        let err = ensure_daemon(&f).unwrap_err();
+        assert!(err.0.contains("did not come up on port 4747"), "{}", err.0);
     }
 
     #[test]

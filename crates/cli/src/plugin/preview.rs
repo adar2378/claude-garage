@@ -576,6 +576,7 @@ Later updates that change only plugin code (no new commands, permissions or URLs
                     description: None,
                     command: vec!["x".into()],
                     fallback: false,
+                    needs_daemon: false,
                 })
             }),
             Box::new(|m| {
@@ -741,6 +742,7 @@ Later updates that change only plugin code (no new commands, permissions or URLs
             description: None,
             command: vec![format!("c{esc}")],
             fallback: true,
+            needs_daemon: false,
         });
         bad.widgets.push(garage_plugin::manifest::Widget {
             id: format!("w{esc}"),

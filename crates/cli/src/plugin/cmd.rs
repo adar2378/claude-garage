@@ -480,7 +480,14 @@ pub fn dispatch_external(argv: &[String]) -> Result<Option<i32>, String> {
             return Ok(None);
         }
     };
-    Ok(external::route(&all, argv).map(|r| external::run(&paths, config.port, &r, argv)))
+    let Some(route) = external::route(&all, argv) else {
+        return Ok(None);
+    };
+    if route.needs_daemon {
+        let host = crate::host::RealHost { port: config.port };
+        crate::launcher::ensure_daemon(&host).map_err(|f| f.0)?;
+    }
+    Ok(Some(external::run(&paths, config.port, &route, argv)))
 }
 
 #[cfg(test)]

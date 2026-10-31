@@ -309,6 +309,10 @@ pub struct Cli {
     /// Also receives an unknown first word. At most one installed plugin.
     #[serde(default)]
     pub fallback: bool,
+    /// `claude-garage` makes sure a current daemon is running before the
+    /// command starts (the command calls the daemon API).
+    #[serde(default)]
+    pub needs_daemon: bool,
 }
 
 /// Run once at install.

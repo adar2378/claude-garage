@@ -26,6 +26,8 @@ pub struct Route {
     /// whole argv for the fallback.
     pub args: Vec<String>,
     pub fallback: bool,
+    /// The `[[cli]]` entry asked for a running daemon.
+    pub needs_daemon: bool,
 }
 
 /// Who handles `argv` (the words after `claude-garage`)?
@@ -42,6 +44,7 @@ pub fn route(all: &[Loaded], argv: &[String]) -> Option<Route> {
                 command: c.command.clone(),
                 args: argv[1..].to_vec(),
                 fallback: false,
+                needs_daemon: c.needs_daemon,
             });
         }
     }
@@ -55,6 +58,7 @@ pub fn route(all: &[Loaded], argv: &[String]) -> Option<Route> {
                 command: c.command.clone(),
                 args: argv.to_vec(),
                 fallback: true,
+                needs_daemon: c.needs_daemon,
             });
         }
     }
