@@ -40,7 +40,7 @@ impl Lang {
                 "This one is Rust: `src/main.rs` uses `garage-plugin-sdk`, and `[[build]]` runs `cargo build --release`."
             }
             Lang::Ts => {
-                "This one is TypeScript on Node.js 20+: `src/` compiles to `dist/` with `npm run build`, which `[[build]]` runs; commit `package-lock.json`, never `dist/`."
+                "This one is TypeScript on Node.js 26+ (the current LTS): `src/` compiles to `dist/` with `npm run build`, which `[[build]]` runs after `npm ci --ignore-scripts`; commit `package-lock.json`, never `dist/`, and run `npm install` yourself when you add a dependency."
             }
             Lang::Shell => {
                 "This one is a POSIX shell script that needs only `sh` and `curl`; `test.sh` runs it against a fake `curl`."
@@ -73,6 +73,10 @@ impl Lang {
                 (
                     "package.json",
                     include_str!("../../templates/ts/package.json"),
+                ),
+                (
+                    "package-lock.json",
+                    include_str!("../../templates/ts/package-lock.json"),
                 ),
                 (
                     "tsconfig.json",
@@ -119,9 +123,32 @@ impl SdkSource {
                 "git = \"https://github.com/adar2378/claude-garage\", tag = \"v{}\"",
                 env!("CARGO_PKG_VERSION")
             ),
-            SdkSource::Path(p) => format!("path = {:?}", p.to_string_lossy()),
+            SdkSource::Path(p) => format!("path = {}", toml_basic_string(&p.to_string_lossy())),
         }
     }
+}
+
+/// `s` as a TOML basic string (`"..."`): backslash, quote and every control
+/// character escaped as TOML defines them. (Rust's `{:?}` is not TOML: it
+/// writes `\u{7f}` and `\'`, which a TOML parser rejects.)
+fn toml_basic_string(s: &str) -> String {
+    let mut o = String::with_capacity(s.len() + 2);
+    o.push('"');
+    for c in s.chars() {
+        match c {
+            '"' => o.push_str("\\\""),
+            '\\' => o.push_str("\\\\"),
+            '\u{8}' => o.push_str("\\b"),
+            '\t' => o.push_str("\\t"),
+            '\n' => o.push_str("\\n"),
+            '\u{c}' => o.push_str("\\f"),
+            '\r' => o.push_str("\\r"),
+            c if c.is_control() => o.push_str(&format!("\\u{:04X}", c as u32)),
+            c => o.push(c),
+        }
+    }
+    o.push('"');
+    o
 }
 
 pub struct NewPlugin<'a> {
@@ -163,12 +190,6 @@ fn fill(template: &str, p: &NewPlugin) -> String {
 pub fn create(parent: &Path, p: &NewPlugin) -> Result<PathBuf, String> {
     check_name(p.name)?;
     let dir = parent.join(p.name);
-    if dir.exists() {
-        return Err(format!(
-            "{} already exists; pick another name or remove it first",
-            dir.display()
-        ));
-    }
     let mut files: Vec<(&str, &str)> = p.lang.files();
     files.extend([
         (
@@ -193,7 +214,21 @@ pub fn create(parent: &Path, p: &NewPlugin) -> Result<PathBuf, String> {
         .expect("every language has a manifest");
     check_manifest(manifest)?;
 
-    std::fs::create_dir_all(&dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
+    // `create_dir` fails if the path exists (a folder, a file or a symlink), so
+    // there is no gap between checking and creating for something to slip into.
+    // The parent is made first; only the plugin folder itself must be new.
+    std::fs::create_dir_all(parent)
+        .map_err(|e| format!("cannot create {}: {e}", parent.display()))?;
+    std::fs::create_dir(&dir).map_err(|e| {
+        if e.kind() == std::io::ErrorKind::AlreadyExists {
+            format!(
+                "{} already exists; pick another name or remove it first",
+                dir.display()
+            )
+        } else {
+            format!("cannot create {}: {e}", dir.display())
+        }
+    })?;
     for (rel, text) in &rendered {
         let path = dir.join(rel);
         if let Some(d) = path.parent() {
@@ -345,6 +380,111 @@ mod tests {
             "{cargo}"
         );
         assert!(cargo.contains("features = [\"testing\"]"));
+    }
+
+    #[test]
+    fn the_local_sdk_path_is_a_valid_toml_string_whatever_it_contains() {
+        let nasty = "C:\\Users\\a \"b\"\ttab\u{7f}\u{1b}'q'\n\u{e9}";
+        assert_eq!(
+            toml_basic_string(nasty),
+            "\"C:\\\\Users\\\\a \\\"b\\\"\\ttab\\u007F\\u001B'q'\\n\u{e9}\""
+        );
+        let d = tempfile::tempdir().unwrap();
+        let p = NewPlugin {
+            name: "esc-one",
+            lang: Lang::Rust,
+            sdk: SdkSource::Path(nasty.into()),
+        };
+        let dir = create(d.path(), &p).unwrap();
+        let cargo: toml::Table = std::fs::read_to_string(dir.join("Cargo.toml"))
+            .unwrap()
+            .parse()
+            .unwrap();
+        assert_eq!(
+            cargo["dependencies"]["garage-plugin-sdk"]["path"].as_str(),
+            Some(nasty)
+        );
+        assert_eq!(
+            cargo["dev-dependencies"]["garage-plugin-sdk"]["path"].as_str(),
+            Some(nasty)
+        );
+    }
+
+    #[test]
+    fn a_file_or_link_in_the_way_is_refused_without_a_write() {
+        let d = tempfile::tempdir().unwrap();
+        std::fs::write(d.path().join("afile"), "x").unwrap();
+        let e = create(d.path(), &new("afile", Lang::Shell)).unwrap_err();
+        assert!(e.contains("already exists"), "{e}");
+        assert_eq!(
+            std::fs::read_to_string(d.path().join("afile")).unwrap(),
+            "x"
+        );
+        // A missing parent is made, so `plugin new` works in a fresh place.
+        let nested = d.path().join("a/b");
+        let dir = create(&nested, &new("fresh-one", Lang::Shell)).unwrap();
+        assert!(dir.join("garage-plugin.toml").is_file());
+    }
+
+    #[test]
+    fn the_typescript_template_installs_from_its_lockfile_without_scripts() {
+        let d = tempfile::tempdir().unwrap();
+        let dir = create(d.path(), &new("ts-one", Lang::Ts)).unwrap();
+        let manifest = std::fs::read_to_string(dir.join("garage-plugin.toml")).unwrap();
+        let m = parse(&manifest).unwrap();
+        let builds: Vec<String> = m.build.iter().map(|b| b.command.join(" ")).collect();
+        assert_eq!(builds[0], "npm ci --ignore-scripts --no-audit --no-fund");
+        let lock: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(dir.join("package-lock.json")).unwrap())
+                .unwrap();
+        let pkg: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(dir.join("package.json")).unwrap())
+                .unwrap();
+        assert_eq!(lock["name"], "garage-plugin-ts-one");
+        assert_eq!(lock["packages"][""]["name"], "garage-plugin-ts-one");
+        assert_eq!(
+            lock["packages"][""]["devDependencies"], pkg["devDependencies"],
+            "`npm ci` refuses a lockfile that disagrees with package.json"
+        );
+        assert_eq!(pkg["engines"]["node"], ">=26");
+        let notes = Lang::Ts.notes();
+        assert!(notes.contains("Node.js 26+"), "{notes}");
+    }
+
+    /// The Rust template compiles against the SDK in this checkout, tests
+    /// included, so an SDK change that breaks the template fails here and not
+    /// for the first person to run `plugin new`. The pinned tag (`v<version>`)
+    /// must contain `crates/plugin-sdk` for the git form to work: see the
+    /// release notes in the p27 design.
+    #[test]
+    fn the_generated_rust_plugin_compiles_against_this_checkouts_sdk() {
+        let sdk = Path::new(env!("CARGO_MANIFEST_DIR")).join("../plugin-sdk");
+        let sdk = sdk.canonicalize().unwrap();
+        assert!(sdk.join("Cargo.toml").is_file());
+        let d = tempfile::tempdir().unwrap();
+        let p = NewPlugin {
+            name: "rust-one",
+            lang: Lang::Rust,
+            sdk: SdkSource::Path(sdk),
+        };
+        let dir = create(d.path(), &p).unwrap();
+        // Same dependency versions as the workspace, so this works offline and
+        // does not test whatever crates.io published an hour ago.
+        let lock = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../Cargo.lock");
+        std::fs::copy(lock, dir.join("Cargo.lock")).unwrap();
+        let out = std::process::Command::new(std::env::var_os("CARGO").unwrap_or("cargo".into()))
+            .args(["check", "--all-targets", "--offline"])
+            .current_dir(&dir)
+            .env("CARGO_TARGET_DIR", d.path().join("target"))
+            .env_remove("RUSTFLAGS")
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
     }
 
     #[test]

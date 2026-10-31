@@ -409,6 +409,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "tokio",
+ "toml",
  "ureq",
 ]
 
