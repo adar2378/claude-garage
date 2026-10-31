@@ -1,0 +1,21 @@
+#:schema https://raw.githubusercontent.com/adar2378/claude-garage/main/schemas/garage-plugin.schema.json
+id          = "jump-palette"
+name        = "Jump palette"
+version     = "0.1.0"
+api_version = 1
+platforms   = ["macos", "linux"]
+description = "/ opens a fuzzy list of sessions and projects; choosing one focuses it"
+permissions = ["sessions.read", "workspaces.read", "ui.panes", "ui.invoke", "core.actions"]
+
+[[panes]]
+id        = "palette"
+title     = "Jump to"
+placement = "overlay"
+command   = ["{plugin_dir}/bin/jump-palette", "open"]
+
+[[actions]]
+id          = "open"
+title       = "Jump to a session or project"
+contexts    = ["global"]
+pane        = "palette"
+default_key = "/"

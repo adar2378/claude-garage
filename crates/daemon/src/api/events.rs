@@ -5,7 +5,7 @@
 //! title changes (and after a restart), `: keepalive` every 15 s.
 //!
 //! Plugin host frames (p24, additive; older clients ignore them):
-//! `session.created`, `session.closed` (with `reason`), `session.turn`,
+//! `session.created`, `session.closed` (with `reason`), `session.turn`, `session.forgotten`,
 //! `worktree.created`, `workspace.added`, `workspace.removed` carry the same
 //! payload a plugin event hook gets; `widgets` (`{plugin, rev}`), `plugins`
 //! (`{}`), `plugin_run_failed`, `plugin_notice`, `ui_action` (a plugin asks the
@@ -223,6 +223,14 @@ mod tests {
                 },
                 "session.turn",
                 json!({"id": "garage/w/a", "workspace": "w", "at": 5, "transcript_offset": null}),
+            ),
+            (
+                DaemonEvent::SessionForgotten {
+                    id: "garage/w/a".into(),
+                    workspace: "w".into(),
+                },
+                "session.forgotten",
+                json!({"id": "garage/w/a", "workspace": "w"}),
             ),
             (
                 DaemonEvent::WorkspaceAdded { name: "w".into() },

@@ -433,19 +433,20 @@ impl GarageRouter {
             }
             ids::SESSION_DELETE => {
                 let Some(id) = session else { return };
+                let label = id.rsplit('/').next().unwrap_or(id).to_owned();
+                // A live session is killed with no closed record (the arm
+                // prompt said so); a closed one just loses its record.
                 if store
                     .state()
                     .session_by_id(Some(id))
                     .is_some_and(|s| s.live())
                 {
-                    self.notices.show(
-                        "close it first — delete forgets a closed session",
-                        4000,
-                        now_ms,
-                    );
+                    effects.push(Effect::Forget {
+                        id: id.to_owned(),
+                        label,
+                    });
                     return;
                 }
-                let label = id.rsplit('/').next().unwrap_or(id).to_owned();
                 effects.push(Effect::Close {
                     id: id.to_owned(),
                     label,
@@ -595,7 +596,18 @@ fn arm_prompt(store: &WallStore, id: ActionId, ctx: &ActionCtx) -> Option<(Strin
             }
             format!("Restart {}", name()?)
         }
-        ids::SESSION_DELETE => format!("Delete {}", name()?),
+        ids::SESSION_DELETE => {
+            let live = state.session_by_id(session()).is_some_and(|s| s.live());
+            if live {
+                // Not the usual tail: this one has no way back.
+                let text = format!(
+                    "Delete {}? (kills it, no history) — click again or press y",
+                    name()?
+                );
+                return Some((text, false));
+            }
+            format!("Delete {}", name()?)
+        }
         ids::WORKSPACE_RESTART => format!("Restart idle sessions in {}", ctx.workspace.as_deref()?),
         ids::WORKSPACE_REMOVE => format!("Remove workspace {}", ctx.workspace.as_deref()?),
         ids::WORKSPACE_REMOVE_KILL => {

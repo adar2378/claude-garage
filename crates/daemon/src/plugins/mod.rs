@@ -18,6 +18,8 @@ pub mod runner;
 pub mod widgets;
 
 #[cfg(test)]
+mod first_party;
+#[cfg(test)]
 mod rig;
 #[cfg(test)]
 mod tests;

@@ -731,6 +731,8 @@ async fn session_closed_reaches_hooks_once_with_the_real_reason() {
     let r = Rig::new();
     r.install("closer", &manifest("closer", &[], &hook("session.closed")));
     let _loop = r.st.plugins.start();
+    // the daemon publishes session.closed through the closed-record recorder
+    let _recorder = crate::closed::spawn(&r.st.bus, r.st.registry.clone(), r.st.backend.clone());
     let poller = r.st.shared_poller();
     r.backend.set("garage/ws/user", "/proj", Some(1), "");
     r.backend.set("garage/ws/crash", "/proj2", Some(2), "");
@@ -1454,6 +1456,59 @@ async fn session_input_needs_a_token_the_permission_and_a_live_garage_session() 
     tmux.wait_for(|| std::fs::read_to_string(&out).is_ok_and(|t| !t.is_empty()))
         .await;
     assert_eq!(std::fs::read_to_string(&out).unwrap(), "hello there");
+}
+
+#[tokio::test]
+async fn session_input_with_a_status_guard_refuses_a_session_that_is_waiting_for_input() {
+    use garage_protocol::SessionStatus;
+    let tmux = crate::test_support::TestTmux::new();
+    let r = Rig::with_tmux(&tmux);
+    let args = vec![
+        "-c".to_string(),
+        "read line; printf '%s' \"$line\" > out.txt; sleep 60".to_string(),
+    ];
+    r.st.backend
+        .create("garage/ws/s", tmux.dir(), "sh", &args, &[])
+        .await
+        .unwrap();
+    r.install("qs", &manifest("qs", &["sessions.input"], ""));
+    let qs = r.token("qs");
+    let out = tmux.dir().join("out.txt");
+    let guarded = json!({"id": "garage/ws/s", "text": "hi", "if_status": {"not": ["needs-input"]}})
+        .to_string();
+
+    r.st.status
+        .set("garage/ws/s", SessionStatus::NeedsInput, None);
+    let (s, _, b) = r
+        .call("POST", "/api/sessions/input", Some(&qs), Some(&guarded))
+        .await;
+    assert_eq!(s, StatusCode::CONFLICT);
+    assert_eq!(b["status"], "needs-input");
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert!(!out.exists(), "a refused call typed nothing");
+
+    // the same call without the guard still goes through (old callers)
+    // and a bad guard is a 400, not a silent send
+    for bad in [
+        json!("needs-input"),
+        json!({"not": "needs-input"}),
+        json!({"not": [1]}),
+    ] {
+        let body = json!({"id": "garage/ws/s", "text": "hi", "if_status": bad}).to_string();
+        let (s, _, _) = r
+            .call("POST", "/api/sessions/input", Some(&qs), Some(&body))
+            .await;
+        assert_eq!(s, StatusCode::BAD_REQUEST, "{bad}");
+    }
+
+    r.st.status.set("garage/ws/s", SessionStatus::Idle, None);
+    let (s, _, _) = r
+        .call("POST", "/api/sessions/input", Some(&qs), Some(&guarded))
+        .await;
+    assert_eq!(s, StatusCode::OK);
+    tmux.wait_for(|| std::fs::read_to_string(&out).is_ok_and(|t| !t.is_empty()))
+        .await;
+    assert_eq!(std::fs::read_to_string(&out).unwrap(), "hi");
 }
 
 #[tokio::test]

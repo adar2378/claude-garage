@@ -536,52 +536,9 @@ mod end_to_end {
     use super::*;
     use crate::plugins::rig::{Rig, wait_for};
     use serde_json::json;
-    use std::sync::OnceLock;
 
-    /// Builds `plugins/hello` once and returns the executable cargo reports.
-    fn hello_binary() -> &'static Path {
-        static BIN: OnceLock<PathBuf> = OnceLock::new();
-        BIN.get_or_init(|| {
-            let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
-            // Same profile and target dir as this test run (deps/ sits two levels
-            // under the profile dir), so cargo reuses the compiled dependencies.
-            let target = std::env::current_exe()
-                .unwrap()
-                .ancestors()
-                .nth(3)
-                .unwrap()
-                .to_path_buf();
-            let mut args = vec![
-                "build",
-                "-p",
-                "garage-plugin-hello",
-                "--message-format=json",
-                "--target-dir",
-                target.to_str().unwrap(),
-            ];
-            if !cfg!(debug_assertions) {
-                args.push("--release");
-            }
-            let out = std::process::Command::new(cargo)
-                .args(args)
-                .current_dir(env!("CARGO_MANIFEST_DIR"))
-                .output()
-                .expect("cargo runs");
-            assert!(
-                out.status.success(),
-                "building the hello plugin failed:\n{}",
-                String::from_utf8_lossy(&out.stderr)
-            );
-            String::from_utf8_lossy(&out.stdout)
-                .lines()
-                .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
-                .find_map(|v| {
-                    v.get("executable")
-                        .and_then(|e| e.as_str())
-                        .map(PathBuf::from)
-                })
-                .expect("cargo reported the hello executable")
-        })
+    fn hello_binary() -> PathBuf {
+        crate::plugins::first_party::plugin_binary("garage-plugin-hello")
     }
 
     /// `<root>/hello/{garage-plugin.toml,bin/hello}`: what packaging stages.

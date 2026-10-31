@@ -23,6 +23,46 @@ pub const GARAGE_PREFIX: &str = "garage/";
 pub struct Workspace {
     pub name: String,
     pub dir: Option<String>,
+    /// When it was first registered (ms since the epoch); `None` for one
+    /// registered before the daemon recorded this.
+    pub registered_at: Option<i64>,
+}
+
+/// What `remove_workspace_if_empty` insists on.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct EmptyRules {
+    /// Closed records do not count as content and go with the workspace.
+    pub drop_closed: bool,
+    /// Refuse a workspace registered more recently than this many ms ago.
+    pub min_age_ms: Option<i64>,
+}
+
+/// Why a workspace was not removed as empty.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum NotEmpty {
+    /// A live session exists.
+    Live(Vec<String>),
+    /// A session with resume metadata (shown as restorable) exists.
+    Restorable(Vec<String>),
+    /// Closed records exist.
+    Closed(usize),
+    /// Registered `age_ms` ago, less than the rules allow.
+    TooNew { age_ms: i64 },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RemovedIfEmpty {
+    Removed,
+    Unknown,
+    Refused(NotEmpty),
+}
+
+fn workspace_of_entry(name: &str, e: &Map<String, Value>) -> Workspace {
+    Workspace {
+        name: name.to_owned(),
+        dir: e.get("dir").and_then(Value::as_str).map(str::to_owned),
+        registered_at: e.get("registeredAt").and_then(Value::as_i64),
+    }
 }
 
 /// Resume metadata of one garage session.
@@ -134,30 +174,32 @@ impl Registry {
             .as_object()
             .unwrap()
             .iter()
-            .map(|(name, e)| Workspace {
-                name: name.clone(),
-                dir: e.get("dir").and_then(Value::as_str).map(str::to_owned),
-            })
+            .filter_map(|(name, e)| e.as_object().map(|e| workspace_of_entry(name, e)))
             .collect()
     }
 
     pub async fn get_workspace(&self, name: &str) -> Option<Workspace> {
         let _g = self.lock.lock().await;
         let state = self.read();
-        state["workspaces"][name].as_object().map(|e| Workspace {
-            name: name.into(),
-            dir: e.get("dir").and_then(Value::as_str).map(str::to_owned),
-        })
+        state["workspaces"][name]
+            .as_object()
+            .map(|e| workspace_of_entry(name, e))
     }
 
     pub async fn upsert_workspace(&self, name: &str, dir: &str) -> std::io::Result<Workspace> {
         let _g = self.lock.lock().await;
         let mut state = self.read();
-        state["workspaces"][name] = json!({ "dir": dir });
+        // Re-pointing keeps the original registration time.
+        let registered_at = state["workspaces"][name]
+            .get("registeredAt")
+            .and_then(Value::as_i64)
+            .unwrap_or_else(crate::state::status::now_ms);
+        state["workspaces"][name] = json!({ "dir": dir, "registeredAt": registered_at });
         self.write(&state)?;
         Ok(Workspace {
             name: name.into(),
             dir: Some(dir.into()),
+            registered_at: Some(registered_at),
         })
     }
 
@@ -177,7 +219,14 @@ impl Registry {
         let Some(entry) = workspaces.shift_remove(old) else {
             return Ok(None);
         };
-        let dir = entry.get("dir").and_then(Value::as_str).map(str::to_owned);
+        let renamed = entry
+            .as_object()
+            .map(|e| workspace_of_entry(new, e))
+            .unwrap_or_else(|| Workspace {
+                name: new.into(),
+                dir: None,
+                registered_at: None,
+            });
         workspaces.insert(new.into(), entry);
         let old_prefix = format!("{GARAGE_PREFIX}{old}/");
         let new_prefix = format!("{GARAGE_PREFIX}{new}/");
@@ -214,10 +263,7 @@ impl Registry {
             state.insert("closed".into(), Value::Object(closed));
         }
         self.write(&state)?;
-        Ok(Some(Workspace {
-            name: new.into(),
-            dir,
-        }))
+        Ok(Some(renamed))
     }
 
     pub async fn get_session_meta(&self, id: &str) -> Option<SessionMeta> {
@@ -378,13 +424,20 @@ impl Registry {
     pub async fn remove_workspace(&self, name: &str) -> std::io::Result<()> {
         let _g = self.lock.lock().await;
         let mut state = self.read();
+        if Self::remove_locked(&mut state, name) {
+            self.write(&state)?;
+        }
+        Ok(())
+    }
+
+    fn remove_locked(state: &mut Map<String, Value>, name: &str) -> bool {
         if state["workspaces"]
             .as_object_mut()
             .unwrap()
             .shift_remove(name)
             .is_none()
         {
-            return Ok(());
+            return false;
         }
         let prefix = format!("{GARAGE_PREFIX}{name}/");
         state["sessions"]
@@ -394,7 +447,64 @@ impl Registry {
         if let Some(closed) = state.get_mut("closed").and_then(Value::as_object_mut) {
             closed.shift_remove(name);
         }
-        self.write(&state)
+        true
+    }
+
+    /// Remove a workspace only if it holds nothing, deciding and removing
+    /// under one registry lock. `live_ids` lists the live backend sessions (an
+    /// error aborts: an unreadable backend never reads as empty); it
+    /// runs inside the lock, so a session registered by a racing request is
+    /// either seen here or finds the workspace gone, never half-removed.
+    pub async fn remove_workspace_if_empty(
+        &self,
+        name: &str,
+        rules: EmptyRules,
+        live_ids: impl AsyncFnOnce() -> std::io::Result<Vec<String>>,
+    ) -> std::io::Result<RemovedIfEmpty> {
+        let _g = self.lock.lock().await;
+        let mut state = self.read();
+        let Some(entry) = state["workspaces"][name].as_object() else {
+            return Ok(RemovedIfEmpty::Unknown);
+        };
+        let ws = workspace_of_entry(name, entry);
+        let prefix = format!("{GARAGE_PREFIX}{name}/");
+        let live: Vec<String> = live_ids()
+            .await?
+            .into_iter()
+            .filter(|id| id.starts_with(&prefix))
+            .collect();
+        if !live.is_empty() {
+            return Ok(RemovedIfEmpty::Refused(NotEmpty::Live(live)));
+        }
+        let restorable: Vec<String> = state["sessions"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .filter(|id| id.starts_with(&prefix))
+            .cloned()
+            .collect();
+        if !restorable.is_empty() {
+            return Ok(RemovedIfEmpty::Refused(NotEmpty::Restorable(restorable)));
+        }
+        if !rules.drop_closed {
+            let closed = state
+                .get("closed")
+                .and_then(|c| c.get(name))
+                .and_then(Value::as_array)
+                .map_or(0, Vec::len);
+            if closed > 0 {
+                return Ok(RemovedIfEmpty::Refused(NotEmpty::Closed(closed)));
+            }
+        }
+        if let (Some(min), Some(at)) = (rules.min_age_ms, ws.registered_at) {
+            let age_ms = (crate::state::status::now_ms() - at).max(0);
+            if age_ms < min {
+                return Ok(RemovedIfEmpty::Refused(NotEmpty::TooNew { age_ms }));
+            }
+        }
+        Self::remove_locked(&mut state, name);
+        self.write(&state)?;
+        Ok(RemovedIfEmpty::Removed)
     }
 
     /// Per-install shared secret for the hook endpoint: generated once
@@ -545,7 +655,13 @@ mod tests {
         assert_eq!(names, ["a", "b"]);
         r.remove_workspace("a").await.unwrap();
         assert_eq!(r.get_workspace("a").await, None);
-        assert_eq!(s.raw()["workspaces"], json!({"b": {"dir": "/dir/b"}}));
+        let raw = s.raw();
+        assert_eq!(raw["workspaces"].as_object().unwrap().len(), 1);
+        assert_eq!(raw["workspaces"]["b"]["dir"], "/dir/b");
+        assert!(
+            raw["workspaces"]["b"]["registeredAt"].as_i64().unwrap() > 0,
+            "the registration time is recorded"
+        );
     }
 
     #[tokio::test]
@@ -738,7 +854,12 @@ mod tests {
         assert_eq!(r.rename_workspace("ghost", "x").await.unwrap(), None);
         let raw = s.raw();
         assert!(raw["workspaces"].get("old").is_none());
-        assert_eq!(raw["workspaces"]["new"], json!({"dir": "/d"}));
+        assert_eq!(raw["workspaces"]["new"]["dir"], "/d");
+        assert_eq!(
+            raw["workspaces"]["new"]["registeredAt"].as_i64(),
+            w.registered_at,
+            "a rename keeps the registration time"
+        );
         assert_eq!(raw["sessions"]["garage/new/one"]["workspace"], "new");
         assert!(raw["sessions"].get("garage/old/one").is_none());
         assert_eq!(raw["sessions"]["garage/other/two"]["workspace"], "other");

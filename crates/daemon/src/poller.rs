@@ -241,12 +241,12 @@ impl Poller {
     fn publish_membership(&self, m: Membership) {
         for (id, dir, last_status) in m.closed {
             let reason = match self.intents.take(&id) {
-                Some(Intent::Renamed) => continue,
+                Some(Intent::Renamed | Intent::Forgotten) => continue,
                 Some(Intent::Reason(r)) => r,
                 None => CloseReason::Crash,
             };
             let (workspace, _) = split_session_id(&id);
-            self.bus.publish(DaemonEvent::SessionClosed {
+            self.bus.publish(DaemonEvent::SessionClosing {
                 id,
                 dir,
                 workspace,
@@ -992,7 +992,7 @@ mod tests {
         let mut closed: Vec<(String, &str)> = typed(drain_all(&mut rx))
             .into_iter()
             .filter_map(|e| match e {
-                DaemonEvent::SessionClosed {
+                DaemonEvent::SessionClosing {
                     id,
                     reason,
                     dir,
@@ -1049,7 +1049,7 @@ mod tests {
         r.poller.poll_once().await;
         let closed: Vec<_> = typed(drain_all(&mut r.rx))
             .into_iter()
-            .filter(|e| matches!(e, DaemonEvent::SessionClosed { .. }))
+            .filter(|e| matches!(e, DaemonEvent::SessionClosing { .. }))
             .collect();
         assert_eq!(closed.len(), 1);
     }
@@ -1070,7 +1070,7 @@ mod tests {
         let ev = typed(drain_all(&mut r.rx));
         assert_eq!(ev.len(), 1, "{ev:?}");
         assert!(
-            matches!(&ev[0], DaemonEvent::SessionClosed { id, dir, reason: CloseReason::Crash, last_status: Some(s), .. }
+            matches!(&ev[0], DaemonEvent::SessionClosing { id, dir, reason: CloseReason::Crash, last_status: Some(s), .. }
             if id == ID && dir == "/work" && s == "working"),
             "{ev:?}"
         );

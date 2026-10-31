@@ -339,6 +339,36 @@ pub fn tui_main(host: &dyn Host) -> Result<i32, Fail> {
     })
 }
 
+/// A running, current daemon for a command that talks to the API (a CLI
+/// plugin with `needs_daemon`): the TUI launcher's checks and stale-daemon
+/// handling, then wait for health instead of starting the TUI.
+pub fn ensure_daemon(host: &dyn Host) -> Result<(), Fail> {
+    check_prerequisites(host)?;
+    let port = host.port();
+    let health = host.fetch_health(750);
+    let stale = health
+        .as_ref()
+        .is_some_and(|h| daemon_is_stale(h, host.version()));
+    if let (true, Some(h)) = (stale, &health) {
+        stop_stale_daemon(host, h)?;
+    }
+    if health.is_none() || stale {
+        if !stale {
+            detail(
+                host,
+                &format!("no daemon on port {port} — starting one (it outlives this command)"),
+            );
+        }
+        host.spawn_daemon().map_err(Fail)?;
+        if !wait_for_health(host) {
+            return Err(Fail(format!(
+                "claude-garage daemon did not come up on port {port}"
+            )));
+        }
+    }
+    Ok(())
+}
+
 // ── `claude-garage restart` ─────────────────────────────────────────────
 
 fn display(v: Option<&Value>) -> String {
@@ -505,6 +535,8 @@ mod tests {
         fetches: RefCell<u64>,
         host_backend: bool,
         verbose: bool,
+        /// The `GARAGE_*` variables the process had when the TUI was started.
+        tui_garage_env: RefCell<Vec<String>>,
     }
 
     impl Fake {
@@ -532,6 +564,7 @@ mod tests {
                 fetches: Default::default(),
                 host_backend: false,
                 verbose: false,
+                tui_garage_env: Default::default(),
             }
         }
         fn called(&self, prefix: &str) -> usize {
@@ -666,6 +699,11 @@ mod tests {
             self.calls
                 .borrow_mut()
                 .push(format!("run_tui {}", bin.display()));
+            // the real host starts the TUI in this process's own environment
+            *self.tui_garage_env.borrow_mut() = std::env::vars()
+                .map(|(k, _)| k)
+                .filter(|k| k.starts_with("GARAGE_"))
+                .collect();
             if let Some(s) = starting {
                 let env: Vec<String> = s.env().iter().map(|(k, v)| format!("{k}={v}")).collect();
                 self.calls
@@ -903,6 +941,36 @@ mod tests {
             assert!(!verbose_from(Some(off)), "{off}");
         }
         assert!(!verbose_from(None));
+    }
+
+    #[test]
+    fn ensure_daemon_starts_one_when_none_runs_and_leaves_a_current_one_alone() {
+        let f = Fake::new(None);
+        assert_eq!(ensure_daemon(&f), Ok(()));
+        assert_eq!(f.called("spawn_daemon"), 1);
+        assert_eq!(
+            f.called("run_tui /fake/garage-wall"),
+            0,
+            "never starts the TUI"
+        );
+
+        let f = Fake::new(Some(health(Some(V), Some(321))));
+        assert_eq!(ensure_daemon(&f), Ok(()));
+        assert_eq!(f.called("spawn_daemon"), 0);
+        assert_eq!(f.called("terminate"), 0);
+    }
+
+    #[test]
+    fn ensure_daemon_replaces_a_stale_daemon_and_fails_when_it_never_comes_up() {
+        let f = Fake::new(Some(health(Some("0.5.0"), Some(4242))));
+        assert_eq!(ensure_daemon(&f), Ok(()));
+        assert_eq!(f.called("terminate 4242"), 1);
+        assert_eq!(f.called("spawn_daemon"), 1);
+
+        let mut f = Fake::new(None);
+        f.spawn_brings_up = false;
+        let err = ensure_daemon(&f).unwrap_err();
+        assert!(err.0.contains("did not come up on port 4747"), "{}", err.0);
     }
 
     #[test]
@@ -1166,5 +1234,119 @@ mod tests {
             restart_main(&f, true, false).unwrap_err().0,
             "session restart failed (502)"
         );
+    }
+
+    // ── CLI plugin routes (`claude-garage <word>`) ──────────────────────
+
+    #[cfg(unix)]
+    mod dispatch {
+        use super::*;
+        use crate::plugin::cmd::dispatch_route;
+        use crate::plugin::external::route;
+        use crate::plugin::registry::load_all;
+        use crate::plugin::testkit::link_plugin;
+        use garage_daemon::plugins::layout::Paths;
+
+        fn words(w: &[&str]) -> Vec<String> {
+            w.iter().map(|s| (*s).to_owned()).collect()
+        }
+
+        /// A fallback plugin that needs the daemon and runs `sh -c <script>`.
+        fn folder_plugin(script: &str) -> (tempfile::TempDir, Paths) {
+            let d = tempfile::tempdir().unwrap();
+            let paths = Paths::new(d.path());
+            let command = format!("\"sh\", \"-c\", {script:?}, \"sh\"");
+            link_plugin(
+                &paths,
+                d.path(),
+                "opener",
+                &format!(
+                    "[[cli]]\nname = \"open\"\ncommand = [{command}]\nfallback = true\nneeds_daemon = true\n"
+                ),
+                true,
+            );
+            (d, paths)
+        }
+
+        fn go(f: &Fake, paths: &Paths, argv: &[&str], cwd: &Path) -> Result<Option<i32>, String> {
+            let argv = words(argv);
+            let all = load_all(paths).unwrap();
+            let r = route(&all, &argv).expect("the fallback takes the word");
+            dispatch_route(f, paths, &r, &argv, cwd, Some(cwd))
+        }
+
+        #[test]
+        fn a_mistyped_word_never_starts_or_replaces_a_daemon() {
+            let (d, paths) = folder_plugin("exit 0");
+            // a daemon is not running, and a stale one would be replaced: neither may happen
+            for daemon in [None, Some(health(Some("0.0.1"), Some(77)))] {
+                let f = Fake::new(daemon);
+                assert_eq!(go(&f, &paths, &["instal"], d.path()), Ok(None));
+                assert_eq!(go(&f, &paths, &["~/no/such/folder"], d.path()), Ok(None));
+                assert_eq!(
+                    f.log(),
+                    Vec::<String>::new(),
+                    "no probe, no spawn, no terminate: the check came first"
+                );
+            }
+            // a file is not a folder either
+            std::fs::write(d.path().join("notes.txt"), "x").unwrap();
+            let f = Fake::new(None);
+            assert_eq!(go(&f, &paths, &["notes.txt"], d.path()), Ok(None));
+            assert!(f.log().is_empty());
+        }
+
+        #[test]
+        fn a_tilde_word_that_cannot_be_used_says_why_instead_of_the_generic_error() {
+            let (d, paths) = folder_plugin("exit 0");
+            let f = Fake::new(None);
+            let err = go(&f, &paths, &["~no-such-user-xyz/app"], d.path()).unwrap_err();
+            assert!(err.contains("no such user: no-such-user-xyz"), "{err}");
+            assert!(f.log().is_empty());
+        }
+
+        #[test]
+        fn a_real_folder_starts_the_daemon_and_runs_the_plugin() {
+            let (d, paths) = folder_plugin("exit 4");
+            let folder = d.path().join("app");
+            std::fs::create_dir(&folder).unwrap();
+            let f = Fake::new(None);
+            assert_eq!(go(&f, &paths, &["app"], d.path()), Ok(Some(4)));
+            assert_eq!(f.called("spawn_daemon"), 1);
+            assert_eq!(f.called("run_tui"), 0, "no hand-over asked for");
+        }
+
+        #[test]
+        fn a_plugin_that_asks_for_the_wall_gets_it_from_the_launcher_without_its_secrets() {
+            let (d, paths) = folder_plugin(r#"printf '{"open_wall": true}' > "$GARAGE_HANDOVER""#);
+            std::fs::create_dir(d.path().join("app")).unwrap();
+            let f = Fake::new(Some(health(Some(V), Some(5))));
+            assert_eq!(go(&f, &paths, &["app"], d.path()), Ok(Some(0)));
+            assert_eq!(f.called("run_tui /fake/garage-wall"), 1, "{:?}", f.log());
+            let seen = f.tui_garage_env.borrow().clone();
+            for secret in [
+                "GARAGE_PLUGIN_TOKEN",
+                "GARAGE_CONTEXT",
+                "GARAGE_HANDOVER",
+                "GARAGE_PLUGIN_ID",
+                "GARAGE_API",
+                "GARAGE_BIN",
+            ] {
+                assert!(
+                    !seen.iter().any(|k| k == secret),
+                    "{secret} reached the wall: {seen:?}"
+                );
+            }
+        }
+
+        #[test]
+        fn a_plugin_that_failed_does_not_open_the_wall_and_its_exit_code_stands() {
+            let (d, paths) =
+                folder_plugin(r#"printf '{"open_wall": true}' > "$GARAGE_HANDOVER"; exit 9"#);
+            std::fs::create_dir(d.path().join("app")).unwrap();
+            let f = Fake::new(Some(health(Some(V), Some(5))));
+            assert_eq!(go(&f, &paths, &["app"], d.path()), Ok(Some(9)));
+            assert_eq!(f.called("run_tui"), 0);
+        }
     }
 }

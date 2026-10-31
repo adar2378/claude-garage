@@ -268,11 +268,22 @@ impl GarageClient {
         id: &str,
         meta_only: bool,
     ) -> Result<Option<WorktreeRecord>, ApiError> {
-        let path = format!(
-            "/api/sessions/{}{}",
-            encode_component(id),
-            if meta_only { "?meta=1" } else { "" }
-        );
+        self.delete_session_with(id, if meta_only { "?meta=1" } else { "" })
+    }
+
+    /// `DELETE /api/sessions/<id>?forget=1` — kill a LIVE session and keep no
+    /// closed record (no way back). Returns the worktree record like
+    /// [`Self::delete_session`].
+    pub fn forget_session(&self, id: &str) -> Result<Option<WorktreeRecord>, ApiError> {
+        self.delete_session_with(id, "?forget=1")
+    }
+
+    fn delete_session_with(
+        &self,
+        id: &str,
+        query: &str,
+    ) -> Result<Option<WorktreeRecord>, ApiError> {
+        let path = format!("/api/sessions/{}{query}", encode_component(id));
         let body = read_json(
             self.agent
                 .delete(&format!("{}{}", self.base_url, path))
@@ -652,6 +663,43 @@ mod tests {
         tokens.forget();
         assert!(tokens.get().is_err(), "an empty file is no credential");
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn deleting_a_live_session_asks_the_daemon_to_forget_it() {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let server = std::thread::spawn(move || {
+            let mut lines = Vec::new();
+            for _ in 0..2 {
+                let (mut sock, _) = listener.accept().unwrap();
+                let mut buf = [0u8; 2048];
+                let n = sock.read(&mut buf).unwrap();
+                let text = String::from_utf8_lossy(&buf[..n]).into_owned();
+                lines.push(text.lines().next().unwrap_or_default().to_owned());
+                let body = r#"{"deleted":true,"worktree":null}"#;
+                write!(
+                    sock,
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                )
+                .unwrap();
+            }
+            lines
+        });
+        let client = GarageClient::new(Some(base));
+        assert_eq!(client.forget_session("garage/a/x").unwrap(), None);
+        assert_eq!(client.delete_session("garage/a/y", true).unwrap(), None);
+        let lines = server.join().unwrap();
+        assert_eq!(
+            lines[0],
+            "DELETE /api/sessions/garage%2Fa%2Fx?forget=1 HTTP/1.1"
+        );
+        assert_eq!(
+            lines[1],
+            "DELETE /api/sessions/garage%2Fa%2Fy?meta=1 HTTP/1.1"
+        );
     }
 
     #[test]

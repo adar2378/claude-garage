@@ -34,6 +34,9 @@ pub enum Effect {
         label: String,
         meta_only: bool,
     },
+    /// A confirmed `session.delete` on a LIVE session:
+    /// `DELETE /api/sessions/<id>?forget=1` kills it and keeps no history.
+    Forget { id: String, label: String },
     /// Confirmed `X`-`X` (registry-only) or `X` then `K` (`kill: true`,
     /// `?sessions=kill`).
     RemoveWorkspace { name: String, kill: bool },
@@ -213,6 +216,17 @@ pub(super) fn run_effect(effect: Effect, tx: &EventSender, base_url: &str) {
                     }
                     Ok(None) => send_notice(&tx, format!("closed {label}"), 2000),
                     Err(e) => send_notice(&tx, failure_notice("close failed", &e), 5000),
+                }
+                fetch_and_send(&client, &tx);
+            }
+            Effect::Forget { id, label } => {
+                match client.forget_session(&id) {
+                    Ok(Some(record)) => {
+                        send_notice(&tx, format!("deleted {label}"), 2000);
+                        let _ = tx.send(AppEvent::WorktreeClosed(record));
+                    }
+                    Ok(None) => send_notice(&tx, format!("deleted {label}"), 2000),
+                    Err(e) => send_notice(&tx, failure_notice("delete failed", &e), 5000),
                 }
                 fetch_and_send(&client, &tx);
             }

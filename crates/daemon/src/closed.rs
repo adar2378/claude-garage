@@ -3,6 +3,12 @@
 //! (`GET /api/workspaces/{name}/closed`). A session that comes back (restored,
 //! or created under the same id) drops its record.
 //!
+//! The poller publishes the internal `SessionClosing`; this task writes the
+//! record and only then publishes the public `SessionClosed` (the plugin
+//! event `session.closed`), so a plugin woken by it can read the record at
+//! once. A record rebuilt by [`reconcile`] after lagging is announced the same
+//! way.
+//!
 //! A record carries the Claude session id, so restoring it resumes the
 //! conversation. The bus is lossy: when this task falls behind it cannot know
 //! which closes and creates it missed, so it rescans the backend and the
@@ -15,6 +21,7 @@ use tokio::task::JoinHandle;
 
 use crate::backend::SessionBackend;
 use crate::bus::{DaemonEvent, EventBus};
+use crate::closing::CloseReason;
 use crate::git::resolve_branch;
 use crate::state::registry::{ClosedRecord, Registry};
 use crate::state::status::now_ms;
@@ -25,10 +32,11 @@ pub fn spawn(
     backend: Arc<dyn SessionBackend>,
 ) -> JoinHandle<()> {
     let mut rx = bus.subscribe();
+    let bus = bus.clone();
     tokio::spawn(async move {
         loop {
             match rx.recv().await {
-                Ok(DaemonEvent::SessionClosed {
+                Ok(DaemonEvent::SessionClosing {
                     id,
                     dir,
                     workspace,
@@ -50,17 +58,24 @@ pub fn spawn(
                         .or_else(|| prior.and_then(|r| r.worktree));
                     let branch = resolve_branch(&dir).await;
                     let rec = ClosedRecord {
-                        id,
-                        workspace,
-                        dir,
+                        id: id.clone(),
+                        workspace: workspace.clone(),
+                        dir: dir.clone(),
                         branch,
                         closed_at: now_ms(),
                         reason: reason.as_str().to_owned(),
-                        last_status,
+                        last_status: last_status.clone(),
                         claude_session_id,
                         worktree,
                     };
                     let _ = registry.record_closed(rec).await;
+                    bus.publish(DaemonEvent::SessionClosed {
+                        id,
+                        dir,
+                        workspace,
+                        reason,
+                        last_status,
+                    });
                 }
                 Ok(DaemonEvent::SessionCreated { id, .. }) => {
                     let _ = registry.remove_closed(&id).await;
@@ -70,7 +85,15 @@ pub fn spawn(
                     eprintln!(
                         "closed: fell behind the bus and missed {missed} events; reconciling closed records with the backend"
                     );
-                    reconcile(&registry, backend.as_ref()).await;
+                    for rec in reconcile(&registry, backend.as_ref()).await {
+                        bus.publish(DaemonEvent::SessionClosed {
+                            id: rec.id,
+                            dir: rec.dir,
+                            workspace: rec.workspace,
+                            reason: CloseReason::Crash,
+                            last_status: None,
+                        });
+                    }
                 }
                 Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
             }
@@ -83,9 +106,11 @@ pub fn spawn(
 /// metadata that is neither live nor recorded gets a `crash` record (its
 /// `SessionClosed` was lost; the real reason is unknown). A failing backend
 /// listing changes nothing.
-pub async fn reconcile(registry: &Registry, backend: &dyn SessionBackend) {
+/// Returns the `crash` records it created (their `SessionClosed` was lost).
+pub async fn reconcile(registry: &Registry, backend: &dyn SessionBackend) -> Vec<ClosedRecord> {
+    let mut created = Vec::new();
     let Ok(live) = backend.list().await else {
-        return;
+        return created;
     };
     let live: HashSet<String> = live.into_iter().map(|s| s.id).collect();
     let workspaces = registry.list_workspaces().await;
@@ -121,8 +146,11 @@ pub async fn reconcile(registry: &Registry, backend: &dyn SessionBackend) {
             claude_session_id: meta.claude_session_id,
             worktree: meta.worktree,
         };
-        let _ = registry.record_closed(rec).await;
+        if registry.record_closed(rec.clone()).await.is_ok() {
+            created.push(rec);
+        }
     }
+    created
 }
 
 #[cfg(test)]
@@ -150,7 +178,7 @@ mod tests {
     }
 
     fn closed_event(id: &str) -> DaemonEvent {
-        DaemonEvent::SessionClosed {
+        DaemonEvent::SessionClosing {
             id: id.into(),
             dir: "/nonexistent-dir".into(),
             workspace: "ws".into(),
@@ -194,6 +222,55 @@ mod tests {
             (rec.claude_session_id.as_deref(), rec.reason.as_str()),
             (Some("conv-1"), "crash")
         );
+    }
+
+    #[tokio::test]
+    async fn session_closed_is_published_only_after_the_record_can_be_read() {
+        let r = rig(64);
+        r.registry.upsert_workspace("ws", "/w").await.unwrap();
+        let mut rx = r.bus.subscribe();
+        let _t = spawn(&r.bus, r.registry.clone(), r.backend.clone());
+        r.bus.publish(closed_event("garage/ws/a"));
+        let end = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            match rx.recv().await.unwrap() {
+                DaemonEvent::SessionClosing { .. } => {
+                    // the plugin-visible event has not been sent yet
+                }
+                DaemonEvent::SessionClosed { id, reason, .. } => {
+                    assert_eq!((id.as_str(), reason), ("garage/ws/a", CloseReason::Crash));
+                    assert!(
+                        r.registry.get_closed("garage/ws/a").await.is_some(),
+                        "a hook woken by session.closed finds the record"
+                    );
+                    break;
+                }
+                _ => {}
+            }
+            assert!(std::time::Instant::now() < end, "timed out");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_record_rebuilt_after_lagging_is_announced_as_closed() {
+        let r = rig(2);
+        r.registry.upsert_workspace("ws", "/w").await.unwrap();
+        meta(&r, "garage/ws/lost", "conv-a").await;
+        let mut rx = r.bus.subscribe();
+        let _t = spawn(&r.bus, r.registry.clone(), r.backend.clone());
+        for i in 0..10 {
+            r.bus.publish(closed_event(&format!("garage/ws/noise{i}")));
+        }
+        let end = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            if let Ok(DaemonEvent::SessionClosed { id, .. }) = rx.recv().await
+                && id == "garage/ws/lost"
+            {
+                assert!(r.registry.get_closed("garage/ws/lost").await.is_some());
+                break;
+            }
+            assert!(std::time::Instant::now() < end, "timed out");
+        }
     }
 
     #[tokio::test]

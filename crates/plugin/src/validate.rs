@@ -1226,6 +1226,7 @@ priority = 5
                 description: None,
                 command: vec!["x".into()],
                 fallback: fallback_on == Some(n),
+                needs_daemon: false,
             })
             .collect();
         m

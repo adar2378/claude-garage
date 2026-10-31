@@ -756,23 +756,59 @@ pub async fn remove(
                 format!("session is live — delete it without meta=1: {id}"),
             );
         }
-        let Some(meta) = st.registry.get_session_meta(&id).await else {
+        // A deliberately closed session has no metadata any more, only its
+        // closed record: forgetting it removes that record.
+        let meta = st.registry.get_session_meta(&id).await;
+        let closed = st.registry.get_closed(&id).await;
+        let worktree = match meta
+            .as_ref()
+            .and_then(|m| m.worktree.as_ref())
+            .or_else(|| closed.as_ref().and_then(|c| c.worktree.as_ref()))
+        {
+            Some(w) => with_target(w).await,
+            None => Value::Null,
+        };
+        if meta.is_none() && closed.is_none() {
             return error_response(
                 StatusCode::NOT_FOUND,
                 format!("no resume metadata for: {id}"),
             );
-        };
+        }
         let _ = st.registry.remove_session_meta(&id).await;
         let _ = st.registry.remove_closed(&id).await;
-        let worktree = match &meta.worktree {
-            Some(w) => with_target(w).await,
-            None => Value::Null,
-        };
+        let (workspace, _) = split_session_id(&id);
+        st.bus
+            .publish(crate::bus::DaemonEvent::SessionForgotten { id, workspace });
         return Json(json!({"deleted": true, "meta": true, "worktree": worktree})).into_response();
     }
 
     if !live {
         return error_response(StatusCode::NOT_FOUND, format!("no such session: {id}"));
+    }
+    // `?forget=1` kills a LIVE session and leaves no history: no closed
+    // record, no resume metadata, no `session.closed`; the bus says
+    // `session.forgotten` instead.
+    if q.get("forget").map(String::as_str) == Some("1") {
+        let meta = st.registry.get_session_meta(&id).await;
+        st.closing.mark_forgotten(&id);
+        if let Err(e) = st.backend.kill(&id).await {
+            st.closing.clear(&id);
+            return server_error(e);
+        }
+        let _ = st.registry.remove_session_meta(&id).await;
+        let _ = st.registry.remove_closed(&id).await;
+        st.telemetry.context.drop_session(&id);
+        st.telemetry.transcripts.clear_cache(&id);
+        st.status.drop_session(&id);
+        let worktree = match meta.as_ref().and_then(|m| m.worktree.as_ref()) {
+            Some(w) => with_target(w).await,
+            None => Value::Null,
+        };
+        let (workspace, _) = split_session_id(&id);
+        st.bus
+            .publish(crate::bus::DaemonEvent::SessionForgotten { id, workspace });
+        return Json(json!({"deleted": true, "forgotten": true, "worktree": worktree}))
+            .into_response();
     }
     // Capture the meta BEFORE removing it: the worktree record rides the
     // response so the caller can drive worktrees/finish afterwards.
@@ -1243,6 +1279,43 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn forgetting_a_closed_only_session_drops_its_record_and_says_so_on_the_bus() {
+        let h = harness();
+        h.workspace("ws").await;
+        // a deliberate close leaves a closed record and no resume metadata
+        h.st.registry
+            .record_closed(crate::state::registry::ClosedRecord {
+                id: "garage/ws/gone".into(),
+                workspace: "ws".into(),
+                dir: "/d".into(),
+                branch: None,
+                closed_at: 1,
+                reason: "user".into(),
+                last_status: None,
+                claude_session_id: Some("c".into()),
+                worktree: None,
+            })
+            .await
+            .unwrap();
+        let mut rx = h.st.bus.subscribe();
+        let (c, body) = h
+            .call("DELETE", "/api/sessions/garage%2Fws%2Fgone?meta=1", None)
+            .await;
+        assert_eq!(c, StatusCode::OK, "{body}");
+        assert!(h.st.registry.get_closed("garage/ws/gone").await.is_none());
+        match rx.recv().await.unwrap() {
+            crate::bus::DaemonEvent::SessionForgotten { id, workspace } => {
+                assert_eq!((id.as_str(), workspace.as_str()), ("garage/ws/gone", "ws"));
+            }
+            other => panic!("{other:?}"),
+        }
+        let (c, _) = h
+            .call("DELETE", "/api/sessions/garage%2Fws%2Fgone?meta=1", None)
+            .await;
+        assert_eq!(c, StatusCode::NOT_FOUND, "nothing left to forget");
+    }
+
     // --- sessions.title.test.js ---
 
     #[tokio::test]
@@ -1707,6 +1780,76 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn forgetting_a_live_session_kills_it_and_leaves_no_closed_record_and_no_close_event() {
+        let h = harness();
+        let dir = h.workspace("ws").await;
+        h.live("garage/ws/a", &dir).await;
+        h.live("garage/ws/b", &dir).await;
+        h.st.registry
+            .upsert_session_meta("garage/ws/a", meta(Some("conv-1"), "ws", "a"))
+            .await
+            .unwrap();
+        let recorder = crate::closed::spawn(&h.st.bus, h.st.registry.clone(), h.st.backend.clone());
+        let poller = h.st.shared_poller();
+        poller.poll_once().await; // the poller knows both sessions
+        let mut rx = h.st.bus.subscribe();
+
+        let (c, body) = h
+            .call("DELETE", "/api/sessions/garage%2Fws%2Fa?forget=1", None)
+            .await;
+        assert_eq!(c, StatusCode::OK, "{body}");
+        assert!(!h.st.backend.has("garage/ws/a").await.unwrap(), "killed");
+        assert!(
+            h.st.registry
+                .get_session_meta("garage/ws/a")
+                .await
+                .is_none()
+        );
+        // a plain close of the other one for contrast: it does leave a record
+        let (c, _) = h
+            .call("DELETE", "/api/sessions/garage%2Fws%2Fb", None)
+            .await;
+        assert_eq!(c, StatusCode::OK);
+
+        poller.poll_once().await; // sees both vanish
+        h.tmux
+            .wait_for_async(|| async { h.st.registry.get_closed("garage/ws/b").await.is_some() })
+            .await;
+        assert!(
+            h.st.registry.get_closed("garage/ws/a").await.is_none(),
+            "no history for a forgotten session"
+        );
+        let mut seen = Vec::new();
+        while !seen.contains(&"closed garage/ws/b".to_string()) {
+            let ev = tokio::time::timeout(std::time::Duration::from_secs(5), rx.recv())
+                .await
+                .expect("b's close is announced")
+                .unwrap();
+            match ev {
+                DaemonEvent::SessionForgotten { id, .. } => seen.push(format!("forgotten {id}")),
+                DaemonEvent::SessionClosed { id, .. } => seen.push(format!("closed {id}")),
+                _ => {}
+            }
+        }
+        assert!(
+            seen.contains(&"forgotten garage/ws/a".to_string()),
+            "{seen:?}"
+        );
+        assert!(seen.contains(&"closed garage/ws/b".to_string()), "{seen:?}");
+        assert!(
+            !seen.contains(&"closed garage/ws/a".to_string()),
+            "{seen:?}"
+        );
+        recorder.abort();
+
+        // a session that is not live cannot be forgotten this way
+        let (c, _) = h
+            .call("DELETE", "/api/sessions/garage%2Fws%2Fa?forget=1", None)
+            .await;
+        assert_eq!(c, StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
     async fn a_deliberate_close_keeps_a_record_with_the_claude_session_id_and_restore_works_from_it()
      {
         let mut h = harness();
@@ -1747,7 +1890,7 @@ mod tests {
 
         // the poller's close event (a tick later) must not wipe the id
         let recorder = crate::closed::spawn(&h.st.bus, h.st.registry.clone(), h.st.backend.clone());
-        h.st.bus.publish(DaemonEvent::SessionClosed {
+        h.st.bus.publish(DaemonEvent::SessionClosing {
             id: "garage/ws/a".into(),
             dir: dir.clone(),
             workspace: "ws".into(),
@@ -1874,7 +2017,7 @@ mod tests {
                 .await
                 .unwrap()
                 .closed_at;
-        h.st.bus.publish(DaemonEvent::SessionClosed {
+        h.st.bus.publish(DaemonEvent::SessionClosing {
             id: "garage/ws/w".into(),
             dir: wt.clone(),
             workspace: "ws".into(),

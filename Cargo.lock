@@ -403,6 +403,7 @@ dependencies = [
  "garage-daemon",
  "garage-host",
  "garage-plugin",
+ "garage-plugin-sdk",
  "garage-protocol",
  "libc",
  "serde_json",
@@ -883,6 +884,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "fs4"
+version = "1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7e72ed92b67c146290f88e9c89d60ca163ea417a446f61ffd7b72df3e7f1dfd5"
+dependencies = [
+ "rustix",
+ "windows-sys",
+]
+
+[[package]]
 name = "futures-core"
 version = "0.3.34"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -960,7 +971,46 @@ dependencies = [
 ]
 
 [[package]]
+name = "garage-plugin-cli-extras"
+version = "0.6.2"
+dependencies = [
+ "garage-plugin-sdk",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
+name = "garage-plugin-closed-chats"
+version = "0.6.2"
+dependencies = [
+ "fs4",
+ "garage-plugin-sdk",
+ "tempfile",
+]
+
+[[package]]
 name = "garage-plugin-hello"
+version = "0.6.2"
+dependencies = [
+ "garage-plugin-sdk",
+]
+
+[[package]]
+name = "garage-plugin-jump-palette"
+version = "0.6.2"
+dependencies = [
+ "garage-plugin-sdk",
+]
+
+[[package]]
+name = "garage-plugin-prune-empty-projects"
+version = "0.6.2"
+dependencies = [
+ "garage-plugin-sdk",
+]
+
+[[package]]
+name = "garage-plugin-quick-send"
 version = "0.6.2"
 dependencies = [
  "garage-plugin-sdk",
@@ -970,9 +1020,12 @@ dependencies = [
 name = "garage-plugin-sdk"
 version = "0.6.2"
 dependencies = [
+ "crossterm",
  "garage-protocol",
  "serde_json",
+ "tempfile",
  "ureq",
+ "uzers",
 ]
 
 [[package]]
@@ -2865,6 +2918,16 @@ checksum = "23b082222b4f6619906941c17eb2297fff4c2fb96cb60164170522942a200bd8"
 dependencies = [
  "outref",
  "vsimd",
+]
+
+[[package]]
+name = "uzers"
+version = "0.12.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0b8275fb1afee25b4111d2dc8b5c505dbbc4afd0b990cb96deb2d88bff8be18d"
+dependencies = [
+ "libc",
+ "log",
 ]
 
 [[package]]

@@ -1,0 +1,38 @@
+#:schema https://raw.githubusercontent.com/adar2378/claude-garage/main/schemas/garage-plugin.schema.json
+id          = "cli-extras"
+name        = "CLI extras"
+version     = "0.1.0"
+api_version = 1
+platforms   = ["macos", "linux"]
+description = "claude-garage <folder> opens a folder as a project, plus install and prune"
+permissions = ["workspaces.read", "workspaces.write", "sessions.read", "sessions.manage"]
+
+# `claude-garage ~/dev/app` and `claude-garage open ~/dev/app`: register the
+# folder as a project, start a session if it has none, then open the wall.
+# The fallback receives an unknown first word only when it is an existing
+# folder (~, ~user, relative and absolute spellings): checked before any daemon
+# is started, so a mistyped command gets the usual "unrecognized subcommand"
+# error and starts nothing. The plugin does not start the wall: it asks the
+# launcher to (GARAGE_HANDOVER), and the launcher opens it after this exits.
+[[cli]]
+name         = "open"
+description  = "Open a folder as a project and start a session"
+command      = ["{plugin_dir}/bin/cli-extras", "open"]
+fallback     = true
+needs_daemon = true
+
+# Install the Claude Code hooks and the statusline wrapper.
+[[cli]]
+name         = "install"
+description  = "Install the garage hooks and statusline into Claude Code settings"
+command      = ["{plugin_dir}/bin/cli-extras", "install"]
+needs_daemon = true
+
+# Remove projects that have no session and no closed chat. It lists them and
+# asks first (--yes skips the question, --dry-run only lists). A project added
+# in the last ten minutes is never removed.
+[[cli]]
+name         = "prune"
+description  = "Remove projects with no sessions (asks first; --yes, --dry-run)"
+command      = ["{plugin_dir}/bin/cli-extras", "prune"]
+needs_daemon = true

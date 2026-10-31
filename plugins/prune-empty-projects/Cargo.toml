@@ -1,0 +1,20 @@
+[package]
+name = "garage-plugin-prune-empty-projects"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "claude-garage bundled plugin: closing a project's last chat removes the project"
+publish = false
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "prune-empty-projects"
+path = "src/main.rs"
+
+[dependencies]
+garage-plugin-sdk = { path = "../../crates/plugin-sdk" }
+
+[dev-dependencies]
+garage-plugin-sdk = { path = "../../crates/plugin-sdk", features = ["testing"] }

@@ -480,7 +480,54 @@ pub fn dispatch_external(argv: &[String]) -> Result<Option<i32>, String> {
             return Ok(None);
         }
     };
-    Ok(external::route(&all, argv).map(|r| external::run(&paths, config.port, &r, argv)))
+    let Some(route) = external::route(&all, argv) else {
+        return Ok(None);
+    };
+    let host = crate::host::RealHost { port: config.port };
+    let cwd = std::env::current_dir().unwrap_or_default();
+    let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
+    dispatch_route(&host, &paths, &route, argv, &cwd, home.as_deref())
+}
+
+/// Run a routed CLI plugin.
+///
+/// A fallback route that needs the daemon only ever receives a word that is an
+/// existing folder (that is what a fallback is for): the check happens here,
+/// BEFORE any daemon is started or replaced, so a mistyped subcommand
+/// (`claude-garage instal`) cannot start anything.
+///
+/// If the plugin finished and asked for the wall, the wall is opened here, by
+/// the launcher, in this process's own environment: the plugin's token and run
+/// context never reach it.
+pub(crate) fn dispatch_route(
+    host: &dyn crate::launcher::Host,
+    paths: &Paths,
+    route: &external::Route,
+    argv: &[String],
+    cwd: &std::path::Path,
+    home: Option<&std::path::Path>,
+) -> Result<Option<i32>, String> {
+    if route.fallback && route.needs_daemon {
+        let word = argv.first().map(String::as_str).unwrap_or_default();
+        match garage_plugin_sdk::folder::resolve_folder(word, cwd, home) {
+            Ok(_) => {}
+            // not a folder: the usual unrecognized-subcommand error
+            Err(garage_plugin_sdk::folder::FolderError::NotADirectory) => return Ok(None),
+            // a word written like a path (`~bob`), but unusable: say why
+            Err(e) if word.starts_with('~') || word.contains('/') => {
+                return Err(format!("{word}: {e}"));
+            }
+            Err(_) => return Ok(None),
+        }
+    }
+    if route.needs_daemon {
+        crate::launcher::ensure_daemon(host).map_err(|f| f.0)?;
+    }
+    let ran = external::run(paths, host.port(), route, argv);
+    if ran.open_wall {
+        return crate::launcher::tui_main(host).map(Some).map_err(|f| f.0);
+    }
+    Ok(Some(ran.code))
 }
 
 #[cfg(test)]

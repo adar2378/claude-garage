@@ -830,6 +830,11 @@ async fn run_action(
 /// `POST /api/sessions/input`: type text into a session. Token REQUIRED,
 /// permission `sessions.input`. The id is in the body because session ids
 /// contain slashes.
+///
+/// `if_status: {"not": ["needs-input"]}` refuses (409) when the session is in
+/// one of those states. The status is read right before the keys go out, so a
+/// plugin that checked a moment earlier cannot answer a permission prompt by
+/// accident.
 async fn session_input(State(st): State<AppState>, headers: HeaderMap, body: Bytes) -> Response {
     let plugin = match authed(&st, &headers, Permission::SessionsInput) {
         Ok(p) => p,
@@ -849,8 +854,42 @@ async fn session_input(State(st): State<AppState>, headers: HeaderMap, body: Byt
             "refusing to touch non-garage sessions",
         );
     }
+    let refused: Vec<String> = match body.get("if_status") {
+        None | Some(Value::Null) => Vec::new(),
+        Some(Value::Object(o)) => match o.get("not") {
+            Some(Value::Array(a)) if a.iter().all(Value::is_string) => a
+                .iter()
+                .filter_map(|v| v.as_str().map(str::to_owned))
+                .collect(),
+            _ => {
+                return error_response(
+                    StatusCode::BAD_REQUEST,
+                    "if_status.not must be an array of status names",
+                );
+            }
+        },
+        Some(_) => {
+            return error_response(
+                StatusCode::BAD_REQUEST,
+                "if_status must be an object like {\"not\": [\"needs-input\"]}",
+            );
+        }
+    };
     if !st.backend.has(id).await.unwrap_or(false) {
         return error_response(StatusCode::NOT_FOUND, format!("no such session: {id}"));
+    }
+    if !refused.is_empty() {
+        let now = serde_json::to_value(st.status.get(id))
+            .ok()
+            .and_then(|v| v.as_str().map(str::to_owned))
+            .unwrap_or_default();
+        if refused.contains(&now) {
+            return (
+                StatusCode::CONFLICT,
+                Json(json!({"error": format!("{id} is {now}; nothing was typed"), "status": now})),
+            )
+                .into_response();
+        }
     }
     match st.backend.send_text(id, text).await {
         Ok(()) => {

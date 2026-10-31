@@ -3,6 +3,8 @@
 [workspace]
 resolver = "2"
 members = ["wall", "crates/protocol", "crates/plugin", "crates/host", "crates/daemon", "crates/cli", "crates/plugin-sdk", "plugins/*"]
+# Manifest-only plugins have no crate; the member glob refuses a directory without a Cargo.toml.
+exclude = ["plugins/tile-buttons"]
 
 [workspace.package]
 version = "0.6.2" # keep in step with package.json

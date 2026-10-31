@@ -1,0 +1,14 @@
+#:schema https://raw.githubusercontent.com/adar2378/claude-garage/main/schemas/garage-plugin.schema.json
+id          = "prune-empty-projects"
+name        = "Prune empty projects"
+version     = "0.1.0"
+api_version = 1
+platforms   = ["macos", "linux"]
+description = "Closing a project's last chat removes the project from the rail"
+permissions = ["sessions.read", "workspaces.write"]
+
+# Only a close the user asked for counts; a crash or a daemon restart never
+# removes anything. Removing a project also drops its closed-chat records.
+[[events]]
+on      = "session.closed"
+command = ["{plugin_dir}/bin/prune-empty-projects", "event"]
