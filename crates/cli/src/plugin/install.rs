@@ -713,7 +713,7 @@ mod tests {
     #[test]
     fn a_no_prompt_update_still_refuses_a_cli_name_another_plugin_now_holds() {
         let r = Rig::new();
-        let with_cli = |v: &str| toml("upd", &format!("[[cli]]\nname = \"go\"\ncommand = [\"x\"]\n")).replace("1.0.0", v);
+        let with_cli = |v: &str| toml("upd", "[[cli]]\nname = \"go\"\ncommand = [\"x\"]\n").replace("1.0.0", v);
         let dir = repo::make(r.remote.path(), "o/up", &[("garage-plugin.toml", &with_cli("1.0.0"))]);
         // The rival is registered first (linked, approved), as if added while upd was unchanged.
         let rival = r.garage.path().join("rival-src");

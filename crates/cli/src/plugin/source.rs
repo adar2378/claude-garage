@@ -337,6 +337,7 @@ mod tests {
         assert_eq!(find_symlink_in_path(d.path(), "real/last"), Some(PathBuf::from("real/last")));
     }
 
+    #[cfg(unix)]
     fn plain_git(dir: &Path, args: &[&str], home: Option<&Path>) -> std::process::Output {
         let mut c = Command::new("git");
         c.args(args).current_dir(dir).env("GIT_CONFIG_NOSYSTEM", "1").env("GIT_CONFIG_GLOBAL", "/dev/null");
