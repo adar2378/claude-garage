@@ -598,7 +598,7 @@ mod tests {
 
     fn filler_item(text: &str, x: u16, priority: i16, caption: Option<&str>) -> SlotItem {
         SlotItem {
-            on_click: Some(ClickTarget::new(ActionId::intern(&format!("t:{text}")))),
+            on_click: Some(ClickTarget::new(ActionId::intern(&format!("t:{}", &text[..text.len().min(8)])))),
             placement: Placement::Filler { x, caption: caption.map(str::to_owned) },
             ..SlotItem::new(vec![Span::raw(text.to_owned())], priority)
         }

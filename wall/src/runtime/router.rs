@@ -229,6 +229,9 @@ pub struct GarageRouter {
     /// [`ArmedAction::arm`], confirmed only by a human key or click.
     armed_plugin: ArmedAction,
     plugin_arm: Option<plugin_gate::PluginArm>,
+    /// One-shot proof that a `confirmed` plugin source came from this
+    /// router's own confirm path: (arm key, restart force).
+    confirm_token: Option<(String, bool)>,
     pub notices: Notices,
 }
 
@@ -271,10 +274,16 @@ impl GarageRouter {
             return KeyOutcome { effects, action };
         }
         // A pending plugin arm (p24): `y` confirms it, any other key drops it.
+        self.refresh_plugin_arm(now_ms);
         if self.plugin_arm_pending() {
             if key == "y" {
-                if let Some(action) = self.plugin_confirm_key(now_ms) {
-                    return KeyOutcome { effects, action: Some(action) };
+                match self.plugin_confirm_key(now_ms) {
+                    plugin_gate::ConfirmKey::Run(action) => {
+                        return KeyOutcome { effects, action: Some(*action) };
+                    }
+                    // A racing `y` is swallowed; the prompt stays.
+                    plugin_gate::ConfirmKey::TooSoon => return KeyOutcome::effects(effects),
+                    plugin_gate::ConfirmKey::Gone => {}
                 }
             }
             self.disarm_plugin();

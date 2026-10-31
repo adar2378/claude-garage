@@ -10,7 +10,7 @@ use std::sync::Arc;
 use serde_json::Value;
 
 use crate::api::models::WorktreeRecord;
-use crate::slots::SlotId;
+use crate::slots::{RegionId, SlotId};
 use crate::state::wall_state::WallState;
 
 /// A stable, dotted action name (`session.close`, `jump.blocked`, …).
@@ -22,20 +22,43 @@ impl ActionId {
         self.0
     }
 
-    /// The id for a runtime string (a plugin's `plugin:action`). Core ids
-    /// resolve to their `&'static` constant; anything else is leaked once
-    /// into a process-wide set, so the same string always yields the same
-    /// pointer and `ActionId` stays `Copy`. The set is bounded by the
-    /// installed plugins' declared action ids, so the leak is a few hundred
-    /// bytes (p24 design.md Gap A).
-    pub fn intern(id: &str) -> ActionId {
+    /// Intern an id a plugin MANIFEST declares (`plugin:action`). This is the
+    /// only way the process-wide set grows: the daemon lane calls it once
+    /// per declared action id while loading a manifest, never for a string
+    /// that arrived later (a widget push, a `ui/action` request, a hook
+    /// payload); those go through [`ActionId::lookup`]. Core ids resolve to
+    /// their `&'static` constant. The id must look like `plugin:action`
+    /// (ASCII, at most [`MAX_ID_LEN`] bytes) and the set holds at most
+    /// [`MAX_DECLARED`] plugin ids, so the leak stays a few KB (p24
+    /// design.md Gap A). `None` when the id is refused.
+    pub fn declare(id: &str) -> Option<ActionId> {
         let mut set = INTERNER.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(existing) = set.get(id) {
-            return ActionId(existing);
+            return Some(ActionId(existing));
+        }
+        let shaped = id.len() <= MAX_ID_LEN
+            && id.split_once(':').is_some_and(|(p, a)| !p.is_empty() && !a.is_empty())
+            && id.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b':' | b'_' | b'-' | b'.'));
+        if !shaped || set.len() >= ids::ALL.len() + MAX_DECLARED {
+            return None;
         }
         let leaked: &'static str = Box::leak(id.to_owned().into_boxed_str());
         set.insert(leaked);
-        ActionId(leaked)
+        Some(ActionId(leaked))
+    }
+
+    /// The already-interned id for a runtime string, never adding one. A
+    /// widget-pushed action string maps through this: an id no manifest
+    /// declared (and no core id) yields `None` and the item is refused.
+    pub fn lookup(id: &str) -> Option<ActionId> {
+        let set = INTERNER.lock().unwrap_or_else(|e| e.into_inner());
+        set.get(id).map(|existing| ActionId(existing))
+    }
+
+    /// Test shorthand for [`ActionId::declare`].
+    #[cfg(test)]
+    pub fn intern(id: &str) -> ActionId {
+        ActionId::declare(id).expect("a well-formed test id")
     }
 
     /// True for a plugin id (`plugin:action`). Core ids are dotted and never
@@ -44,6 +67,11 @@ impl ActionId {
         self.0.contains(':')
     }
 }
+
+/// Longest declared plugin action id, in bytes.
+pub const MAX_ID_LEN: usize = 96;
+/// Most plugin ids the interner will ever hold.
+pub const MAX_DECLARED: usize = 1024;
 
 /// The interner, seeded with every core id so interning a core string hands
 /// back the core constant instead of leaking a duplicate.
@@ -214,6 +242,10 @@ pub enum ActionSource {
     /// A plugin's own request (`POST /api/plugins/ui/action`). `confirmed`
     /// is set only by the TUI's confirm path after a human key or click
     /// armed-then-confirmed a dangerous action; a plugin never builds it.
+    /// `/api/plugins/ui/action` (daemon lane) must NEVER deserialize
+    /// `confirmed` from a request body: it builds `ActionSource::plugin(..)`
+    /// and nothing else. The gate also honours `confirmed: true` only with a
+    /// one-shot token its own confirm path issued, so a forged value arms.
     Plugin { plugin: String, confirmed: bool },
 }
 
@@ -250,6 +282,10 @@ pub struct ActionCtx {
     /// actions take their target from `session`/`workspace`, never from
     /// here (p24 design.md Gap E).
     pub args: Option<Arc<Value>>,
+    /// The slot region a click came from (set by `click_ctx`, `None` for
+    /// keys and core click targets). A plugin arm raised by a widget click
+    /// is confirmable only by a click on this exact region.
+    pub region: Option<RegionId>,
     pub source: ActionSource,
 }
 
@@ -264,6 +300,7 @@ impl ActionCtx {
             view: None,
             worktree: None,
             args: None,
+            region: None,
             source,
         }
     }
@@ -523,6 +560,22 @@ mod tests {
         let set = INTERNER.lock().unwrap();
         assert!(set.len() >= before);
         assert!(ids::ALL.iter().all(|id| set.contains(id.as_str())));
+    }
+
+    #[test]
+    fn only_declared_ids_are_interned_and_lookup_never_adds() {
+        let before = INTERNER.lock().unwrap().len();
+        assert_eq!(ActionId::lookup("never:declared"), None, "a pushed string is not interned");
+        assert!(!INTERNER.lock().unwrap().contains("never:declared"));
+        let declared = ActionId::declare("declaredplugin:go").unwrap();
+        assert_eq!(ActionId::lookup("declaredplugin:go"), Some(declared));
+        assert_eq!(ActionId::lookup("session.close"), Some(ids::SESSION_CLOSE), "core ids resolve");
+        assert!(INTERNER.lock().unwrap().len() >= before);
+        // Malformed or oversized ids are refused and add nothing.
+        for bad in ["noprefix", ":x", "p:", "p:has space", "p:é", &format!("p:{}", "a".repeat(MAX_ID_LEN))] {
+            assert_eq!(ActionId::declare(bad), None, "{bad:?}");
+            assert_eq!(ActionId::lookup(bad), None, "{bad:?}");
+        }
     }
 
     #[test]

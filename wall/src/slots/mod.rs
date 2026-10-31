@@ -125,6 +125,37 @@ pub struct SlotClickRegion {
     pub workspace: Option<String>,
 }
 
+impl SlotClickRegion {
+    /// What a confirming click must match exactly: the slot, the painted
+    /// rect and the item's identity (action, plugin, scope, payload). Two
+    /// items at the same place with different ids or targets are different
+    /// regions, and so is the same item after the layout moved it.
+    pub fn identity(&self) -> RegionId {
+        RegionId {
+            slot: self.slot,
+            rect: self.rect,
+            action: self.target.action,
+            plugin: self.target.plugin.clone(),
+            session: self.session.clone(),
+            workspace: self.workspace.clone(),
+            args: self.target.args.clone(),
+        }
+    }
+}
+
+/// The exact region (and item) a plugin arm was raised from; see
+/// [`SlotClickRegion::identity`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RegionId {
+    pub slot: SlotId,
+    pub rect: Rect,
+    pub action: ActionId,
+    pub plugin: Option<Arc<str>>,
+    pub session: Option<String>,
+    pub workspace: Option<String>,
+    pub args: Option<Arc<Value>>,
+}
+
 /// Where a slot's renderer puts an item.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub enum Placement {

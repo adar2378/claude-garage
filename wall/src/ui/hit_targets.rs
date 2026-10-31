@@ -10,7 +10,7 @@ use ratatui::layout::Rect;
 
 use crate::actions::{ids, ActionCtx, ActionId, ActionSource};
 use crate::state::wall_state::{KeyLayer, OverlayKind, WallState};
-use crate::slots::{SlotClickRegion, SlotRegistry};
+use crate::slots::{SlotClickRegion, SlotId, SlotRegistry};
 use crate::ui::layout::WallLayout;
 use crate::ui::rail::{extra_row_items, header_items};
 use crate::ui::triage::triage_queue_rows;
@@ -145,7 +145,12 @@ pub fn click_ctx(state: &WallState, region: &SlotClickRegion, col: u16, row: u16
     // tile closes that tile.
     if let Some(session) = &region.session {
         ctx.session = Some(session.clone());
+    } else if region.slot == SlotId::RailExtraRows {
+        // An extra row that is not about a session belongs to its
+        // workspace alone: it never inherits the focused session.
+        ctx.session = None;
     }
+    ctx.region = Some(region.identity());
     if let Some(workspace) = &region.workspace {
         ctx.workspace = Some(workspace.clone());
     }
@@ -819,6 +824,38 @@ mod tests {
             let (id, ctx) = click(&store, &f, rail.x + 3, rail.y).unwrap();
             assert_eq!((id, ctx.workspace.as_deref()), ("session.spawn", Some("et-a")));
             assert!(click(&store, &f, rail.x + 10, rail.y).is_none(), "beside the item stays inert");
+        }
+
+        #[test]
+        fn an_extra_row_without_about_session_resolves_to_its_workspace_never_the_focus() {
+            let store = store();
+            let mut f = fixture(&store);
+            assert!(store.state().focused_session_id.is_some());
+            let rail = f.layout.rail;
+            let mut about_none = region(
+                Rect::new(rail.x + 1, rail.y + 3, 10, 1),
+                SlotId::RailExtraRows,
+                ClickTarget::new(ids::SESSION_CLOSE).from_plugin("p"),
+                None,
+            );
+            about_none.workspace = Some("et-a".into());
+            let mut about_one = about_none.clone();
+            about_one.rect = Rect::new(rail.x + 1, rail.y + 4, 10, 1);
+            about_one.session = Some("garage/et-a/gone".into());
+            f.regions.push(about_none);
+            f.regions.push(about_one);
+
+            let (_, ctx) = click(&store, &f, rail.x + 2, rail.y + 3).unwrap();
+            assert_eq!(ctx.session, None, "not the focused session");
+            assert_eq!(ctx.workspace.as_deref(), Some("et-a"));
+            let (_, ctx) = click(&store, &f, rail.x + 2, rail.y + 4).unwrap();
+            assert_eq!(ctx.session.as_deref(), Some("garage/et-a/gone"));
+
+            // Other slots keep the documented fallback to the focus.
+            let row = f.layout.strip.y;
+            f.slots = vec![(10..14, ClickTarget::new(ids::SESSION_CLOSE).from_plugin("p"))];
+            let (_, ctx) = click(&store, &f, 11, row).unwrap();
+            assert_eq!(ctx.session, store.state().focused_session_id);
         }
 
         #[test]

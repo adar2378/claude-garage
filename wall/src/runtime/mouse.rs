@@ -5,7 +5,6 @@
 use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
 use ratatui::layout::Rect;
 
-use crate::actions::ActionSource;
 use crate::input::links::url_at;
 use crate::state::wall_state::{KeyLayer, OverlayKind, WallSession};
 use crate::ui::hit_targets::{self, action_at, ClickMap};
@@ -81,15 +80,21 @@ impl App {
             slot_clicks: &self.slot_clicks,
             slots: &self.slots,
         };
-        if let Some((id, mut ctx)) = action_at(&map, self.store.state(), col, row) {
-            // A real click on the region a plugin armed is a human confirm:
-            // only here does a plugin item's `Widget` source become `Mouse`
-            // (the first click stays `Widget` and only arms).
-            if matches!(ctx.source, ActionSource::Widget { .. })
-                && self.router.plugin_arm_matches(id, &ctx, now_ms())
-            {
-                ctx.source = ActionSource::Mouse { col, row };
+        let resolved = action_at(&map, self.store.state(), col, row);
+        // A pending plugin arm is confirmed only by a click on the very
+        // region that raised it (and never at all for an API request);
+        // every other click, on a core target or empty space, cancels it
+        // and then lands as usual.
+        let now = now_ms();
+        self.router.refresh_plugin_arm(now);
+        if self.router.plugin_origin_arm_pending() {
+            let clicked = resolved.as_ref().and_then(|(_, ctx)| ctx.region.as_ref());
+            if let Some((id, ctx)) = self.router.plugin_confirm_click(clicked, now) {
+                let effects = self.dispatch_action(id, &ctx);
+                return self.run_effects(effects);
             }
+        }
+        if let Some((id, ctx)) = resolved {
             let effects = self.dispatch_action(id, &ctx);
             return self.run_effects(effects);
         }
