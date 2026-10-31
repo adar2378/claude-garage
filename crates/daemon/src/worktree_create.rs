@@ -85,6 +85,14 @@ pub async fn create_worktree(
     }
 }
 
+/// Undo `create_worktree` (a failed spawn must not leave a stray worktree and
+/// branch behind): `git worktree remove --force`, then `branch -D`. Best
+/// effort; each step runs even if the other failed.
+pub async fn remove_worktree(repo_dir: &str, path: &str, branch: &str) {
+    let _ = git(repo_dir, &["worktree", "remove", "--force", path]).await;
+    let _ = git(repo_dir, &["branch", "-D", branch]).await;
+}
+
 /// The branch checked out in `repo_dir` (where a merge would land), or `None`
 /// when it cannot be read (not a repo, unborn HEAD). A detached HEAD reads as
 /// `"HEAD"`, as in JS. Informational only.

@@ -23,7 +23,7 @@ use crate::error::error_response;
 use crate::git::resolve_branch;
 use crate::state::registry::MetaUpdate;
 use crate::state::AppState;
-use crate::worktree_create::{create_worktree, current_branch};
+use crate::worktree_create::{create_worktree, current_branch, remove_worktree};
 
 /// What sessions run (`GARAGE_CLAUDE_CMD`, default `claude`) and how long a
 /// resume gets to prove it did not die (JS: 1.5 s, then 2 s more if still up).
@@ -75,6 +75,10 @@ impl Spawn for BackendSpawn<'_> {
     async fn spawn(&self, id: &str, dir: &Path, cmd: &str, args: &[String]) -> Result<()> {
         match self.kind {
             Kind::Create => self.backend.create(id, dir, cmd, args, &[]).await,
+            // A failed `--resume` can take the one-pane session with it; a
+            // respawn would then fail and the session would vanish, so start
+            // it again from scratch (same dir/cmd as the original create).
+            Kind::Respawn if !self.has(id).await => self.backend.create(id, dir, cmd, args, &[]).await,
             Kind::Respawn => self.backend.respawn(id, dir, cmd, args, &[]).await,
         }
     }
@@ -89,9 +93,8 @@ impl Spawn for BackendSpawn<'_> {
 /// conversation was never persisted, taking the pane/session with it, and the
 /// exit is not instant, so confirm twice before trusting it. If it died, or
 /// there is no `claude_session_id` to resume, start a plain `claude` and
-/// report `false`. (Kept JS quirk: on restart the dead resume has already
-/// ended the one-pane session, so the plain respawn fails and the caller
-/// reports the target as failed.)
+/// report `false`. (On restart the dead resume may have ended the one-pane
+/// session; `BackendSpawn` then recreates it instead of respawning.)
 pub async fn spawn_claude_resumed(
     spawner: &dyn Spawn,
     claude: &ClaudeCmd,
@@ -330,6 +333,10 @@ pub async fn create(State(st): State<AppState>, body: Bytes) -> Response {
 
     let spawn_dir = worktree.as_ref().map(|(p, _)| p.clone()).unwrap_or_else(|| reg_dir.clone());
     if let Err(e) = st.backend.create(&id, Path::new(&spawn_dir), &st.claude.program, &[], &[]).await {
+        // The worktree was made for this session: do not leave it behind.
+        if let Some((path, branch)) = &worktree {
+            remove_worktree(&reg_dir, path, branch).await;
+        }
         return server_error(e);
     }
 
@@ -600,6 +607,8 @@ pub async fn remove(
     let _ = st.registry.remove_session_meta(&id).await;
     st.telemetry.context.drop_session(&id);
     st.telemetry.transcripts.clear_cache(&id);
+    // A recreated id must not show the old status/since.
+    st.status.drop_session(&id);
     let worktree = match meta.as_ref().and_then(|m| m.worktree.as_ref()) {
         Some(w) => with_target(w).await,
         None => Value::Null,
@@ -1112,9 +1121,12 @@ mod tests {
         let dir = h.workspace("ws").await;
         h.live("garage/ws/a", &dir).await;
         h.st.registry.upsert_session_meta("garage/ws/a", meta(Some("c"), "ws", "a")).await.unwrap();
+        h.st.status.set("garage/ws/a", SessionStatus::Working, None);
+        // The id arrives percent-encoded (%2F) and still resolves.
         let (c, b) = h.call("DELETE", "/api/sessions/garage%2Fws%2Fa", None).await;
         assert_eq!((c, b), (StatusCode::OK, json!({"deleted": true, "worktree": null})));
         assert!(!h.st.backend.has("garage/ws/a").await.unwrap());
+        assert!(!h.st.status.has("garage/ws/a"), "the status entry goes with the session");
         assert!(h.st.registry.get_session_meta("garage/ws/a").await.is_none(), "a deliberate kill offers no restore");
         // gone now: 404
         let (c, _) = h.call("DELETE", "/api/sessions/garage%2Fws%2Fa", None).await;
@@ -1266,7 +1278,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn restart_input_errors_and_a_dead_resume_on_respawn_is_reported_failed() {
+    async fn restart_input_errors_and_a_dead_resume_on_respawn_recreates_the_session() {
         let mut h = harness();
         let dir = h.workspace("ws").await;
         h.live("garage/ws/a", &dir).await;
@@ -1274,18 +1286,58 @@ mod tests {
         let (c, b) = h.call("POST", "/api/sessions/restart", Some(r#"{"id":"garage/ws/none"}"#)).await;
         assert_eq!((c, b), (StatusCode::NOT_FOUND, json!({"error": "no live session: garage/ws/none"})));
 
-        // Kept JS quirk: a resume that dies takes the one-pane session with it,
-        // so the plain respawn finds no session and the target is `failed`.
+        // A resume that dies takes the one-pane session with it: the plain
+        // fallback recreates it, so the session survives instead of vanishing.
         h.script("dies.sh", DIES_ON_RESUME);
         h.st.registry.upsert_session_meta("garage/ws/a", meta(Some("abc"), "ws", "a")).await.unwrap();
         h.st.status.set("garage/ws/a", SessionStatus::Idle, None);
         let mut events = h.st.bus.subscribe();
         let (c, b) = h.call("POST", "/api/sessions/restart", Some(r#"{"id":"garage/ws/a"}"#)).await;
         assert_eq!(c, StatusCode::OK);
-        assert_eq!(b["restarted"], json!([]));
-        assert_eq!(b["failed"][0]["id"], "garage/ws/a");
-        assert!(!b["failed"][0]["error"].as_str().unwrap().is_empty());
-        assert!(events.try_recv().is_err(), "nothing restarted, no sessions event");
+        assert_eq!(b["restarted"], json!([{"id": "garage/ws/a", "resumed": false}]));
+        assert_eq!(b["failed"], json!([]));
+        assert!(h.st.backend.has("garage/ws/a").await.unwrap(), "the session survives");
+        assert_eq!(read_in(&dir, "plain.txt", &h.tmux).await.trim(), "plain");
+        assert_eq!(events.try_recv().unwrap(), DaemonEvent::SessionsChanged);
+    }
+
+    // --- create: a failed spawn must not leave its worktree behind ---
+
+    /// Delegates to a real backend but refuses to create.
+    struct FailCreate(crate::backend::tmux::TmuxBackend);
+
+    #[async_trait]
+    impl SessionBackend for FailCreate {
+        async fn init(&self) -> Result<()> { self.0.init().await }
+        async fn list(&self) -> Result<Vec<BackendSession>> { self.0.list().await }
+        async fn panes(&self) -> Result<HashMap<String, PaneInfo>> { self.0.panes().await }
+        async fn has(&self, id: &str) -> Result<bool> { self.0.has(id).await }
+        async fn create(&self, _: &str, _: &Path, _: &str, _: &[String], _: &[(String, String)]) -> Result<()> {
+            anyhow::bail!("tmux exploded")
+        }
+        async fn respawn(&self, id: &str, d: &Path, c: &str, a: &[String], e: &[(String, String)]) -> Result<()> {
+            self.0.respawn(id, d, c, a, e).await
+        }
+        async fn kill(&self, id: &str) -> Result<()> { self.0.kill(id).await }
+        async fn rename(&self, from: &str, to: &str) -> Result<()> { self.0.rename(from, to).await }
+        async fn capture(&self, id: &str, lines: usize) -> Result<String> { self.0.capture(id, lines).await }
+        fn attach_spec(&self, id: &str) -> garage_protocol::AttachSpec { self.0.attach_spec(id) }
+    }
+
+    #[tokio::test]
+    async fn a_failed_spawn_after_the_worktree_was_made_removes_the_worktree_and_its_branch() {
+        let mut h = harness();
+        let repo = h.workspace("ws").await;
+        git(Path::new(&repo), &["init", "-q", "-b", "main"]);
+        git(Path::new(&repo), &["commit", "-q", "--allow-empty", "-m", "init"]);
+        h.st.backend = Arc::new(FailCreate(h.tmux.backend()));
+
+        let (c, _) = h.call("POST", "/api/sessions", Some(r#"{"workspace":"ws","label":"fix","worktree":true}"#)).await;
+        assert_eq!(c, StatusCode::INTERNAL_SERVER_ERROR);
+        assert!(!h.garage.path().join("worktrees/ws/fix").exists(), "worktree dir removed");
+        let branches = std::process::Command::new("git").arg("-C").arg(&repo).args(["branch", "--list", "garage/*"]).output().unwrap();
+        assert!(String::from_utf8_lossy(&branches.stdout).trim().is_empty(), "branch deleted");
+        assert!(h.st.registry.get_session_meta("garage/ws/fix").await.is_none());
     }
 
     // --- GET /api/events ---

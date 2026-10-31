@@ -61,13 +61,28 @@ pub async fn run(config: Config) -> Result<()> {
         install::claude_home_from_env(),
     );
     let poller = state.poller(agents).start();
-    axum::serve(listener, app(state))
-        .with_graceful_shutdown(async {
-            let _ = tokio::signal::ctrl_c().await;
-        })
-        .await?;
+    serve(listener, state, async {
+        let _ = tokio::signal::ctrl_c().await;
+    })
+    .await?;
     poller.abort();
     Ok(())
+}
+
+/// Serve until `shutdown` resolves. Open SSE streams are told to end first,
+/// otherwise graceful shutdown would wait on them forever.
+pub async fn serve(
+    listener: tokio::net::TcpListener,
+    state: AppState,
+    shutdown: impl std::future::Future<Output = ()> + Send + 'static,
+) -> std::io::Result<()> {
+    let signal = state.clone();
+    axum::serve(listener, app(state))
+        .with_graceful_shutdown(async move {
+            shutdown.await;
+            signal.begin_shutdown();
+        })
+        .await
 }
 
 #[cfg(test)]
@@ -101,6 +116,36 @@ mod tests {
         let status = res.status();
         let bytes = res.into_body().collect().await.unwrap().to_bytes();
         (status, serde_json::from_slice(&bytes).unwrap_or(Value::Null))
+    }
+
+    #[tokio::test]
+    async fn shutdown_ends_open_event_streams_and_serve_returns() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
+        let server = tokio::spawn(serve(listener, state(config(&[])), async {
+            let _ = stopped.await;
+        }));
+
+        let mut conn = tokio::net::TcpStream::connect(addr).await.unwrap();
+        conn.write_all(b"GET /api/events HTTP/1.1\r\nhost: x\r\nconnection: close\r\n\r\n").await.unwrap();
+        let mut seen = String::new();
+        let mut buf = [0u8; 1024];
+        while !seen.contains(": connected") {
+            let n = tokio::time::timeout(std::time::Duration::from_secs(5), conn.read(&mut buf)).await.unwrap().unwrap();
+            assert!(n > 0, "closed before greeting: {seen}");
+            seen.push_str(&String::from_utf8_lossy(&buf[..n]));
+        }
+
+        stop.send(()).unwrap();
+        let ended = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            while conn.read(&mut buf).await.unwrap() > 0 {}
+        })
+        .await;
+        assert!(ended.is_ok(), "stream still open after shutdown");
+        let served = tokio::time::timeout(std::time::Duration::from_secs(5), server).await;
+        assert!(served.expect("serve returns").unwrap().is_ok());
     }
 
     /// The launcher's stale-daemon gate compares /api/health's version with

@@ -9,6 +9,8 @@ pub mod status;
 use std::path::PathBuf;
 use std::sync::{Arc, OnceLock};
 
+use tokio::sync::watch;
+
 use crate::backend::SessionBackend;
 use crate::bus::EventBus;
 use crate::config::Config;
@@ -40,6 +42,9 @@ pub struct AppState {
     /// poll through the same instance (and the same diff state).
     pub agents: Arc<dyn AgentSource>,
     poller_cell: Arc<OnceLock<Arc<Poller>>>,
+    /// Flipped to `true` when the daemon starts shutting down, so long-lived
+    /// responses (SSE) end and graceful shutdown can complete.
+    shutdown: Arc<watch::Sender<bool>>,
 }
 
 impl AppState {
@@ -83,7 +88,17 @@ impl AppState {
             claude: ClaudeCmd::from_env(),
             agents,
             poller_cell: Arc::default(),
+            shutdown: Arc::new(watch::channel(false).0),
         }
+    }
+
+    /// Tell long-lived responses to finish; call before awaiting the server.
+    pub fn begin_shutdown(&self) {
+        self.shutdown.send_replace(true);
+    }
+
+    pub fn shutdown_signal(&self) -> watch::Receiver<bool> {
+        self.shutdown.subscribe()
     }
 
     /// The poller (not started) over the real stores. One instance per
