@@ -627,6 +627,7 @@ dependencies = [
  "async-trait",
  "axum",
  "garage-protocol",
+ "getrandom 0.3.4",
  "http-body-util",
  "serde",
  "serde_json",

@@ -8,7 +8,6 @@
 //! malformed file reads as an empty registry; write errors propagate.
 //! One async mutex serialises read-modify-write cycles within the process.
 
-use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -247,7 +246,7 @@ impl Registry {
             return Ok(t.to_owned());
         }
         let mut bytes = [0u8; 32];
-        std::fs::File::open("/dev/urandom")?.read_exact(&mut bytes)?;
+        getrandom::fill(&mut bytes).map_err(|e| std::io::Error::other(e.to_string()))?;
         let token: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
         state.insert("hookToken".into(), Value::String(token.clone()));
         self.write(&state)?;
@@ -262,8 +261,17 @@ fn obj_of(state: &mut Map<String, Value>, key: &str) -> Map<String, Value> {
     }
 }
 
+/// Decode field by field: one malformed field reads as absent without
+/// discarding its healthy siblings.
 fn meta_of(v: &Value) -> SessionMeta {
-    serde_json::from_value(v.clone()).unwrap_or_default()
+    let field = |k: &str| v.get(k).filter(|f| !f.is_null());
+    let text = |k: &str| field(k).and_then(Value::as_str).map(str::to_owned);
+    SessionMeta {
+        claude_session_id: text("claudeSessionId"),
+        workspace: text("workspace"),
+        label: text("label"),
+        worktree: field("worktree").and_then(|w| serde_json::from_value(w.clone()).ok()),
+    }
 }
 
 #[cfg(test)]
@@ -290,6 +298,34 @@ mod tests {
         fn drop(&mut self) {
             let _ = std::fs::remove_dir_all(&self.0);
         }
+    }
+
+    #[test]
+    fn malformed_field_only_loses_that_field() {
+        let m = meta_of(&json!({"claudeSessionId": "c1", "workspace": "w", "label": 7, "worktree": {"path": 1}}));
+        assert_eq!(m.claude_session_id.as_deref(), Some("c1"));
+        assert_eq!(m.workspace.as_deref(), Some("w"));
+        assert_eq!(m.label, None);
+        assert_eq!(m.worktree, None);
+    }
+
+    #[tokio::test]
+    async fn parallel_upserts_lose_no_writes() {
+        let s = Scratch::new();
+        let r = s.reg();
+        let mut tasks = vec![];
+        for i in 0..24 {
+            let r = r.clone();
+            tasks.push(tokio::spawn(async move {
+                let upd = MetaUpdate { label: Some(format!("l{i}")), ..Default::default() };
+                r.upsert_session_meta(&format!("garage/w/s{i}"), upd).await.unwrap();
+            }));
+        }
+        for t in tasks {
+            t.await.unwrap();
+        }
+        assert_eq!(r.list_session_metas().await.len(), 24);
+        assert_eq!(s.raw()["sessions"].as_object().unwrap().len(), 24);
     }
 
     fn wt() -> Worktree {

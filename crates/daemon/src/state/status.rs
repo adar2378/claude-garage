@@ -70,10 +70,25 @@ impl StatusStore {
     }
 
     pub fn set_at(&self, id: &str, state: SessionStatus, message: Option<&str>, now: i64) {
-        let event = {
+        self.write_at(id, state, message, now, false);
+    }
+
+    /// The single write path. With `no_idle_downgrade`, an idle write over a
+    /// needs-input/done entry is skipped; the check shares the lock with the
+    /// write so a concurrent hook set cannot slip between them. Publishing
+    /// happens under the lock too (`broadcast::send` never blocks), so
+    /// subscribers see transitions in write order.
+    fn write_at(&self, id: &str, state: SessionStatus, message: Option<&str>, now: i64, no_idle_downgrade: bool) {
+        {
             let mut map = self.map.lock().unwrap();
             let existing = map.get(id);
             let prev = existing.map(|e| e.state).unwrap_or(SessionStatus::Idle);
+            if no_idle_downgrade
+                && state == SessionStatus::Idle
+                && matches!(prev, SessionStatus::NeedsInput | SessionStatus::Done)
+            {
+                return;
+            }
             let changed = prev != state;
             let since = if changed { now } else { existing.and_then(|e| e.since).unwrap_or(now) };
             let next_message = if state != SessionStatus::NeedsInput {
@@ -86,11 +101,9 @@ impl StatusStore {
                 None
             };
             map.insert(id.to_owned(), StatusEntry { state, since: Some(since), message: next_message });
-            changed.then(|| DaemonEvent::StatusTransition { id: id.to_owned(), from: prev, to: state, since: Some(since) })
-        };
-        // Publish outside the lock.
-        if let Some(e) = event {
-            self.bus.publish(e);
+            if changed {
+                self.bus.publish(DaemonEvent::StatusTransition { id: id.to_owned(), from: prev, to: state, since: Some(since) });
+            }
         }
     }
 
@@ -108,11 +121,7 @@ impl StatusStore {
             "waiting" => SessionStatus::NeedsInput,
             _ => SessionStatus::Idle,
         };
-        let current = self.get(id);
-        if mapped == SessionStatus::Idle && matches!(current, SessionStatus::NeedsInput | SessionStatus::Done) {
-            return;
-        }
-        self.set(id, mapped, None);
+        self.write_at(id, mapped, None, now_ms(), true);
     }
 }
 
@@ -252,6 +261,19 @@ mod tests {
             rx.try_recv().unwrap(),
             DaemonEvent::StatusTransition { id: ID.into(), from: Idle, to: Working, since: Some(42) }
         );
+    }
+
+    #[test]
+    fn guarded_idle_write_is_atomic_with_the_check() {
+        let s = store();
+        s.set_at(ID, NeedsInput, Some(MSG), 5);
+        let mut rx = s.bus.subscribe();
+        s.write_at(ID, Idle, None, 9, true);
+        assert_eq!(s.entry(ID), StatusEntry { state: NeedsInput, since: Some(5), message: Some(MSG.into()) });
+        assert!(rx.try_recv().is_err());
+        // Unguarded callers (hooks) can still move it.
+        s.write_at(ID, Idle, None, 10, false);
+        assert_eq!(s.get(ID), Idle);
     }
 
     #[test]
