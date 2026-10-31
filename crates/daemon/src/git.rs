@@ -142,7 +142,22 @@ pub async fn remove_worktree(repo_dir: &str, path: &str, branch: &str) {
 async fn assert_garage_worktree(garage_dir: &Path, path: &str, branch: &str) -> Result<(), GitFailure> {
     let refuse = || GitFailure::new(400, format!("refusing to touch a path that is not a garage worktree: {path}"));
     let root = tokio::fs::canonicalize(garage_dir.join("worktrees")).await.map_err(|_| refuse())?;
-    let real = tokio::fs::canonicalize(path).await.map_err(|_| refuse())?;
+    let real = match tokio::fs::canonicalize(path).await {
+        Ok(real) => real,
+        // The directory is already gone (deleted by hand, or a crash): there
+        // is nothing on disk to damage, and the branch still needs cleaning
+        // up, as the JS daemon did. Allowed only when the path, read
+        // literally, is a clean child of the worktrees root.
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            let p = Path::new(path);
+            let clean = p.is_absolute()
+                && p.components().all(|c| !matches!(c, std::path::Component::ParentDir | std::path::Component::CurDir));
+            let under = |root: &Path| p != root && p.starts_with(root);
+            let raw_root = garage_dir.join("worktrees");
+            return if clean && (under(&root) || under(&raw_root)) { Ok(()) } else { Err(refuse()) };
+        }
+        Err(_) => return Err(refuse()),
+    };
     if real == root || !real.starts_with(&root) {
         return Err(refuse());
     }
@@ -441,6 +456,20 @@ mod tests {
         assert!(f.repo.join("precious.txt").exists());
         assert!(f.wt.exists());
         assert!(g(&f.repo, &["branch", "--list", "garage/x"]).contains("garage/x"));
+    }
+
+    #[tokio::test]
+    async fn discarding_a_worktree_whose_directory_is_gone_still_removes_the_branch() {
+        let f = fixture();
+        std::fs::remove_dir_all(&f.wt).unwrap();
+        let wt = s(&f.wt).to_owned();
+        let wt_branch = "garage/x".to_owned();
+        // a `..` escape out of the worktrees root is still refused
+        let escape = format!("{}/../../etc/nothing", s(&f.garage.join("worktrees")));
+        let e = finish_worktree(&f.garage, s(&f.repo), &escape, &wt_branch, FinishAction::Discard).await.unwrap_err();
+        assert_eq!(e.status, 400);
+        finish_worktree(&f.garage, s(&f.repo), &wt, &wt_branch, FinishAction::Discard).await.unwrap();
+        assert_eq!(g(&f.repo, &["branch", "--list", &wt_branch]).trim(), "");
     }
 
     #[tokio::test]

@@ -333,9 +333,10 @@ async fn finish_discard_and_dirty_merge_over_the_route() {
     assert_eq!(b, json!({"action": "discard", "path": wt.to_str().unwrap(), "branch": "garage/x", "discarded": true}));
     assert!(!wt.exists());
 
-    // A worktree that no longer exists is refused before git runs.
+    // A vanished path outside the worktrees root is refused before git runs.
+    let forged = json!({"path": "/nonexistent/garage/wt", "branch": "garage/x", "repoDir": repo.to_str().unwrap()});
     let (s, b) =
-        call(&st, "POST", "/api/worktrees/finish", Some(json!({"worktree": record, "action": "discard"}))).await;
+        call(&st, "POST", "/api/worktrees/finish", Some(json!({"worktree": forged, "action": "discard"}))).await;
     assert_eq!(s, StatusCode::BAD_REQUEST);
     assert!(b["error"].as_str().unwrap().contains("not a garage worktree"));
 }
