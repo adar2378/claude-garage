@@ -257,11 +257,17 @@ fn a_session_that_still_exists_never_dissolves() {
 // ── Done fade ────────────────────────────────────────────────────────────
 
 #[test]
-fn done_fade_runs_green_to_neutral_with_exact_endpoints() {
-    assert_eq!(done_fade_color(Some(1000), 1000), colors::GREEN);
-    assert_eq!(done_fade_color(Some(1000), 1000 + DONE_FADE_MS), colors::FAINT);
-    assert_eq!(done_fade_color(Some(1000), 1000 + 10 * DONE_FADE_MS), colors::FAINT);
-    assert_eq!(done_fade_color(None, i64::MAX), colors::GREEN, "unknown since never fades");
+fn done_fade_runs_green_to_neutral_in_rgb_at_every_step_endpoints_included() {
+    let green = Color::Rgb(DONE_GREEN.0, DONE_GREEN.1, DONE_GREEN.2);
+    let neutral = Color::Rgb(DONE_NEUTRAL.0, DONE_NEUTRAL.1, DONE_NEUTRAL.2);
+    assert_eq!(done_fade_color(Some(1000), 1000), green);
+    assert_eq!(done_fade_color(Some(1000), 1000 + DONE_FADE_MS), neutral);
+    assert_eq!(done_fade_color(Some(1000), 1000 + 10 * DONE_FADE_MS), neutral);
+    assert_eq!(done_fade_color(None, i64::MAX), green, "unknown since never fades");
+    for step in 0..=DONE_FADE_STEPS {
+        let c = done_fade_color(Some(0), step * (DONE_FADE_MS / DONE_FADE_STEPS));
+        assert!(matches!(c, Color::Rgb(..)), "step {step} is {c:?}");
+    }
     let mid = done_fade_color(Some(0), DONE_FADE_MS / 2);
     assert!(matches!(mid, Color::Rgb(..)));
 }
@@ -286,8 +292,8 @@ fn done_fade_changes_color_once_per_elapsed_tick() {
     // colour per tick, no finer.
     let step_ms = DONE_FADE_MS / DONE_FADE_STEPS;
     assert_eq!(step_ms, 10_000);
-    assert_eq!(done_fade_color(Some(0), step_ms - 1), colors::GREEN);
-    assert_ne!(done_fade_color(Some(0), step_ms), colors::GREEN);
+    assert_eq!(done_fade_color(Some(0), step_ms - 1), done_fade_color(Some(0), 0));
+    assert_ne!(done_fade_color(Some(0), step_ms), done_fade_color(Some(0), 0));
 }
 
 // ── Spinner ──────────────────────────────────────────────────────────────

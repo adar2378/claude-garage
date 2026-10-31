@@ -20,6 +20,14 @@
 - [x] 3.2 Unit: with motion off, no effect starts and spinners render static
 - [x] 3.3 Snapshot: `done` fade at 0, 60 and 120 seconds
 
+## 3b. Review fixes (2026-10-31)
+
+- [x] 3b.1 Strip spinner capped at 15 s after a drop or restart request; static `◌ daemon down`, no tick
+- [x] 3b.2 Startup reveal: only Ctrl+C aborts; IO error has its own message
+- [x] 3b.3 Tile fade-in on first attach only
+- [x] 3b.4 `done` fade in RGB at every step, endpoints included
+- [x] 3b.5 Rust launcher hand-off: no wait on spawn, `GARAGE_DAEMON_STARTING/LOG/PID` + port env, wall fails fast when the pid is gone
+
 ## 4. Verification
 
 - [x] 4.1 `cargo test --lib --bins`, clippy green

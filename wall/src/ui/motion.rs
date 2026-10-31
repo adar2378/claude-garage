@@ -132,18 +132,13 @@ pub const DONE_FADE_STEPS: i64 = 12;
 const DONE_GREEN: (u8, u8, u8) = (0, 190, 0);
 const DONE_NEUTRAL: (u8, u8, u8) = (100, 100, 100);
 
-/// The `done` glyph colour `elapsed_ms` after the transition: exactly
-/// [`colors::GREEN`] at the start, exactly [`colors::FAINT`] once the 2
-/// minutes are up, stepped green-to-neutral between. Never amber.
+/// The `done` glyph colour `elapsed_ms` after the transition: RGB at every
+/// step, endpoints included (a named colour at either end would jump on
+/// terminals whose palette differs from the true-colour ramp), stepped from
+/// green to neutral across the 2 minutes. Never amber. Unknown `since`
+/// stays at the green end.
 pub fn done_fade_color(since_ms: Option<i64>, now_ms: i64) -> Color {
-    let Some(since) = since_ms else { return colors::GREEN };
-    let step = ((now_ms - since).max(0) * DONE_FADE_STEPS) / DONE_FADE_MS;
-    if step <= 0 {
-        return colors::GREEN;
-    }
-    if step >= DONE_FADE_STEPS {
-        return colors::FAINT;
-    }
+    let step = since_ms.map_or(0, |since| ((now_ms - since).max(0) * DONE_FADE_STEPS) / DONE_FADE_MS).min(DONE_FADE_STEPS);
     let lerp = |a: u8, b: u8| (a as i64 + (b as i64 - a as i64) * step / DONE_FADE_STEPS) as u8;
     Color::Rgb(
         lerp(DONE_GREEN.0, DONE_NEUTRAL.0),
