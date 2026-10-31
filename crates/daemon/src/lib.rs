@@ -6,6 +6,7 @@ pub mod api;
 pub mod backend;
 pub mod bus;
 pub mod config;
+pub mod control;
 pub mod error;
 pub mod git;
 pub mod install;
@@ -68,10 +69,15 @@ pub async fn run(config: Config) -> Result<()> {
     let backend = Arc::new(backend::tmux::TmuxBackend::new(config.tmux_socket.clone()));
     backend.init().await.context("initialising the tmux server")?;
     let agents: Arc<dyn poller::AgentSource> = Arc::new(poller::CommandAgents::default());
-    let state = AppState::with_agents(config, backend, os::platform(), agents.clone(), install::claude_home_from_env());
-    let poller = state.poller(agents).start();
+    let state = AppState::with_agents(config, backend.clone(), os::platform(), agents.clone(), install::claude_home_from_env());
+    let shared = state.poller(agents);
+    // tmux control mode wakes the poller on session changes; the tick stays
+    // as the fallback (and carries pane titles, which tmux does not announce).
+    let control = control::spawn((*backend).clone(), shared.control_link());
+    let poller = shared.start();
     let notifier = os::notify::spawn(&state.bus, state.os.clone(), state.visibility.clone());
-    let (poller_stop, notifier_stop) = (poller.abort_handle(), notifier.abort_handle());
+    let (poller_stop, notifier_stop, control_stop) =
+        (poller.abort_handle(), notifier.abort_handle(), control.abort_handle());
     let lifecycle = state.lifecycle.shutdown.clone();
     let (begin_tx, begin_rx) = tokio::sync::oneshot::channel::<()>();
     // One shutdown source: ctrl-c or the restart route. The poller and
@@ -84,6 +90,7 @@ pub async fn run(config: Config) -> Result<()> {
         }
         poller_stop.abort();
         notifier_stop.abort();
+        control_stop.abort();
         let _ = begin_tx.send(());
     };
     let serving = serve(listener, state, signal);
@@ -95,6 +102,7 @@ pub async fn run(config: Config) -> Result<()> {
     };
     poller.abort();
     notifier.abort();
+    control.abort();
     result
 }
 

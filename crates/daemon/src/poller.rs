@@ -20,8 +20,11 @@ use tokio::task::JoinHandle;
 use crate::backend::tmux::{normalize_title, split_session_id};
 use crate::backend::{BackendSession, PaneInfo, SessionBackend, COMMAND_TIMEOUT};
 use crate::bus::{DaemonEvent, EventBus};
+use crate::control::ControlLink;
 
 pub const POLL_INTERVAL: Duration = Duration::from_millis(2000);
+/// A notification burst (create + rename + title) becomes one poll.
+pub const DEBOUNCE: Duration = Duration::from_millis(100);
 
 /// One entry of `claude agents --json`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -158,6 +161,7 @@ pub struct Poller {
     bus: EventBus,
     hostname: Option<String>,
     last: Mutex<Last>,
+    control: Arc<ControlLink>,
 }
 
 impl Poller {
@@ -168,7 +172,7 @@ impl Poller {
         bus: EventBus,
     ) -> Self {
         let hostname = gethostname::gethostname().to_str().map(str::to_string);
-        Self { backend, agents, sink, bus, hostname, last: Mutex::new(Last::default()) }
+        Self { backend, agents, sink, bus, hostname, last: Mutex::new(Last::default()), control: Arc::default() }
     }
 
     /// Override the hostname used to filter default pane titles.
@@ -245,15 +249,29 @@ impl Poller {
         }
     }
 
-    /// Tick every 2 s (first tick after 2 s, like `setInterval`). Abort the
-    /// handle to stop.
+    /// The wake-up shared with the tmux control client (`control::spawn`).
+    pub fn control_link(&self) -> Arc<ControlLink> {
+        self.control.clone()
+    }
+
+    /// Tick every 2 s (first tick after 2 s, like `setInterval`), and also
+    /// poll `DEBOUNCE` after the control client reports a change. The tick
+    /// never slows down: tmux sends no notification for pane-title changes,
+    /// so the tick is still what carries those. Abort the handle to stop.
     pub fn start(self: Arc<Self>) -> JoinHandle<()> {
         tokio::spawn(async move {
-            let mut iv = tokio::time::interval_at(tokio::time::Instant::now() + POLL_INTERVAL, POLL_INTERVAL);
-            iv.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+            let mut next = tokio::time::Instant::now() + POLL_INTERVAL;
             loop {
-                iv.tick().await;
+                tokio::select! {
+                    _ = tokio::time::sleep_until(next) => {}
+                    _ = self.control.woken() => {
+                        tokio::time::sleep(DEBOUNCE).await;
+                        // The burst is covered by the poll about to run.
+                        self.control.drain();
+                    }
+                }
                 self.poll_once().await;
+                next = tokio::time::Instant::now() + POLL_INTERVAL;
             }
         })
     }
@@ -578,5 +596,58 @@ mod tests {
         assert!(started.elapsed() < Duration::from_secs(3));
         assert!(r.sink.applied.lock().unwrap().is_empty(), "timeout means no agents");
         drain(&mut r.rx);
+    }
+
+    // ---- start(): tick + control wake-ups (paused clock, fakes) ----
+
+    /// Counts polls: `agents()` runs once per poll that has live sessions.
+    struct CountingAgents(std::sync::atomic::AtomicUsize);
+
+    #[async_trait]
+    impl AgentSource for CountingAgents {
+        async fn agents(&self) -> Vec<Agent> {
+            self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Vec::new()
+        }
+    }
+
+    impl CountingAgents {
+        fn polls(&self) -> usize {
+            self.0.load(std::sync::atomic::Ordering::SeqCst)
+        }
+    }
+
+    async fn advance(ms: u64) {
+        tokio::time::advance(Duration::from_millis(ms)).await;
+        for _ in 0..10 {
+            tokio::task::yield_now().await;
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_burst_of_wakeups_is_one_debounced_poll_and_the_tick_still_runs() {
+        let backend = Arc::new(FakeBackend::new());
+        backend.set(ID, "/d", Some(1), "");
+        let agents = Arc::new(CountingAgents(Default::default()));
+        let poller = Arc::new(Poller::new(backend.clone(), agents.clone(), Arc::new(FakeSink::default()), EventBus::default()));
+        let link = poller.control_link();
+        let task = poller.start();
+        advance(1).await;
+        assert_eq!(agents.polls(), 0, "nothing before the first tick or a wake-up");
+
+        for _ in 0..5 {
+            link.wake();
+            advance(10).await;
+        }
+        assert_eq!(agents.polls(), 0, "still inside the debounce window");
+        advance(150).await;
+        assert_eq!(agents.polls(), 1, "five wake-ups, one poll, ~100 ms after the first");
+        advance(1500).await;
+        assert_eq!(agents.polls(), 1, "no stray poll from the stored permit");
+
+        // The tick is the fallback and fires 2 s after the last poll.
+        advance(600).await;
+        assert_eq!(agents.polls(), 2);
+        task.abort();
     }
 }

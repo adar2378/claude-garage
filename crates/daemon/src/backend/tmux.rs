@@ -22,6 +22,10 @@ use super::{BackendSession, PaneInfo, SessionBackend};
 
 pub const GARAGE_PREFIX: &str = "garage/";
 
+/// Name of the control client's own session. Deliberately outside
+/// `GARAGE_PREFIX`, so `list`/`panes` and every garage listing skip it.
+pub const CONTROL_SESSION: &str = "garage-control";
+
 /// Workspace and session labels: `[a-z0-9-]+` (the JS `NAME_RE`).
 pub fn is_valid_name(s: &str) -> bool {
     !s.is_empty() && s.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
@@ -161,6 +165,27 @@ impl TmuxBackend {
             self.run_args(&["set-option", "-as", "terminal-features", "xterm*:extkeys"]).await?;
         }
         Ok(())
+    }
+
+    /// True when a tmux server answers on this backend's socket.
+    pub async fn server_running(&self) -> bool {
+        self.run_args(&["list-sessions", "-F", "#{session_name}"]).await.is_ok()
+    }
+
+    /// The control-mode client: `tmux [-L s -f /dev/null] -C new-session -A -s
+    /// garage-control cat`. It attaches to its own session, which has no
+    /// `garage/` prefix (so no listing shows it) and is destroyed when the
+    /// client goes away, so a stopped daemon leaves nothing behind. stdin and
+    /// stdout are piped and the child dies with the handle (`kill_on_drop`).
+    pub fn control_command(&self) -> Command {
+        let mut argv = self.prefix();
+        argv.extend(
+            ["-C", "new-session", "-A", "-s", CONTROL_SESSION, "cat", ";", "set-option", "-t", CONTROL_SESSION, "destroy-unattached", "on"]
+                .map(String::from),
+        );
+        let mut cmd = self.command(&argv);
+        cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null());
+        cmd
     }
 
     fn env_args(env: &[(String, String)]) -> Vec<String> {

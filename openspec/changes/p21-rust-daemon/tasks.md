@@ -33,9 +33,9 @@ Rules for every task: tmux tests use an isolated socket (`GARAGE_TMUX_SOCKET`), 
 
 ## 5. tmux control mode (after 4)
 
-- [ ] 5.1 `tmux -C` reader per backend socket, parsing `%sessions-changed`, `%session-renamed`, `%window-renamed`, `%exit`; publish `SessionsChanged` on the bus immediately
-- [ ] 5.2 Keep a slower poll (agent status via `claude agents --json`) as fallback; reconnect when the control client exits
-- [ ] 5.3 Contract suite and ported tests still green; measure event latency and idle CPU before and after, record in `verification.md`
+- [x] 5.1 `tmux -C` reader per backend socket, parsing `%sessions-changed`, `%session-renamed`, `%window-renamed`, `%exit`; publish `SessionsChanged` on the bus immediately
+- [x] 5.2 Keep the poll tick as fallback (stays 2 s: tmux sends no notification for pane-title changes, so a slower tick would delay titles; agent status via `claude agents --json` stays on it); reconnect when the control client exits
+- [x] 5.3 Contract suite and ported tests still green; measure event latency and idle CPU before and after, record in `verification.md`
 
 ## 6. Diff route
 
