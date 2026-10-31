@@ -113,9 +113,8 @@ export class Context {
     return this.raw.plugin?.state_dir || undefined;
   }
 
-  /** The directory of the focused session (the caller's directory for a CLI run). */
+  /** The directory of the focused session, or the caller's directory for a CLI run. */
   get cwd(): string | undefined {
-    const focus = this.raw.focus as { dir?: string | null } | undefined;
-    return this.raw.focus?.session?.dir || focus?.dir || undefined;
+    return this.raw.focus?.session?.dir || this.raw.focus?.dir || undefined;
   }
 }

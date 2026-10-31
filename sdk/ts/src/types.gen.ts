@@ -401,6 +401,10 @@ export interface ContextEvent {
   name: string;
 }
 export interface ContextFocus {
+  /**
+   * CLI runs only: the caller's working directory.
+   */
+  dir?: string | null;
   session: ContextSession | null;
   workspace: string | null;
 }

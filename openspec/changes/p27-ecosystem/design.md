@@ -24,7 +24,7 @@
 
 # Part A: API freeze, docs and SDKs (detailed design)
 
-This part covers p25 task 4.2 (freeze v1) and p27 tasks 1.1, 1.3, 2.1, 2.2 (the first four are done by hand-written, test-checked code rather than code generation; see decision A3) and 4.2 (docs). `plugin new`, `plugin dev`, `plugin search`, the skill and the example plugin are other parts.
+This part covers p25 task 4.2 (freeze v1) and p27 tasks 1.1, 2.1, 2.2 and 4.2 (docs). Task 1.3 (API reference generated from the schema) is done only for the manifest page; the HTTP reference is hand-written and checked by tests. 2.1 and 2.2 are not fully code-generated: see decision A3. `plugin new`, `plugin dev`, `plugin search`, the skill and the example plugin are other parts.
 
 ## A1. What "v1" means
 

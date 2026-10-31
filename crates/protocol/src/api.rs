@@ -141,6 +141,9 @@ pub struct ContextFocus {
     pub workspace: Option<String>,
     #[schemars(required, schema_with = "nullable::<ContextSession>")]
     pub session: Option<ContextSession>,
+    /// CLI runs only: the caller's working directory.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dir: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]

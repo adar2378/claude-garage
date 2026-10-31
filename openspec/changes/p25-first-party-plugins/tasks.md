@@ -21,7 +21,7 @@
 - [x] 3.4 Quiet startup (`GARAGE_VERBOSE=1` for full output)
 
 ## 4. API freeze
-- [ ] 4.1 List every plugin API gap found in group 2 and close it in the plugin host
+- [x] 4.1 List every plugin API gap found in group 2 and close it in the plugin host
   Gaps found by closed-chats, jump-palette, quick-send, tile-buttons, prune-empty-projects and cli-extras (usage-bar, pit-pet and turn-markers list theirs after). Closed in the host:
   - [x] `DELETE /api/sessions/{id}?meta=1` published no plugin-visible event, so a forgotten closed chat stayed in the rail: new additive event `session.forgotten {id, workspace}` (manifest enum, features list, schema, SSE frame).
   - [x] The same route answered 404 for a deliberately closed session (a close removes the resume metadata, only the closed record is left), so `session.delete` on a closed-chat row could never work: it now forgets a closed-only record.
@@ -55,7 +55,8 @@
   - G11 The plugin does not know the garage directory (no `GARAGE_DIR` in its environment): pit-pet finds the old `wall.json` by walking up from its state dir. **Worked around**; export `GARAGE_DIR`. The wall keeps the legacy `pet` key (and any other key it does not own) when it saves views, so the migration source survives.
   - G12 Up to 4 runs of one plugin run at once and share its state: **Worked around** with `StateLock` in the SDK; a lock wait that times out is the distinct `Error::LockHeld`, which pit-pet turns into a skipped run (exit 0) so it never counts toward the five-failure auto-disable. A per-entry `serial = true` would be cleaner.
   - G13 The daemon could not say where a turn ended in the scrollback. **Closed in the daemon:** when it handles the Stop hook it asks the backend for the session's `history_size` and `cursor_y` (tmux `display-message`; host backend: a new control frame answered from its vt100 screen) and puts the absolute `row` (and `history_limit`) in the `session.turn` event. turn-markers pushes `{row}` items for the last 32 turns per session, capped by size (under 12 KiB), and the wall draws them and drops the ones below `history_size - history_limit`. The first-seen placement in the wall is gone. **Known limit:** once a pane's history is full, tmux trims its oldest lines and every absolute row shifts; a marker is then drawn on a later line than it belongs to, or not at all. tmux has no counter of trimmed lines to correct this.
-- [ ] 4.2 Freeze plugin API v1 and document it
+- [x] 4.2 Freeze plugin API v1 and document it
+  Frozen in p27 part A: `crates/plugin/api-v1.golden.json` lists the v1 surface (manifest fields, permissions, events and payload keys, slots, theme tokens, routes, run context and environment, invocable core ids). Tests fail when any entry is removed or renamed: `crates/plugin/tests/frozen_api.rs` (tables, schema, features) and `frozen_api_*` in `crates/daemon/src/plugins/tests.rs` (real router, real context, real event payloads). `GET /api/plugin/features` reports `api.v1.frozen` and the same sets. Docs: `docs/plugins/`. Open items from the gap list stay open as additive v1.x work (G6 `usage.changed`, G10 settings, the "box" mood of G3, `play once`, `after_secs`, `serial`): they add to v1 and cannot break it.
 
 ## 5. Verification
 - [ ] 5.1 Unit and contract tests per plugin

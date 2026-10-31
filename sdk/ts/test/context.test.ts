@@ -68,7 +68,6 @@ describe("Context accessors", () => {
     assert.equal(ctx.session, undefined);
     assert.equal(ctx.event, undefined);
     assert.equal(ctx.eventName, undefined);
-    assert.equal(ctx.cwd, undefined);
   });
 
   it("reads argv of a CLI run", () => {
@@ -78,5 +77,10 @@ describe("Context accessors", () => {
     });
     assert.deepEqual(ctx.argv, ["open", "~/dev/app"]);
     assert.deepEqual(new Context(sample).argv, []);
+    const withDir = new Context({
+      ...sample,
+      focus: { workspace: null, session: null, dir: "/home/me/app" },
+    });
+    assert.equal(withDir.cwd, "/home/me/app");
   });
 });

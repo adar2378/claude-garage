@@ -308,6 +308,13 @@
     "ContextFocus": {
       "type": "object",
       "properties": {
+        "dir": {
+          "description": "CLI runs only: the caller's working directory.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "session": {
           "anyOf": [
             {
