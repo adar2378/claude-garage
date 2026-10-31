@@ -84,16 +84,41 @@ test("discard refuses a path outside the garage worktrees folder, deleting nothi
   assert.match(git(repo, "branch", "--list", "garage/outside"), /garage\/outside/);
 });
 
-test("discard refuses a worktree not on the recorded branch, deleting nothing", async () => {
+test("merge refuses a worktree whose HEAD is on another branch, deleting nothing", async () => {
+  git(wt, "checkout", "-q", "-b", "garage/elsewhere");
   await assert.rejects(
-    finishWorktree({ repoDir: repo, path: wt, branch: "garage/other", action: "discard" }),
+    finishWorktree({ repoDir: repo, path: wt, branch: "garage/x", action: "merge" }),
     (err) => err.statusCode === 400
   );
   assert.ok(existsSync(wt));
+  assert.match(git(repo, "branch", "--list", "garage/x"), /garage\/x/);
+  git(wt, "checkout", "-q", "garage/x");
+  git(repo, "branch", "-D", "garage/elsewhere");
+});
+
+test("discard succeeds after the agent checked out another branch", async () => {
+  git(wt, "checkout", "-q", "-b", "garage/elsewhere");
+  const res = await finishWorktree({ repoDir: repo, path: wt, branch: "garage/x", action: "discard" });
+  assert.equal(res.discarded, true);
+  assert.ok(!existsSync(wt));
+  assert.equal(git(repo, "branch", "--list", "garage/x").trim(), "");
+  // The agent's other branch is not ours to delete.
+  assert.match(git(repo, "branch", "--list", "garage/elsewhere"), /garage\/elsewhere/);
+});
+
+test("discard succeeds when the folder is already gone", async () => {
+  const gone = path.join(scratch, "garage", "worktrees", "ws", "gone");
+  git(repo, "worktree", "add", "-q", "-b", "garage/gone", gone);
+  await rm(gone, { recursive: true, force: true });
+  const res = await finishWorktree({ repoDir: repo, path: gone, branch: "garage/gone", action: "discard" });
+  assert.equal(res.discarded, true);
+  assert.equal(git(repo, "branch", "--list", "garage/gone").trim(), "");
 });
 
 test("discard removes a worktree under the garage folder on its branch", async () => {
-  const res = await finishWorktree({ repoDir: repo, path: wt, branch: "garage/x", action: "discard" });
+  wt = path.join(scratch, "garage", "worktrees", "ws", "wt2");
+  git(repo, "worktree", "add", "-q", "-b", "garage/y", wt);
+  const res = await finishWorktree({ repoDir: repo, path: wt, branch: "garage/y", action: "discard" });
   assert.equal(res.discarded, true);
   assert.ok(!existsSync(wt));
 });

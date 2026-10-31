@@ -15,6 +15,14 @@ let scratch;
 let transcript;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+// Poll until fn() is truthy (2s cap). Iteration-counted so it still works
+// when tests mock Date.
+async function waitFor(fn) {
+  for (let i = 0; i < 200; i++) {
+    if (fn()) return;
+    await sleep(10);
+  }
+}
 
 before(async () => {
   scratch = await mkdtemp(path.join(tmpdir(), "garage-claude-home-"));
@@ -196,7 +204,7 @@ test("refreshContext populates the cache asynchronously without blocking the cal
   // complete yet on a fresh event-loop turn.
   assert.equal(transcript.getCachedContext(id), null);
 
-  await sleep(50);
+  await waitFor(() => transcript.getCachedContext(id));
   assert.deepEqual(transcript.getCachedContext(id), { usedPercentage: 50, source: "transcript" });
 });
 
@@ -208,18 +216,18 @@ test("refreshContext respects the 15s TTL and refreshes again once stale", async
   await writeTranscript(dir, csid, assistantLine({ input: 100_000, model: "claude-haiku-4-5" })); // 50%
 
   transcript.refreshContext(id, { dir, claudeSessionId: csid });
-  await sleep(50);
+  await waitFor(() => transcript.getCacheEntry(id)?.at);
   const firstAt = transcript.getCacheEntry(id).at;
   assert.ok(firstAt);
 
   t.mock.timers.tick(5_000); // 5s later — still within the 15s TTL
   transcript.refreshContext(id, { dir, claudeSessionId: csid });
-  await sleep(50);
+  await sleep(50); // negative check: nothing to poll for, a refresh must NOT land
   assert.equal(transcript.getCacheEntry(id).at, firstAt, "no refresh should have happened yet");
 
   t.mock.timers.tick(11_000); // total 16s — past the TTL
   transcript.refreshContext(id, { dir, claudeSessionId: csid });
-  await sleep(50);
+  await waitFor(() => transcript.getCacheEntry(id).at !== firstAt);
   assert.notEqual(transcript.getCacheEntry(id).at, firstAt, "a stale entry must refresh");
 });
 
@@ -229,7 +237,7 @@ test("clearCache drops a cached entry", async () => {
   const csid = "session-clear";
   await writeTranscript(dir, csid, assistantLine({ input: 100_000 }));
   transcript.refreshContext(id, { dir, claudeSessionId: csid });
-  await sleep(50);
+  await waitFor(() => transcript.getCachedContext(id));
   assert.ok(transcript.getCachedContext(id));
   transcript.clearCache(id);
   assert.equal(transcript.getCachedContext(id), null);

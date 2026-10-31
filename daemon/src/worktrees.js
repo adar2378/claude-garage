@@ -113,19 +113,24 @@ export async function currentBranch(repoDir) {
 }
 
 // Refuse to delete anything that is not a garage worktree: the path must sit
-// under <GARAGE_DIR>/worktrees/ and be checked out on the recorded branch.
-async function assertOwnWorktree(wtPath, branch) {
+// under <GARAGE_DIR>/worktrees/. Merge additionally requires the folder to be
+// checked out on the recorded branch; discard does not (the agent may have
+// switched branches, detached, or be mid-rebase — the folder is still ours).
+async function assertOwnWorktree(wtPath, branch, { requireHead }) {
   const fail = (msg) => {
     const err = new Error(msg);
     err.statusCode = 400;
     return err;
   };
-  if (typeof wtPath !== "string" || !path.resolve(wtPath).startsWith(WORKTREES_ROOT + path.sep)) {
+  const root = path.resolve(WORKTREES_ROOT);
+  if (typeof wtPath !== "string" || !path.resolve(wtPath).startsWith(root + path.sep)) {
     throw fail("worktree path is not under the garage worktrees folder — nothing deleted");
   }
-  const head = await git(wtPath, ["rev-parse", "--abbrev-ref", "HEAD"]).catch(() => null);
-  if (head?.stdout.trim() !== branch) {
-    throw fail("worktree is not on the recorded branch — nothing deleted");
+  if (requireHead) {
+    const head = await git(wtPath, ["rev-parse", "--abbrev-ref", "HEAD"]).catch(() => null);
+    if (head?.stdout.trim() !== branch) {
+      throw fail("worktree is not on the recorded branch — nothing deleted");
+    }
   }
 }
 
@@ -147,7 +152,7 @@ export async function finishWorktree({ repoDir, path: wtPath, branch, action }) 
   }
 
   assertGarageBranch(branch);
-  await assertOwnWorktree(wtPath, branch);
+  await assertOwnWorktree(wtPath, branch, { requireHead: action === "merge" });
 
   if (action === "merge") {
     // The most common failure isn't a conflict — it's an agent that edited
@@ -180,8 +185,15 @@ export async function finishWorktree({ repoDir, path: wtPath, branch, action }) 
   }
 
   // discard
-  await git(repoDir, ["worktree", "remove", "--force", wtPath]);
-  await git(repoDir, ["branch", "-D", branch]);
+  if (existsSync(wtPath)) {
+    await git(repoDir, ["worktree", "remove", "--force", wtPath]);
+  } else {
+    // Folder already gone: drop the stale registration so the branch is free.
+    await git(repoDir, ["worktree", "prune"]);
+  }
+  const hasBranch = await git(repoDir, ["rev-parse", "--verify", "--quiet", `refs/heads/${branch}`])
+    .then(() => true, () => false);
+  if (hasBranch) await git(repoDir, ["branch", "-D", branch]);
   return { action: "discard", path: wtPath, branch, discarded: true };
 }
 
