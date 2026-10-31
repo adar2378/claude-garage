@@ -1,5 +1,9 @@
 //! The single `claude-garage` binary (design.md decision 9).
-//! Only `daemon` does anything yet; the other subcommands are stubs.
+//! `tui` and `restart` are the ported launcher (`bin/garage.js`).
+
+mod host;
+mod launcher;
+mod tui_bin;
 
 use anyhow::{bail, Result};
 use clap::{Parser, Subcommand};
@@ -32,6 +36,17 @@ enum Command {
     Plugin,
 }
 
+/// The launcher talks to the daemon on `GARAGE_PORT` (default 4747).
+fn real_host() -> Result<host::RealHost> {
+    let config = garage_daemon::Config::from_env()?;
+    Ok(host::RealHost { port: config.port })
+}
+
+fn exit_fail(f: launcher::Fail) -> i32 {
+    eprintln!("{}", f.0);
+    std::process::exit(1)
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     match Cli::parse().command.unwrap_or(Command::Tui) {
@@ -42,8 +57,17 @@ async fn main() -> Result<()> {
             }
             garage_daemon::run(config).await
         }
-        Command::Tui => bail!("`tui` is not ported yet; use the npm launcher"),
-        Command::Restart { .. } => bail!("`restart` is not ported yet; use the npm launcher"),
+        Command::Tui => {
+            let h = real_host()?;
+            std::process::exit(launcher::tui_main(&h).unwrap_or_else(exit_fail));
+        }
+        Command::Restart { sessions, all } => {
+            let h = real_host()?;
+            launcher::restart_main(&h, sessions, all).unwrap_or_else(|f| {
+                exit_fail(f);
+            });
+            Ok(())
+        }
         Command::Plugin => bail!("plugins: coming in a later release"),
     }
 }
