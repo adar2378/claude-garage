@@ -177,7 +177,7 @@ pub enum AppEvent {
     /// The daemon created this session fresh (a spawn succeeded): whatever
     /// draft an earlier session of the same id left behind is not its own.
     SessionSpawned(String),
-    /// The daemon's `session.closed` event, for any reason.
+    /// The daemon's `session.closed` event, for a close the user made.
     SessionClosed(String),
     /// A restore effect settled for this session id.
     RestoreSettled(String),
@@ -688,7 +688,8 @@ impl App {
             AppEvent::Status { id, status, since } => {
                 self.store.status_changed(&id, &status, since);
             }
-            AppEvent::SessionSpawned(id) | AppEvent::SessionClosed(id) => self.forget_drafts(&id),
+            AppEvent::SessionSpawned(id) => self.fresh_session(&id),
+            AppEvent::SessionClosed(id) => self.user_closed(&id),
             AppEvent::Connection(live) => {
                 self.motion.connection_changed(live, now_ms());
                 self.store.connection(live);
@@ -924,7 +925,7 @@ impl App {
                 quit = true;
             } else {
                 if let Effect::Close { id, .. } = &effect {
-                    self.forget_drafts(id);
+                    self.user_closed(id);
                 }
                 if matches!(effect, Effect::RestartDaemon) {
                     self.motion.daemon_restart_requested(now_ms());

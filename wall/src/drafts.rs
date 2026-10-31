@@ -362,6 +362,18 @@ impl DraftStore {
     /// Copy a pasted image file into the session's recovery folder. `Ok(None)`
     /// when it was refused (not an image file, too big, folder full).
     pub fn add_image(&self, id: &str, src: &Path) -> std::io::Result<Option<PathBuf>> {
+        self.add_image_if(id, src, &|| true)
+    }
+
+    /// [`DraftStore::add_image`], but the copy is discarded (`Ok(None)`)
+    /// when `wanted()` is false by the time it is done, just before it
+    /// would be renamed into place.
+    pub fn add_image_if(
+        &self,
+        id: &str,
+        src: &Path,
+        wanted: &dyn Fn() -> bool,
+    ) -> std::io::Result<Option<PathBuf>> {
         let ext = src
             .extension()
             .and_then(|e| e.to_str())
@@ -386,6 +398,10 @@ impl DraftStore {
         // short (crash, full disk, a file that kept growing) is never replayed.
         let tmp = dir.join(format!(".copy-{ms:016}-{seq:08}.tmp"));
         if copy_bounded(src, &tmp, MAX_IMAGE_BYTES)? {
+            if !wanted() {
+                let _ = fs::remove_file(&tmp);
+                return Ok(None);
+            }
             fs::rename(&tmp, &dest).inspect_err(|_| {
                 let _ = fs::remove_file(&tmp);
             })?;
@@ -655,6 +671,18 @@ mod tests {
         fs::write(dir.join(".copy-0-0.tmp"), b"half").unwrap();
         fs::write(dir.join("img-0000000000000001-00000001.png"), b"ok").unwrap();
         assert_eq!(s.images("g").len(), 1);
+    }
+
+    #[test]
+    fn a_copy_nobody_wants_any_more_is_discarded_before_it_lands() {
+        let root = tempfile::tempdir().unwrap();
+        let s = DraftStore::new(root.path().join("drafts"));
+        let src = root.path().join("a.png");
+        fs::write(&src, b"png").unwrap();
+        assert_eq!(s.add_image_if("x", &src, &|| false).unwrap(), None);
+        assert!(s.images("x").is_empty());
+        let leftovers = fs::read_dir(s.images_dir("x")).map_or(0, Iterator::count);
+        assert_eq!(leftovers, 0, "no temp file stays");
     }
 
     #[test]

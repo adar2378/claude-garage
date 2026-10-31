@@ -509,7 +509,7 @@ mod draft_flow {
     }
 
     #[test]
-    fn the_daemons_closed_event_and_a_fresh_spawn_wipe_a_sessions_draft() {
+    fn a_user_close_and_a_fresh_spawn_wipe_a_sessions_draft_and_others_stay() {
         for event in [
             AppEvent::SessionClosed("garage/a/one".into()),
             AppEvent::SessionSpawned("garage/a/one".into()),
@@ -517,14 +517,28 @@ mod draft_flow {
             let (mut app, _d, store, _id) = app_with_drafts();
             let id = "garage/a/one";
             store.save_text(id, "old words").unwrap();
-            assert!(store.has_anything(id));
             app.apply(event);
             assert!(!store.has_anything(id), "a reused label starts clean");
-            // Another session's draft is left alone.
             store.save_text("garage/a/two", "keep").unwrap();
             app.apply(AppEvent::SessionClosed(id.into()));
             assert!(store.has_anything("garage/a/two"));
         }
+    }
+
+    #[test]
+    fn an_image_copy_finishing_after_the_user_closed_the_session_is_discarded() {
+        let (mut app, d, store, id) = app_with_drafts();
+        let png = d.path().join("shot.png");
+        std::fs::write(&png, b"png").unwrap();
+        app.user_closed(&id);
+        app.note_paste_for_drafts(&id, png.to_str().unwrap(), 1000);
+        wait_for_copies(&mut app, 1600);
+        assert!(store.images(&id).is_empty());
+        // A fresh session with the same id keeps images again.
+        app.fresh_session(&id);
+        app.note_paste_for_drafts(&id, png.to_str().unwrap(), 2000);
+        wait_for_copies(&mut app, 2600);
+        assert_eq!(store.images(&id).len(), 1);
     }
 
     #[test]
@@ -559,7 +573,7 @@ mod draft_flow {
     fn closing_a_session_deletes_what_was_kept_and_nothing_is_written_when_off() {
         let (mut app, _d, store, id) = app_with_drafts();
         app.observe_prompt(&id, Prompt::Text("x".into()), 1000);
-        app.forget_drafts(&id);
+        app.user_closed(&id);
         assert!(!store.has_anything(&id));
 
         let mut off = app_with_layout(); // never enabled

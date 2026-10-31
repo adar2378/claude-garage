@@ -6,6 +6,7 @@
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::mpsc::{Receiver, Sender, channel};
+use std::sync::{Arc, Mutex};
 
 use crate::drafts::{self, DraftStore, Prompt};
 use crate::input::paste::wrap_bracketed_paste;
@@ -84,6 +85,9 @@ pub(super) struct DraftSync {
     /// When an image was last added per session (ms).
     image_at: HashMap<String, i64>,
     pub(super) last_prune_ms: i64,
+    /// Sessions the user closed: a copy still running for one is discarded.
+    /// Shared with the copy threads.
+    pub(super) closed: Arc<Mutex<HashSet<String>>>,
     /// Image copies running on a background thread, per session.
     pub(super) inflight: HashMap<String, usize>,
     images: Option<(Sender<ImageDone>, Receiver<ImageDone>)>,
@@ -327,10 +331,12 @@ impl App {
         }
         *self.drafts.inflight.entry(session.to_owned()).or_default() += 1;
         let (tx, session, text) = (tx.clone(), session.to_owned(), text.to_owned());
+        let closed = Arc::clone(&self.drafts.closed);
         std::thread::spawn(move || {
             let mut saved = false;
+            let wanted = || !closed.lock().is_ok_and(|c| c.contains(&session));
             for path in drafts::pasted_image_paths(&text) {
-                saved |= matches!(store.add_image(&session, &path), Ok(Some(_)));
+                saved |= matches!(store.add_image_if(&session, &path, &wanted), Ok(Some(_)));
             }
             let _ = tx.send(ImageDone {
                 session,
@@ -361,8 +367,25 @@ impl App {
         }
     }
 
-    /// The user closed or deleted the session: nothing to recover.
-    pub(super) fn forget_drafts(&mut self, session: &str) {
+    /// A session id the daemon just created fresh: it starts with no draft
+    /// and no memory of an earlier session that had the same id.
+    pub(super) fn fresh_session(&mut self, session: &str) {
+        if let Ok(mut c) = self.drafts.closed.lock() {
+            c.remove(session);
+        }
+        self.forget_drafts(session);
+    }
+
+    /// The user closed or deleted the session: nothing to recover, and no
+    /// image copy still running may land for it.
+    pub(super) fn user_closed(&mut self, session: &str) {
+        if let Ok(mut c) = self.drafts.closed.lock() {
+            c.insert(session.to_owned());
+        }
+        self.forget_drafts(session);
+    }
+
+    fn forget_drafts(&mut self, session: &str) {
         if let Some(store) = &self.drafts.store {
             store.clear(session);
         }
