@@ -508,7 +508,7 @@ impl App {
                     self.run_effects(effects);
                     return false;
                 }
-                let home = std::env::var("HOME").unwrap_or_default();
+                let home = std::env::var("HOME").or_else(|_| std::env::var("USERPROFILE")).unwrap_or_default();
                 let (effects, notice) = handle_overlay_key(
                     &mut self.store,
                     &self.keymap,
