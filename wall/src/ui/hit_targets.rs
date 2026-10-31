@@ -12,7 +12,7 @@ use crate::actions::{ids, ActionCtx, ActionId, ActionSource};
 use crate::state::wall_state::{KeyLayer, OverlayKind, WallState};
 use crate::slots::{SlotClickRegion, SlotRegistry};
 use crate::ui::layout::WallLayout;
-use crate::ui::rail::header_items;
+use crate::ui::rail::{extra_row_items, header_items};
 use crate::ui::triage::triage_queue_rows;
 use crate::ui::grid_layout::grid_cell_rect;
 
@@ -46,9 +46,10 @@ pub enum RailTarget {
 
 /// Maps a rail-content row (0-based, local to the rail — the rail renders
 /// one line per row: each group's `rail.header` slot rows, its workspace
-/// row, then its sessions) to its target. The header rows are counted from
-/// the slot registry, exactly as the renderer lays them out. `None` for a
-/// header row, rows past the last group, or an empty rail.
+/// row, its sessions, then its `rail.extra_rows`) to its target. The slot
+/// rows are counted from the slot registry, exactly as the renderer lays
+/// them out. `None` for a header or extra row (their clicks are slot
+/// regions), rows past the last group, or an empty rail.
 pub fn rail_target_at(state: &WallState, slots: &SlotRegistry, row: i32) -> Option<RailTarget> {
     if row < 0 {
         return None;
@@ -70,6 +71,11 @@ pub fn rail_target_at(state: &WallState, slots: &SlotRegistry, row: i32) -> Opti
             return Some(RailTarget::Session(sessions[row - line].id.clone()));
         }
         line += sessions.len();
+        let extra_rows = extra_row_items(state, slots, group).len();
+        if row < line + extra_rows {
+            return None;
+        }
+        line += extra_rows;
     }
     None
 }
@@ -473,6 +479,37 @@ mod tests {
         assert_eq!(rows[5], " 2 beta", "the click mapping and the paint agree on the workspace row");
         assert_eq!(rail_target_at(&state, &slots, 6), Some(RailTarget::Session("b1".into())));
         assert_eq!(rail_target_at(&state, &slots, 7), None);
+    }
+
+    #[test]
+    fn extra_rows_sit_after_their_groups_sessions_and_shift_the_rows_below() {
+        use crate::slots::{SlotCtx, SlotId, SlotItem};
+        use crate::ui::rail::rail_lines;
+        use ratatui::text::Span;
+        let mut state = WallState::initial();
+        state.groups = groups();
+        // Two extra rows under `alpha` only, one under `beta`.
+        let mut slots = SlotRegistry::core();
+        slots.register(SlotId::RailExtraRows, |ctx: &SlotCtx| {
+            let n = if ctx.group.is_some_and(|g| g.name == "alpha") { 2 } else { 1 };
+            (0..n).map(|i| SlotItem::new(vec![Span::raw(format!(" closed {i}"))], 0)).collect()
+        });
+        let rows: Vec<String> = rail_lines(&state, &slots, 0).iter().map(ToString::to_string).collect();
+        // 0 alpha, 1 a1, 2 a2, 3-4 extra, 5 beta, 6 b1, 7 extra
+        assert_eq!(rows[3], " closed 0");
+        assert_eq!(rows[5], " 2 beta");
+        assert_eq!(rail_target_at(&state, &slots, 2), Some(RailTarget::Session("a2".into())));
+        assert_eq!(rail_target_at(&state, &slots, 3), None, "extra rows are inert here (slot regions)");
+        assert_eq!(rail_target_at(&state, &slots, 4), None);
+        assert_eq!(rail_target_at(&state, &slots, 5), Some(RailTarget::Workspace(1)));
+        assert_eq!(rail_target_at(&state, &slots, 6), Some(RailTarget::Session("b1".into())));
+        assert_eq!(rail_target_at(&state, &slots, 7), None);
+        assert_eq!(rail_target_at(&state, &slots, 8), None);
+        // Every painted row agrees with what the maths says it is.
+        for (row, text) in rows.iter().enumerate() {
+            let target = rail_target_at(&state, &slots, row as i32);
+            assert_eq!(target.is_some(), !text.trim().starts_with("closed"), "row {row}: {text}");
+        }
     }
 
     // ── triageRowIndexAt ────────────────────────────────────────────────

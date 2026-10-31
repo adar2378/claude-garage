@@ -31,6 +31,14 @@ pub struct RailClick {
     pub workspace: Option<String>,
 }
 
+/// What [`rail_render`] produces besides the lines.
+#[derive(Default)]
+pub struct RailExtras {
+    pub clicks: Vec<RailClick>,
+    /// Styles laid over a whole row (`rail.extra_rows` backgrounds).
+    pub row_styles: Vec<(u16, Style)>,
+}
+
 /// One rendered line per rail row: each group's optional family label, its
 /// header, then its sessions — the exact rows `rail_target_at` maps clicks against.
 pub fn rail_lines(state: &WallState, slots: &SlotRegistry, now_ms: i64) -> Vec<Line<'static>> {
@@ -42,8 +50,9 @@ pub fn rail_render(
     state: &WallState,
     slots: &SlotRegistry,
     now_ms: i64,
-) -> (Vec<Line<'static>>, Vec<RailClick>) {
-    let mut clicks: Vec<RailClick> = Vec::new();
+) -> (Vec<Line<'static>>, RailExtras) {
+    let mut extras = RailExtras::default();
+    let clicks = &mut extras.clicks;
     let gridded: HashSet<&str> = state
         .gridded_session_ids
         .iter()
@@ -100,6 +109,25 @@ pub fn rail_render(
             }
             lines.push(line);
         }
+        // `rail.extra_rows`: whole rows after the sessions. A click anywhere
+        // on the row runs the item's target; `about_session` scopes it.
+        for item in extra_row_items(state, slots, group) {
+            if let Some(target) = item.on_click.clone() {
+                let session = target.session.as_deref().map(str::to_owned);
+                clicks.push(RailClick {
+                    row: lines.len() as u16,
+                    cols: 0..u16::MAX,
+                    target,
+                    slot: SlotId::RailExtraRows,
+                    session,
+                    workspace: Some(group.name.clone()),
+                });
+            }
+            if let Some(style) = item.row_style {
+                extras.row_styles.push((lines.len() as u16, style));
+            }
+            lines.push(Line::from(item.text));
+        }
     }
     if lines.is_empty() {
         lines.push(Line::styled(
@@ -107,7 +135,7 @@ pub fn rail_render(
             Style::default().fg(colors::FAINT),
         ));
     }
-    (lines, clicks)
+    (lines, extras)
 }
 
 /// The `rail.header` items above a group's workspace row, one rail row each.
@@ -120,6 +148,18 @@ pub fn header_items(state: &WallState, slots: &SlotRegistry, group: &WorkspaceGr
         ..SlotCtx::default()
     };
     slots.items(SlotId::RailHeader, &ctx)
+}
+
+/// The `rail.extra_rows` items under a group's sessions, one rail row each.
+/// The renderer and the click router both ask here, so the row maths cannot
+/// drift.
+pub fn extra_row_items(state: &WallState, slots: &SlotRegistry, group: &WorkspaceGroup) -> Vec<SlotItem> {
+    let ctx = SlotCtx {
+        state: Some(state),
+        group: Some(group),
+        ..SlotCtx::default()
+    };
+    slots.items(SlotId::RailExtraRows, &ctx)
 }
 
 /// The `rail.header` core provider: the p18 family label row above the first
@@ -225,9 +265,15 @@ pub fn render_rail(
         .border_style(Style::default().fg(colors::FAINT));
     let inner = block.inner(rect);
     block.render(rect, buf);
-    let (lines, clicks) = rail_render(state, slots, now_ms);
+    let (lines, extras) = rail_render(state, slots, now_ms);
     Paragraph::new(lines).render(inner, buf);
-    clicks
+    for (row, style) in extras.row_styles {
+        if row < inner.height {
+            buf.set_style(Rect::new(inner.x, inner.y + row, inner.width, 1), style);
+        }
+    }
+    extras
+        .clicks
         .into_iter()
         .filter_map(|c| {
             let start = c.cols.start.min(inner.width);
@@ -400,6 +446,38 @@ mod tests {
         // The painted rows are exactly what rail_lines says, plus the item.
         let lines = texts(&rail_lines(store.state(), &slots, 0));
         assert_eq!(lines[1], " ▸ ○ one x3", "focused session carries the marker");
+    }
+
+    #[test]
+    fn extra_rows_paint_with_their_style_and_click_across_the_whole_row() {
+        use crate::actions::ids;
+        use ratatui::style::Color;
+        let mut store = WallStore::new();
+        store.workspaces_fetched(vec![ws("alpha")]);
+        store.sessions_fetched(vec![si("alpha", "one", "idle", None)]);
+        let mut slots = SlotRegistry::core();
+        slots.register(SlotId::RailExtraRows, |_: &SlotCtx| {
+            vec![SlotItem {
+                on_click: Some(
+                    ClickTarget::new(ids::SESSION_RESTORE).from_plugin("closed").about_session("garage/alpha/gone"),
+                ),
+                row_style: Some(Style::default().bg(Color::Indexed(236))),
+                ..SlotItem::new(vec![Span::raw(" ↺ gone")], 1)
+            }]
+        });
+        let rect = Rect::new(0, 0, 20, 5);
+        let mut buf = Buffer::empty(rect);
+        let regions = render_rail(&mut buf, rect, store.state(), &slots, 0);
+        // rows: 0 alpha, 1 one, 2 extra
+        assert_eq!(regions.len(), 1);
+        let r = &regions[0];
+        assert_eq!((r.rect.y, r.rect.x, r.rect.width), (2, 0, 19), "the whole inner row");
+        assert_eq!(r.session.as_deref(), Some("garage/alpha/gone"), "the item's own session, not a row's");
+        assert_eq!(r.workspace.as_deref(), Some("alpha"));
+        assert_eq!(r.slot, SlotId::RailExtraRows);
+        assert_eq!(buf[(1, 2)].symbol(), "↺");
+        assert_eq!(buf[(15, 2)].bg, Color::Indexed(236), "row style reaches past the text");
+        assert_eq!(buf[(1, 1)].bg, Color::Reset, "other rows untouched");
     }
 
     #[test]

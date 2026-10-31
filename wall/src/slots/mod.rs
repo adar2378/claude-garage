@@ -9,6 +9,7 @@ use std::ops::Range;
 use std::sync::Arc;
 
 use ratatui::layout::Rect;
+use ratatui::style::Style;
 use ratatui::text::Span;
 use serde_json::Value;
 
@@ -20,7 +21,11 @@ use crate::state::wall_state::{WallSession, WallState};
 pub enum SlotId {
     TileTitleRight,
     RailRow,
+    /// Whole extra rows under a workspace's sessions (workspace-scoped).
+    RailExtraRows,
     RailHeader,
+    /// Row-addressed markers drawn in the tile's left gutter.
+    TileGutter,
     StripRight,
     /// Defined for the plugin host; nothing renders it yet.
     Overlay,
@@ -29,11 +34,30 @@ pub enum SlotId {
 }
 
 impl SlotId {
+    /// Every slot, in declaration order.
+    pub const ALL: [SlotId; 8] = [
+        SlotId::TileTitleRight,
+        SlotId::RailRow,
+        SlotId::RailExtraRows,
+        SlotId::RailHeader,
+        SlotId::TileGutter,
+        SlotId::StripRight,
+        SlotId::Overlay,
+        SlotId::ContextMenu,
+    ];
+
+    /// The slot named `name` (the manifest/wire spelling), if any.
+    pub fn parse(name: &str) -> Option<SlotId> {
+        SlotId::ALL.into_iter().find(|s| s.as_str() == name)
+    }
+
     pub fn as_str(self) -> &'static str {
         match self {
             SlotId::TileTitleRight => "tile.title.right",
             SlotId::RailRow => "rail.row",
+            SlotId::RailExtraRows => "rail.extra_rows",
             SlotId::RailHeader => "rail.header",
+            SlotId::TileGutter => "tile.gutter",
             SlotId::StripRight => "strip.right",
             SlotId::Overlay => "overlay",
             SlotId::ContextMenu => "context.menu",
@@ -51,15 +75,25 @@ pub struct ClickTarget {
     pub action: ActionId,
     pub args: Option<Arc<Value>>,
     pub plugin: Option<Arc<str>>,
+    /// The session this item is about, for items that sit in a row which is
+    /// not that session's own (a closed chat in `rail.extra_rows`). It scopes
+    /// the click region, so a core action such as `session.restore` takes it
+    /// as its target; `args` never does.
+    pub session: Option<Arc<str>>,
 }
 
 impl ClickTarget {
     pub fn new(action: ActionId) -> Self {
-        ClickTarget { action, args: None, plugin: None }
+        ClickTarget { action, args: None, plugin: None, session: None }
     }
 
     pub fn with_args(mut self, args: Value) -> Self {
         self.args = Some(Arc::new(args));
+        self
+    }
+
+    pub fn about_session(mut self, session: &str) -> Self {
+        self.session = Some(Arc::from(session));
         self
     }
 
@@ -109,6 +143,9 @@ pub struct SlotItem {
     pub on_click: Option<ClickTarget>,
     pub priority: i16,
     pub placement: Placement,
+    /// `rail.extra_rows` only: a style laid over the whole row (a
+    /// background, typically).
+    pub row_style: Option<Style>,
 }
 
 impl SlotItem {
@@ -118,6 +155,7 @@ impl SlotItem {
             on_click: None,
             priority,
             placement: Placement::Flow,
+            row_style: None,
         }
     }
 
@@ -354,18 +392,25 @@ mod tests {
         assert!(registry.items(SlotId::Overlay, &ctx).is_empty());
         assert!(registry.items(SlotId::ContextMenu, &ctx).is_empty());
         assert!(registry.items(SlotId::RailRow, &ctx).is_empty());
-        let ids = [
-            SlotId::TileTitleRight,
-            SlotId::RailRow,
-            SlotId::RailHeader,
-            SlotId::StripRight,
-            SlotId::Overlay,
-            SlotId::ContextMenu,
-        ]
-        .map(SlotId::as_str);
+        let ids = SlotId::ALL.map(SlotId::as_str);
         assert_eq!(
             ids,
-            ["tile.title.right", "rail.row", "rail.header", "strip.right", "overlay", "context.menu"]
+            [
+                "tile.title.right",
+                "rail.row",
+                "rail.extra_rows",
+                "rail.header",
+                "tile.gutter",
+                "strip.right",
+                "overlay",
+                "context.menu"
+            ]
         );
+        for slot in SlotId::ALL {
+            assert_eq!(SlotId::parse(slot.as_str()), Some(slot));
+        }
+        assert_eq!(SlotId::parse("rail.nope"), None);
+        assert!(registry.items(SlotId::RailExtraRows, &ctx).is_empty());
+        assert!(registry.items(SlotId::TileGutter, &ctx).is_empty());
     }
 }
