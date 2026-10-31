@@ -18,11 +18,22 @@ use ratatui::widgets::{Block, Borders, Paragraph, Widget};
 use crate::slots::{SlotCtx, SlotId, SlotItem, SlotRegistry};
 use crate::state::salience::WorkspaceGroup;
 use crate::state::wall_state::{WallSession, WallState};
-use crate::ui::theme::{colors, elapsed_for, glyph_for, status_color};
+use crate::ui::theme::{colors, elapsed_for, glyph_for, status_color, status_color_fading};
 
 /// One rendered line per rail row: each group's optional family label, its
 /// header, then its sessions — the exact rows `rail_target_at` maps clicks against.
 pub fn rail_lines(state: &WallState, slots: &SlotRegistry, now_ms: i64) -> Vec<Line<'static>> {
+    rail_lines_fading(state, slots, now_ms, false)
+}
+
+/// [`rail_lines`] with the `done` glyph fading across its 2 minutes when
+/// `fade_done` (motion on).
+pub fn rail_lines_fading(
+    state: &WallState,
+    slots: &SlotRegistry,
+    now_ms: i64,
+    fade_done: bool,
+) -> Vec<Line<'static>> {
     let gridded: HashSet<&str> = state
         .gridded_session_ids
         .iter()
@@ -43,6 +54,7 @@ pub fn rail_lines(state: &WallState, slots: &SlotRegistry, now_ms: i64) -> Vec<L
                 focused_ws && gridded.contains(s.id.as_str()),
                 focused_ws && state.focused_session_id.as_deref() == Some(s.id.as_str()),
                 now_ms,
+                fade_done,
             ));
         }
     }
@@ -101,14 +113,22 @@ fn workspace_row(group: &WorkspaceGroup, index: usize, focused: bool) -> Line<'s
     Line::from(spans)
 }
 
-fn session_row(s: &WallSession, gridded: bool, focused: bool, now_ms: i64) -> Line<'static> {
+fn session_row(
+    s: &WallSession,
+    gridded: bool,
+    focused: bool,
+    now_ms: i64,
+    fade_done: bool,
+) -> Line<'static> {
     // Amber row exclusively for needs-input; everything else follows the
     // status ladder, dimmed further when the session has no tile. The
     // focused session carries a `▸` marker plus a bright/bold label — never
     // amber (amber stays exclusive to needs-input, whose label keeps its hue
     // and just gains bold). The marker column is always reserved so rows
     // never shift as focus moves.
-    let glyph_color = if gridded {
+    let glyph_color = if gridded && fade_done {
+        status_color_fading(&s.status, s.since, now_ms)
+    } else if gridded {
         status_color(&s.status, s.since, now_ms)
     } else {
         colors::FAINT
@@ -156,12 +176,24 @@ fn session_row(s: &WallSession, gridded: bool, focused: bool, now_ms: i64) -> Li
 /// rows (only a RIGHT border — no top inset), so the click router can map
 /// `row - rect.y` straight through `rail_target_at`.
 pub fn render_rail(buf: &mut Buffer, rect: Rect, state: &WallState, slots: &SlotRegistry, now_ms: i64) {
+    render_rail_fading(buf, rect, state, slots, now_ms, false);
+}
+
+/// [`render_rail`] with the `done` fade (motion on).
+pub fn render_rail_fading(
+    buf: &mut Buffer,
+    rect: Rect,
+    state: &WallState,
+    slots: &SlotRegistry,
+    now_ms: i64,
+    fade_done: bool,
+) {
     let block = Block::default()
         .borders(Borders::RIGHT)
         .border_style(Style::default().fg(colors::FAINT));
     let inner = block.inner(rect);
     block.render(rect, buf);
-    Paragraph::new(rail_lines(state, slots, now_ms)).render(inner, buf);
+    Paragraph::new(rail_lines_fading(state, slots, now_ms, fade_done)).render(inner, buf);
 }
 
 #[cfg(test)]

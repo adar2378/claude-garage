@@ -73,6 +73,17 @@ pub fn status_color(status: &str, since_ms: Option<i64>, now_ms: i64) -> Color {
     }
 }
 
+/// [`status_color`] with `done` stepping from green to neutral across its 2
+/// minutes (p23 motion) instead of the hard switch. Every other status is
+/// unchanged.
+pub fn status_color_fading(status: &str, since_ms: Option<i64>, now_ms: i64) -> Color {
+    if status == "done" {
+        crate::ui::motion::done_fade_color(since_ms, now_ms)
+    } else {
+        status_color(status, since_ms, now_ms)
+    }
+}
+
 /// Elapsed-time formatting: `None` → "—", under an hour → "M:SS", under a day →
 /// "Hh MMm", else "Nd". Clamps negative deltas to 0 (clock skew reads as
 /// "just now").

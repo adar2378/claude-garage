@@ -104,5 +104,6 @@ fn plain(code: KeyCode) -> KeyEvent {
 
 mod dispatch;
 mod layers;
+mod motion;
 mod router;
 mod worktree;

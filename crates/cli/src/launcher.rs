@@ -54,6 +54,28 @@ impl Reply {
     }
 }
 
+/// A daemon the launcher just spawned and did not wait for: the TUI waits
+/// for it instead (with its startup reveal).
+#[derive(Debug, PartialEq, Eq, Clone)]
+pub struct Starting {
+    pub log: PathBuf,
+    pub pid: u32,
+    pub port: u16,
+}
+
+impl Starting {
+    /// The env the wall reads for the hand-off. The port is explicit so the
+    /// wall waits on the daemon the launcher actually started.
+    pub fn env(&self) -> Vec<(&'static str, String)> {
+        vec![
+            ("GARAGE_DAEMON_STARTING", "1".to_owned()),
+            ("GARAGE_DAEMON_LOG", self.log.display().to_string()),
+            ("GARAGE_DAEMON_PID", self.pid.to_string()),
+            ("GARAGE_PORT", self.port.to_string()),
+        ]
+    }
+}
+
 pub trait Host: Out {
     fn port(&self) -> u16;
     /// The launcher's own version (compared with `/api/health`).
@@ -69,14 +91,16 @@ pub trait Host: Out {
     fn run_inherit(&self, bin: &str, args: &[&str]) -> bool;
     fn listener_pid(&self) -> Option<u32>;
     fn terminate(&self, pid: u32) -> Terminate;
-    /// Start `claude-garage daemon` detached; returns the log path.
-    fn spawn_daemon(&self) -> Result<PathBuf, String>;
+    /// Start `claude-garage daemon` detached; returns its log path and pid.
+    fn spawn_daemon(&self) -> Result<Starting, String>;
     fn sleep_ms(&self, ms: u64);
     /// Monotonic milliseconds, for measuring real elapsed time.
     fn now_ms(&self) -> u64;
     fn resolve_tui(&self) -> Result<PathBuf, Fail>;
     /// Run the TUI in the foreground; returns its exit code (1 on a signal).
-    fn run_tui(&self, bin: &Path) -> Result<i32, String>;
+    /// `starting` is set when the daemon was just spawned: the TUI gets
+    /// [`Starting::env`] and waits for the daemon itself.
+    fn run_tui(&self, bin: &Path, starting: Option<&Starting>) -> Result<i32, String>;
 }
 
 /// Poll `f` every `interval_ms` until `deadline_ms` of real elapsed time
@@ -234,19 +258,16 @@ pub fn tui_main(host: &dyn Host) -> Result<i32, Fail> {
     if let (true, Some(h)) = (stale, &health) {
         stop_stale_daemon(host, h)?;
     }
+    let mut starting = None;
     if health.is_none() || stale {
         if !stale {
             host.say(&format!("no daemon on port {port} — starting one (it outlives the TUI)"));
         }
-        let log = host.spawn_daemon().map_err(Fail)?;
-        if !wait_for_health(host) {
-            return fail(format!(
-                "claude-garage daemon did not come up on port {port} — see {} (port already in use? set GARAGE_PORT to pick a different one)",
-                log.display()
-            ));
-        }
+        // No wait here: the TUI waits for /api/health itself, behind its
+        // startup reveal, with the same 15s budget and failure message.
+        starting = Some(host.spawn_daemon().map_err(Fail)?);
     }
-    host.run_tui(&tui)
+    host.run_tui(&tui, starting.as_ref())
         .map_err(|e| Fail(format!("failed to start TUI binary at {}: {e}", tui.display())))
 }
 
@@ -488,12 +509,12 @@ mod tests {
             }
             t
         }
-        fn spawn_daemon(&self) -> Result<PathBuf, String> {
+        fn spawn_daemon(&self) -> Result<Starting, String> {
             self.calls.borrow_mut().push("spawn_daemon".into());
             if self.spawn_brings_up {
                 *self.daemon.borrow_mut() = Some(health(Some(V), Some(111)));
             }
-            Ok(PathBuf::from("/fake/daemon.log"))
+            Ok(Starting { log: PathBuf::from("/fake/daemon.log"), pid: 111, port: 4747 })
         }
         fn sleep_ms(&self, ms: u64) {
             *self.sleeps.borrow_mut() += ms;
@@ -508,8 +529,12 @@ mod tests {
                 Err(Fail(m)) => Err(Fail(m.clone())),
             }
         }
-        fn run_tui(&self, bin: &Path) -> Result<i32, String> {
+        fn run_tui(&self, bin: &Path, starting: Option<&Starting>) -> Result<i32, String> {
             self.calls.borrow_mut().push(format!("run_tui {}", bin.display()));
+            if let Some(s) = starting {
+                let env: Vec<String> = s.env().iter().map(|(k, v)| format!("{k}={v}")).collect();
+                self.calls.borrow_mut().push(format!("tui_env {}", env.join(" ")));
+            }
             Ok(self.tui_exit)
         }
     }
@@ -575,7 +600,7 @@ mod tests {
         let mut f = Fake::new(None);
         f.spawn_brings_up = false;
         f.fetch_cost_ms = 1_000;
-        assert!(tui_main(&f).is_err());
+        assert!(restart_main(&f, false, false).is_err());
         assert!(*f.sleeps.borrow() < 15_000, "slept {}", f.sleeps.borrow());
         assert!(f.now_ms() >= 15_000 && f.now_ms() < 15_000 + 1_000 + 250 + 1_000, "{}", f.now_ms());
     }
@@ -758,14 +783,25 @@ mod tests {
     }
 
     #[test]
-    fn a_daemon_that_never_comes_up_reports_the_log_path_after_15s() {
+    fn a_freshly_spawned_daemon_is_not_waited_for_and_the_tui_gets_the_hand_off_env() {
         let mut f = Fake::new(None);
+        // Even a daemon that never answers: the launcher no longer waits, the
+        // wall owns the wait (and the failure message).
         f.spawn_brings_up = false;
-        let err = tui_main(&f).unwrap_err();
-        assert!(err.0.contains("did not come up on port 4747 — see /fake/daemon.log"), "{}", err.0);
-        assert!(err.0.contains("GARAGE_PORT"));
-        assert_eq!(*f.sleeps.borrow(), 15_000);
-        assert_eq!(f.called("run_tui"), 0);
+        assert_eq!(tui_main(&f), Ok(0));
+        assert_eq!(*f.sleeps.borrow(), 0, "no wait_for_health on the spawn path");
+        assert_eq!(*f.fetches.borrow(), 1, "only the initial probe");
+        assert_eq!(
+            f.log().last().unwrap(),
+            "tui_env GARAGE_DAEMON_STARTING=1 GARAGE_DAEMON_LOG=/fake/daemon.log GARAGE_DAEMON_PID=111 GARAGE_PORT=4747"
+        );
+    }
+
+    #[test]
+    fn a_daemon_that_is_already_up_gets_no_hand_off_env() {
+        let f = Fake::new(Some(health(Some(V), Some(7))));
+        assert_eq!(tui_main(&f), Ok(0));
+        assert_eq!(f.called("tui_env"), 0);
     }
 
     // ── restart ─────────────────────────────────────────────────────────

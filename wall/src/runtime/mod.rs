@@ -50,6 +50,7 @@ use crate::state::store::WallStore;
 use crate::state::wall_state::{KeyLayer, OverlayKind, WallSession};
 use crate::ui::escalation::{EscalationPolicy, HEARTBEAT_INTERVAL_MS};
 use crate::ui::layout::WallLayout;
+use crate::ui::motion::Motion;
 use crate::ui::pet::{PetClick, PetHost};
 use crate::ui::registry::{FrozenTile, TileRegistry};
 use crate::ui::scroll::{capture_frozen, page_lines, tmux_history_size, ScrollModel};
@@ -337,6 +338,8 @@ struct App {
     /// The pit pet behind its feature boundary; `None` when the `pet`
     /// feature is off.
     pet: Option<PetHost>,
+    /// p23: running effects, spinner flags and the redraw clock.
+    motion: Motion,
     /// The filler width the last-drawn strip had — the room `pet_tick`'s
     /// next `PetSim::step` has to work with. `0` until the first frame
     /// (falls back to a conservative default — see `pet_tick`).
@@ -344,11 +347,20 @@ struct App {
 }
 
 impl App {
+    #[cfg(test)]
     fn new(tx: EventSender, base_url: &str, started_ms: i64) -> App {
+        App::with_motion(tx, base_url, started_ms, false)
+    }
+
+    fn with_motion(tx: EventSender, base_url: &str, started_ms: i64, motion_enabled: bool) -> App {
         let pet = PetHost::new(started_ms);
+        let motion = Motion::new(motion_enabled);
         let mut slots = SlotRegistry::core();
         if let Some(provider) = pet.as_ref().and_then(PetHost::slot_provider) {
             slots.register(SlotId::StripRight, provider);
+        }
+        if let Some(spinner) = motion.strip_spinner() {
+            slots.register(SlotId::StripRight, spinner);
         }
         App {
             store: WallStore::new(),
@@ -372,6 +384,7 @@ impl App {
             ws_add_rect: None,
             view_picker_rect: None,
             pet,
+            motion,
             last_strip_filler: 0,
         }
     }
@@ -387,7 +400,10 @@ impl App {
             AppEvent::Status { id, status, since } => {
                 self.store.status_changed(&id, &status, since);
             }
-            AppEvent::Connection(live) => self.store.connection(live),
+            AppEvent::Connection(live) => {
+                self.motion.connection_changed(live, now_ms());
+                self.store.connection(live);
+            }
             AppEvent::Notice { text, ttl_ms } => {
                 self.router.notices.show(text, ttl_ms, now_ms());
             }
@@ -557,6 +573,9 @@ impl App {
             if matches!(effect, Effect::Quit) {
                 quit = true;
             } else {
+                if matches!(effect, Effect::RestartDaemon) {
+                    self.motion.daemon_restart_requested(now_ms());
+                }
                 run_effect(effect, &self.tx, &self.base_url);
             }
         }
@@ -751,6 +770,22 @@ fn should_show_install_hint(
         && !sessions.iter().any(WallSession::has_statusline_context)
 }
 
+/// Idle poll when nothing is dirty and nothing animates.
+const IDLE_POLL: Duration = Duration::from_millis(250);
+
+/// How long the loop waits for the next event. Dirty: until the frame cap.
+/// Clean: the idle poll, shortened to the motion tick only while something
+/// animates (`motion_tick` is `None` otherwise, leaving today's behaviour).
+fn loop_timeout(dirty: bool, since_render: Duration, motion_tick: Option<Duration>) -> Duration {
+    if dirty {
+        return FRAME_CAP.saturating_sub(since_render);
+    }
+    match motion_tick {
+        Some(tick) => IDLE_POLL.min(tick.saturating_sub(since_render)),
+        None => IDLE_POLL,
+    }
+}
+
 /// The single state-owning loop: drains the channel, applies events, runs
 /// the downstream reconciliation (registry / escalation / heartbeat), and
 /// draws when dirty, frame-capped like the spike.
@@ -762,7 +797,7 @@ async fn state_loop(
     client_id: &str,
 ) -> std::io::Result<()> {
     let started_ms = now_ms();
-    let mut app = App::new(tx, base_url, started_ms);
+    let mut app = App::with_motion(tx, base_url, started_ms, crate::ui::motion::load_enabled());
     // View persistence (spec tui-views "View persistence"): load whatever
     // wall.json holds, then debounce a save (≥500ms after the last
     // views_revision bump) so a burst of `d`/`D`/Tab presses writes once,
@@ -847,16 +882,17 @@ async fn state_loop(
                 });
             }
         }
+        // Motion (p23): the only timed redraw. `next_tick` is `None` while
+        // nothing animates, so an idle wall never takes this branch.
+        if app.motion.next_tick().is_some_and(|tick| last_render.elapsed() >= tick) {
+            dirty = true;
+        }
         if dirty && last_render.elapsed() >= FRAME_CAP {
             terminal.draw(|f| app.draw_frame(f, now_ms()))?;
             last_render = Instant::now();
             dirty = false;
         }
-        let timeout = if dirty {
-            FRAME_CAP.saturating_sub(last_render.elapsed())
-        } else {
-            Duration::from_millis(250)
-        };
+        let timeout = loop_timeout(dirty, last_render.elapsed(), app.motion.next_tick());
         let first = match tokio::time::timeout(timeout, rx.recv()).await {
             Err(_) => continue, // timeout: loop back to tick + render
             Ok(None) => {

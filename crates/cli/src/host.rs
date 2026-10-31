@@ -1,7 +1,7 @@
 //! The real [`Host`]: ureq, libc, `std::process`. Not unit-tested (it is the
 //! system); every decision it feeds lives in `launcher` / `tui_bin`.
 
-use crate::launcher::{checked_pid, parse_listener_pid, Fail, Host, Out, Probe, Reply, Terminate};
+use crate::launcher::{checked_pid, parse_listener_pid, Fail, Host, Out, Probe, Reply, Starting, Terminate};
 use crate::tui_bin::{self, Builder};
 use serde_json::Value;
 use std::io::{BufRead, IsTerminal, Write};
@@ -149,7 +149,7 @@ impl Host for RealHost {
             Terminate::Error(err.to_string())
         }
     }
-    fn spawn_daemon(&self) -> Result<PathBuf, String> {
+    fn spawn_daemon(&self) -> Result<Starting, String> {
         let dir = log_dir(|k| std::env::var(k).ok()).ok_or("HOME is not set; set GARAGE_DIR")?;
         std::fs::create_dir_all(&dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
         let log_path = dir.join("daemon.log");
@@ -174,9 +174,14 @@ impl Host for RealHost {
                 Ok(())
             });
         }
-        cmd.spawn()
-            .map_err(|e| format!("failed to start the daemon: {e}"))?;
-        Ok(log_path)
+        let mut child = cmd.spawn().map_err(|e| format!("failed to start the daemon: {e}"))?;
+        let pid = child.id();
+        // Reap it if it dies while we are alive: an unreaped child stays a
+        // zombie, and the wall's kill(pid, 0) liveness check would pass.
+        std::thread::spawn(move || {
+            let _ = child.wait();
+        });
+        Ok(Starting { log: log_path, pid, port: self.port })
     }
     fn sleep_ms(&self, ms: u64) {
         std::thread::sleep(Duration::from_millis(ms));
@@ -197,8 +202,12 @@ impl Host for RealHost {
         };
         tui_bin::resolve(&inputs, &CargoBuilder, self)
     }
-    fn run_tui(&self, bin: &Path) -> Result<i32, String> {
-        let status = Command::new(bin).status().map_err(|e| e.to_string())?;
+    fn run_tui(&self, bin: &Path, starting: Option<&Starting>) -> Result<i32, String> {
+        let mut cmd = Command::new(bin);
+        if let Some(s) = starting {
+            cmd.envs(s.env());
+        }
+        let status = cmd.status().map_err(|e| e.to_string())?;
         Ok(status.code().unwrap_or(1))
     }
 }
