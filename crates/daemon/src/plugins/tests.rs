@@ -1372,6 +1372,7 @@ async fn a_ui_action_target_must_name_real_things_and_nothing_is_published_other
             reason: "user".into(),
             last_status: None,
             claude_session_id: None,
+            worktree: None,
         })
         .await
         .unwrap();
