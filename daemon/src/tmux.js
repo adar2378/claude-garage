@@ -3,6 +3,20 @@ import { promisify } from "node:util";
 
 const run = promisify(execFile);
 
+// p20: when GARAGE_TMUX_SOCKET is set, every tmux call targets that private
+// socket (`tmux -L <name>`) instead of the default server, so tests and CI
+// can never touch a developer's live sessions, and `-f /dev/null` keeps that
+// scratch server from loading the user's tmux config. Unset: argv is unchanged.
+export function tmuxArgs(args, env = process.env) {
+  const socket = env.GARAGE_TMUX_SOCKET;
+  return socket ? ["-L", socket, "-f", "/dev/null", ...args] : args;
+}
+
+// The one place the daemon (and its tests) invoke tmux.
+export function runTmux(args, options) {
+  return run("tmux", tmuxArgs(args), options);
+}
+
 export const GARAGE_PREFIX = "garage/";
 export const NAME_RE = /^[a-z0-9-]+$/;
 
@@ -16,7 +30,7 @@ const exact = (id) => `=${id}`;
 export async function listSessions() {
   let stdout;
   try {
-    ({ stdout } = await run("tmux", [
+    ({ stdout } = await runTmux([
       "ls",
       "-F",
       // `session_created` (epoch SECONDS) backs the UI's elapsed timer for a
@@ -70,7 +84,7 @@ export function parsePaneLine(line) {
 export async function listPanePaths() {
   let stdout;
   try {
-    ({ stdout } = await run("tmux", [
+    ({ stdout } = await runTmux([
       "list-panes",
       "-a",
       "-F",
@@ -151,7 +165,7 @@ export async function resolveBranch(dir) {
 
 export async function hasSession(id) {
   try {
-    await run("tmux", ["has-session", "-t", exact(id)]);
+    await runTmux(["has-session", "-t", exact(id)]);
     return true;
   } catch {
     return false;
@@ -163,7 +177,7 @@ export async function hasSession(id) {
 // sessionId` becomes the pane's `claude --resume <sessionId>`), so callers
 // must not pre-join them into a single string.
 export async function createSession(id, dir, command, extraArgs = []) {
-  await run("tmux", ["new-session", "-d", "-s", id, "-c", dir, command, ...extraArgs]);
+  await runTmux(["new-session", "-d", "-s", id, "-c", dir, command, ...extraArgs]);
   // The new-session call may have just started the server — (re)apply the
   // extended-keys server config so Shift+Enter works in this pane (p14).
   await ensureExtendedKeys();
@@ -172,7 +186,7 @@ export async function createSession(id, dir, command, extraArgs = []) {
   // `tmux attach` escape-hatch user can restore it with `set status on`.
   // set-option does not accept the `=` exact-match target prefix; the full
   // freshly-created name is unambiguous here.
-  await run("tmux", ["set-option", "-t", id, "status", "off"]).catch(() => {});
+  await runTmux(["set-option", "-t", id, "status", "off"]).catch(() => {});
 }
 
 // p16-restart D1: in-place restart — kills the pane's running process (tmux
@@ -190,7 +204,7 @@ export async function createSession(id, dir, command, extraArgs = []) {
 // trailing `:` is required to say "this session, exactly; its active
 // window's active pane" (garage sessions only ever have the one pane).
 export async function respawnPane(id, dir, command, extraArgs = []) {
-  await run("tmux", ["respawn-pane", "-k", "-c", dir, "-t", `${exact(id)}:`, command, ...extraArgs]);
+  await runTmux(["respawn-pane", "-k", "-c", dir, "-t", `${exact(id)}:`, command, ...extraArgs]);
 }
 
 // p14: Claude Code's Shift+Enter (kitty protocol, ESC[13;2u) only reaches a
@@ -203,19 +217,19 @@ export async function respawnPane(id, dir, command, extraArgs = []) {
 // duplicates, so the extkeys feature is only appended when missing.
 export async function ensureExtendedKeys() {
   try {
-    await run("tmux", ["set-option", "-s", "extended-keys", "on"]);
+    await runTmux(["set-option", "-s", "extended-keys", "on"]);
     // csi-u, not the default xterm `CSI 27;m;k~` form: with extended keys
     // on, tmux re-encodes every modified key for a pane that asked for
     // them — Option+Enter becomes `ESC[27;3;13~`, which Claude Code does
     // not parse, so Option+Enter (its own newline binding on macOS) died
     // inside every garage session. The kitty form (`ESC[13;3u`) is the one
     // Claude Code already understands for Shift+Enter. tmux ≥ 3.5.
-    await run("tmux", ["set-option", "-s", "extended-keys-format", "csi-u"]).catch(() => {});
-    const { stdout } = await run("tmux", ["show-options", "-s", "terminal-features"]).catch(
+    await runTmux(["set-option", "-s", "extended-keys-format", "csi-u"]).catch(() => {});
+    const { stdout } = await runTmux(["show-options", "-s", "terminal-features"]).catch(
       () => ({ stdout: "" })
     );
     if (!/xterm\*?[^\n]*extkeys/.test(stdout)) {
-      await run("tmux", ["set-option", "-as", "terminal-features", "xterm*:extkeys"]);
+      await runTmux(["set-option", "-as", "terminal-features", "xterm*:extkeys"]);
     }
   } catch {
     // No server running (or ancient tmux) — nothing to configure; the
@@ -224,12 +238,12 @@ export async function ensureExtendedKeys() {
 }
 
 export async function killSession(id) {
-  await run("tmux", ["kill-session", "-t", exact(id)]);
+  await runTmux(["kill-session", "-t", exact(id)]);
 }
 
 // D-rename: renames the tmux session entity itself. Attached clients (grid
 // ptys, iTerm) stay attached across a rename — they're bound to the session
 // entity, not its name — so this is safe to call on a live, attached session.
 export async function renameSession(oldId, newId) {
-  await run("tmux", ["rename-session", "-t", exact(oldId), newId]);
+  await runTmux(["rename-session", "-t", exact(oldId), newId]);
 }
