@@ -39,6 +39,7 @@ pub struct Call {
     /// Content of the file `GARAGE_CONTEXT_FILE` named, read during the run.
     pub ctx_file: Option<String>,
     /// Unix mode bits of that file while the run was going.
+    #[cfg_attr(not(unix), allow(dead_code))]
     pub ctx_file_mode: Option<u32>,
 }
 
@@ -111,6 +112,7 @@ impl Rig {
     }
 
     /// Real processes (tiny scripts the test writes), fake backend.
+    #[cfg_attr(not(unix), allow(dead_code))]
     pub fn real() -> Self {
         Self::build(false)
     }

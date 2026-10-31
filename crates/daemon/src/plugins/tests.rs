@@ -6,6 +6,7 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 use axum::http::StatusCode;
+#[cfg_attr(not(unix), allow(unused_imports))]
 use garage_protocol::widgets::{WidgetPut, WidgetSlot};
 use serde_json::{json, Value};
 
@@ -503,6 +504,7 @@ async fn the_stop_hook_becomes_a_session_turn_with_the_transcript_offset() {
     wait_for(|| r.runner.count() == 2).await;
     assert_eq!(r.runner.call(1).ctx()["event"]["data"]["transcript_offset"], Value::Null);
 
+    #[cfg_attr(not(unix), allow(unused_mut))]
     let mut outside_paths = vec![outside.to_string_lossy().into_owned(), dotdot.to_string_lossy().into_owned(), "/etc/hosts".to_owned()];
     #[cfg(unix)]
     outside_paths.push(link.to_string_lossy().into_owned());
