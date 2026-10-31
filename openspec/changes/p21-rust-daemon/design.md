@@ -54,18 +54,22 @@ pub trait SessionBackend: Send + Sync {
     async fn list(&self) -> Result<Vec<BackendSession>>;          // id, dir, attached, created_at
     async fn panes(&self) -> Result<HashMap<String, PaneInfo>>;   // cwd, title, pid
     async fn has(&self, id: &str) -> Result<bool>;
-    async fn create(&self, id: &str, dir: &Path, cmd: &str, args: &[String]) -> Result<()>;
-    async fn respawn(&self, id: &str, dir: &Path, cmd: &str, args: &[String]) -> Result<()>;
+    async fn create(&self, id: &str, dir: &Path, cmd: &str, args: &[String], env: &[(String, String)]) -> Result<()>;
+    async fn respawn(&self, id: &str, dir: &Path, cmd: &str, args: &[String], env: &[(String, String)]) -> Result<()>;
     async fn kill(&self, id: &str) -> Result<()>;
     async fn rename(&self, from: &str, to: &str) -> Result<()>;
     async fn capture(&self, id: &str, lines: usize) -> Result<String>;
-    fn attach_command(&self, id: &str) -> Vec<String>;             // what the TUI spawns in a PTY
+    fn attach_spec(&self, id: &str) -> AttachSpec;                 // how the TUI attaches a PTY
 }
 ```
 
-`TmuxBackend` implements it by porting `daemon/src/tmux.js` and the two direct `tmux` calls in `poller.js` and `session-resolve.js`. It always passes `-L <socket>` when `GARAGE_TMUX_SOCKET` is set. Unset means the default server, which is the user's normal setup. `ensureExtendedKeys` runs inside `create` and at startup, as today.
+`AttachSpec` lives in `garage-protocol` so the TUI can consume it: `Tmux { argv, detach_argv }` (spawn `argv` in a PTY; detach one client by running `detach_argv` plus its tty) and a placeholder `Socket { addr, token }` for the Windows host backend. Per-session env travels in the `env` argument, never baked into tmux flags.
 
-**5. tmux isolation, from the first commit.** Every daemon test that touches tmux creates a `TmuxBackend` with a unique socket (`garage-test-<pid>-<n>`) and kills that server (`tmux -L <socket> kill-server`) on drop. No test, agent or CI job uses the default tmux server. The TUI's attach path (`wall/src/pty.rs`) gets the same socket through `attach_command`, so an end-to-end test can run a whole isolated garage.
+Handlers share one `AppState { config: Arc<Config>, bus: EventBus, backend: Arc<dyn SessionBackend>, os: Arc<dyn Os> }` (stores are added as fields by the port lanes); the router is `Router<AppState>` and the origin guard reads `state.config.ui_origins`.
+
+`TmuxBackend` implements it by porting `daemon/src/tmux.js` and the two direct `tmux` calls in `poller.js` and `session-resolve.js`. It always passes `-L <socket> -f /dev/null` when `GARAGE_TMUX_SOCKET` is set, so a socket also means no user tmux.conf (intended, for tests and isolation). Unset means the default server, which is the user's normal setup. `ensureExtendedKeys` runs inside `create` and `respawn`, and at startup via `SessionBackend::init`.
+
+**5. tmux isolation, from the first commit.** Every daemon test that touches tmux creates a `TmuxBackend` with a unique socket (`garage-test-<pid>-<n>`) and kills that server (`tmux -L <socket> kill-server`) on drop. No test, agent or CI job uses the default tmux server. The TUI's attach path (`wall/src/pty.rs`) gets the same socket through `attach_spec`, so an end-to-end test can run a whole isolated garage.
 
 **6. Event bus.** One `tokio::sync::broadcast` channel of `DaemonEvent` (`StatusTransition { id, from, to, since }`, `SessionsChanged`). The status store, poller, restart route and (later) control-mode reader publish. SSE clients, notifications and (later) plugins subscribe. This replaces `statusEvents` and `pollerEvents`.
 
@@ -117,3 +121,12 @@ If any check fails, the JS daemon stays the shipped one, and the Rust daemon sta
 - `~/.garage` stays the data folder on every OS; `GARAGE_DIR` overrides it.
 - The diff route is removed (404); the TUI has not used it since 0.5.0.
 - A fourth crate, `crates/cli`, holds the single `claude-garage` binary.
+
+## Parity deviations
+
+Found by running the p20 contract suite (12 tests) and a throwaway differential probe (about 45 requests, error paths included) against both daemons. Everything not listed here returned the same status and body.
+
+- **Diff route.** `GET /api/diff/:workspace` is 404 in Rust (decision 11). Not in the contract suite, because the JS daemon would fail it; task 6.1 adds it once the JS daemon is gone.
+- **404 body for unmatched routes.** Fastify returns `{"error":"Not Found","message":"Route GET:/api/nope not found","statusCode":404}`; Rust returns `{"error":"not found"}`. Nothing in the TUI reads this body.
+- **Forged worktree records.** `POST /api/worktrees/finish` with `merge` or `discard` in Rust refuses (400) any path that is not under `<GARAGE_DIR>/worktrees/` or whose HEAD is not the claimed branch. The JS daemon trusts the record. Deliberate hardening; a worktree whose directory has vanished is still accepted when the path is literally a clean child of that root (found by the probe and fixed to match JS, covered by a contract test).
+- **`merge` of a worktree whose directory has vanished.** JS skips its uncommitted-changes check and merges the branch; Rust does the same after the fix above, but the path guard also applies, so a forged record gets 400 where JS would run git.

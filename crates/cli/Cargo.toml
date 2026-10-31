@@ -1,0 +1,18 @@
+[package]
+name = "claude-garage"
+version.workspace = true
+edition = "2021"
+description = "claude-garage: one binary for the TUI, the daemon and the launcher"
+
+[[bin]]
+name = "claude-garage"
+path = "src/main.rs"
+
+[dependencies]
+garage-daemon = { path = "../daemon" }
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+libc = "0.2"
+serde_json = "1"
+ureq = { version = "2.12.1", default-features = false }
