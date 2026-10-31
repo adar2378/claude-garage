@@ -15,6 +15,10 @@ pub const WIDGET: &str = "usage";
 const STORE: &str = "usage.json";
 /// Where the chip sat among `strip.right` items when it was a core provider.
 const PRIORITY: i32 = 50;
+/// How long a figure with no reset time stays drawn after it was last seen to
+/// change: with nothing to say when it stops being true, it is only trusted
+/// for a while. (15 minutes.)
+pub const NO_RESET_TTL_SECS: i64 = 15 * 60;
 
 /// One rate-limit window as the plugin keeps it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -23,6 +27,10 @@ pub struct Window {
     pub pct: u32,
     /// When the window resets, whole seconds since the epoch, when known.
     pub resets_at: Option<i64>,
+    /// When this exact figure was first seen, whole seconds since the epoch.
+    /// Set by [`choose`]; what a window with no reset time expires from.
+    #[serde(default)]
+    pub seen_at: Option<i64>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -37,6 +45,7 @@ fn window(v: Option<&Value>) -> Option<Window> {
     Some(Window {
         pct,
         resets_at: v.get("resetsAt").and_then(epoch_secs),
+        seen_at: None,
     })
 }
 
@@ -50,11 +59,15 @@ impl Usage {
         }
     }
 
-    /// Drop the windows that have already reset: their figure is history.
+    /// Drop the windows that have already reset, and those with no reset time
+    /// that were last seen to change more than [`NO_RESET_TTL_SECS`] ago: a
+    /// figure that cannot say when it stops being true is not kept forever.
     pub fn without_expired(mut self, now: i64) -> Usage {
         let live = |w: &Option<Window>| {
-            w.as_ref()
-                .is_none_or(|w| w.resets_at.is_none_or(|t| t > now))
+            w.as_ref().is_none_or(|w| match w.resets_at {
+                Some(t) => t > now,
+                None => w.seen_at.is_some_and(|s| now - s < NO_RESET_TTL_SECS),
+            })
         };
         if !live(&self.five_hour) {
             self.five_hour = None;
@@ -166,7 +179,25 @@ pub fn now_secs() -> i64 {
 /// ones that have not reset yet. Returns the usage to show and whether it
 /// came fresh from the daemon (and so should be stored).
 pub fn choose(fresh: Usage, stored: Option<Usage>, now: i64) -> (Usage, bool) {
-    let fresh = fresh.without_expired(now);
+    // A figure the daemon repeats unchanged keeps the time it was first seen,
+    // so one without a reset time ages out even while the daemon keeps saying it.
+    let stamp = |f: Option<Window>, was: Option<&Window>| {
+        f.map(|mut w| {
+            w.seen_at = match was {
+                Some(o) if o.pct == w.pct && o.resets_at == w.resets_at && o.seen_at.is_some() => {
+                    o.seen_at
+                }
+                _ => Some(now),
+            };
+            w
+        })
+    };
+    let was = stored.clone().unwrap_or_default();
+    let fresh = Usage {
+        five_hour: stamp(fresh.five_hour, was.five_hour.as_ref()),
+        seven_day: stamp(fresh.seven_day, was.seven_day.as_ref()),
+    }
+    .without_expired(now);
     if !fresh.is_empty() {
         // The daemon may know one window only: keep the other from storage.
         let kept = stored.unwrap_or_default().without_expired(now);
@@ -215,7 +246,13 @@ mod tests {
     }
 
     fn usd(five: Option<(u32, Option<i64>)>, week: Option<(u32, Option<i64>)>) -> Usage {
-        let w = |x: Option<(u32, Option<i64>)>| x.map(|(pct, resets_at)| Window { pct, resets_at });
+        let w = |x: Option<(u32, Option<i64>)>| {
+            x.map(|(pct, resets_at)| Window {
+                pct,
+                resets_at,
+                seen_at: Some(0),
+            })
+        };
         Usage {
             five_hour: w(five),
             seven_day: w(week),
@@ -323,20 +360,60 @@ mod tests {
                 .0
                 .is_empty()
         );
-        // A window with no known reset time is kept (it can only be replaced).
-        assert_eq!(
-            choose(Usage::default(), Some(usd(Some((5, None)), None)), 1 << 40)
-                .0
-                .chip()
-                .as_deref(),
-            Some("5h 5%")
-        );
+        // A window with no known reset time is kept for 15 minutes from when it was seen.
+        let no_reset = || Some(usd(Some((5, None)), None)); // seen at 0
+        let shown = |now| choose(Usage::default(), no_reset(), now).0.chip();
+        assert_eq!(shown(NO_RESET_TTL_SECS - 1).as_deref(), Some("5h 5%"));
+        assert_eq!(shown(NO_RESET_TTL_SECS), None, "then it is history");
+        // An old file from before `seen_at` existed has no age, so it is not trusted.
+        let legacy: Usage =
+            serde_json::from_str(r#"{"five_hour":{"pct":5,"resets_at":null},"seven_day":null}"#)
+                .unwrap();
+        assert!(choose(Usage::default(), Some(legacy), 1).0.is_empty());
         // Fresh figures win per window and are flagged for storing; the other window is kept.
         let (u, fresh) = choose(usd(Some((41, Some(2_500))), None), Some(stored), 1_000);
         assert_eq!(
             (u.chip().as_deref(), fresh),
             (Some("5h 41% · wk 70%"), true)
         );
+    }
+
+    #[test]
+    fn a_figure_without_a_reset_time_ages_out_even_while_the_daemon_keeps_repeating_it() {
+        let said = || usd(Some((30, None)), None);
+        let seen = |at| Usage {
+            five_hour: said().five_hour.map(|w| Window {
+                seen_at: Some(at),
+                ..w
+            }),
+            seven_day: None,
+        };
+        // First sight at t=1000: stamped and shown.
+        let (u, store) = choose(said_unstamped(), None, 1000);
+        assert_eq!((u.chip().as_deref(), store), (Some("5h 30%"), true));
+        assert_eq!(u.five_hour.as_ref().unwrap().seen_at, Some(1000));
+        // The same figure again 10 minutes later keeps its original stamp.
+        let (u, _) = choose(said_unstamped(), Some(u), 1600);
+        assert_eq!(u.five_hour.as_ref().unwrap().seen_at, Some(1000));
+        // 15 minutes after first sight it is gone, though the daemon still says it.
+        let (u, store) = choose(said_unstamped(), Some(seen(1000)), 1000 + NO_RESET_TTL_SECS);
+        assert!(u.is_empty() && !store);
+        // A changed figure is new news and starts its own 15 minutes.
+        let changed = Usage {
+            five_hour: Some(Window {
+                pct: 31,
+                resets_at: None,
+                seen_at: None,
+            }),
+            seven_day: None,
+        };
+        let (u, store) = choose(changed, Some(seen(1000)), 1000 + NO_RESET_TTL_SECS);
+        assert_eq!(u.five_hour.unwrap().seen_at, Some(1000 + NO_RESET_TTL_SECS));
+        assert!(store);
+    }
+
+    fn said_unstamped() -> Usage {
+        Usage::from_api(&json!({"fiveHour": {"usedPercentage": 30, "resetsAt": null}}))
     }
 
     #[test]
@@ -359,15 +436,19 @@ mod tests {
         write_state_in(
             &dir,
             STORE,
-            &usd(Some((42, Some(i64::MAX / 2))), Some((7, None))),
+            &usd(Some((42, Some(i64::MAX / 2))), Some((7, None))), // seen at 0
         )
         .unwrap();
-        refresh(&api(&d), &dir, 1_000).unwrap();
+        refresh(&api(&d), &dir, 800).unwrap();
         let puts = d.bodies("PUT", "/api/plugins/usage-bar/widgets/usage");
         assert_eq!(
             puts[0]["scopes"]["*"][0]["segments"][0]["text"],
             " 5h 42% · wk 7% "
         );
+        // Much later the weekly figure, which never had a reset time, is dropped.
+        refresh(&api(&d), &dir, NO_RESET_TTL_SECS).unwrap();
+        let puts = d.bodies("PUT", "/api/plugins/usage-bar/widgets/usage");
+        assert_eq!(puts[1]["scopes"]["*"][0]["segments"][0]["text"], " 5h 42% ");
     }
 
     #[test]

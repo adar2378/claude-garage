@@ -31,6 +31,11 @@ pub trait TelemetryDeps: Send + Sync {
     /// `resolveSessionIds({session_id, cwd})` from `session-resolve.js`.
     async fn resolve_session_ids(&self, session_id: Option<&str>, cwd: Option<&str>)
     -> Vec<String>;
+    /// Where the session's cursor is in its scrollback right now (for the
+    /// `row` of a `session.turn` event). `None` when the backend cannot say.
+    async fn pane_anchor(&self, _id: &str) -> Option<crate::backend::PaneAnchor> {
+        None
+    }
 }
 
 /// Default until the merge wires real stores: nothing resolves, and the token

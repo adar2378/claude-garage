@@ -34,6 +34,8 @@ pub const PERMISSIONS: &[&str] = &[
     "ui.panes",
     "ui.invoke",
     "core.actions",
+    "ui.navigate",
+    "ui.notice",
     "network",
 ];
 
@@ -54,6 +56,7 @@ pub fn features() -> Value {
         "widgets.animated": true,
         "widgets.frame_x": true,
         "widgets.slot_geometry": true,
+        "ui.notice": true,
         "cli.fallback": true,
         "panes.placements": PANE_PLACEMENTS,
         "sessions.input": true,
@@ -65,6 +68,8 @@ pub fn features() -> Value {
             "widget_body_bytes": limits::BODY_BYTES,
             "widget_puts_per_sec": limits::PUTS_PER_SEC,
             "widget_ttl_secs": limits::TTL_SECS_MAX,
+            "widget_frames": limits::FRAMES_PER_ITEM,
+            "notice_chars": limits::NOTICE_LEN,
         },
     })
 }

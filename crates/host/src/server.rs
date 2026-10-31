@@ -469,6 +469,17 @@ fn handle_conn(ctx: Arc<Ctx>, mut stream: TcpStream, mut slot: Slot) -> std::io:
                 let n = history_len(&mut ctx.core.lock().unwrap().parser);
                 write_reply(&mut stream, &n.to_le_bytes())?;
             }
+            F_ANCHOR => {
+                let mut core = ctx.core.lock().unwrap();
+                let history = history_len(&mut core.parser);
+                let cursor = i64::from(core.parser.screen().cursor_position().0);
+                let mut reply = Vec::with_capacity(24);
+                for n in [history, cursor, SCROLLBACK as i64] {
+                    reply.extend_from_slice(&n.to_le_bytes());
+                }
+                drop(core);
+                write_reply(&mut stream, &reply)?;
+            }
             F_CAPTURE if payload.len() >= 12 => {
                 let top = i64::from_le_bytes(payload[..8].try_into().unwrap());
                 let cols = u16::from_le_bytes([payload[8], payload[9]]);

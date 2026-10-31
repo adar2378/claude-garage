@@ -55,6 +55,7 @@ fn main() {
                 context: &garage_plugin_sdk::Value::Null,
                 schedule_clear: &|_, _| {},
                 local_hour: &local_hour,
+                lock_wait: run::LOCK_WAIT,
             };
             return run::clear_caption(&env, rev);
         }
@@ -66,6 +67,7 @@ fn main() {
             context: &context,
             schedule_clear: &schedule_clear,
             local_hour: &local_hour,
+            lock_wait: run::LOCK_WAIT,
         };
         match cmd {
             "update" => run::update(&env),
@@ -78,8 +80,15 @@ fn main() {
             }
         }
     })();
-    if let Err(e) = result {
-        eprintln!("pit-pet: {e}");
-        std::process::exit(1);
+    match result {
+        Ok(()) => {}
+        // Another run holds the state: this one has nothing to add, and a
+        // skipped run must not count as a failure (five failures in a row
+        // switch a plugin's events off).
+        Err(e @ garage_plugin_sdk::Error::LockHeld(_)) => eprintln!("pit-pet: skipped ({e})"),
+        Err(e) => {
+            eprintln!("pit-pet: {e}");
+            std::process::exit(1);
+        }
     }
 }

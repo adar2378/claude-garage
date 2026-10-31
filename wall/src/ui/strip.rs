@@ -69,18 +69,13 @@ fn place_fillers(filler: usize, items: Vec<SlotItem>) -> Vec<(usize, SlotItem)> 
     kept
 }
 
-/// Both click-routed column ranges the strip paints, plus the filler width
-/// the pet tick needs for its next `PetSim::step` (spec tui-pit-pet "Narrow
-/// strip hides the pet" — the tick has to know how much room there'll be).
+/// The click-routed column ranges the strip paints, and the filler's span
+/// (reported to plugins as the room a `strip.right` filler item has).
 pub struct StripCols {
     /// Absolute column range of the blocked badge, when rendered.
     pub badge: Option<Range<u16>>,
-    /// Absolute click ranges of the clickable `strip.right` slot items (the
-    /// pet's sprite and reserved bang column among them).
+    /// Absolute click ranges of the clickable `strip.right` slot items.
     pub slots: Vec<(Range<u16>, ClickTarget)>,
-    /// The filler's width this frame — the room available for the pet,
-    /// independent of whether a pet is currently selected.
-    pub filler_width: u16,
     /// The filler's absolute column range (`x0..x1`); empty when there is no
     /// room.
     pub filler: Range<u16>,
@@ -92,17 +87,13 @@ pub struct StripLine {
     pub badge: Option<Range<u16>>,
     /// Strip-local click ranges of the clickable `strip.right` slot items.
     pub slots: Vec<(Range<u16>, ClickTarget)>,
-    /// The filler's width this frame, regardless of whether a pet occupies
-    /// any of it (spec tui-pit-pet: the tick pass needs this for the next
-    /// step's `filler_width`).
-    pub filler_width: u16,
     /// Strip-local column range of the filler.
     pub filler: Range<u16>,
 }
 
 /// Build the strip's line for `width` columns: tabs left, then a filler
-/// (with a floated `strip.right` item such as the pet inserted into it, when
-/// there's room), then
+/// (with a floated `strip.right` item such as a plugin's pet inserted into it,
+/// when there's room), then
 /// notice · badge · chip right-aligned.
 pub fn strip_line(
     state: &WallState,
@@ -239,15 +230,14 @@ pub fn strip_line(
             click_ranges.extend(laid.clicks(right_start + notice_w, usize::from(width)));
             click_ranges
         },
-        filler_width: filler as u16,
         filler: left_w.min(usize::from(width)) as u16
             ..(left_w + filler).min(usize::from(width)) as u16,
     }
 }
 
 /// Render the strip into its 1-row rect; returns the badge's and the
-/// clickable slot items' absolute column ranges for click routing, plus the filler width the
-/// pet's next tick needs (spec tui-pit-pet).
+/// clickable slot items' absolute column ranges for click routing, plus the
+/// filler's span.
 pub fn render_strip(
     buf: &mut Buffer,
     rect: Rect,
@@ -266,7 +256,6 @@ pub fn render_strip(
             .into_iter()
             .map(|(r, target)| (rect.x + r.start..rect.x + r.end, target))
             .collect(),
-        filler_width: built.filler_width,
         filler: rect.x + built.filler.start..rect.x + built.filler.end,
     }
 }

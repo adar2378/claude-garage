@@ -182,9 +182,9 @@ fn strip_narrow_drops_right_side_content() {
 /// The strip with the pit-pet plugin's frames laid into its filler: an
 /// alerting pup with speech, then a dim sleeping cat. The bodies are the
 /// plugin's golden files, drawn through the real wire-to-slot path (an
-/// animated item with a column per frame). Text and columns are what the
-/// in-wall pet drew; the only change is the lit `!`, which a plugin can only
-/// colour with the `warn` token, never the core's amber.
+/// animated item with a column per frame). Text, columns and colours are what
+/// the in-wall pet drew, the lit `!` in amber included (the `needs-input`
+/// token, lit because the store has sessions waiting).
 #[test]
 fn strip_with_the_pet_in_the_filler() {
     let store = strip_store();
@@ -322,4 +322,105 @@ fn done_fade_at_0_60_and_120_seconds() {
         ));
     }
     insta::assert_snapshot!(out);
+}
+
+// ── pit-pet plugin: needs-input colour, per-frame clicks, a full window ──
+
+const PET_CYCLE: &str = include_str!("../../../plugins/pit-pet/golden/cycle-24.json");
+
+fn pet_registry(golden: &str) -> SlotRegistry {
+    crate::plugins::test_support::registry_with(
+        "pit-pet",
+        &["pit-pet:pet"],
+        garage_protocol::widgets::WidgetSlot::StripRight,
+        golden,
+    )
+}
+
+fn calm_store() -> WallStore {
+    let mut store = WallStore::new();
+    store.workspaces_fetched(vec![ws("alpha", "/r/alpha")]);
+    store.sessions_fetched(vec![si("alpha", "one", "working", Some(0))]);
+    store
+}
+
+/// The cell of the lit `!` the alert golden draws, and its foreground.
+fn bang_fg(store: &WallStore) -> Option<Color> {
+    let rect = Rect::new(0, 0, 110, 1);
+    let mut buf = Buffer::empty(rect);
+    let slots = pet_registry(include_str!(
+        "../../../plugins/pit-pet/golden/alert-speech.json"
+    ));
+    render_strip(&mut buf, rect, store.state(), &slots, None);
+    (0..110)
+        .map(|x| &buf[(x, 0)])
+        .find(|c| c.symbol() == "!")
+        .map(|c| c.fg)
+}
+
+/// A plugin asks for `needs-input` and the wall decides: amber while some
+/// session waits for you, plain text colour the rest of the time. Without
+/// this the colour would be lit with nothing to be alerted about.
+#[test]
+fn the_needs_input_token_is_amber_only_while_a_session_needs_input() {
+    assert_eq!(
+        bang_fg(&strip_store()),
+        Some(crate::ui::theme::colors::AMBER)
+    );
+    assert_eq!(
+        bang_fg(&calm_store()),
+        Some(crate::ui::theme::colors::FG),
+        "neutral when nothing is waiting"
+    );
+}
+
+/// A full 24-frame window: the wall cycles through it on its own clock, and a
+/// click on an alerting frame is the core jump, with nothing to ask the plugin.
+#[test]
+fn a_24_frame_window_cycles_on_the_wall_clock_and_its_alert_frames_jump() {
+    let slots = pet_registry(PET_CYCLE);
+    let store = strip_store();
+    let mut seen = std::collections::BTreeSet::new();
+    for tick in 0..24 {
+        let rect = Rect::new(0, 0, 110, 1);
+        let mut buf = Buffer::empty(rect);
+        slots.begin_frame(tick * 300);
+        let cols = render_strip(&mut buf, rect, store.state(), &slots, None);
+        let line: String = (0..110).map(|x| buf[(x, 0)].symbol()).collect();
+        seen.insert(line.trim_end().to_owned());
+        let click = cols
+            .slots
+            .iter()
+            .find(|(_, t)| t.action == crate::actions::ids::JUMP_BLOCKED);
+        assert!(click.is_some(), "frame {tick} jumps to the blocked session");
+        assert_eq!(click.unwrap().1.plugin.as_deref(), Some("pit-pet"));
+    }
+    assert!(seen.len() > 3, "the pet moves through the window: {seen:?}");
+    // The 25th tick is the first again.
+    let at = |t: i64| {
+        let rect = Rect::new(0, 0, 110, 1);
+        let mut buf = Buffer::empty(rect);
+        slots.begin_frame(t);
+        render_strip(&mut buf, rect, store.state(), &slots, None);
+        dump(&buf)
+    };
+    assert_eq!(at(0), at(24 * 300));
+}
+
+/// A calm frame keeps the plugin's own click (petting), so the two kinds of
+/// frame in one item do not share a target.
+#[test]
+fn a_calm_frame_pets_and_an_alert_frame_jumps_in_the_same_item() {
+    let calm = include_str!("../../../plugins/pit-pet/golden/asleep.json");
+    let slots = pet_registry(calm);
+    let rect = Rect::new(0, 0, 110, 1);
+    let mut buf = Buffer::empty(rect);
+    let cols = render_strip(&mut buf, rect, strip_store().state(), &slots, None);
+    let target = &cols
+        .slots
+        .iter()
+        .find(|(_, t)| t.plugin.is_some())
+        .unwrap()
+        .1;
+    assert_eq!(target.action.as_str(), "pit-pet:pet");
 }

@@ -85,13 +85,23 @@ fn plugin_frame(
         }
         "plugin_notice" => {
             if let (Some(plugin), Some(message)) = (text("plugin"), text("message")) {
-                let _ = tx.send(AppEvent::PluginNotice(format!("{plugin}: {message}")));
+                let ttl_ms = data
+                    .get("ttl_ms")
+                    .and_then(Value::as_u64)
+                    .map(|t| t.min(10_000));
+                let _ = tx.send(AppEvent::PluginNotice {
+                    text: format!("{plugin}: {message}"),
+                    ttl_ms,
+                });
             }
         }
         "plugin_run_failed" => {
             if let (Some(plugin), Some(action)) = (text("plugin"), text("action")) {
                 let reason = text("reason").unwrap_or_default();
-                let _ = tx.send(AppEvent::PluginNotice(format!("{plugin}: {action} failed ({reason}) — see `claude-garage plugin logs {plugin}`")));
+                let _ = tx.send(AppEvent::PluginNotice {
+                    text: format!("{plugin}: {action} failed ({reason}) — see `claude-garage plugin logs {plugin}`"),
+                    ttl_ms: None,
+                });
             }
         }
         "ui_action" => {

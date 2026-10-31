@@ -505,12 +505,26 @@ pub fn validate(m: &Manifest) -> Vec<Problem> {
     if !m.panes.is_empty() {
         needs(Permission::UiPanes, "panes", &mut out);
     }
-    if m.buttons.iter().any(|b| core_target(&b.on_click)) {
-        needs(
-            Permission::CoreActions,
-            "a button that triggers a core action",
-            &mut out,
-        );
+    if m.buttons.iter().any(|b| core_target(&b.on_click))
+        && !m.has_permission(Permission::CoreActions)
+    {
+        // Navigation only needs ui.navigate; any other core action needs core.actions.
+        if m.buttons
+            .iter()
+            .all(|b| !core_target(&b.on_click) || core_actions::is_navigation(&b.on_click))
+        {
+            needs(
+                Permission::UiNavigate,
+                "a button that navigates (core.actions also allows it)",
+                &mut out,
+            );
+        } else {
+            needs(
+                Permission::CoreActions,
+                "a button that triggers a core action",
+                &mut out,
+            );
+        }
     }
     out
 }
@@ -1151,6 +1165,30 @@ checksums = "SHA256SUMS"
             fail(&no_core)
                 .iter()
                 .any(|e| e.contains("core action needs the \"core.actions\""))
+        );
+    }
+
+    #[test]
+    fn a_navigation_button_needs_only_ui_navigate_and_a_closing_one_still_needs_core_actions() {
+        // session.focus navigates: ui.navigate in place of core.actions is enough.
+        let nav = tweak(
+            "on_click = \"session.close\"",
+            "on_click = \"session.focus\"",
+        )
+        .replace("\"core.actions\", ", "\"ui.navigate\", ");
+        parse_ok(&nav);
+        let none = nav.replace("\"ui.navigate\", ", "");
+        assert!(
+            fail(&none).iter().any(|e| e.contains("\"ui.navigate\"")),
+            "{:?}",
+            fail(&none)
+        );
+        // session.close is not navigation: ui.navigate does not cover it.
+        let close = tweak("\"core.actions\", ", "\"ui.navigate\", ");
+        assert!(
+            fail(&close).iter().any(|e| e.contains("\"core.actions\"")),
+            "{:?}",
+            fail(&close)
         );
     }
 

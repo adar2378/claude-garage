@@ -279,10 +279,16 @@ impl PluginSlotProvider {
 
 impl SlotProvider for PluginSlotProvider {
     fn items(&self, ctx: &SlotCtx) -> Vec<SlotItem> {
-        match scope_for(self.slot, ctx) {
-            Some(scope) => self.store.borrow().items_for(self.slot, &scope),
-            None => Vec::new(),
+        let Some(scope) = scope_for(self.slot, ctx) else {
+            return Vec::new();
+        };
+        let mut items = self.store.borrow().items_for(self.slot, &scope);
+        // `needs-input` is amber only while some session needs input.
+        let lit = ctx.state.is_some_and(|s| s.blocked_count() > 0);
+        for item in &mut items {
+            build::resolve_needs_input(item, lit);
         }
+        items
     }
 }
 

@@ -51,7 +51,7 @@ use crate::ui::escalation::{EscalationPolicy, HEARTBEAT_INTERVAL_MS};
 use crate::ui::layout::WallLayout;
 use crate::ui::motion::Motion;
 use crate::ui::registry::{FrozenTile, TileRegistry};
-use crate::ui::scroll::{ScrollModel, capture_frozen, history_size, page_lines};
+use crate::ui::scroll::{ScrollModel, capture_frozen, history_info, history_size, page_lines};
 use crate::ui::view_picker::ViewPickerState;
 use crate::ui::workspace_add::{PickOutcome, WorkspaceAddForm};
 use crate::ui::worktree_finish::WorktreeFinishState;
@@ -155,6 +155,8 @@ pub enum AppEvent {
     History {
         id: String,
         size: i64,
+        /// The most history lines the backend keeps, when it said.
+        limit: Option<i64>,
     },
     /// A transient strip notice (fetch/effect errors, lifecycle results).
     Notice {
@@ -206,7 +208,11 @@ pub enum AppEvent {
     UiAction(garage_protocol::plugins::UiActionFrame),
     /// SSE `plugin_notice` / `plugin_run_failed`: a toast about a plugin.
     /// The same text showing now is not stacked again.
-    PluginNotice(String),
+    PluginNotice {
+        text: String,
+        /// How long to show it (the plugin asked); `None` is 5 s.
+        ttl_ms: Option<u64>,
+    },
     /// The slot geometry report settled (`PUT /api/plugins/ui/slots`).
     SlotsReported(Result<(), String>),
     /// A plugin pane is open (SSE `pane` frame, then a fetch for the attach info).
@@ -388,8 +394,6 @@ struct App {
     /// Sessions whose last-drawn tile had `tile.gutter` markers: the only ones
     /// whose tmux history size is polled.
     gutter_sessions: std::collections::HashSet<String>,
-    /// Scrollback rows of the turns turn-addressed gutter markers stand for.
-    turn_rows: crate::ui::turn_rows::TurnRows,
     /// Strip badge columns from the last frame (absolute), when rendered.
     badge_cols: Option<Range<u16>>,
     /// Clickable slot items painted by the last frame (absolute rects, each
@@ -465,7 +469,6 @@ impl App {
             badge_cols: None,
             slot_clicks: Vec::new(),
             gutter_sessions: std::collections::HashSet::new(),
-            turn_rows: Default::default(),
             view_strip_targets: Vec::new(),
             triage_rect: None,
             ws_add_rect: None,
@@ -665,10 +668,12 @@ impl App {
                     );
                 }
             }
-            AppEvent::PluginNotice(text) => {
+            AppEvent::PluginNotice { text, ttl_ms } => {
                 let now = now_ms();
                 if self.router.notices.current(now) != Some(text.as_str()) {
-                    self.router.notices.show(text, 5000, now);
+                    self.router
+                        .notices
+                        .show(text, ttl_ms.map_or(5000, |t| t as i64), now);
                 }
             }
             AppEvent::PaneOpened(pane) => self.pane_opened(pane, now_ms()),
@@ -680,7 +685,7 @@ impl App {
                     }
                 }
             }
-            AppEvent::History { id, size } => self.registry.set_history(&id, size),
+            AppEvent::History { id, size, limit } => self.registry.set_history(&id, size, limit),
             AppEvent::SpawnSettled => self.router.spawn_settled(),
             AppEvent::RestoreSettled(id) => self.router.restore_settled(&id),
             AppEvent::InstallSettled { statusline, hooks } => {
@@ -1145,8 +1150,8 @@ async fn state_loop(
                 };
                 let tx = app.tx.clone();
                 tokio::task::spawn_blocking(move || {
-                    if let Some(size) = history_size(&spec, &id) {
-                        let _ = tx.send(AppEvent::History { id, size });
+                    if let Some((size, limit)) = history_info(&spec, &id) {
+                        let _ = tx.send(AppEvent::History { id, size, limit });
                     }
                 });
             }

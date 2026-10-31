@@ -10,8 +10,9 @@
 //! views are written — the default view's membership is always the derived
 //! complement (see `state::views` module docs), so an untouched workspace
 //! costs nothing in the file, and a workspace with no named views at all is
-//! omitted rather than written as `[]`. Unknown keys (an old `pet`) are ignored
-//! on read and dropped on write.
+//! omitted rather than written as `[]`. Unknown top-level keys (an old `pet`,
+//! which the pit-pet plugin reads once) are ignored on read and kept as they
+//! are when the file is saved, so this build never deletes what it does not own.
 //!
 //! **Ownership split** (this module vs. the runtime wave): everything here
 //! is either pure (`serialize`/`deserialize`) or a small, self-contained
@@ -74,6 +75,12 @@ fn garage_dir_from(garage_dir_env: Option<&str>, home_env: Option<&str>) -> Path
 
 /// Render `file` as the `wall.json` document text.
 pub fn serialize(file: &WallFile) -> String {
+    serialize_keeping(file, serde_json::Map::new())
+}
+
+/// [`serialize`] with the unknown top-level keys of an earlier document
+/// carried over untouched.
+fn serialize_keeping(file: &WallFile, kept: serde_json::Map<String, Value>) -> String {
     let mut by_workspace = serde_json::Map::new();
     for (workspace, list) in &file.views {
         if list.is_empty() {
@@ -85,7 +92,10 @@ pub fn serialize(file: &WallFile) -> String {
             .collect();
         by_workspace.insert(workspace.clone(), Value::Array(entries));
     }
-    let doc = json!({ "version": SCHEMA_VERSION, "views": by_workspace });
+    let mut doc = kept;
+    doc.insert("version".to_owned(), json!(SCHEMA_VERSION));
+    doc.insert("views".to_owned(), Value::Object(by_workspace));
+    let doc = Value::Object(doc);
     // A `Value` built from owned strings/numbers always serializes; the
     // fallback is unreachable in practice but keeps this function total.
     serde_json::to_string_pretty(&doc).unwrap_or_else(|_| "{}".to_owned())
@@ -160,6 +170,21 @@ pub fn load(path: &Path) -> WallFile {
     }
 }
 
+/// The top-level keys of the file at `path` that this build does not own
+/// (everything but `version` and `views`); empty when it is missing or not a
+/// JSON object.
+fn unknown_keys(path: &Path) -> serde_json::Map<String, Value> {
+    let Some(Value::Object(mut root)) = std::fs::read_to_string(path)
+        .ok()
+        .and_then(|raw| serde_json::from_str(&raw).ok())
+    else {
+        return serde_json::Map::new();
+    };
+    root.remove("version");
+    root.remove("views");
+    root
+}
+
 /// Write `wall.json` atomically: a temp file in the same directory, then
 /// `rename()` (atomic on the same filesystem — a crash mid-write leaves
 /// either the previous complete file or the new one, never a truncation),
@@ -172,7 +197,7 @@ pub fn save(path: &Path, file: &WallFile) -> std::io::Result<()> {
         .and_then(|f| f.to_str())
         .unwrap_or("wall.json");
     let tmp = dir.join(format!(".{file_name}.{}.tmp", std::process::id()));
-    let write_result = std::fs::write(&tmp, serialize(file));
+    let write_result = std::fs::write(&tmp, serialize_keeping(file, unknown_keys(path)));
     if write_result.is_err() {
         let _ = std::fs::remove_file(&tmp);
     }
@@ -244,7 +269,7 @@ mod tests {
     }
 
     #[test]
-    fn a_legacy_pet_key_is_ignored_and_not_written_back() {
+    fn a_legacy_pet_key_is_ignored_when_reading() {
         let raw =
             r#"{"version":1,"views":{"w":[{"name":"v","sessions":["garage/w/a"]}]},"pet":"duck"}"#;
         let doc = deserialize(raw);
@@ -253,7 +278,42 @@ mod tests {
             "the views survive the unknown key"
         );
         let parsed: Value = serde_json::from_str(&serialize(&doc)).unwrap();
-        assert!(parsed.get("pet").is_none());
+        assert!(
+            parsed.get("pet").is_none(),
+            "serialize alone writes only what it owns"
+        );
+    }
+
+    #[test]
+    fn saving_views_keeps_the_keys_it_does_not_own() {
+        let dir = std::env::temp_dir().join(format!("wall-keep-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("wall.json");
+        std::fs::write(
+            &path,
+            r#"{"version":1,"views":{"old":[{"name":"x","sessions":["a"]}]},"pet":"duck","future":{"k":[1,2]}}"#,
+        )
+        .unwrap();
+        let mut views: ViewsByWorkspace = HashMap::new();
+        views.insert("w".to_owned(), vec![view("v", &["garage/w/a"])]);
+        save(&path, &file(views)).unwrap();
+        let saved: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(
+            saved["pet"], "duck",
+            "the legacy pet key stays for the plugin"
+        );
+        assert_eq!(saved["future"], json!({"k": [1, 2]}));
+        assert_eq!(saved["version"], 1);
+        assert!(
+            saved["views"].get("old").is_none(),
+            "the views are the new ones"
+        );
+        assert!(saved["views"].get("w").is_some());
+        // A file that is not an object (or not JSON) is simply replaced.
+        std::fs::write(&path, "[1,2").unwrap();
+        save(&path, &file(HashMap::new())).unwrap();
+        assert_eq!(load(&path), file(HashMap::new()));
     }
 
     // ── invalid file ────────────────────────────────────────────────────

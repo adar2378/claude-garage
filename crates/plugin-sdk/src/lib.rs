@@ -29,6 +29,9 @@ pub enum Error {
     Http { status: u16, body: String },
     /// The daemon could not be reached.
     Transport(String),
+    /// A [`StateLock`] stayed held by another run past the wait. Not a
+    /// failure of this run: it has nothing to do and should skip.
+    LockHeld(String),
 }
 
 impl fmt::Display for Error {
@@ -38,6 +41,7 @@ impl fmt::Display for Error {
             Error::Context(e) => write!(f, "cannot read the run context: {e}"),
             Error::Http { status, body } => write!(f, "daemon answered {status}: {body}"),
             Error::Transport(e) => write!(f, "cannot reach the daemon: {e}"),
+            Error::LockHeld(name) => write!(f, "{name}.lock is held by another run"),
         }
     }
 }
@@ -135,7 +139,7 @@ impl StateLock {
                         continue;
                     }
                     if start.elapsed() > wait {
-                        return Err(Error::Context(format!("{name}.lock is held")));
+                        return Err(Error::LockHeld(name.to_owned()));
                     }
                     std::thread::sleep(std::time::Duration::from_millis(15));
                 }
@@ -228,6 +232,21 @@ impl Api {
             Some(&body),
         )?;
         Ok(res.get("rev").and_then(Value::as_u64).unwrap_or(0))
+    }
+
+    /// `POST /api/plugins/{me}/notice`: a short toast for the user (needs the
+    /// `ui.notice` permission; one a second, bursts of three).
+    pub fn notice(&self, text: &str, ttl_ms: Option<u32>) -> Result<(), Error> {
+        let mut body = json!({"text": text});
+        if let Some(ms) = ttl_ms {
+            body["ttl_ms"] = json!(ms);
+        }
+        self.request(
+            "POST",
+            &format!("/api/plugins/{}/notice", self.plugin),
+            Some(&body),
+        )
+        .map(|_| ())
     }
 
     /// `DELETE /api/plugins/{me}/widgets/{widget}`.
@@ -328,14 +347,16 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         let a = StateLock::acquire(&dir, "s", Duration::from_secs(60), Duration::ZERO).unwrap();
         assert!(
-            StateLock::acquire(
-                &dir,
-                "s",
-                Duration::from_secs(60),
-                Duration::from_millis(40)
-            )
-            .is_err(),
-            "held"
+            matches!(
+                StateLock::acquire(
+                    &dir,
+                    "s",
+                    Duration::from_secs(60),
+                    Duration::from_millis(40)
+                ),
+                Err(Error::LockHeld(name)) if name == "s"
+            ),
+            "held: a distinct error, so a plugin can skip instead of failing"
         );
         drop(a);
         let b = StateLock::acquire(&dir, "s", Duration::from_secs(60), Duration::ZERO).unwrap();

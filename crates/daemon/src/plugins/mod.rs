@@ -44,6 +44,7 @@ use tokio::task::JoinHandle;
 use crate::bus::{DaemonEvent, EventBus};
 use crate::config::Config;
 use context::{CtxRequest, PluginFacts, SessionInfo, SessionLookup};
+use garage_protocol::widgets::limits;
 use layout::{
     Entry, MANIFEST_FILE, Paths, PluginsFile, Source, create_private_dir, ensure_token,
     ensure_ui_token, write_private,
@@ -192,6 +193,8 @@ pub struct Inner {
     slots_bucket: Mutex<Bucket>,
     /// Rate limit of `POST /api/plugins/ui/action`, per plugin.
     ui_action_buckets: Mutex<HashMap<String, Bucket>>,
+    /// Rate limit of `POST /api/plugins/{id}/notice`, per plugin.
+    notice_buckets: Mutex<HashMap<String, Bucket>>,
     /// One lock per plugin across a pane open (singleton check, limit, create).
     pane_locks: Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
     /// The per-install credential of the TUI and CLI; empty when it could not
@@ -242,6 +245,7 @@ impl PluginHost {
             ui_slots: Mutex::new(json!({})),
             slots_bucket: Mutex::new(Bucket::new(std::time::Instant::now())),
             ui_action_buckets: Mutex::default(),
+            notice_buckets: Mutex::default(),
             pane_locks: Mutex::default(),
             ui_token,
             dispatch_permits: Arc::new(tokio::sync::Semaphore::new(DISPATCH_INFLIGHT)),
@@ -625,6 +629,24 @@ impl PluginHost {
             .take(now)
     }
 
+    /// Rate limit one `POST /api/plugins/{id}/notice`: a toast a second, in
+    /// bursts of at most three (a plugin cannot flood the user's screen).
+    pub fn acquire_notice(&self, plugin: &str, now: std::time::Instant) -> Result<(), Duration> {
+        self.0
+            .notice_buckets
+            .lock()
+            .unwrap()
+            .entry(plugin.to_owned())
+            .or_insert_with(|| {
+                Bucket::with_limits(
+                    now,
+                    f64::from(limits::NOTICES_PER_SEC),
+                    f64::from(limits::NOTICE_BURST),
+                )
+            })
+            .take(now)
+    }
+
     pub fn set_ui_slots(&self, slots: Value) {
         let changed = {
             let mut cur = self.0.ui_slots.lock().unwrap();
@@ -826,6 +848,7 @@ impl Inner {
         self.bus.publish(DaemonEvent::PluginNotice {
             plugin: plugin.to_owned(),
             message,
+            ttl_ms: None,
         });
     }
 

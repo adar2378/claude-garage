@@ -5,17 +5,18 @@
 use std::path::Path;
 use std::time::Duration;
 
-use garage_plugin_sdk::{Api, Error, StateLock, Value, json, read_state_in, write_state_in};
+use garage_plugin_sdk::{Api, Error, StateLock, Value, read_state_in, write_state_in};
 
 use crate::engine::Species;
-use crate::plan::{Inputs, State, build_put};
+use crate::plan::{DEBOUNCE_MS, Inputs, State, build_put};
 
 pub const WIDGET: &str = "pet";
 const STORE: &str = "pet.json";
 const LOCK: &str = "pet";
 /// A run holds the lock for milliseconds; a lock this old died with its run.
 const STALE: Duration = Duration::from_secs(20);
-const WAIT: Duration = Duration::from_secs(8);
+/// How long a run waits for another run's lock before it skips.
+pub const LOCK_WAIT: Duration = Duration::from_secs(8);
 
 /// Everything a run needs from outside.
 pub struct Env<'a> {
@@ -28,6 +29,8 @@ pub struct Env<'a> {
     pub schedule_clear: &'a dyn Fn(u64, i64),
     /// `date +%H`, injected.
     pub local_hour: &'a dyn Fn() -> u8,
+    /// How long to wait for the state lock ([`LOCK_WAIT`]).
+    pub lock_wait: Duration,
 }
 
 fn load(env: &Env) -> State {
@@ -41,6 +44,18 @@ fn load(env: &Env) -> State {
         }
     }
     st
+}
+
+/// A run that has nothing to do: no pet is chosen, nothing is on the strip,
+/// and the old `wall.json` has no pet to adopt. It must not take the lock or
+/// write a file, so a plugin nobody uses costs nothing but the process start.
+fn idle(env: &Env) -> bool {
+    match read_state_in::<State>(env.dir, STORE) {
+        Some(st) => {
+            st.species.is_none() && !st.pushed && (st.migrated || wall_json_pet(env.dir).is_none())
+        }
+        None => wall_json_pet(env.dir).is_none(),
+    }
 }
 
 /// The pet the wall used to keep in `wall.json` (`<garage dir>/wall.json`; the
@@ -57,7 +72,7 @@ fn save(env: &Env, st: &State) -> Result<(), Error> {
 }
 
 fn lock(env: &Env) -> Result<StateLock, Error> {
-    StateLock::acquire(env.dir, LOCK, STALE, WAIT)
+    StateLock::acquire(env.dir, LOCK, STALE, env.lock_wait)
 }
 
 /// The strip filler's width as the sim wants it: the room minus the two gutter
@@ -127,7 +142,13 @@ fn inputs(env: &Env, st: &mut State, world: &World) -> Inputs {
 }
 
 /// Plan and push the next window (or clear the widget when there is no pet).
-fn show(env: &Env, st: &mut State, world: &World) -> Result<(), Error> {
+/// `force` is for what the user did (a key, a click) and for a daemon that
+/// forgot the widget; the rest wait at least [`DEBOUNCE_MS`] after the last
+/// push, so a burst of session events makes one push.
+fn show(env: &Env, st: &mut State, world: &World, force: bool) -> Result<(), Error> {
+    if !force && st.species.is_some() && (0..DEBOUNCE_MS).contains(&(env.now - st.last_push_ms)) {
+        return Ok(());
+    }
     let inputs = inputs(env, st, world);
     let Some(frames) = st.plan(&inputs, env.now) else {
         return clear(env, st);
@@ -139,6 +160,7 @@ fn show(env: &Env, st: &mut State, world: &World) -> Result<(), Error> {
         &build_put(&frames, caption.as_ref().map(|c| c.text.as_str())),
     )?;
     st.pushed = true;
+    st.last_push_ms = env.now;
     save(env, st)?;
     if let Some(c) = caption {
         (env.schedule_clear)(st.rev, c.until_ms - env.now);
@@ -146,7 +168,12 @@ fn show(env: &Env, st: &mut State, world: &World) -> Result<(), Error> {
     Ok(())
 }
 
+/// Take the pet off the strip. Writes the state only when something was
+/// there to take off.
 fn clear(env: &Env, st: &mut State) -> Result<(), Error> {
+    if !st.pushed && st.frames.is_empty() {
+        return Ok(());
+    }
     if st.pushed {
         env.api.clear_widget(WIDGET)?;
         st.pushed = false;
@@ -157,17 +184,23 @@ fn clear(env: &Env, st: &mut State) -> Result<(), Error> {
 
 /// `update`: timer and session events. Keeps a window arriving.
 pub fn update(env: &Env) -> Result<(), Error> {
+    if idle(env) {
+        return Ok(());
+    }
     let _lock = lock(env)?;
     let mut st = load(env);
     if st.species.is_none() {
         return clear(env, &mut st);
     }
     let world = sessions(env.api)?;
-    show(env, &mut st, &world)
+    show(env, &mut st, &world, false)
 }
 
 /// `started`: the daemon (re)started and forgot every widget.
 pub fn started(env: &Env) -> Result<(), Error> {
+    if idle(env) {
+        return Ok(());
+    }
     let _lock = lock(env)?;
     let mut st = load(env);
     st.started_ms = env.now;
@@ -176,7 +209,7 @@ pub fn started(env: &Env) -> Result<(), Error> {
         return save(env, &st);
     }
     let world = sessions(env.api)?;
-    show(env, &mut st, &world)
+    show(env, &mut st, &world, true)
 }
 
 /// `cycle`: the `P` key.
@@ -185,30 +218,37 @@ pub fn cycle(env: &Env) -> Result<(), Error> {
     let mut st = load(env);
     st.cycle(env.now);
     if st.species.is_none() {
-        return clear(env, &mut st);
+        // The choice itself changed, so the state is written even when the
+        // strip had nothing to take down.
+        if st.pushed {
+            env.api.clear_widget(WIDGET)?;
+        }
+        st.pushed = false;
+        st.frames.clear();
+        save(env, &st)?;
+        // A toast, not a caption: there is no pet left to hold one. A refused
+        // or limited notice does not fail the key.
+        let _ = env.api.notice("the strip is quiet again", Some(3000));
+        return Ok(());
     }
     let world = sessions(env.api)?;
-    show(env, &mut st, &world)
+    show(env, &mut st, &world, true)
 }
 
-/// `pet`: a click. An alerting pet sends you to the blocked session; any
-/// other pet is petted.
+/// `pet`: a click on a calm pet. (An alerting pet's frames carry
+/// `jump.blocked` themselves, so a click on one never reaches this run; if a
+/// session started waiting since the click was painted, the pet stays put.)
 pub fn pet(env: &Env) -> Result<(), Error> {
     let _lock = lock(env)?;
     let mut st = load(env);
     let world = sessions(env.api)?;
     if world.blocked > 0 {
-        env.api.request(
-            "POST",
-            "/api/plugins/ui/action",
-            Some(&json!({"action": "jump.blocked"})),
-        )?;
         return Ok(());
     }
     if !st.pet(env.now) {
         return Ok(()); // the pet was turned off between paint and click
     }
-    show(env, &mut st, &world)
+    show(env, &mut st, &world, true)
 }
 
 /// `clear <rev>`: take the caption of push `rev` down, unless a newer push
@@ -222,14 +262,16 @@ pub fn clear_caption(env: &Env, rev: u64) -> Result<(), Error> {
     st.caption = None;
     st.rev += 1;
     env.api.put_widget(WIDGET, &build_put(&st.frames, None))?;
+    st.last_push_ms = env.now;
     save(env, &st)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::plan::{FRAMES, PET_CAPTION_MS};
+    use crate::plan::{FRAMES, PET_CAPTION_MS, PUSH_TTL_SECS, TICK_MS};
     use garage_plugin_sdk::fake::FakeDaemon;
+    use garage_plugin_sdk::json;
     use std::cell::RefCell;
 
     const NOW: i64 = 1_800_000_000_000;
@@ -275,6 +317,7 @@ mod tests {
                     move |rev, ms| cleared.borrow_mut().push((rev, ms))
                 })),
                 local_hour: &|| 12,
+                lock_wait: Duration::from_millis(60),
             }
         }
         fn state(&self) -> State {
@@ -320,13 +363,16 @@ mod tests {
         let item = &puts[0]["scopes"]["*"][0];
         assert_eq!(item["frames"].as_array().unwrap().len(), FRAMES);
         assert_eq!(item["frame_x"].as_array().unwrap().len(), FRAMES);
-        assert_eq!(item["frame_ms"], 330);
+        assert_eq!(item["frame_ms"], TICK_MS);
         assert_eq!(item["placement"]["kind"], "filler");
-        // One session needs input: the cat alerts, the bang is lit, the click is the pet's own.
-        let frame = &item["frames"][((NOW / 330) % 16) as usize];
+        // One session needs input: the cat alerts, the bang is lit in the
+        // needs-input colour, and a click goes straight to the blocked session.
+        let frame = &item["frames"][((NOW / TICK_MS) % FRAMES as i64) as usize];
         assert_eq!(frame[0]["text"], "=O_O=");
-        assert_eq!(frame[0]["click"]["action"], "pet");
+        assert_eq!(frame[0]["click"]["action"], "jump.blocked");
         assert_eq!(frame[2]["text"], "!");
+        assert_eq!(frame[2]["style"]["fg"], "needs-input");
+        assert_eq!(puts[0]["ttl_secs"], PUSH_TTL_SECS, "a dead pet disappears");
         assert_eq!(r.state().rev, 1);
         assert!(
             r.cleared.borrow().is_empty(),
@@ -373,13 +419,13 @@ mod tests {
     }
 
     #[test]
-    fn a_click_on_an_alerting_pet_jumps_to_the_blocked_session_and_nothing_else() {
+    fn a_click_that_reaches_the_plugin_while_a_session_waits_changes_nothing() {
         let r = rig("jump", ONE_BLOCKED);
         r.set(|st| st.species = Some(Species::Duck));
         pet(&r.env(NOW)).unwrap();
-        assert_eq!(
-            r.d.bodies("POST", "/api/plugins/ui/action"),
-            vec![json!({"action": "jump.blocked"})]
+        assert!(
+            r.d.bodies("POST", "/api/plugins/ui/action").is_empty(),
+            "the jump is on the frames; the plugin never asks for it"
         );
         assert!(r.puts().is_empty(), "no petting while it is asking for you");
     }
@@ -397,7 +443,7 @@ mod tests {
                 .is_some_and(|c| !c.is_empty()),
             "a reply"
         );
-        let frame = &item["frames"][((NOW / 330) % 16) as usize];
+        let frame = &item["frames"][((NOW / TICK_MS) % FRAMES as i64) as usize];
         assert!(
             frame[0]["text"].as_str().unwrap().starts_with("=^.^="),
             "celebrating: {frame}"
@@ -477,5 +523,93 @@ mod tests {
         r.set(|st| st.species = Some(Species::Cat));
         assert!(update(&r.env(NOW)).is_err());
         assert!(r.puts().is_empty());
+    }
+
+    #[test]
+    fn with_no_pet_a_run_touches_nothing_at_all() {
+        // Not the daemon, not the state file, not the lock.
+        for run in [update, started] {
+            let r = rig("idle", ONE_BLOCKED);
+            run(&r.env(NOW)).unwrap();
+            assert!(r.d.seen().is_empty(), "{:?}", r.d.seen());
+            assert!(
+                !r.dir.exists(),
+                "no pet.json, no lock, not even the directory"
+            );
+        }
+        // A pet that was turned off keeps its (one) state file and is left alone.
+        let r = rig("idle-off", "[]");
+        r.set(|st| st.species = None);
+        let before = std::fs::read(r.dir.join(STORE)).unwrap();
+        update(&r.env(NOW)).unwrap();
+        assert!(r.d.seen().is_empty());
+        assert_eq!(std::fs::read(r.dir.join(STORE)).unwrap(), before);
+    }
+
+    #[test]
+    fn a_burst_of_events_makes_one_push_but_a_key_or_a_restart_always_pushes() {
+        let r = rig("debounce", "[]");
+        r.set(|st| st.species = Some(Species::Cat));
+        update(&r.env(NOW)).unwrap();
+        update(&r.env(NOW + 100)).unwrap();
+        update(&r.env(NOW + 299)).unwrap();
+        assert_eq!(r.puts().len(), 1, "inside 300 ms of the last push");
+        update(&r.env(NOW + 300)).unwrap();
+        assert_eq!(r.puts().len(), 2);
+        // The user's own key and a daemon that forgot the widget are not debounced.
+        pet(&r.env(NOW + 310)).unwrap();
+        assert_eq!(r.puts().len(), 3);
+        started(&r.env(NOW + 320)).unwrap();
+        assert_eq!(r.puts().len(), 4);
+        cycle(&r.env(NOW + 330)).unwrap();
+        assert_eq!(r.puts().len(), 5);
+    }
+
+    #[test]
+    fn a_run_that_cannot_get_the_lock_skips_with_a_distinct_error() {
+        let r = rig("locked", "[]");
+        r.set(|st| st.species = Some(Species::Cat));
+        let held = StateLock::acquire(&r.dir, LOCK, STALE, Duration::ZERO).unwrap();
+        for run in [update, started, cycle, pet] {
+            assert!(
+                matches!(run(&r.env(NOW)), Err(Error::LockHeld(_))),
+                "a busy lock is a skip the binary exits 0 on, not a failure"
+            );
+        }
+        assert!(
+            matches!(clear_caption(&r.env(NOW), 1), Err(Error::LockHeld(_))),
+            "the caption clear too"
+        );
+        assert!(r.puts().is_empty());
+        drop(held);
+        update(&r.env(NOW)).unwrap();
+        assert_eq!(r.puts().len(), 1);
+    }
+
+    #[test]
+    fn turning_the_pet_off_says_so_in_a_toast_and_a_refused_toast_does_not_fail_the_key() {
+        let r = rig("quiet", "[]");
+        r.set(|st| st.species = Some(Species::Pup));
+        cycle(&r.env(NOW)).unwrap();
+        assert_eq!(
+            r.d.bodies("POST", "/api/plugins/pit-pet/notice"),
+            vec![json!({"text": "the strip is quiet again", "ttl_ms": 3000})]
+        );
+        assert_eq!(r.state().species, None);
+        // Rate limited (or no permission): the key still works.
+        let r = rig("quiet-429", "[]");
+        r.d.route(
+            "POST",
+            "/api/plugins/pit-pet/notice",
+            429,
+            r#"{"error":"slow"}"#,
+        );
+        r.set(|st| st.species = Some(Species::Pup));
+        cycle(&r.env(NOW)).unwrap();
+        assert_eq!(r.state().species, None, "state saved before the toast");
+        // Cycling to a pet is not a toast: the arrival line is its caption.
+        let r = rig("arrive", "[]");
+        cycle(&r.env(NOW)).unwrap();
+        assert!(r.d.bodies("POST", "/api/plugins/pit-pet/notice").is_empty());
     }
 }

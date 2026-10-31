@@ -6,12 +6,18 @@ use serde::{Deserialize, Serialize};
 
 use crate::engine::{Chatter, ChatterCtx, LINES, Mood, PetSim, Species, mood, petting_line};
 
-/// Milliseconds per simulated tick and per frame. The wall's pet ticked every
-/// 300 ms; 330 ms makes a 16-frame set last 5.28 s, longer than the 5 s timer
-/// that renews it, so the pet never replays the start of a set.
-pub const TICK_MS: i64 = 330;
-/// Frames per set (the widget limit).
-pub const FRAMES: usize = 16;
+/// Milliseconds per simulated tick and per frame: what the wall's own pet
+/// ticked at.
+pub const TICK_MS: i64 = 300;
+/// Frames per set (the widget limit). 24 frames last 7.2 s, longer than the
+/// ~6 s timer that renews the set, so the pet never replays the start of one.
+pub const FRAMES: usize = 24;
+/// A pushed set lives this long unless renewed: a pet whose plugin died (or
+/// whose daemon forgot it) disappears instead of freezing on its last frame.
+/// More than two timer periods, so one late run does not make it blink.
+pub const PUSH_TTL_SECS: u32 = 15;
+/// No push within this long of the last (a burst of session events makes one).
+pub const DEBOUNCE_MS: i64 = 300;
 /// How long a chatter line stays beside the pet.
 pub const CHATTER_CAPTION_MS: i64 = 4000;
 /// How long a petting reply or an arrival line stays.
@@ -19,6 +25,8 @@ pub const PET_CAPTION_MS: i64 = 2500;
 pub const ARRIVAL_CAPTION_MS: i64 = 3000;
 /// The click action of the pet (this plugin's own).
 pub const CLICK: &str = "pet";
+/// What a click on an alerting pet does: go to the session that needs you.
+pub const ALERT_CLICK: &str = "jump.blocked";
 
 /// What one frame looks like.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -30,6 +38,9 @@ pub struct FrameSpec {
     pub x: u16,
     /// Sleep and box are drawn dim.
     pub dim: bool,
+    /// The pet is alerting: a click goes to the blocked session.
+    #[serde(default)]
+    pub alert: bool,
 }
 
 /// One simulated tick, kept so the next run can continue from where the pet
@@ -113,6 +124,9 @@ pub struct State {
     pub pushed: bool,
     /// Epoch ms of the daemon start this state last saw: the chatter's uptime.
     pub started_ms: i64,
+    /// Epoch ms of the last push, for the debounce.
+    #[serde(default)]
+    pub last_push_ms: i64,
     /// `date +%H` result and the minute it was read.
     pub hour_cache: Option<(i64, u8)>,
     /// The old `pet` value of `wall.json` was looked at.
@@ -133,6 +147,7 @@ impl Default for State {
             rev: 0,
             pushed: false,
             started_ms: 0,
+            last_push_ms: 0,
             hour_cache: None,
             migrated: false,
         }
@@ -300,6 +315,7 @@ impl State {
                 bang_lit: r.bang_lit,
                 x: r.x,
                 dim: matches!(r.mood, Mood::Sleep | Mood::Box),
+                alert: r.mood == Mood::Alert,
             });
         }
         self.rng = rng_state;
@@ -315,7 +331,7 @@ impl State {
     }
 }
 
-fn seg(text: &str, fg: &str, bold: bool, click: bool) -> Segment {
+fn seg(text: &str, fg: &str, bold: bool, click: Option<&str>) -> Segment {
     Segment {
         text: text.to_owned(),
         style: Some(Style {
@@ -323,19 +339,22 @@ fn seg(text: &str, fg: &str, bold: bool, click: bool) -> Segment {
             bold,
             ..Style::default()
         }),
-        click: click.then(|| garage_plugin_sdk::Click {
-            action: CLICK.to_owned(),
+        click: click.map(|action| garage_plugin_sdk::Click {
+            action: action.to_owned(),
             args: None,
         }),
     }
 }
 
 fn segments(f: &FrameSpec) -> Vec<Segment> {
+    // The alert frames carry the jump themselves; the TUI runs it on click
+    // without asking this plugin, so it works even with the plugin not running.
+    let click = if f.alert { ALERT_CLICK } else { CLICK };
     let mut out = vec![seg(
         &f.text,
         if f.dim { "dim" } else { "text" },
         false,
-        true,
+        Some(click),
     )];
     if f.bang {
         out.push(Segment {
@@ -344,9 +363,9 @@ fn segments(f: &FrameSpec) -> Vec<Segment> {
             click: None,
         });
         out.push(if f.bang_lit {
-            // Amber is the core's needs-input colour and the wire cannot ask
-            // for it; `warn` is the nearest a plugin can say.
-            seg("!", "warn", true, false)
+            // Amber while a session needs input (the wall decides; the
+            // token is neutral the rest of the time).
+            seg("!", "needs-input", true, None)
         } else {
             Segment {
                 text: " ".into(),
@@ -374,7 +393,7 @@ pub fn build_put(frames: &[FrameSpec], caption: Option<&str>) -> WidgetPut {
     };
     WidgetPut {
         scopes: [("*".to_owned(), vec![item])].into(),
-        ttl_secs: None,
+        ttl_secs: Some(PUSH_TTL_SECS),
     }
 }
 
@@ -607,6 +626,7 @@ mod tests {
             bang_lit: true,
             x: 30,
             dim: false,
+            alert: true,
         };
         let asleep = FrameSpec {
             text: "=-.-=".into(),
@@ -614,12 +634,71 @@ mod tests {
             bang_lit: false,
             x: 4,
             dim: true,
+            alert: false,
         };
         golden_check(
             "alert-speech.json",
             &build_put(&[alert], Some("someone needs you")),
         );
         golden_check("asleep.json", &build_put(&[asleep], None));
+    }
+
+    /// A whole 24-frame window of an alerting cat, as the wall renders it: the
+    /// frames cycle (the sprite changes and the cat walks), and the body stays
+    /// far below the 16 KiB limit with room for the caption.
+    #[test]
+    fn a_full_window_is_a_golden_that_cycles_and_stays_small() {
+        let mut st = cat();
+        let frames = st.plan(&inputs(1, true, 2), T).unwrap();
+        assert_eq!(frames.len(), FRAMES);
+        let put = build_put(&frames, Some("someone needs you"));
+        golden_check("cycle-24.json", &put);
+        let body = serde_json::to_vec(&put).unwrap();
+        assert!(
+            body.len() < 12 * 1024,
+            "a window is {} bytes; the limit is 16 KiB",
+            body.len()
+        );
+        // It cycles: more than one column, and every frame is clickable as
+        // the alert it is.
+        let xs: std::collections::BTreeSet<u16> = frames.iter().map(|f| f.x).collect();
+        assert!(xs.len() > 3, "the cat walks: {xs:?}");
+        assert!(frames.iter().all(|f| f.alert && f.bang));
+        let item = &put.scopes["*"][0];
+        assert_eq!(item.frames.as_ref().unwrap().len(), FRAMES);
+        assert_eq!(put.ttl_secs, Some(PUSH_TTL_SECS));
+    }
+
+    #[test]
+    fn alert_frames_jump_to_the_blocked_session_and_calm_ones_pet() {
+        let mut st = cat();
+        let alert = st.plan(&inputs(1, false, 1), T).unwrap();
+        let put = build_put(&alert, None);
+        let clicks = |put: &WidgetPut| -> Vec<String> {
+            put.scopes["*"][0]
+                .frames
+                .as_ref()
+                .unwrap()
+                .iter()
+                .map(|f| f[0].click.as_ref().unwrap().action.clone())
+                .collect()
+        };
+        assert!(clicks(&put).iter().all(|a| a == "jump.blocked"));
+        // The lit bang uses the needs-input token, never a fixed colour.
+        let bang_colours: Vec<_> = put.scopes["*"][0]
+            .frames
+            .as_ref()
+            .unwrap()
+            .iter()
+            .flatten()
+            .filter(|s| s.text == "!")
+            .map(|s| s.style.as_ref().unwrap().fg.clone().unwrap())
+            .collect();
+        assert!(!bang_colours.is_empty());
+        assert!(bang_colours.iter().all(|c| c == "needs-input"));
+        let mut calm = cat();
+        let frames = calm.plan(&inputs(0, true, 1), T + 60_000).unwrap();
+        assert!(clicks(&build_put(&frames, None)).iter().all(|a| a == "pet"));
     }
 
     #[test]
@@ -633,5 +712,6 @@ mod tests {
         assert_eq!(item.frames.as_ref().unwrap().len(), FRAMES);
         assert_eq!(item.frame_x.as_ref().unwrap().len(), FRAMES);
         assert_eq!(item.frame_ms, Some(TICK_MS as u32));
+        assert_eq!(ok.ttl_secs, Some(PUSH_TTL_SECS));
     }
 }

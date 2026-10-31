@@ -39,9 +39,13 @@ fn frame(event: &DaemonEvent) -> Event {
         } => Event::default()
             .event("plugin_run_failed")
             .data(json!({"plugin": plugin, "action": action, "reason": reason}).to_string()),
-        DaemonEvent::PluginNotice { plugin, message } => Event::default()
+        DaemonEvent::PluginNotice {
+            plugin,
+            message,
+            ttl_ms,
+        } => Event::default()
             .event("plugin_notice")
-            .data(json!({"plugin": plugin, "message": message}).to_string()),
+            .data(json!({"plugin": plugin, "message": message, "ttl_ms": ttl_ms}).to_string()),
         DaemonEvent::WidgetsChanged { plugin, rev } => Event::default()
             .event("widgets")
             .data(json!({"plugin": plugin, "rev": rev}).to_string()),
@@ -176,9 +180,10 @@ mod tests {
                 DaemonEvent::PluginNotice {
                     plugin: "p".into(),
                     message: "hi".into(),
+                    ttl_ms: Some(3000),
                 },
                 "plugin_notice",
-                json!({"plugin": "p", "message": "hi"}),
+                json!({"plugin": "p", "message": "hi", "ttl_ms": 3000}),
             ),
             (
                 DaemonEvent::UiAction {
@@ -220,9 +225,11 @@ mod tests {
                     workspace: "w".into(),
                     at: 5,
                     transcript_offset: None,
+                    row: Some(42),
+                    history_limit: Some(2000),
                 },
                 "session.turn",
-                json!({"id": "garage/w/a", "workspace": "w", "at": 5, "transcript_offset": null}),
+                json!({"id": "garage/w/a", "workspace": "w", "at": 5, "transcript_offset": null, "row": 42, "history_limit": 2000}),
             ),
             (
                 DaemonEvent::WorkspaceAdded { name: "w".into() },

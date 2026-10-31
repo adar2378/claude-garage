@@ -104,6 +104,30 @@ pub fn history_size(spec: &Target, session: &str) -> Option<i64> {
     String::from_utf8_lossy(&out.stdout).trim().parse().ok()
 }
 
+/// [`history_size`] plus the most history lines the backend keeps
+/// (`#{history_limit}` for tmux, the host's scrollback for a host).
+pub fn history_info(spec: &Target, session: &str) -> Option<(i64, Option<i64>)> {
+    if let Target::Socket { addr, token } = spec {
+        let (size, _, limit) = garage_host::proto::anchor(addr, token)?;
+        return Some((size, Some(limit)));
+    }
+    let out = tmux(
+        spec,
+        &[
+            "display-message",
+            "-p",
+            "-t",
+            &format!("={session}:"),
+            "-F",
+            "#{history_size} #{history_limit}",
+        ],
+    )?;
+    let text = String::from_utf8_lossy(&out.stdout);
+    let mut it = text.split_whitespace();
+    let size = it.next()?.parse().ok()?;
+    Some((size, it.next().and_then(|l| l.parse().ok())))
+}
+
 /// Capture `rows` lines starting at absolute line `top_abs` from the
 /// session, with escape sequences, rendered into a fresh vt100 parser sized
 /// to the tile. For tmux the `-S`/`-E` arguments are relative to the CURRENT

@@ -206,6 +206,10 @@ pub struct Animated {
     /// A filler item's column per frame (same length as `frames`), when the
     /// item moves as it animates.
     pub frame_x: Option<Arc<[u16]>>,
+    /// The click of each frame (same length as `frames`) when frames differ
+    /// in what a click does (an alerting pet jumps to the blocked session, a
+    /// calm one is petted). Replaces the item's own click while that frame shows.
+    pub frame_clicks: Option<Arc<[Option<ClickTarget>]>>,
 }
 
 impl Animated {
@@ -235,10 +239,6 @@ pub struct SlotItem {
     /// `tile.gutter` only: the absolute scrollback row (counted from the
     /// first line of the session's scrollback) this marker is drawn beside.
     pub gutter_row: Option<u64>,
-    /// `tile.gutter` only: the turn this marker stands for (the `at` of a
-    /// `session.turn` event) when its row is not known to the plugin; the
-    /// wall places it (`ui::turn_rows`).
-    pub gutter_turn: Option<u64>,
     /// Set for an animated item: `text` then holds frame 0 and the registry
     /// swaps in the frame for the current draw.
     pub animated: Option<Animated>,
@@ -253,7 +253,6 @@ impl SlotItem {
             placement: Placement::Flow,
             row_style: None,
             gutter_row: None,
-            gutter_turn: None,
             animated: None,
         }
     }
@@ -268,6 +267,7 @@ impl SlotItem {
             frames: frames.into(),
             frame_ms,
             frame_x: None,
+            frame_clicks: None,
         });
         Some(item)
     }
@@ -279,6 +279,17 @@ impl SlotItem {
             && xs.len() == anim.frames.len()
         {
             anim.frame_x = Some(xs.into());
+        }
+        self
+    }
+
+    /// Give an animated item a click per frame. Ignored unless there is
+    /// exactly one per frame.
+    pub fn with_frame_clicks(mut self, clicks: Vec<Option<ClickTarget>>) -> Self {
+        if let Some(anim) = self.animated.as_mut()
+            && clicks.len() == anim.frames.len()
+        {
+            anim.frame_clicks = Some(clicks.into());
         }
         self
     }
@@ -427,12 +438,19 @@ impl SlotRegistry {
         for item in &mut items {
             // Stamp before an animation swaps the text: the label is the
             // item's own (frame 0) text, so a spinner stays one region.
+            let label = text_hash(&item.text);
             if let Some(target) = item.on_click.as_mut() {
-                target.label = text_hash(&item.text);
+                target.label = label;
             }
             if let Some(anim) = &item.animated {
                 let index = anim.index_at(self.clock_ms.get());
                 item.text = anim.frames[index].clone();
+                if let Some(clicks) = &anim.frame_clicks {
+                    item.on_click = clicks[index].clone().map(|mut t| {
+                        t.label = label;
+                        t
+                    });
+                }
                 if let (Some(xs), Placement::Filler { x, .. }) =
                     (&anim.frame_x, &mut item.placement)
                 {

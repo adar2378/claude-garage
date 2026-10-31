@@ -51,6 +51,17 @@ const DANGEROUS: &[&str] = &[
     "hooks.install",
 ];
 
+/// Moving focus or switching view: nothing is changed, closed or sent. The
+/// `ui.navigate` permission is enough for these; everything else a plugin may
+/// trigger needs `core.actions`.
+const NAVIGATION: &[&str] = &[
+    "jump.blocked",
+    "session.focus",
+    "workspace.focus",
+    "view.cycle",
+    "view.focus",
+];
+
 /// Real core ids a plugin must never trigger.
 const NEVER: &[&str] = &[
     "app.quit",
@@ -77,6 +88,12 @@ pub fn lookup(id: &str) -> Option<CoreAction> {
         dangerous: false,
         plugin_invocable: false,
     })
+}
+
+/// Whether `id` is a plugin-invocable, non-dangerous navigation action (the
+/// ones `ui.navigate` grants).
+pub fn is_navigation(id: &str) -> bool {
+    NAVIGATION.contains(&id) && lookup(id).is_some_and(|a| a.plugin_invocable && !a.dangerous)
 }
 
 /// The invocable exact ids, for `/api/plugin/features`.
@@ -118,5 +135,28 @@ mod tests {
         assert_eq!(lookup("overlay.open."), None);
         assert_eq!(lookup("no.such.action"), None);
         assert_eq!(lookup("usage-bar:details"), None);
+    }
+
+    #[test]
+    fn navigation_is_a_small_safe_subset_of_the_invocable_ids() {
+        for id in NAVIGATION {
+            assert!(is_navigation(id), "{id}");
+            assert!(!DANGEROUS.contains(id), "{id} must not be dangerous");
+        }
+        // Nothing that changes, sends or closes, nothing that moves where the
+        // user types, and nothing unknown.
+        for id in [
+            "session.close",
+            "session.restore",
+            "session.spawn",
+            "session.engage",
+            "daemon.restart",
+            "overlay.open.x",
+            "app.quit",
+            "view.nothing",
+            "x:y",
+        ] {
+            assert!(!is_navigation(id), "{id}");
+        }
     }
 }

@@ -6,9 +6,10 @@ api_version = 1
 platforms = ["macos", "linux"]
 description = "Arthur, Papito or Segan lives in the status strip and watches your sessions"
 requires = ["widgets.animated", "widgets.frame_x", "widgets.slot_geometry"]
-# core.actions: only for the click on an alerting pet, which jumps to the
-# blocked session (`jump.blocked`); nothing else in this plugin uses it.
-permissions = ["ui.widgets", "ui.invoke", "core.actions", "sessions.read"]
+# ui.navigate: the alert frames carry a click on `jump.blocked`, which moves
+# focus and nothing else. ui.notice: "the strip is quiet again" when the pet
+# is turned off.
+permissions = ["ui.widgets", "ui.navigate", "ui.notice", "sessions.read"]
 
 [[actions]]
 id = "cycle"
@@ -23,12 +24,13 @@ title = "Pet the pit pet"
 contexts = ["global"]
 command = ["{plugin_dir}/bin/pit-pet", "pet"]
 
-# The sim rolls forward 16 frames at a time; the timer keeps a fresh window
-# arriving before the old one ends. The other events make a mood change show
-# within a few hundred milliseconds.
+# The sim rolls forward 24 frames (7.2 s) at a time; the timer keeps a fresh
+# window arriving before the old one ends, and a push expires after 15 s if
+# the timer stops. The other events make a mood change show within a few
+# hundred milliseconds (at most one push per 300 ms).
 [[events]]
 on = "timer"
-every_secs = 5
+every_secs = 6
 timeout_secs = 15
 command = ["{plugin_dir}/bin/pit-pet", "update"]
 

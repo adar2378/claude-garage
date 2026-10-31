@@ -379,13 +379,46 @@ fn a_ui_action_on_a_core_action_takes_its_target_from_target_alone() {
 #[test]
 fn the_same_plugin_notice_is_not_stacked_and_a_new_one_replaces_it() {
     let mut app = app();
-    app.apply(AppEvent::PluginNotice("bt: hello".into()));
+    app.apply(AppEvent::PluginNotice {
+        text: "bt: hello".into(),
+        ttl_ms: None,
+    });
     let first = now_ms();
     assert_eq!(app.router.notices.current(first), Some("bt: hello"));
-    app.apply(AppEvent::PluginNotice("bt: hello".into()));
+    app.apply(AppEvent::PluginNotice {
+        text: "bt: hello".into(),
+        ttl_ms: None,
+    });
     assert_eq!(app.router.notices.current(first), Some("bt: hello"));
-    app.apply(AppEvent::PluginNotice("bt: other".into()));
+    app.apply(AppEvent::PluginNotice {
+        text: "bt: other".into(),
+        ttl_ms: None,
+    });
     assert_eq!(app.router.notices.current(now_ms()), Some("bt: other"));
+}
+
+#[test]
+fn a_plugin_notice_shows_for_the_time_it_asked_and_five_seconds_by_default() {
+    let mut app = app();
+    let t0 = now_ms();
+    app.apply(AppEvent::PluginNotice {
+        text: "bt: short".into(),
+        ttl_ms: Some(1500),
+    });
+    assert_eq!(app.router.notices.current(t0 + 1000), Some("bt: short"));
+    assert_eq!(
+        app.router.notices.current(t0 + 2500),
+        None,
+        "gone after its own time"
+    );
+    app.apply(AppEvent::PluginNotice {
+        text: "bt: dflt".into(),
+        ttl_ms: None,
+    });
+    assert_eq!(
+        app.router.notices.current(now_ms() + 4000),
+        Some("bt: dflt")
+    );
 }
 
 fn bt_pane() -> garage_protocol::plugins::PaneInstance {

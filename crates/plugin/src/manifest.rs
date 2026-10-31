@@ -55,6 +55,12 @@ pub enum Permission {
     UiInvoke,
     #[serde(rename = "core.actions")]
     CoreActions,
+    // Navigation only: move focus or view (never a close, delete or restart).
+    #[serde(rename = "ui.navigate")]
+    UiNavigate,
+    // Show a short notice (toast) in the TUI.
+    #[serde(rename = "ui.notice")]
+    UiNotice,
     #[serde(rename = "network")]
     Network,
 }
@@ -71,6 +77,8 @@ impl Permission {
             Permission::UiPanes => "ui.panes",
             Permission::UiInvoke => "ui.invoke",
             Permission::CoreActions => "core.actions",
+            Permission::UiNavigate => "ui.navigate",
+            Permission::UiNotice => "ui.notice",
             Permission::Network => "network",
         }
     }
