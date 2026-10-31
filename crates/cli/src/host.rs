@@ -81,6 +81,11 @@ pub fn taskkill_says_gone(stdout: &str, stderr: &str) -> bool {
 /// The pid listening on `port` in `netstat -ano -p TCP` output (rows like
 /// `  TCP    127.0.0.1:4747    0.0.0.0:0    LISTENING    1234`): exactly one
 /// distinct pid above 1, else `None`, like the `lsof` path.
+///
+/// Locale-independent: the State column is translated on non-English Windows
+/// ("ABHÖREN", "ÉCOUTE"), so a row counts as a listener by its shape instead:
+/// the foreign address has port 0 (only a listening socket has no peer), and
+/// the pid is the last column. Established rows carry a real foreign port.
 #[cfg_attr(not(windows), allow(dead_code))]
 pub fn parse_netstat_listener(netstat: &str, port: u16) -> Option<u32> {
     let suffix = format!(":{port}");
@@ -88,7 +93,7 @@ pub fn parse_netstat_listener(netstat: &str, port: u16) -> Option<u32> {
         .lines()
         .filter_map(|l| {
             let f: Vec<&str> = l.split_whitespace().collect();
-            (f.len() >= 5 && f[0].eq_ignore_ascii_case("TCP") && f[1].ends_with(&suffix) && f[3].eq_ignore_ascii_case("LISTENING"))
+            (f.len() == 5 && f[0].eq_ignore_ascii_case("TCP") && f[1].ends_with(&suffix) && f[2].ends_with(":0"))
                 .then(|| f[4].to_owned())
         })
         .collect();
@@ -310,6 +315,9 @@ mod tests {
         let two = format!("{out}  TCP    0.0.0.0:4747           0.0.0.0:0              LISTENING       9999\n");
         assert_eq!(parse_netstat_listener(&two, 4747), None, "ambiguous: never guess");
         assert_eq!(parse_netstat_listener("", 4747), None);
+        // A German Windows prints the state as ABHÖREN; the pid is still found.
+        let de = "  TCP    127.0.0.1:4747         0.0.0.0:0              ABHÖREN         4242\n  TCP    127.0.0.1:4747         127.0.0.1:50000        HERGESTELLT     5555\n";
+        assert_eq!(parse_netstat_listener(de, 4747), Some(4242));
     }
 
     #[test]

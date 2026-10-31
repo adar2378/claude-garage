@@ -18,11 +18,14 @@ session is one detached `claude-garage host` process:
   vt100 screen with 10,000 lines of scrollback, and listens on 127.0.0.1;
 - it writes `<garage dir>/hosts/<id>.json` (port, token, pid). The directory is
   0700 and the files 0600 on Unix; on Windows the per-user profile directory is
-  the protection. File names escape every byte outside `[A-Za-z0-9_-]` as `%XX`;
+  the protection, and a `GARAGE_DIR` outside the profile gets an owner-only ACL
+  (or the host refuses to start). File names escape every byte outside `[A-Za-z0-9_-]` as `%XX`;
 - every connection starts with the token; a control connection answers info,
   history, capture, rename and shutdown;
 - hosts outlive the daemon, the TUI and the terminal, but not a reboot. A record
-  whose port refuses connections is stale and is removed by the daemon.
+  whose port refuses connections, or whose host process is gone, is stale and
+  is removed by the daemon, only if the file still holds the record that was
+  probed (a respawn's new record is never deleted).
 
 The daemon never sends the token over HTTP. `GET /api/attach?id=` answers
 `{"kind":"tmux","socket":"name"}` or `{"kind":"host","id":"..."}`; the TUI builds
@@ -69,3 +72,7 @@ has not been run on Windows:
    shows as restorable.
 5. Toast on needs-input, the folder picker, `x x` (taskkill of the tree).
 6. `claude agents --json` is run by name: confirm it resolves when `claude` is a `.cmd` shim.
+
+## Credits
+
+Windows host design based on PR #2 by Sabbir Hossain Khan.
