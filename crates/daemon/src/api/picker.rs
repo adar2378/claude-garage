@@ -18,9 +18,9 @@ pub async fn pick(State(state): State<AppState>) -> Response {
         Ok(Some(dir)) => Json(json!({"dir": strip_trailing_slash(&dir.to_string_lossy())})).into_response(),
         Ok(None) => Json(json!({"cancelled": true})).into_response(),
         Err(OsError::Unsupported) => {
-            error_response(StatusCode::NOT_IMPLEMENTED, "directory picker is only available on macOS")
+            error_response(StatusCode::NOT_IMPLEMENTED, "no folder picker on this system (macOS, Windows, or Linux with zenity or kdialog)")
         }
         Err(OsError::Failed(m)) => error_response(StatusCode::INTERNAL_SERVER_ERROR, m),
-        Err(OsError::NotFound) => error_response(StatusCode::INTERNAL_SERVER_ERROR, "osascript failed"),
+        Err(OsError::NotFound) => error_response(StatusCode::INTERNAL_SERVER_ERROR, "folder picker failed"),
     }
 }

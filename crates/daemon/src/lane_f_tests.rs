@@ -454,7 +454,7 @@ async fn pick_directory_strips_the_trailing_slash_and_maps_cancel_unsupported_fa
     *os.mode.lock().unwrap() = Mode::Unsupported;
     assert_eq!(
         pick().await,
-        (StatusCode::NOT_IMPLEMENTED, json!({"error": "directory picker is only available on macOS"}))
+        (StatusCode::NOT_IMPLEMENTED, json!({"error": "no folder picker on this system (macOS, Windows, or Linux with zenity or kdialog)"}))
     );
     *os.mode.lock().unwrap() = Mode::Failed;
     assert_eq!(pick().await, (StatusCode::INTERNAL_SERVER_ERROR, json!({"error": "fake failure"})));
