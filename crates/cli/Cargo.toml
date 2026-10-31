@@ -35,3 +35,4 @@ bundle-plugins = ["garage-daemon/embed-plugins"]
 
 [dev-dependencies]
 tempfile = "3"
+garage-daemon = { path = "../daemon", features = ["test-support"] }

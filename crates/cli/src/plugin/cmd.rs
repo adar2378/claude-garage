@@ -520,6 +520,8 @@ pub(crate) fn dispatch_route(
             Err(_) => return Ok(None),
         }
     }
+    // before a daemon is started for it: a plugin that fails the check never runs
+    external::verify(route)?;
     if route.needs_daemon {
         crate::launcher::ensure_daemon(host).map_err(|f| f.0)?;
     }

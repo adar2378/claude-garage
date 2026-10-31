@@ -1337,6 +1337,36 @@ mod tests {
         }
 
         #[test]
+        fn a_bundled_plugin_with_a_swapped_binary_is_refused_before_any_daemon_starts() {
+            let d = tempfile::tempdir().unwrap();
+            let paths = Paths::new(d.path());
+            link_plugin(
+                &paths,
+                d.path(),
+                "disp-swap",
+                "[[cli]]\nname = \"swap\"\ncommand = [\"true\"]\nneeds_daemon = true\n",
+                true,
+            );
+            let dir = crate::plugin::testkit::make_embedded(&paths, d.path(), "disp-swap");
+            let f = Fake::new(None);
+            assert_eq!(go_word(&f, &paths, &["swap"], d.path()), Ok(Some(0)));
+            assert_eq!(f.called("spawn_daemon"), 1);
+
+            std::fs::write(dir.join("bin/disp-swap"), b"tampered").unwrap();
+            let f = Fake::new(None);
+            let err = go_word(&f, &paths, &["swap"], d.path()).unwrap_err();
+            assert!(err.contains("refusing") && err.contains("restart the daemon"), "{err}");
+            assert!(f.log().is_empty(), "no daemon was started for it: {:?}", f.log());
+        }
+
+        fn go_word(f: &Fake, paths: &Paths, argv: &[&str], cwd: &Path) -> Result<Option<i32>, String> {
+            let argv = words(argv);
+            let all = load_all(paths).unwrap();
+            let r = route(&all, &argv).expect("a route");
+            dispatch_route(f, paths, &r, &argv, cwd, Some(cwd))
+        }
+
+        #[test]
         fn a_tilde_word_that_cannot_be_used_says_why_instead_of_the_generic_error() {
             let (d, paths) = folder_plugin("exit 0");
             let f = Fake::new(None);
