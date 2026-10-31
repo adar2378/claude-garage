@@ -664,3 +664,33 @@ fn a_burst_of_plugin_focus_moves_lands_once() {
     app.dispatch_action_at(ids::SESSION_FOCUS, &plugin(&app, ONE), 1600);
     assert_eq!(app.store.state().focused_session_id.as_deref(), Some(ONE), "after the gap it lands again");
 }
+
+#[test]
+fn a_plugin_sourced_jump_blocked_focuses_the_blocked_session_but_never_engages() {
+    let (tx, _rx) = mpsc::unbounded_channel();
+    let mut app = App::new(tx, "http://127.0.0.1:0", 0);
+    app.store.workspaces_fetched(vec![ws("a")]);
+    app.store.sessions_fetched(vec![si("a", "one"), si_status("a", "stuck", "needs-input")]);
+    let stuck = "garage/a/stuck";
+    app.dispatch_action_at(ids::JUMP_BLOCKED, &plugin(&app, ONE), 1000);
+    let state = app.store.state();
+    assert_eq!(state.layer, KeyLayer::Garage, "typing never moves on a plugin's say-so");
+    assert_eq!(state.focused_session_id.as_deref(), Some(stuck), "the new focus stays");
+    let notice = app.router.notices.current(1000).expect("the user is told");
+    assert!(
+        notice.contains("plugin closer tried to put you into a session") && notice.contains("press Enter to engage"),
+        "{notice}"
+    );
+}
+
+#[test]
+fn a_human_jump_blocked_still_lands_engaged() {
+    let (tx, _rx) = mpsc::unbounded_channel();
+    let mut app = App::new(tx, "http://127.0.0.1:0", 0);
+    app.store.workspaces_fetched(vec![ws("a")]);
+    app.store.sessions_fetched(vec![si("a", "one"), si_status("a", "stuck", "needs-input")]);
+    let ctx = ActionCtx::from_focus(app.store.state(), ActionSource::Key("a".into()));
+    app.dispatch_action_at(ids::JUMP_BLOCKED, &ctx, 1000);
+    assert_eq!(app.store.state().layer, KeyLayer::Engaged);
+    assert_eq!(app.store.state().focused_session_id.as_deref(), Some("garage/a/stuck"));
+}

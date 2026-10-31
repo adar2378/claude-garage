@@ -4,7 +4,8 @@
 //! same for a click. What the router does not own (the overlay forms and
 //! queue selection, the pit pet) is handled here, keyed on the action id.
 
-use crate::actions::{ActionCtx, ActionId, ids};
+use crate::actions::{ActionCtx, ActionId, ActionSource, ids};
+use crate::state::wall_state::KeyLayer;
 
 use super::{App, Effect, OverlayRefs, now_ms, overlay_action};
 
@@ -23,6 +24,29 @@ impl App {
         ctx: &ActionCtx,
         now: i64,
     ) -> Vec<Effect> {
+        // Outcome check: whatever path a plugin's own request takes
+        // (`jump.blocked`, a queue jump, ...), it never leaves the human
+        // typing into a session. The new focus stays; the layer goes back.
+        let plugin = match &ctx.source {
+            ActionSource::Plugin { plugin, .. } => Some(plugin.clone()),
+            _ => None,
+        };
+        let was_garage = self.store.state().layer == KeyLayer::Garage;
+        let effects = self.dispatch_action_inner(id, ctx, now);
+        if let Some(plugin) = plugin {
+            if was_garage && self.store.state().layer == KeyLayer::Engaged {
+                self.store.disengage();
+                self.router.notices.show(
+                    format!("plugin {plugin} tried to put you into a session — press Enter to engage"),
+                    4000,
+                    now,
+                );
+            }
+        }
+        effects
+    }
+
+    fn dispatch_action_inner(&mut self, id: ActionId, ctx: &ActionCtx, now: i64) -> Vec<Effect> {
         // The confirm rule for plugin-originated triggers: they may only arm
         // a dangerous action; a human key or click confirms (and a refused
         // id never runs). Everything it handles ends here.
