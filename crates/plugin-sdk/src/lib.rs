@@ -247,6 +247,17 @@ impl Api {
             .map(|_| ())
     }
 
+    /// Like [`Api::session_input`], but the daemon refuses (409, `Error::Http`)
+    /// when the session is in one of the `not` statuses at the moment the keys
+    /// would go out, e.g. `["needs-input"]`.
+    pub fn session_input_unless(&self, id: &str, text: &str, not: &[&str]) -> Result<(), Error> {
+        self.post(
+            "/api/sessions/input",
+            &json!({"id": id, "text": text, "if_status": {"not": not}}),
+        )
+        .map(|_| ())
+    }
+
     /// `PUT /api/plugins/{me}/widgets/{widget}`; returns the new `rev`.
     pub fn put_widget(&self, widget: &str, put: &WidgetPut) -> Result<u64, Error> {
         let body = serde_json::to_value(put).map_err(|e| Error::Context(e.to_string()))?;

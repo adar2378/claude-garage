@@ -140,6 +140,8 @@ fn clip(s: &str, cols: usize) -> String {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Stage {
+    /// A warning is on screen; only `y` goes on, Esc leaves.
+    Warn,
     Typing,
     Confirm,
 }
@@ -151,6 +153,8 @@ enum Stage {
 pub struct Prompt {
     title: String,
     confirm_text: String,
+    warning: String,
+    notes: Vec<String>,
     text: String,
     stage: Stage,
 }
@@ -161,9 +165,25 @@ impl Prompt {
         Self {
             title: title.to_owned(),
             confirm_text: confirm_text.to_owned(),
+            warning: String::new(),
+            notes: Vec::new(),
             text: String::new(),
             stage: Stage::Typing,
         }
+    }
+
+    /// Put a warning in front of the prompt. Nothing can be typed until the
+    /// user presses `y`; any other key except Esc is ignored.
+    pub fn with_warning(mut self, warning: &str) -> Self {
+        self.warning = warning.to_owned();
+        self.stage = Stage::Warn;
+        self
+    }
+
+    /// Extra lines shown under the prompt in every step.
+    pub fn with_notes(mut self, notes: Vec<String>) -> Self {
+        self.notes = notes;
+        self
     }
 
     pub fn on_key(&mut self, k: KeyEvent) -> Outcome<String> {
@@ -175,6 +195,8 @@ impl Prompt {
         }
         let ctrl = k.modifiers.contains(KeyModifiers::CONTROL);
         match (self.stage, k.code) {
+            (Stage::Warn, KeyCode::Char('y')) if !ctrl => self.stage = Stage::Typing,
+            (Stage::Warn, _) => {}
             (Stage::Typing, KeyCode::Enter) => {
                 if !self.text.trim().is_empty() {
                     self.stage = Stage::Confirm;
@@ -210,18 +232,30 @@ impl Prompt {
     }
 
     pub fn lines(&self, cols: usize) -> Vec<String> {
+        if self.stage == Stage::Warn {
+            let mut v = vec![
+                clip(&self.title, cols),
+                clip(&self.warning, cols),
+                clip("y to type anyway, Esc to cancel", cols),
+            ];
+            v.extend(self.notes.iter().map(|n| clip(n, cols)));
+            return v;
+        }
         let status = match self.stage {
+            Stage::Warn => unreachable!("handled above"),
             Stage::Typing => "Enter to review, Esc to cancel".to_owned(),
             Stage::Confirm => format!(
                 "{} - Enter again to confirm, Esc to cancel",
                 self.confirm_text
             ),
         };
-        vec![
+        let mut v = vec![
             clip(&self.title, cols),
             clip(&format!("> {}", self.text), cols),
             clip(&status, cols),
-        ]
+        ];
+        v.extend(self.notes.iter().map(|n| clip(n, cols)));
+        v
     }
 
     pub fn in_confirm(&self) -> bool {
@@ -403,6 +437,25 @@ mod tests {
         assert!(lines.iter().any(|l| l == "> item-7"), "{lines:?}");
         assert!(!lines.iter().any(|l| l.contains("item-0")));
         assert_eq!(p.lines(5, 6)[1], "> ", "long text is clipped to the width");
+    }
+
+    #[test]
+    fn a_warned_prompt_takes_no_text_until_y_and_esc_leaves() {
+        let mut p = Prompt::new("Send", "ok").with_warning("it is asking you something");
+        assert!(p.lines(80)[1].contains("asking you something"));
+        for c in ['h', 'i', ' '] {
+            p.on_key(key(KeyCode::Char(c)));
+        }
+        p.on_key(key(KeyCode::Enter));
+        assert_eq!(p.lines(80)[2], "y to type anyway, Esc to cancel");
+        p.on_key(key(KeyCode::Char('y')));
+        assert!(p.lines(80)[1].starts_with("> "), "{:?}", p.lines(80));
+        assert_eq!(p.lines(80)[1], "> ", "the keys before y typed nothing");
+        p.on_key(key(KeyCode::Char('x')));
+        p.on_key(key(KeyCode::Enter));
+        assert_eq!(p.on_key(key(KeyCode::Enter)), Outcome::Done("x".into()));
+        let mut p = Prompt::new("Send", "ok").with_warning("w");
+        assert_eq!(p.on_key(key(KeyCode::Esc)), Outcome::Cancel);
     }
 
     #[test]

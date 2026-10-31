@@ -8,7 +8,9 @@ description = "s sends one line to the focused session, S to every session of th
 permissions = ["sessions.input", "sessions.read", "ui.panes"]
 
 # sessions.input types into your sessions and presses Enter. The popup shows
-# the targets and needs Enter twice, so nothing is sent by accident.
+# the targets and needs Enter twice, so nothing is sent by accident. S skips
+# sessions that are waiting for input (the popup names them), and s on one asks
+# for an extra y first: a line typed there would answer its prompt.
 [[panes]]
 id        = "send-one"
 title     = "Send a line"
