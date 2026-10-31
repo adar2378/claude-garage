@@ -66,6 +66,9 @@ jobs:
       - name: Build the TUI binary
         run: npm run build:tui
 
+      - name: Build and stage the bundled plugins
+        run: npm run build:plugins
+
       - name: Package contains the TUI binary
         run: npm pack --dry-run 2>&1 | grep -q "wall/dist/garage-wall-darwin-arm64"
 

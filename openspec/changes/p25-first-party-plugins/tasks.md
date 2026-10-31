@@ -1,7 +1,7 @@
 # Tasks: p25-first-party-plugins
 
 ## 1. Core data
-- [ ] 1.1 Daemon keeps closed-session records (id, workspace, title, closed at) with an API to list them
+- [x] 1.1 Daemon keeps closed-session records (id, workspace, title, closed at) with an API to list them (records also keep the worktree, so a restored worktree chat can still be finished)
 
 ## 2. First-party plugins (`plugins/`)
 - [ ] 2.1 closed-chats (rail widget rows + `H` recent overlay)

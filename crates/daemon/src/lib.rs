@@ -110,6 +110,16 @@ pub async fn run(config: Config) -> Result<()> {
     let control = control_on.then(|| control::spawn(control_backend, shared.control_link()));
     let poller = shared.start();
     let notifier = os::notify::spawn(&state.bus, state.os.clone(), state.visibility.clone());
+    // First-party plugins: register and refresh them before the host loads.
+    if let Some(root) = plugins::bundled::discover() {
+        match plugins::bundled::seed(state.plugins.paths(), &root) {
+            Ok(s) if !s.added.is_empty() || !s.refreshed.is_empty() => {
+                eprintln!("plugins: bundled from {}: added {:?}, refreshed {:?}", root.display(), s.added, s.refreshed);
+            }
+            Ok(_) => {}
+            Err(e) => eprintln!("plugins: cannot register the bundled plugins: {e}"),
+        }
+    }
     let plugin_host = state.plugins.start();
     let closed = closed::spawn(&state.bus, state.registry.clone(), state.backend.clone());
     let (poller_stop, notifier_stop, control_stop) = (

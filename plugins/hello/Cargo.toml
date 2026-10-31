@@ -1,0 +1,13 @@
+[package]
+name = "garage-plugin-hello"
+version.workspace = true
+edition = "2021"
+description = "claude-garage sample bundled plugin: one action that pushes one widget"
+publish = false
+
+[[bin]]
+name = "hello"
+path = "src/main.rs"
+
+[dependencies]
+garage-plugin-sdk = { path = "../../crates/plugin-sdk" }

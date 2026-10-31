@@ -9,6 +9,7 @@
 //! queue, timers and the teardown sequence.
 
 pub mod api;
+pub mod bundled;
 pub mod context;
 pub mod layout;
 pub mod runner;

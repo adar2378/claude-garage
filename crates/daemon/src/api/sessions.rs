@@ -476,7 +476,7 @@ pub async fn restore(State(st): State<AppState>, body: Bytes) -> Response {
                         claude_session_id: rec.claude_session_id.clone(),
                         workspace: Some(workspace),
                         label: Some(label),
-                        worktree: None,
+                        worktree: rec.worktree.clone(),
                     };
                     vec![(rec.id.clone(), meta, Some(rec.dir.clone()))]
                 }
@@ -535,6 +535,7 @@ pub async fn restore(State(st): State<AppState>, body: Bytes) -> Response {
                             claude_session_id: Some(meta.claude_session_id.clone()),
                             workspace: meta.workspace.clone(),
                             label: meta.label.clone(),
+                            worktree: meta.worktree.clone().map(Some),
                             ..Default::default()
                         },
                     )
@@ -771,6 +772,7 @@ pub async fn remove(
             reason: crate::closing::CloseReason::User.as_str().to_owned(),
             last_status: Some(last_status),
             claude_session_id: meta.as_ref().and_then(|m| m.claude_session_id.clone()),
+            worktree: meta.as_ref().and_then(|m| m.worktree.clone()),
         };
         let _ = st.registry.record_closed(rec).await;
     }
@@ -1693,6 +1695,50 @@ mod tests {
         // neither metadata nor record: still a 404
         let (c, _) = h.call("POST", "/api/sessions/restore", Some(r#"{"id":"garage/ws/zzz"}"#)).await;
         assert_eq!(c, StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn a_closed_worktree_chat_keeps_its_worktree_and_restores_into_it_so_it_can_still_be_finished() {
+        let mut h = harness();
+        h.script("claude.sh", RESUMABLE);
+        let dir = h.workspace("ws").await;
+        let wt = h.garage.path().join("wt");
+        std::fs::create_dir_all(&wt).unwrap();
+        let wt = wt.canonicalize().unwrap().to_string_lossy().into_owned();
+        let w = Worktree { path: wt.clone(), branch: "garage/w".into(), repo_dir: dir.clone(), target: None };
+        h.live("garage/ws/w", &wt).await;
+        h.st.registry
+            .upsert_session_meta("garage/ws/w", MetaUpdate { worktree: Some(Some(w.clone())), ..meta(Some("wcs"), "ws", "w") })
+            .await
+            .unwrap();
+
+        let (c, _) = h.call("DELETE", "/api/sessions/garage%2Fws%2Fw", None).await;
+        assert_eq!(c, StatusCode::OK);
+        assert!(h.st.registry.get_session_meta("garage/ws/w").await.is_none());
+        assert_eq!(h.st.registry.get_closed("garage/ws/w").await.unwrap().worktree, Some(w.clone()));
+
+        // the poller's close event arrives after the metadata is gone: the
+        // record it rewrites keeps the worktree from the first one
+        let recorder = crate::closed::spawn(&h.st.bus, h.st.registry.clone(), h.st.backend.clone());
+        let first = h.st.registry.get_closed("garage/ws/w").await.unwrap().closed_at;
+        h.st.bus.publish(DaemonEvent::SessionClosed {
+            id: "garage/ws/w".into(),
+            dir: wt.clone(),
+            workspace: "ws".into(),
+            reason: crate::closing::CloseReason::User,
+            last_status: None,
+        });
+        h.tmux
+            .wait_for_async(|| async { h.st.registry.get_closed("garage/ws/w").await.is_some_and(|r| r.closed_at > first) })
+            .await;
+        recorder.abort();
+        assert_eq!(h.st.registry.get_closed("garage/ws/w").await.unwrap().worktree, Some(w.clone()));
+
+        let (c, b) = h.call("POST", "/api/sessions/restore", Some(r#"{"id":"garage/ws/w"}"#)).await;
+        assert_eq!(c, StatusCode::CREATED, "{b}");
+        assert_eq!(b["restored"][0]["dir"], wt);
+        assert_eq!(b["restored"][0]["worktree"], json!({"path": wt, "branch": "garage/w", "repoDir": dir}));
+        assert_eq!(h.st.registry.get_session_meta("garage/ws/w").await.and_then(|m| m.worktree), Some(w), "so finish and delete still see the worktree");
     }
 
     // --- POST /api/sessions/restore ---

@@ -897,6 +897,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "garage-plugin-hello"
+version = "0.6.2"
+dependencies = [
+ "garage-plugin-sdk",
+]
+
+[[package]]
+name = "garage-plugin-sdk"
+version = "0.6.2"
+dependencies = [
+ "garage-protocol",
+ "serde_json",
+ "ureq",
+]
+
+[[package]]
 name = "garage-protocol"
 version = "0.6.2"
 dependencies = [

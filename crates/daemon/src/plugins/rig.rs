@@ -108,19 +108,30 @@ pub struct Rig {
 impl Rig {
     /// Fake runner, fake backend.
     pub fn new() -> Self {
-        Self::build(true)
+        Self::build(true, 4747)
     }
 
     /// Real processes (tiny scripts the test writes), fake backend.
     #[cfg_attr(not(unix), allow(dead_code))]
     pub fn real() -> Self {
-        Self::build(false)
+        Self::build(false, 4747)
     }
 
-    fn build(fake: bool) -> Self {
+    /// Real processes, and the router served on an ephemeral loopback port
+    /// the plugins' `GARAGE_API` points at (the bundled-plugin end to end).
+    #[cfg_attr(not(unix), allow(dead_code))]
+    pub async fn serving() -> Self {
+        let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let r = Self::build(false, l.local_addr().unwrap().port());
+        let app = crate::app(r.st.clone());
+        tokio::spawn(async move { axum::serve(l, app).await });
+        r
+    }
+
+    fn build(fake: bool, port: u16) -> Self {
         let garage = tempfile::tempdir().unwrap();
         let backend = Arc::new(FakeBackend::new());
-        let config = Config { port: 4747, garage_dir: garage.path().to_path_buf(), tmux_socket: None, tmux_control: false, ui_origins: vec![] };
+        let config = Config { port, garage_dir: garage.path().to_path_buf(), tmux_socket: None, tmux_control: false, ui_origins: vec![] };
         let claude_home = tempfile::tempdir().unwrap();
         let mut st = AppState::with_agents(
             config,
