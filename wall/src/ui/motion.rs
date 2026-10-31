@@ -204,6 +204,9 @@ pub struct Motion {
     ghosts: Vec<Ghost>,
     /// Ids whose terminal is attached (fade-in fires on the edge).
     attached: HashSet<String>,
+    /// Ids that have faded in once this run: a workspace/view switch
+    /// re-attaches a tile without fading it in again.
+    faded_in: HashSet<String>,
     /// Last seen `needs-input` per drawn tile (pulse fires on false → true).
     blocked: HashMap<String, bool>,
     /// The last frame's clean tiles (before effects and overlays).
@@ -228,6 +231,7 @@ impl Motion {
             effects: Vec::new(),
             ghosts: Vec::new(),
             attached: HashSet::new(),
+            faded_in: HashSet::new(),
             blocked: HashMap::new(),
             prev_buf: None,
             prev_tiles: Vec::new(),
@@ -309,6 +313,7 @@ impl Motion {
             .collect();
         for (id, rect) in gone {
             self.attached.remove(&id);
+            self.faded_in.remove(&id);
             self.blocked.remove(&id);
             self.effects.retain(|e| e.id != id);
             let rect = rect.intersection(prev.area);
@@ -341,7 +346,7 @@ impl Motion {
         }
         self.drawn.push((id.to_owned(), rect));
         if attached {
-            if self.attached.insert(id.to_owned()) {
+            if self.attached.insert(id.to_owned()) && self.faded_in.insert(id.to_owned()) {
                 self.start(id, rect, FxKind::FadeIn);
             }
         } else {

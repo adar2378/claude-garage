@@ -362,3 +362,39 @@ fn a_dead_daemon_stops_the_spinner_after_the_cap_and_shows_a_static_caption() {
     m.connection_changed(false, 99_000);
     assert!(!m.strip_spinner_active(false, 100_000));
 }
+
+#[test]
+fn a_switch_and_return_does_not_fade_the_tile_in_again() {
+    let mut m = Motion::new(true);
+    frame(&mut m, 0, true, false);
+    assert!(m.effects_running(), "first attach fades in");
+    let mut now = 0;
+    while m.effects_running() {
+        now += 33;
+        frame(&mut m, now, true, false);
+        assert!(now < 2_000, "fade never finished");
+    }
+    // Switch away: the tile is drawn detached (or not at all), then back.
+    frame(&mut m, now + 100, false, false);
+    frame(&mut m, now + 200, true, false);
+    assert!(!m.effects_running(), "re-attach after a switch is not a first attach");
+    assert_eq!(m.next_tick(), None);
+}
+
+#[test]
+fn a_closed_session_id_that_comes_back_fades_in_as_a_new_session() {
+    let mut m = Motion::new(true);
+    frame(&mut m, 0, true, false);
+    m.closed(|_| false);
+    // Let the dissolve finish, then the id reappears.
+    let mut now = 0;
+    while m.effects_running() {
+        now += 33;
+        m.begin_frame(now);
+        let mut buf = painted();
+        m.apply(&mut buf);
+        assert!(now < 2_000);
+    }
+    frame(&mut m, now + 100, true, false);
+    assert!(m.effects_running());
+}
