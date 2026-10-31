@@ -40,6 +40,28 @@ pub enum Outcome {
     Ready,
     Aborted,
     TimedOut,
+    /// The daemon process the launcher spawned exited before it answered.
+    DaemonDied,
+}
+
+/// The pid the launcher spawned (`GARAGE_DAEMON_PID`), if it said.
+pub fn daemon_pid_from_env() -> Option<u32> {
+    std::env::var("GARAGE_DAEMON_PID").ok()?.trim().parse().ok().filter(|p| *p > 1)
+}
+
+/// True when the spawned daemon is certainly dead: `kill(pid, 0)` says no
+/// such process. Unix only; elsewhere (or with no pid) never "gone", so the
+/// wait falls back to the deadline.
+#[cfg(unix)]
+pub fn daemon_gone(pid: Option<u32>) -> bool {
+    let Some(pid) = pid.and_then(|p| i32::try_from(p).ok()).filter(|p| *p > 1) else { return false };
+    // SAFETY: signal 0 only checks existence/permission; nothing is sent.
+    unsafe { libc::kill(pid, 0) != 0 && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH) }
+}
+
+#[cfg(not(unix))]
+pub fn daemon_gone(_pid: Option<u32>) -> bool {
+    false
 }
 
 /// Whether the reveal runs at all: the launcher said it is starting the
@@ -114,6 +136,7 @@ pub fn reveal(
     terminal: &mut crate::term::WallTerminal,
     base_url: &str,
     deadline: Duration,
+    daemon_pid: Option<u32>,
 ) -> io::Result<Outcome> {
     let started = Instant::now();
     let mut last_poll = Instant::now() - POLL_EVERY;
@@ -125,6 +148,9 @@ pub fn reveal(
             if daemon_healthy(base_url, Duration::from_millis(200)) {
                 return Ok(Outcome::Ready);
             }
+        }
+        if daemon_gone(daemon_pid) {
+            return Ok(Outcome::DaemonDied);
         }
         if started.elapsed() >= deadline {
             return Ok(Outcome::TimedOut);
@@ -142,7 +168,8 @@ pub fn reveal(
         if event::poll(FRAME)? {
             if let Event::Key(key) = event::read()? {
                 let ctrl_c = key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c');
-                if key.kind != KeyEventKind::Release && (ctrl_c || matches!(key.code, KeyCode::Char('q') | KeyCode::Esc)) {
+                // Only Ctrl+C aborts; every other key is dropped.
+                if key.kind != KeyEventKind::Release && ctrl_c {
                     return Ok(Outcome::Aborted);
                 }
             }
@@ -152,11 +179,14 @@ pub fn reveal(
 
 /// Wait for the daemon without drawing (motion off): the launcher's old
 /// behaviour, on the normal terminal.
-pub fn wait_plain(base_url: &str, deadline: Duration) -> Outcome {
+pub fn wait_plain(base_url: &str, deadline: Duration, daemon_pid: Option<u32>) -> Outcome {
     let started = Instant::now();
     while started.elapsed() < deadline {
         if daemon_healthy(base_url, Duration::from_millis(200)) {
             return Outcome::Ready;
+        }
+        if daemon_gone(daemon_pid) {
+            return Outcome::DaemonDied;
         }
         std::thread::sleep(POLL_EVERY);
     }
@@ -171,6 +201,14 @@ pub fn timed_out_message(base_url: &str, log: Option<&str>) -> String {
              (port already in use? set GARAGE_PORT to pick a different one)"
         ),
         None => format!("claude-garage daemon did not come up at {base_url}"),
+    }
+}
+
+/// The message when the spawned daemon exited during startup.
+pub fn daemon_died_message(log: Option<&str>) -> String {
+    match log {
+        Some(log) => format!("claude-garage daemon exited during startup — see {log}"),
+        None => "claude-garage daemon exited during startup".to_owned(),
     }
 }
 

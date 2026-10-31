@@ -52,5 +52,9 @@ tachyonfx = { version = "=0.25.2", default-features = false, features = ["std"] 
 throbber-widgets-tui = "=0.11.1"
 tui-big-text = "=0.8.10"
 
+# Startup hand-off liveness check (kill(pid, 0)); unix only.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [dev-dependencies]
 insta = "1"

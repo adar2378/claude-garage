@@ -91,3 +91,34 @@ fn the_timeout_message_names_the_log_when_the_launcher_gave_one() {
     assert!(with.contains("/h/.garage/daemon.log") && with.contains("GARAGE_PORT"));
     assert!(!timed_out_message("http://127.0.0.1:4747", None).contains("see"));
 }
+
+#[test]
+fn the_launcher_pid_is_parsed_and_junk_or_system_pids_are_ignored() {
+    // (Env access is process-global; this test owns the variable.)
+    for (value, want) in [("4242", Some(4242)), (" 77\n", Some(77)), ("1", None), ("0", None), ("abc", None), ("-5", None)] {
+        std::env::set_var("GARAGE_DAEMON_PID", value);
+        assert_eq!(daemon_pid_from_env(), want, "{value:?}");
+    }
+    std::env::remove_var("GARAGE_DAEMON_PID");
+    assert_eq!(daemon_pid_from_env(), None);
+}
+
+#[cfg(unix)]
+#[test]
+fn a_dead_pid_is_gone_a_live_pid_and_no_pid_are_not() {
+    assert!(!daemon_gone(None));
+    assert!(!daemon_gone(Some(std::process::id())), "this process is alive");
+    let mut child = std::process::Command::new("true").spawn().expect("spawn true");
+    let pid = child.id();
+    child.wait().expect("reap");
+    assert!(daemon_gone(Some(pid)), "a reaped child no longer exists");
+}
+
+#[test]
+fn the_died_message_points_at_the_log() {
+    assert_eq!(
+        daemon_died_message(Some("/h/.garage/daemon.log")),
+        "claude-garage daemon exited during startup — see /h/.garage/daemon.log"
+    );
+    assert!(!daemon_died_message(None).contains("did not come up"));
+}
