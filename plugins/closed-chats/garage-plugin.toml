@@ -5,7 +5,7 @@ version     = "0.1.0"
 api_version = 1
 platforms   = ["macos", "linux"]
 description = "Closed chats stay in the rail as grey rows; H lists the recent ones"
-permissions = ["ui.widgets", "ui.panes", "sessions.read", "workspaces.read", "core.actions"]
+permissions = ["ui.widgets", "ui.panes", "sessions.read", "core.actions"]
 
 # `sync` rebuilds the grey rows from the daemon's closed-session records. The
 # widgets live in memory, so it also runs when the daemon starts.

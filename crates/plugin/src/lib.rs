@@ -5,6 +5,7 @@
 
 pub mod argv;
 pub mod core_actions;
+pub mod docs;
 pub mod features;
 pub mod manifest;
 pub mod schema;

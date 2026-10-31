@@ -1,0 +1,466 @@
+{
+  "_note": "Plugin API v1, frozen. Hand-edited on purpose. Adding a line is fine (additive). Removing or renaming one needs api_version 2, except what docs/plugins/versioning.md names as a security change. Tests: garage-plugin (frozen_api), garage-daemon (plugins::tests frozen_api_*), garage-protocol (api_schema).",
+  "api_versions": [
+    1
+  ],
+  "manifest": {
+    "": [
+      "id",
+      "name",
+      "version",
+      "api_version",
+      "platforms",
+      "description",
+      "homepage",
+      "requires",
+      "permissions",
+      "actions",
+      "events",
+      "panes",
+      "widgets",
+      "buttons",
+      "cli",
+      "build",
+      "release"
+    ],
+    "actions": [
+      "id",
+      "title",
+      "contexts",
+      "command",
+      "pane",
+      "default_key",
+      "confirm",
+      "timeout_secs"
+    ],
+    "events": [
+      "on",
+      "every_secs",
+      "command",
+      "timeout_secs"
+    ],
+    "panes": [
+      "id",
+      "title",
+      "placement",
+      "command",
+      "singleton",
+      "size"
+    ],
+    "widgets": [
+      "id",
+      "slot"
+    ],
+    "buttons": [
+      "slot",
+      "label",
+      "tooltip",
+      "on_click",
+      "args",
+      "confirm",
+      "priority"
+    ],
+    "cli": [
+      "name",
+      "description",
+      "command",
+      "fallback",
+      "needs_daemon"
+    ],
+    "build": [
+      "platforms",
+      "command",
+      "timeout_secs"
+    ],
+    "release": [
+      "repo",
+      "tag",
+      "checksums",
+      "assets"
+    ]
+  },
+  "permissions": [
+    "sessions.read",
+    "sessions.input",
+    "ui.widgets",
+    "ui.panes",
+    "ui.invoke",
+    "core.actions",
+    "ui.navigate",
+    "ui.notice"
+  ],
+  "dangerous_permissions": [
+    "sessions.input",
+    "core.actions"
+  ],
+  "events": [
+    "session.created",
+    "session.closed",
+    "session.turn",
+    "session.forgotten",
+    "session.status_changed",
+    "worktree.created",
+    "workspace.added",
+    "workspace.removed",
+    "daemon.started",
+    "timer"
+  ],
+  "event_payload": {
+    "session.created": [
+      "id",
+      "dir",
+      "workspace"
+    ],
+    "session.closed": [
+      "id",
+      "dir",
+      "workspace",
+      "reason",
+      "last_status"
+    ],
+    "session.turn": [
+      "id",
+      "workspace",
+      "at",
+      "anchor"
+    ],
+    "session.forgotten": [
+      "id",
+      "workspace"
+    ],
+    "session.status_changed": [
+      "id",
+      "dir",
+      "workspace",
+      "from",
+      "to",
+      "since"
+    ],
+    "worktree.created": [
+      "workspace",
+      "session",
+      "path",
+      "branch",
+      "repo_dir"
+    ],
+    "workspace.added": [
+      "name"
+    ],
+    "workspace.removed": [
+      "name"
+    ],
+    "daemon.started": [],
+    "timer": []
+  },
+  "event_payload_nested": {
+    "session.turn.anchor": [
+      "transcript_offset",
+      "row",
+      "history_limit"
+    ]
+  },
+  "slots": {
+    "tile.title.right": "session",
+    "tile.gutter": "session",
+    "rail.row": "session",
+    "rail.extra_rows": "workspace",
+    "rail.header": "workspace",
+    "strip.right": "global"
+  },
+  "pane_placements": [
+    "tile",
+    "overlay",
+    "popup"
+  ],
+  "theme_tokens": [
+    "text",
+    "dim",
+    "accent",
+    "ok",
+    "warn",
+    "error",
+    "needs_input"
+  ],
+  "widget_item_fields": [
+    "priority",
+    "placement",
+    "segments",
+    "frames",
+    "frame_ms",
+    "frame_x",
+    "row",
+    "kind",
+    "row_style",
+    "click",
+    "session"
+  ],
+  "segment_fields": [
+    "text",
+    "style",
+    "click"
+  ],
+  "style_fields": [
+    "fg",
+    "bg",
+    "bold",
+    "italic",
+    "underline",
+    "dim"
+  ],
+  "features": [
+    "api.v1.frozen",
+    "events",
+    "slots",
+    "permissions",
+    "dangerous_permissions",
+    "theme_tokens",
+    "routes",
+    "widgets.click_args",
+    "widgets.filler",
+    "widgets.animated",
+    "widgets.frame_x",
+    "widgets.slot_geometry",
+    "ui.notice",
+    "cli.fallback",
+    "panes.placements",
+    "sessions.input",
+    "actions.core_invocable",
+    "limits"
+  ],
+  "routes": [
+    {
+      "method": "GET",
+      "path": "/api/health",
+      "needs": "none"
+    },
+    {
+      "method": "GET",
+      "path": "/api/events",
+      "needs": "none",
+      "tokenless": "deprecated"
+    },
+    {
+      "method": "GET",
+      "path": "/api/sessions",
+      "needs": "none",
+      "tokenless": "deprecated"
+    },
+    {
+      "method": "GET",
+      "path": "/api/workspaces",
+      "needs": "none",
+      "tokenless": "deprecated"
+    },
+    {
+      "method": "GET",
+      "path": "/api/usage",
+      "needs": "none",
+      "tokenless": "deprecated"
+    },
+    {
+      "method": "GET",
+      "path": "/api/workspaces/{name}/closed",
+      "needs": "sessions.read",
+      "tokenless": "deprecated"
+    },
+    {
+      "method": "GET",
+      "path": "/api/plugins/features",
+      "needs": "none"
+    },
+    {
+      "method": "GET",
+      "path": "/api/plugins",
+      "needs": "none"
+    },
+    {
+      "method": "GET",
+      "path": "/api/plugins/widgets",
+      "needs": "none",
+      "tokenless": "deprecated"
+    },
+    {
+      "method": "GET",
+      "path": "/api/plugins/panes",
+      "needs": "none"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/plugins/{id}/widgets/{widget}",
+      "needs": "ui.widgets"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/plugins/{id}/widgets/{widget}",
+      "needs": "ui.widgets"
+    },
+    {
+      "method": "POST",
+      "path": "/api/plugins/{id}/notice",
+      "needs": "ui.notice"
+    },
+    {
+      "method": "POST",
+      "path": "/api/plugins/ui/action",
+      "needs": "ui.invoke"
+    },
+    {
+      "method": "POST",
+      "path": "/api/plugins/{id}/panes/{pane}/open",
+      "needs": "ui.panes"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/plugins/{id}/panes/{pane}",
+      "needs": "ui.panes"
+    },
+    {
+      "method": "POST",
+      "path": "/api/sessions/input",
+      "needs": "sessions.input"
+    }
+  ],
+  "core_actions_invocable": [
+    "session.close",
+    "session.delete",
+    "session.focus",
+    "session.maximize",
+    "session.spawn",
+    "session.spawn.worktree",
+    "session.detach",
+    "session.open_window",
+    "session.restore",
+    "session.restore_all",
+    "session.restart",
+    "workspace.focus",
+    "workspace.restart",
+    "workspace.remove",
+    "workspace.remove.kill",
+    "daemon.restart",
+    "jump.blocked",
+    "view.cycle",
+    "view.focus",
+    "hooks.install",
+    "focus.cycle.prev",
+    "focus.cycle.next",
+    "overlay.open.queue",
+    "overlay.open.help",
+    "overlay.open.view_picker",
+    "overlay.open.workspace_add"
+  ],
+  "context": {
+    "": [
+      "api_version",
+      "plugin",
+      "trigger",
+      "focus",
+      "selection",
+      "worktree",
+      "event",
+      "ui"
+    ],
+    "plugin": [
+      "id",
+      "version",
+      "state_dir"
+    ],
+    "trigger": [
+      "kind",
+      "key",
+      "slot",
+      "action",
+      "args"
+    ],
+    "focus": [
+      "workspace",
+      "session",
+      "dir"
+    ],
+    "focus.session": [
+      "id",
+      "dir",
+      "status",
+      "branch",
+      "worktree"
+    ],
+    "selection": [
+      "session",
+      "index",
+      "view"
+    ],
+    "ui": [
+      "slots"
+    ]
+  },
+  "env": [
+    "GARAGE_API",
+    "GARAGE_API_VERSION",
+    "GARAGE_PLUGIN_ID",
+    "GARAGE_PLUGIN_VERSION",
+    "GARAGE_PLUGIN_DIR",
+    "GARAGE_PLUGIN_STATE_DIR",
+    "GARAGE_PLUGIN_TOKEN",
+    "GARAGE_CONTEXT",
+    "GARAGE_CONTEXT_FILE"
+  ],
+  "env_cli": [
+    "GARAGE_HANDOVER"
+  ],
+  "limit_sizes": [
+    "widget_items",
+    "widget_segments",
+    "widget_cols",
+    "widget_body_bytes",
+    "widget_ttl_secs",
+    "widget_frames",
+    "notice_chars"
+  ],
+  "limit_rates": [
+    "widget_puts_per_sec"
+  ],
+  "error_body": [
+    "error",
+    "code",
+    "permission"
+  ],
+  "error_codes": [
+    "bad_request",
+    "unauthorized",
+    "forbidden",
+    "not_found",
+    "conflict",
+    "payload_too_large",
+    "invalid_request",
+    "rate_limited",
+    "internal_error",
+    "not_implemented",
+    "unavailable",
+    "unspecified",
+    "invalid_json",
+    "missing_token",
+    "invalid_token",
+    "wrong_plugin",
+    "ui_token_required",
+    "plugin_disabled",
+    "permission_denied",
+    "unknown_plugin",
+    "unknown_widget",
+    "invalid_widget",
+    "unknown_action",
+    "action_not_allowed",
+    "invalid_action",
+    "invalid_target",
+    "invalid_text",
+    "unknown_pane",
+    "too_many_panes",
+    "pane_failed",
+    "unknown_session",
+    "session_not_allowed",
+    "invalid_if_status",
+    "status_blocked",
+    "send_failed",
+    "unknown_workspace",
+    "host_not_allowed",
+    "origin_not_allowed"
+  ]
+}

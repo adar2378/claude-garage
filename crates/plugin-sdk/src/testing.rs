@@ -14,16 +14,23 @@ use crate::Api;
 
 /// One request the fake saw.
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub struct Req {
+    /// HTTP method.
     pub method: String,
+    /// Path with the query string.
     pub path: String,
+    /// The `Authorization` header, if any.
     pub authorization: Option<String>,
+    /// The JSON body, or `Null`.
     pub body: Value,
 }
 
 type Responder = dyn Fn(&Req) -> (u16, String) + Send + Sync;
 
+/// A local HTTP server that records every request.
 pub struct FakeDaemon {
+    /// Its base URL, for `GARAGE_API`.
     pub base: String,
     seen: Arc<Mutex<Vec<Req>>>,
     stop: Arc<AtomicBool>,
@@ -62,6 +69,7 @@ impl FakeDaemon {
         Api::new(&self.base, plugin, "tok")
     }
 
+    /// Every request seen so far.
     pub fn requests(&self) -> Vec<Req> {
         self.seen.lock().expect("lock").clone()
     }

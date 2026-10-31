@@ -4,9 +4,11 @@
   "type": "object",
   "properties": {
     "id": {
+      "description": "Unique id: `^[a-z][a-z0-9-]{1,30}$`, not a reserved word.",
       "type": "string"
     },
     "name": {
+      "description": "Display name.",
       "type": "string"
     },
     "version": {
@@ -20,12 +22,14 @@
       "minimum": 0
     },
     "platforms": {
+      "description": "Systems the plugin runs on.",
       "type": "array",
       "items": {
         "$ref": "#/definitions/Platform"
       }
     },
     "description": {
+      "description": "One line for the install preview and `plugin list`.",
       "type": [
         "string",
         "null"
@@ -33,6 +37,7 @@
       "default": null
     },
     "homepage": {
+      "description": "A URL shown in the install preview.",
       "type": [
         "string",
         "null"
@@ -40,7 +45,7 @@
       "default": null
     },
     "requires": {
-      "description": "Feature names from `/api/plugin/features` the plugin needs.",
+      "description": "Feature names from `/api/plugins/features` the plugin needs.",
       "type": "array",
       "items": {
         "type": "string"
@@ -48,6 +53,7 @@
       "default": []
     },
     "permissions": {
+      "description": "What the plugin uses. Shown at install; the daemon checks it on API calls.",
       "type": "array",
       "items": {
         "$ref": "#/definitions/Permission"
@@ -55,6 +61,7 @@
       "default": []
     },
     "actions": {
+      "description": "Commands bindable to keys, buttons and the palette (`[[actions]]`).",
       "type": "array",
       "items": {
         "$ref": "#/definitions/Action"
@@ -62,6 +69,7 @@
       "default": []
     },
     "events": {
+      "description": "Commands run when something happens (`[[events]]`).",
       "type": "array",
       "items": {
         "$ref": "#/definitions/EventHook"
@@ -69,6 +77,7 @@
       "default": []
     },
     "panes": {
+      "description": "Programs shown in a tile, overlay or popup (`[[panes]]`).",
       "type": "array",
       "items": {
         "$ref": "#/definitions/Pane"
@@ -76,6 +85,7 @@
       "default": []
     },
     "widgets": {
+      "description": "Named spots the plugin fills at runtime (`[[widgets]]`).",
       "type": "array",
       "items": {
         "$ref": "#/definitions/Widget"
@@ -83,6 +93,7 @@
       "default": []
     },
     "buttons": {
+      "description": "Clickable labels that run an action (`[[buttons]]`).",
       "type": "array",
       "items": {
         "$ref": "#/definitions/Button"
@@ -90,6 +101,7 @@
       "default": []
     },
     "cli": {
+      "description": "Subcommands of `claude-garage` (`[[cli]]`).",
       "type": "array",
       "items": {
         "$ref": "#/definitions/Cli"
@@ -97,6 +109,7 @@
       "default": []
     },
     "build": {
+      "description": "Commands run once at install and update (`[[build]]`).",
       "type": "array",
       "items": {
         "$ref": "#/definitions/Build"
@@ -104,6 +117,7 @@
       "default": []
     },
     "release": {
+      "description": "Per-system binary downloads that replace `[[build]]` (`[release]`).",
       "anyOf": [
         {
           "$ref": "#/definitions/Release"
@@ -137,16 +151,12 @@
       "enum": [
         "sessions.read",
         "sessions.input",
-        "sessions.manage",
-        "workspaces.read",
-        "workspaces.write",
         "ui.widgets",
         "ui.panes",
         "ui.invoke",
         "core.actions",
         "ui.navigate",
-        "ui.notice",
-        "network"
+        "ui.notice"
       ]
     },
     "Action": {
@@ -158,9 +168,11 @@
           "type": "string"
         },
         "title": {
+          "description": "Shown in help and the palette.",
           "type": "string"
         },
         "contexts": {
+          "description": "What must be focused for the action to be available.",
           "type": "array",
           "items": {
             "$ref": "#/definitions/ActionContext"
@@ -170,6 +182,7 @@
           ]
         },
         "command": {
+          "description": "The program and arguments to run (no shell). Exactly one of `command` and `pane`.",
           "type": [
             "array",
             "null"
@@ -196,6 +209,7 @@
           "default": null
         },
         "confirm": {
+          "description": "Ask the user before a plugin-origin trigger (click, `ui/action`) runs it.",
           "type": "boolean",
           "default": false
         },
@@ -229,7 +243,12 @@
       "type": "object",
       "properties": {
         "on": {
-          "$ref": "#/definitions/EventName"
+          "description": "The event, or `timer`.",
+          "allOf": [
+            {
+              "$ref": "#/definitions/EventName"
+            }
+          ]
         },
         "every_secs": {
           "description": "Only with `on = \"timer\"`; at least 5.",
@@ -242,6 +261,7 @@
           "default": null
         },
         "command": {
+          "description": "The program and arguments to run (no shell).",
           "type": "array",
           "items": {
             "type": "string"
@@ -284,15 +304,23 @@
       "type": "object",
       "properties": {
         "id": {
+          "description": "Local id, used in `pane = \"...\"` and the open-pane route.",
           "type": "string"
         },
         "title": {
+          "description": "Shown in the pane frame.",
           "type": "string"
         },
         "placement": {
-          "$ref": "#/definitions/PanePlacement"
+          "description": "Where it appears.",
+          "allOf": [
+            {
+              "$ref": "#/definitions/PanePlacement"
+            }
+          ]
         },
         "command": {
+          "description": "The program and arguments to run (no shell).",
           "type": "array",
           "items": {
             "type": "string"
@@ -304,6 +332,7 @@
           "default": true
         },
         "size": {
+          "description": "A size hint for overlay and popup panes.",
           "anyOf": [
             {
               "$ref": "#/definitions/PaneSize"
@@ -335,12 +364,14 @@
       "type": "object",
       "properties": {
         "cols": {
+          "description": "Columns (or percent of the screen width).",
           "type": "integer",
           "format": "uint16",
           "minimum": 0,
           "maximum": 65535
         },
         "rows": {
+          "description": "Rows (or percent of the screen height).",
           "type": "integer",
           "format": "uint16",
           "minimum": 0,
@@ -363,10 +394,16 @@
       "type": "object",
       "properties": {
         "id": {
+          "description": "Local id, used in the push route.",
           "type": "string"
         },
         "slot": {
-          "$ref": "#/definitions/Slot"
+          "description": "Where it is drawn; decides the scope key of its content.",
+          "allOf": [
+            {
+              "$ref": "#/definitions/Slot"
+            }
+          ]
         }
       },
       "additionalProperties": false,
@@ -390,12 +427,19 @@
       "type": "object",
       "properties": {
         "slot": {
-          "$ref": "#/definitions/Slot"
+          "description": "Where the button is drawn.",
+          "allOf": [
+            {
+              "$ref": "#/definitions/Slot"
+            }
+          ]
         },
         "label": {
+          "description": "The text of the button.",
           "type": "string"
         },
         "tooltip": {
+          "description": "Shown on hover.",
           "type": [
             "string",
             "null"
@@ -434,9 +478,11 @@
       "type": "object",
       "properties": {
         "name": {
+          "description": "The subcommand: `claude-garage <name>`.",
           "type": "string"
         },
         "description": {
+          "description": "Shown in help.",
           "type": [
             "string",
             "null"
@@ -444,6 +490,7 @@
           "default": null
         },
         "command": {
+          "description": "The program and arguments to run (no shell).",
           "type": "array",
           "items": {
             "type": "string"
@@ -479,6 +526,7 @@
           "default": []
         },
         "command": {
+          "description": "The program and arguments to run (no shell).",
           "type": "array",
           "items": {
             "type": "string"
@@ -505,6 +553,7 @@
       "type": "object",
       "properties": {
         "repo": {
+          "description": "Default: the repo the plugin was installed from.",
           "type": [
             "string",
             "null"

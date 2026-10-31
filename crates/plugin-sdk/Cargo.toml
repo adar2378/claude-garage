@@ -1,9 +1,17 @@
 [package]
 name = "garage-plugin-sdk"
-version.workspace = true
+version = "1.0.0" # the plugin SDK, versioned on its own (not with the app)
 edition.workspace = true
 rust-version.workspace = true
-description = "claude-garage plugin helper: read the run context, call the daemon with the plugin token, push widgets"
+description = "Helpers for claude-garage plugins: read the run context, call the daemon with the plugin token, push widgets and notices"
+readme = "README.md"
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation = "https://docs.rs/garage-plugin-sdk"
+keywords = ["claude", "claude-code", "plugin", "terminal", "sdk"]
+categories = ["development-tools", "command-line-utilities", "api-bindings"]
+include = ["src/**", "examples/**", "README.md", "Cargo.toml", "LICENSE"]
 
 [features]
 # Raw-mode terminal toolkit for pane plugins (fuzzy picker, one-line prompt).
@@ -13,13 +21,17 @@ testing = []
 
 [dependencies]
 crossterm = { version = "0.29", optional = true }
-garage-protocol = { path = "../protocol" }
+garage-protocol.workspace = true
 serde = "1"
 serde_json = "1"
 ureq = { version = "3", default-features = false }
 
 [target."cfg(unix)".dependencies]
 uzers = "0.12.2"
+
+[[example]]
+name = "pane"
+required-features = ["tui"]
 
 [dev-dependencies]
 tempfile = "3"

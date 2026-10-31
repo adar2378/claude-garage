@@ -11,12 +11,12 @@ pub struct CoreAction {
     pub plugin_invocable: bool,
 }
 
-/// Plugin-invocable ids (exact).
+/// Plugin-invocable ids. Exact ids only, no prefix families: a core id added
+/// later is not reachable by plugins until it is listed here on purpose.
 const INVOCABLE: &[&str] = &[
     "session.close",
     "session.delete",
     "session.focus",
-    "session.engage",
     "session.maximize",
     "session.spawn",
     "session.spawn.worktree",
@@ -34,10 +34,13 @@ const INVOCABLE: &[&str] = &[
     "view.cycle",
     "view.focus",
     "hooks.install",
+    "focus.cycle.prev",
+    "focus.cycle.next",
+    "overlay.open.queue",
+    "overlay.open.help",
+    "overlay.open.view_picker",
+    "overlay.open.workspace_add",
 ];
-
-/// Plugin-invocable families (`focus.cycle.*`, `overlay.open.*`).
-const INVOCABLE_PREFIXES: &[&str] = &["focus.cycle.", "overlay.open."];
 
 const DANGEROUS: &[&str] = &[
     "session.close",
@@ -62,8 +65,10 @@ const NAVIGATION: &[&str] = &[
     "view.focus",
 ];
 
-/// Real core ids a plugin must never trigger.
+/// Real core ids a plugin must never trigger. `session.engage` is here
+/// because it moves where the user types: only a human may change that.
 const NEVER: &[&str] = &[
+    "session.engage",
     "app.quit",
     "overlay.close",
     "overlay.select.next",
@@ -77,11 +82,7 @@ const NEVER: &[&str] = &[
 
 /// `None` when `id` is not a core id at all.
 pub fn lookup(id: &str) -> Option<CoreAction> {
-    let invocable = INVOCABLE.contains(&id)
-        || INVOCABLE_PREFIXES
-            .iter()
-            .any(|p| id.starts_with(p) && id.len() > p.len());
-    if invocable {
+    if INVOCABLE.contains(&id) {
         return Some(CoreAction {
             dangerous: DANGEROUS.contains(&id),
             plugin_invocable: true,
@@ -99,7 +100,7 @@ pub fn is_navigation(id: &str) -> bool {
     NAVIGATION.contains(&id) && lookup(id).is_some_and(|a| a.plugin_invocable && !a.dangerous)
 }
 
-/// The invocable exact ids, for `/api/plugin/features`.
+/// The invocable ids, for `/api/plugins/features`.
 pub fn invocable_ids() -> Vec<&'static str> {
     INVOCABLE.to_vec()
 }
@@ -131,12 +132,23 @@ mod tests {
                 plugin_invocable: true
             })
         );
-        assert_eq!(
-            lookup("overlay.open.anything").map(|a| a.plugin_invocable),
-            Some(true)
-        );
-        assert_eq!(lookup("overlay.open."), None);
+        // exact ids only: a name under a listed family is not invocable
+        for id in ["overlay.open.queue", "focus.cycle.next"] {
+            assert_eq!(lookup(id).map(|a| a.plugin_invocable), Some(true), "{id}");
+        }
+        for id in [
+            "overlay.open.anything",
+            "overlay.open.",
+            "focus.cycle.sideways",
+        ] {
+            assert_eq!(lookup(id), None, "{id}");
+        }
         assert_eq!(lookup("no.such.action"), None);
+        // it is a real core id, so it is refused rather than "not a core action"
+        assert_eq!(
+            lookup("session.engage").map(|a| a.plugin_invocable),
+            Some(false)
+        );
         assert_eq!(lookup("usage-bar:details"), None);
     }
 
@@ -155,6 +167,7 @@ mod tests {
             "session.engage",
             "daemon.restart",
             "overlay.open.x",
+            "overlay.open.help",
             "app.quit",
             "view.nothing",
             "x:y",

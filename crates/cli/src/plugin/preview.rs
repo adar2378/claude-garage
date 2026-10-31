@@ -162,9 +162,6 @@ fn permission_blurb(p: &str) -> &'static str {
     match p {
         "sessions.read" => "read session ids, status and directories",
         "sessions.input" => "type text into any session, as if you had typed it",
-        "sessions.manage" => "create, close and restart sessions",
-        "workspaces.read" => "read workspaces and their folders",
-        "workspaces.write" => "add and remove workspaces",
         "ui.widgets" => "draw widgets in the TUI",
         "ui.panes" => "open panes (overlays, popups and tiles)",
         "ui.invoke" => "ask the TUI to run actions",
@@ -173,7 +170,6 @@ fn permission_blurb(p: &str) -> &'static str {
         }
         "ui.navigate" => "move focus: jump to a blocked session, switch view (changes nothing)",
         "ui.notice" => "show short notices (toasts) in the TUI",
-        "network" => "plugin is expected to use the network (not enforced)",
         _ => "",
     }
 }
@@ -472,7 +468,7 @@ Later updates that change only plugin code (no new commands, permissions or URLs
     #[test]
     fn every_command_and_url_is_listed_dangerous_marks_appear_and_the_policy_line_is_always_last() {
         let man = m(
-            "permissions = [\"sessions.input\", \"network\", \"ui.panes\"]\n\
+            "permissions = [\"sessions.input\", \"ui.notice\", \"ui.panes\"]\n\
              [[build]]\ncommand = [\"cargo\", \"build\", \"--release\"]\n\
              [[actions]]\nid = \"send\"\ntitle = \"Send\"\ncommand = [\"{bin}\", \"send\", \"two words\"]\ndefault_key = \"g\"\n\
              [[events]]\non = \"session.closed\"\ncommand = [\"./hook.sh\"]\n\
@@ -486,7 +482,7 @@ Later updates that change only plugin code (no new commands, permissions or URLs
         );
         assert!(
             got.lines()
-                .any(|l| l.contains("network") && !l.contains("DANGEROUS"))
+                .any(|l| l.contains("ui.notice") && !l.contains("DANGEROUS"))
         );
         for want in [
             "build   (at install)          cargo build --release",
@@ -570,7 +566,7 @@ Later updates that change only plugin code (no new commands, permissions or URLs
         // each consent-bearing change prompts
         type Change = Box<dyn Fn(&mut Manifest)>;
         let cases: Vec<Change> = vec![
-            Box::new(|m| m.permissions.push(Permission::Network)),
+            Box::new(|m| m.permissions.push(Permission::UiNotice)),
             Box::new(|m| m.actions[0].command = Some(vec!["y".into()])),
             Box::new(|m| m.actions[0].confirm = true),
             Box::new(|m| {
@@ -806,11 +802,11 @@ Later updates that change only plugin code (no new commands, permissions or URLs
     fn the_diff_section_and_question_follow_the_manifest() {
         let man = m(CLOSE);
         let d = Diff {
-            lines: vec!["+ permission network".into()],
+            lines: vec!["+ permission ui.notice".into()],
         };
         let got = render(&input(&man, Mode::Update, Some(&d)));
         assert!(
-            got.contains("Changes since the approved version:\n  + permission network\n"),
+            got.contains("Changes since the approved version:\n  + permission ui.notice\n"),
             "{got}"
         );
         assert_eq!(

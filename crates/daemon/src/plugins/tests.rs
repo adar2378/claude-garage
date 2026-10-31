@@ -848,7 +848,7 @@ async fn the_stop_hook_becomes_a_session_turn_with_the_transcript_offset() {
         (
             d["id"].as_str(),
             d["workspace"].as_str(),
-            d["transcript_offset"].as_u64()
+            d["anchor"]["transcript_offset"].as_u64()
         ),
         (Some("garage/ws/a"), Some("ws"), Some(123))
     );
@@ -857,9 +857,11 @@ async fn the_stop_hook_becomes_a_session_turn_with_the_transcript_offset() {
     let bare = json!({"hook_event_name": "Stop", "cwd": "/proj"});
     r.call("POST", &url, None, Some(&bare.to_string())).await;
     wait_for(|| r.runner.count() == 2).await;
-    assert_eq!(
-        r.runner.call(1).ctx()["event"]["data"]["transcript_offset"],
-        Value::Null
+    // nothing measurable: the anchor is left out, not an object of nulls
+    assert!(
+        r.runner.call(1).ctx()["event"]["data"]
+            .get("anchor")
+            .is_none()
     );
 
     #[cfg_attr(not(unix), allow(unused_mut))]
@@ -874,9 +876,10 @@ async fn the_stop_hook_becomes_a_session_turn_with_the_transcript_offset() {
         let stop = json!({"hook_event_name": "Stop", "cwd": "/proj", "transcript_path": p});
         r.call("POST", &url, None, Some(&stop.to_string())).await;
         wait_for(|| r.runner.count() == 3 + i).await;
-        assert_eq!(
-            r.runner.call(2 + i).ctx()["event"]["data"]["transcript_offset"],
-            Value::Null,
+        assert!(
+            r.runner.call(2 + i).ctx()["event"]["data"]
+                .get("anchor")
+                .is_none(),
             "{p} is outside Claude's home"
         );
     }
@@ -927,9 +930,10 @@ async fn a_status_hook_gets_the_workspace_derived_from_the_session_id() {
     assert_eq!(
         (
             ctx["focus"]["workspace"].as_str(),
+            ctx["event"]["data"]["workspace"].as_str(),
             ctx["event"]["data"]["to"].as_str()
         ),
-        (Some("ws"), Some("working"))
+        (Some("ws"), Some("ws"), Some("working"))
     );
 }
 
@@ -1005,14 +1009,8 @@ async fn disabling_kills_running_trees_clears_widgets_and_refuses_new_triggers()
         "sleep 60 &\necho $! > \"$GARAGE_PLUGIN_STATE_DIR/child.pid\"\nwait",
     );
     r.st.plugins.reload().unwrap();
-    let item = garage_protocol::widgets::WidgetItem {
-        segments: Some(vec![]),
-        ..Default::default()
-    };
-    let put = WidgetPut {
-        scopes: [("*".to_owned(), vec![item])].into(),
-        ttl_secs: None,
-    };
+    let item = garage_protocol::widgets::WidgetItem::new().segments(vec![]);
+    let put = WidgetPut::new().scope("*", vec![item]);
     r.st.plugins
         .widgets()
         .put("sleepy", "bar", WidgetSlot::StripRight, put);
@@ -1066,7 +1064,7 @@ async fn disabling_kills_running_trees_clears_widgets_and_refuses_new_triggers()
 #[tokio::test]
 async fn features_are_public_and_match_the_single_feature_table() {
     let r = Rig::new();
-    let (s, _, body) = r.call("GET", "/api/plugin/features", None, None).await;
+    let (s, _, body) = r.call("GET", "/api/plugins/features", None, None).await;
     assert_eq!(s, StatusCode::OK);
     assert_eq!(
         body,
@@ -3150,7 +3148,8 @@ async fn a_plugin_cannot_ask_the_wall_to_engage_a_session_and_ui_actions_are_lim
         json!({"action": "session.engage", "target": {"session": "garage/w/live"}}),
     )
     .await;
-    assert_eq!(s, StatusCode::FORBIDDEN, "{b}");
+    assert_eq!(s, StatusCode::UNPROCESSABLE_ENTITY, "{b}");
+    assert_eq!(b["code"], "action_not_allowed", "{b}");
     assert!(r.events().is_empty(), "nothing reached the wall");
     // Other focus moves are fine, but only five a second.
     let mut statuses = Vec::new();
@@ -3177,4 +3176,273 @@ async fn a_plugin_cannot_ask_the_wall_to_engage_a_session_and_ui_actions_are_lim
         "{statuses:?}"
     );
     assert_eq!(r.events().len(), 5, "a limited request is not forwarded");
+}
+
+// ---------------------------------------------------------------------
+// The v1 freeze (p25 4.2): what the running daemon still does of what
+// `crates/plugin/api-v1.golden.json` promises. The pure-table half lives in
+// `crates/plugin/tests/frozen_api.rs`.
+// ---------------------------------------------------------------------
+
+fn golden() -> Value {
+    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../plugin/api-v1.golden.json");
+    serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap()
+}
+
+/// A validator for one named type of the published API schema.
+fn api_validator(def: &str) -> jsonschema::Validator {
+    let mut schema: Value = serde_json::from_str(&garage_protocol::api::api_schema_json()).unwrap();
+    schema["$ref"] = format!("#/definitions/{def}").into();
+    jsonschema::validator_for(&schema).expect("schema compiles")
+}
+
+fn assert_valid(def: &str, v: &Value) {
+    let errors: Vec<String> = api_validator(def)
+        .iter_errors(v)
+        .map(|e| e.to_string())
+        .collect();
+    assert!(errors.is_empty(), "{def}: {errors:?} for {v}");
+}
+
+fn golden_names(v: &Value) -> Vec<String> {
+    v.as_array()
+        .unwrap()
+        .iter()
+        .map(|x| x.as_str().unwrap().to_owned())
+        .collect()
+}
+
+#[tokio::test]
+async fn frozen_api_every_v1_route_is_on_the_real_router() {
+    use axum::body::Body;
+    use axum::http::Request;
+    use http_body_util::BodyExt;
+    use tower::ServiceExt;
+
+    let r = Rig::new();
+    for route in golden()["routes"].as_array().unwrap() {
+        let (method, path) = (
+            route["method"].as_str().unwrap(),
+            route["path"].as_str().unwrap(),
+        );
+        let uri = path
+            .replace("{id}", "nobody")
+            .replace("{widget}", "w")
+            .replace("{pane}", "p")
+            .replace("{name}", "nowhere");
+        let req = Request::builder()
+            .method(method)
+            .uri(&uri)
+            .body(Body::empty())
+            .unwrap();
+        let res = crate::app(r.st.clone()).oneshot(req).await.unwrap();
+        let status = res.status();
+        assert_ne!(
+            status,
+            StatusCode::METHOD_NOT_ALLOWED,
+            "v1 route {method} {path} lost its method"
+        );
+        if status == StatusCode::NOT_FOUND {
+            // A route may answer 404 about the thing it was asked for, but
+            // never with the router's own "no such route" body.
+            let body = res.into_body().collect().await.unwrap().to_bytes();
+            let body: Value = serde_json::from_slice(&body).unwrap_or(Value::Null);
+            assert_ne!(
+                body["error"], "not found",
+                "v1 route {method} {path} is gone from the router"
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn frozen_api_a_route_asks_for_the_permission_the_table_says() {
+    // Spot-check the table against the code for every permission-gated v1
+    // route: a plugin holding no permission is refused naming the one needed.
+    let r = Rig::new();
+    r.install("bare", &manifest("bare", &[], ""));
+    let token = r.token("bare");
+    for route in golden()["routes"].as_array().unwrap() {
+        let needs = route["needs"].as_str().unwrap();
+        if !garage_plugin::features::PERMISSIONS.contains(&needs) || needs == "sessions.read" {
+            continue; // sessions.read is checked only when a token is presented
+        }
+        let uri = route["path"]
+            .as_str()
+            .unwrap()
+            .replace("{id}", "bare")
+            .replace("{widget}", "bar")
+            .replace("{pane}", "p");
+        let body = match route["path"].as_str().unwrap() {
+            "/api/plugins/ui/action" => r#"{"action":"x"}"#,
+            "/api/sessions/input" => r#"{"id":"garage/w/a","text":"x"}"#,
+            _ => "{}",
+        };
+        let (s, _, b) = r
+            .call(
+                route["method"].as_str().unwrap(),
+                &uri,
+                Some(&token),
+                Some(body),
+            )
+            .await;
+        assert_eq!(s, StatusCode::FORBIDDEN, "{route}: {b}");
+        assert!(
+            b["error"].as_str().unwrap_or("").contains(needs),
+            "{route}: the refusal should name {needs}, got {b}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn frozen_api_the_run_context_and_environment_keep_their_names() {
+    let r = Rig::new();
+    r.install("frz", &manifest("frz", &[], &action("go", "\"./x\"")));
+    let (s, _, _) = r
+        .call_ui(
+            "POST",
+            "/api/plugins/frz/actions/go/run",
+            Some(r#"{"focus":{"workspace":"w"},"trigger":{"kind":"key"}}"#),
+        )
+        .await;
+    assert_eq!(s, StatusCode::ACCEPTED);
+    wait_for(|| r.runner.count() == 1).await;
+    let call = r.runner.call(0);
+    let ctx = call.ctx();
+    let g = golden();
+    for (path, keys) in g["context"].as_object().unwrap() {
+        let at = if path.is_empty() {
+            ctx.clone()
+        } else {
+            let mut cur = ctx.clone();
+            for part in path.split('.') {
+                cur = cur[part].clone();
+            }
+            cur
+        };
+        if at.is_null() {
+            continue; // a null parent (no focused session) has no children
+        }
+        for key in golden_names(keys) {
+            assert!(
+                at.get(&key).is_some(),
+                "context.{path} lost the key {key:?}; v1 context keys are never absent"
+            );
+        }
+    }
+    // the session sub-object is only built for a focused session
+    let (s, _, _) = r
+        .call_ui(
+            "POST",
+            "/api/plugins/frz/actions/go/run",
+            Some(r#"{"focus":{"workspace":"w","session":{"id":"garage/w/a"}}}"#),
+        )
+        .await;
+    assert_eq!(s, StatusCode::ACCEPTED);
+    wait_for(|| r.runner.count() == 2).await;
+    let ctx2 = r.runner.call(1).ctx();
+    for key in golden_names(&g["context"]["focus.session"]) {
+        assert!(
+            ctx2["focus"]["session"].get(&key).is_some(),
+            "context.focus.session lost {key:?}"
+        );
+    }
+    assert_valid("RunContext", &ctx);
+    assert_valid("RunContext", &ctx2);
+    for name in golden_names(&g["env"]) {
+        // a run gets the context inline, or (when large) as a file: one of the two
+        if name == "GARAGE_CONTEXT" || name == "GARAGE_CONTEXT_FILE" {
+            assert!(
+                call.env("GARAGE_CONTEXT").is_some() ^ call.env("GARAGE_CONTEXT_FILE").is_some(),
+                "a run gets GARAGE_CONTEXT or GARAGE_CONTEXT_FILE, never both or neither"
+            );
+            continue;
+        }
+        assert!(call.env(&name).is_some(), "environment lost {name}");
+    }
+}
+
+#[test]
+fn frozen_api_every_event_keeps_its_payload_keys() {
+    let ev: Vec<DaemonEvent> = vec![
+        DaemonEvent::SessionCreated {
+            id: "i".into(),
+            dir: "d".into(),
+            workspace: "w".into(),
+        },
+        DaemonEvent::SessionClosed {
+            id: "i".into(),
+            dir: "d".into(),
+            workspace: "w".into(),
+            reason: CloseReason::User,
+            last_status: None,
+        },
+        DaemonEvent::SessionTurn {
+            id: "i".into(),
+            workspace: "w".into(),
+            at: 1,
+            anchor: Some(garage_protocol::api::TurnAnchor {
+                transcript_offset: None,
+                row: Some(3),
+                history_limit: Some(2000),
+            }),
+        },
+        DaemonEvent::SessionForgotten {
+            id: "i".into(),
+            workspace: "w".into(),
+        },
+        DaemonEvent::StatusTransition {
+            id: "garage/w/i".into(),
+            from: garage_protocol::SessionStatus::Idle,
+            to: garage_protocol::SessionStatus::Working,
+            since: None,
+        },
+        DaemonEvent::WorktreeCreated {
+            workspace: "w".into(),
+            session: "s".into(),
+            path: "p".into(),
+            branch: "b".into(),
+            repo_dir: "r".into(),
+        },
+        DaemonEvent::WorkspaceAdded { name: "n".into() },
+        DaemonEvent::WorkspaceRemoved { name: "n".into() },
+    ];
+    let g = golden();
+    let mut seen = Vec::new();
+    for e in &ev {
+        let (name, data) = e.plugin_event().expect("a plugin-visible event");
+        seen.push(name.to_owned());
+        let def = match name {
+            "session.created" => "SessionCreated",
+            "session.closed" => "SessionClosed",
+            "session.turn" => "SessionTurn",
+            "session.forgotten" => "SessionForgotten",
+            "session.status_changed" => "SessionStatusChanged",
+            "worktree.created" => "WorktreeCreated",
+            _ => "WorkspaceNamed",
+        };
+        assert_valid(def, &data);
+        for key in golden_names(&g["event_payload"][name]) {
+            assert!(
+                data.get(&key).is_some(),
+                "event {name} lost the payload key {key:?}"
+            );
+        }
+    }
+    // the nested anchor keeps its keys too
+    let turn = ev
+        .iter()
+        .find_map(|e| e.plugin_event().filter(|(n, _)| *n == "session.turn"))
+        .unwrap()
+        .1;
+    for key in golden_names(&g["event_payload_nested"]["session.turn.anchor"]) {
+        assert!(turn["anchor"].get(&key).is_some(), "anchor lost {key:?}");
+    }
+    // daemon.started has no bus variant (dispatched at start) and timer is a
+    // schedule: both carry no payload keys by contract.
+    for name in golden_names(&g["events"]) {
+        if !["daemon.started", "timer"].contains(&name.as_str()) {
+            assert!(seen.contains(&name), "no bus event produces {name}");
+        }
+    }
 }

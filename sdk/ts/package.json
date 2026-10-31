@@ -1,0 +1,56 @@
+{
+  "name": "@claude-garage/plugin-sdk",
+  "version": "0.1.0",
+  "description": "Typed client for the claude-garage plugin API: read the run context, push widgets and notices, ask the wall to run actions, type into sessions, open panes.",
+  "license": "MIT",
+  "author": "Saiful Islam <saifulislamadar@gmail.com>",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/adar2378/claude-garage.git",
+    "directory": "sdk/ts"
+  },
+  "homepage": "https://github.com/adar2378/claude-garage/tree/main/docs/plugins",
+  "bugs": "https://github.com/adar2378/claude-garage/issues",
+  "keywords": [
+    "claude-garage",
+    "claude-garage-plugin",
+    "claude-code",
+    "plugin",
+    "sdk"
+  ],
+  "type": "module",
+  "sideEffects": false,
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=24"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "gen": "node scripts/gen-types.mjs",
+    "check:gen": "node scripts/gen-types.mjs --check",
+    "build": "tsc -p tsconfig.json",
+    "build:test": "tsc -p tsconfig.test.json",
+    "test": "npm run check:gen && npm run build:test && node --test .test-dist/test/*.test.js",
+    "prepack": "npm run build"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.6",
+    "json-schema-to-typescript": "^16.0.0",
+    "typescript": "^7.0.2"
+  }
+}

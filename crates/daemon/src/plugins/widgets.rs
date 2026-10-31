@@ -328,18 +328,10 @@ mod tests {
     use garage_protocol::widgets::Segment;
 
     fn put(text: &str, ttl: Option<u32>) -> WidgetPut {
-        let item = WidgetItem {
-            segments: Some(vec![Segment {
-                text: text.into(),
-                style: None,
-                click: None,
-            }]),
-            ..Default::default()
-        };
-        WidgetPut {
-            scopes: BTreeMap::from([("*".to_owned(), vec![item])]),
-            ttl_secs: ttl,
-        }
+        let item = WidgetItem::new().segments(vec![Segment::new(text)]);
+        let mut put = WidgetPut::new().scope("*", vec![item]);
+        put.ttl_secs = ttl;
+        put
     }
 
     fn store() -> (WidgetStore, tokio::sync::broadcast::Receiver<DaemonEvent>) {

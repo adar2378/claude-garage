@@ -1250,7 +1250,10 @@ mod tests {
                 (c, body),
                 (
                     StatusCode::FORBIDDEN,
-                    json!({"error": "refusing to touch non-garage sessions"})
+                    crate::error::expected(
+                        StatusCode::FORBIDDEN,
+                        "refusing to touch non-garage sessions"
+                    )
                 ),
                 "{u}"
             );
@@ -1550,7 +1553,11 @@ mod tests {
             ),
         ] {
             let (c, b) = h.call("POST", "/api/sessions", Some(body)).await;
-            assert_eq!((c.as_u16(), b), (code, json!({"error": msg})), "{body}");
+            assert_eq!(
+                (c.as_u16(), b),
+                (code, crate::error::expected(c, msg)),
+                "{body}"
+            );
         }
 
         let (c, b) = h
@@ -1585,7 +1592,7 @@ mod tests {
             (c, b),
             (
                 StatusCode::CONFLICT,
-                json!({"error": "session already exists: garage/ws/a"})
+                crate::error::expected(StatusCode::CONFLICT, "session already exists: garage/ws/a")
             )
         );
 
@@ -1601,7 +1608,10 @@ mod tests {
             (c, b),
             (
                 StatusCode::BAD_REQUEST,
-                json!({"error": format!("registered dir no longer exists: {dir}")})
+                crate::error::expected(
+                    StatusCode::BAD_REQUEST,
+                    format!("registered dir no longer exists: {dir}")
+                )
             )
         );
     }
@@ -2279,7 +2289,10 @@ mod tests {
             (c, b),
             (
                 StatusCode::NOT_FOUND,
-                json!({"error": "no resume metadata for: garage/ws/none"})
+                crate::error::expected(
+                    StatusCode::NOT_FOUND,
+                    "no resume metadata for: garage/ws/none"
+                )
             )
         );
     }
@@ -2401,7 +2414,7 @@ mod tests {
             (c, b),
             (
                 StatusCode::NOT_FOUND,
-                json!({"error": "no live session: garage/ws/none"})
+                crate::error::expected(StatusCode::NOT_FOUND, "no live session: garage/ws/none")
             )
         );
 

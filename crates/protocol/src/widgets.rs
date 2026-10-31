@@ -8,12 +8,13 @@
 
 use std::collections::BTreeMap;
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use unicode_width::UnicodeWidthStr;
 
 /// The limits of design section 5. They are also published by
-/// `GET /api/plugin/features` under `limits`.
+/// `GET /api/plugins/features` under `limits`.
 pub mod limits {
     pub const ITEMS_PER_SCOPE: usize = 16;
     pub const SEGMENTS_PER_ITEM: usize = 16;
@@ -50,7 +51,7 @@ pub mod limits {
 }
 
 /// Where a widget draws. The scope key of its content depends on the slot.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 pub enum WidgetSlot {
     #[serde(rename = "tile.title.right")]
     TileTitleRight,
@@ -121,7 +122,11 @@ impl WidgetSlot {
 pub const GLOBAL_SCOPE: &str = "*";
 
 /// `fg`/`bg`: a theme token or `#rrggbb`.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+///
+/// Build one with [`Style::new`] and the setters; fields may be added in
+/// later v1 releases, so a struct literal is not available outside this crate.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[non_exhaustive]
 pub struct Style {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fg: Option<String>,
@@ -141,7 +146,7 @@ fn is_false(b: &bool) -> bool {
     !*b
 }
 
-/// `needs-input` is amber, but only while some session needs input; the rest
+/// `needs_input` is amber, but only while some session needs input; the rest
 /// of the time it reads as plain text. It is how a plugin shows an alert
 /// without owning the signal colour (the wall decides when it is lit).
 pub const THEME_TOKENS: [&str; 7] = [
@@ -151,7 +156,7 @@ pub const THEME_TOKENS: [&str; 7] = [
     "ok",
     "warn",
     "error",
-    "needs-input",
+    "needs_input",
 ];
 
 fn color_ok(c: &str) -> bool {
@@ -159,9 +164,53 @@ fn color_ok(c: &str) -> bool {
         || (c.len() == 7 && c.starts_with('#') && c[1..].bytes().all(|b| b.is_ascii_hexdigit()))
 }
 
+impl Style {
+    /// No colours, no emphasis.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Foreground: a theme token or `#rrggbb`.
+    pub fn fg(mut self, color: impl Into<String>) -> Self {
+        self.fg = Some(color.into());
+        self
+    }
+
+    /// Background: a theme token or `#rrggbb`.
+    pub fn bg(mut self, color: impl Into<String>) -> Self {
+        self.bg = Some(color.into());
+        self
+    }
+
+    /// Bold text.
+    pub fn bold(mut self) -> Self {
+        self.bold = true;
+        self
+    }
+
+    /// Italic text.
+    pub fn italic(mut self) -> Self {
+        self.italic = true;
+        self
+    }
+
+    /// Underlined text.
+    pub fn underline(mut self) -> Self {
+        self.underline = true;
+        self
+    }
+
+    /// Dimmed text.
+    pub fn dim(mut self) -> Self {
+        self.dim = true;
+        self
+    }
+}
+
 /// What a click on a segment (or a whole row) runs. `action` is a core id,
 /// `plugin:action`, or a bare local id.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[non_exhaustive]
 pub struct Click {
     pub action: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -169,6 +218,20 @@ pub struct Click {
 }
 
 impl Click {
+    /// A click that runs `action` with no arguments.
+    pub fn new(action: impl Into<String>) -> Self {
+        Self {
+            action: action.into(),
+            args: None,
+        }
+    }
+
+    /// Pass `args` to the action.
+    pub fn args(mut self, args: Value) -> Self {
+        self.args = Some(args);
+        self
+    }
+
     /// Core ids are dotted; local ids may not contain a dot (manifest rule).
     pub fn is_core(&self) -> bool {
         is_core_action_id(&self.action)
@@ -181,7 +244,8 @@ pub fn is_core_action_id(id: &str) -> bool {
     id.contains('.') && !id.contains(':')
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[non_exhaustive]
 pub struct Segment {
     pub text: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -190,12 +254,38 @@ pub struct Segment {
     pub click: Option<Click>,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+impl Segment {
+    /// Plain text, no style, no click.
+    pub fn new(text: impl Into<String>) -> Self {
+        Self {
+            text: text.into(),
+            style: None,
+            click: None,
+        }
+    }
+
+    /// Style the text.
+    pub fn style(mut self, style: Style) -> Self {
+        self.style = Some(style);
+        self
+    }
+
+    /// Run `click` when the segment is clicked.
+    pub fn click(mut self, click: Click) -> Self {
+        self.click = Some(click);
+        self
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "lowercase")]
+#[non_exhaustive]
 pub enum Placement {
     #[default]
     Flow,
-    /// Strip only: drawn at column `x`, after the flow items.
+    /// Strip only: drawn at column `x`, after the flow items. Build it with
+    /// [`Placement::filler`].
+    #[non_exhaustive]
     Filler {
         x: u16,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -203,10 +293,30 @@ pub enum Placement {
     },
 }
 
+impl Placement {
+    /// A filler at column `x`, with no caption.
+    pub fn filler(x: u16) -> Self {
+        Placement::Filler { x, caption: None }
+    }
+
+    /// Give a filler a caption (the text shown for it when it is hovered).
+    /// Other placements are returned as they are.
+    pub fn caption(self, caption: impl Into<String>) -> Self {
+        match self {
+            Placement::Filler { x, .. } => Placement::Filler {
+                x,
+                caption: Some(caption.into()),
+            },
+            other => other,
+        }
+    }
+}
+
 /// One thing a widget shows. `segments` and `frames` are mutually exclusive;
 /// the gutter fields (`row` / `kind`) apply to `tile.gutter`, and
 /// `row_style` / `click` to `rail.extra_rows` rows (and gutter markers).
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[non_exhaustive]
 pub struct WidgetItem {
     #[serde(default)]
     pub priority: i32,
@@ -238,12 +348,107 @@ pub struct WidgetItem {
     pub session: Option<String>,
 }
 
+impl WidgetItem {
+    /// An empty item (priority 0, flow placement). Add what it shows with
+    /// [`WidgetItem::segments`] or [`WidgetItem::frames`].
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Higher priority items are kept first when a slot is full.
+    pub fn priority(mut self, priority: i32) -> Self {
+        self.priority = priority;
+        self
+    }
+
+    /// Where the item goes.
+    pub fn placement(mut self, placement: Placement) -> Self {
+        self.placement = placement;
+        self
+    }
+
+    /// Static content.
+    pub fn segments(mut self, segments: Vec<Segment>) -> Self {
+        self.segments = Some(segments);
+        self
+    }
+
+    /// Animated content: one list of segments per frame, `frame_ms` apart.
+    pub fn frames(mut self, frames: Vec<Vec<Segment>>, frame_ms: u32) -> Self {
+        self.frames = Some(frames);
+        self.frame_ms = Some(frame_ms);
+        self
+    }
+
+    /// `strip.right` filler: the column of each frame.
+    pub fn frame_x(mut self, frame_x: Vec<u16>) -> Self {
+        self.frame_x = Some(frame_x);
+        self
+    }
+
+    /// `tile.gutter`: the absolute scrollback row.
+    pub fn row(mut self, row: u64) -> Self {
+        self.row = Some(row);
+        self
+    }
+
+    /// `tile.gutter`: the kind of mark.
+    pub fn kind(mut self, kind: impl Into<String>) -> Self {
+        self.kind = Some(kind.into());
+        self
+    }
+
+    /// `rail.extra_rows`: the style of the whole row.
+    pub fn row_style(mut self, style: Style) -> Self {
+        self.row_style = Some(style);
+        self
+    }
+
+    /// A click on the whole row (or marker).
+    pub fn click(mut self, click: Click) -> Self {
+        self.click = Some(click);
+        self
+    }
+
+    /// `rail.extra_rows`: the session the row is about.
+    pub fn session(mut self, session: impl Into<String>) -> Self {
+        self.session = Some(session.into());
+        self
+    }
+}
+
 /// Body of `PUT /api/plugins/{id}/widgets/{widget}`.
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[non_exhaustive]
 pub struct WidgetPut {
     pub scopes: BTreeMap<String, Vec<WidgetItem>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ttl_secs: Option<u32>,
+}
+
+impl WidgetPut {
+    /// An empty push: clears every scope it would otherwise fill.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Replace all scopes at once (keys are session ids, workspaces, or `*`).
+    pub fn scopes(mut self, scopes: BTreeMap<String, Vec<WidgetItem>>) -> Self {
+        self.scopes = scopes;
+        self
+    }
+
+    /// Show `items` for `scope` (a session id, a workspace, or `*`).
+    pub fn scope(mut self, scope: impl Into<String>, items: Vec<WidgetItem>) -> Self {
+        self.scopes.insert(scope.into(), items);
+        self
+    }
+
+    /// Drop everything after `ttl_secs` unless pushed again.
+    pub fn ttl_secs(mut self, ttl_secs: u32) -> Self {
+        self.ttl_secs = Some(ttl_secs);
+        self
+    }
 }
 
 impl Placement {
@@ -906,11 +1111,63 @@ mod tests {
     }
 
     #[test]
+    fn the_builders_build_exactly_what_the_wire_format_carries() {
+        let built = WidgetPut::new()
+            .scope(
+                "garage/w/a",
+                vec![
+                    WidgetItem::new()
+                        .priority(5)
+                        .placement(Placement::filler(30).caption("hi"))
+                        .frames(
+                            vec![vec![
+                                Segment::new("x")
+                                    .style(Style::new().fg("accent").bold())
+                                    .click(Click::new("jump.blocked").args(json!({"k": 1}))),
+                            ]],
+                            300,
+                        )
+                        .frame_x(vec![30])
+                        .session("garage/w/a"),
+                ],
+            )
+            .ttl_secs(15);
+        let wire: WidgetPut = serde_json::from_value(json!({
+            "scopes": {"garage/w/a": [{
+                "priority": 5,
+                "placement": {"kind": "filler", "x": 30, "caption": "hi"},
+                "frames": [[{"text": "x", "style": {"fg": "accent", "bold": true},
+                             "click": {"action": "jump.blocked", "args": {"k": 1}}}]],
+                "frame_ms": 300, "frame_x": [30], "session": "garage/w/a"
+            }]},
+            "ttl_secs": 15
+        }))
+        .unwrap();
+        assert_eq!(built, wire);
+        assert_eq!(
+            serde_json::to_value(&built).unwrap(),
+            serde_json::to_value(&wire).unwrap()
+        );
+        // a caption on a flow placement is a no-op, not a panic
+        assert_eq!(Placement::Flow.caption("x"), Placement::Flow);
+    }
+
+    #[test]
     fn needs_input_is_a_theme_token_and_a_gutter_item_needs_a_row() {
         let styled = put(
-            json!({"scopes": {"*": [{"segments": [{"text": "!", "style": {"fg": "needs-input", "bg": "needs-input"}}]}]}}),
+            json!({"scopes": {"*": [{"segments": [{"text": "!", "style": {"fg": "needs_input", "bg": "needs_input"}}]}]}}),
         );
         assert!(validate_put(WidgetSlot::StripRight, styled).is_ok());
+        // the kebab spelling of v1 drafts is gone: names are snake_case
+        let old = put(
+            json!({"scopes": {"*": [{"segments": [{"text": "!", "style": {"fg": "needs-input"}}]}]}}),
+        );
+        assert_eq!(
+            validate_put(WidgetSlot::StripRight, old)
+                .unwrap_err()
+                .status,
+            422
+        );
         let no_row = put(json!({"scopes": {"s": [{"kind": "marker"}]}}));
         assert!(
             validate_put(WidgetSlot::TileGutter, no_row)

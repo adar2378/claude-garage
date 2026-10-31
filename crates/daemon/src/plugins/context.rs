@@ -142,7 +142,7 @@ pub async fn build(
         "api_version": 1,
         "plugin": {"id": plugin.id, "version": plugin.version, "state_dir": plugin.state_dir},
         "trigger": {"kind": req.kind, "key": req.key, "slot": req.slot, "action": req.action, "args": req.args},
-        "focus": {"workspace": req.workspace, "session": session},
+        "focus": {"workspace": req.workspace, "session": session, "dir": null},
         "selection": {"session": selection("session"), "index": selection("index"), "view": selection("view")},
         "worktree": worktree,
         "event": req.event,
@@ -220,7 +220,10 @@ mod tests {
             &json!({}),
         )
         .await;
-        assert_eq!(ctx["focus"], json!({"workspace": null, "session": null}));
+        assert_eq!(
+            ctx["focus"],
+            json!({"workspace": null, "session": null, "dir": null})
+        );
         assert_eq!(ctx["trigger"]["kind"], "palette");
         assert_eq!(
             ctx["selection"],

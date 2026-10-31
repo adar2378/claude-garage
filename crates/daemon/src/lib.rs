@@ -311,7 +311,7 @@ mod tests {
             (s, body),
             (
                 StatusCode::FORBIDDEN,
-                json!({"error": "origin not allowed"})
+                json!({"error": "origin not allowed", "code": "origin_not_allowed"})
             )
         );
         // GET is never guarded; a header-less write reaches the (stub) route.
@@ -352,7 +352,7 @@ mod tests {
             let bytes = res.into_body().collect().await.unwrap().to_bytes();
             assert_eq!(
                 serde_json::from_slice::<Value>(&bytes).unwrap(),
-                json!({"error": "host not allowed"})
+                json!({"error": "host not allowed", "code": "host_not_allowed"})
             );
             let ok = app(state(c.clone()))
                 .oneshot(req(Some("127.0.0.1:4747")))
@@ -388,7 +388,7 @@ mod tests {
         );
 
         let routes = [
-            ("GET", "/api/plugin/features"),
+            ("GET", "/api/plugins/features"),
             ("POST", "/api/plugins/reload"),
             ("PUT", "/api/plugins/ui/slots"),
             ("POST", "/api/plugins/ui/challenge"),
@@ -425,7 +425,7 @@ mod tests {
             let bytes = res.into_body().collect().await.unwrap().to_bytes();
             assert_eq!(
                 serde_json::from_slice::<Value>(&bytes).unwrap(),
-                json!({"error": "host not allowed"}),
+                json!({"error": "host not allowed", "code": "host_not_allowed"}),
                 "{m} {u}"
             );
             // Foreign Origin on a write: refused, even with the UI token.
@@ -441,7 +441,7 @@ mod tests {
                 let bytes = res.into_body().collect().await.unwrap().to_bytes();
                 assert_eq!(
                     serde_json::from_slice::<Value>(&bytes).unwrap(),
-                    json!({"error": "origin not allowed"}),
+                    json!({"error": "origin not allowed", "code": "origin_not_allowed"}),
                     "{m} {u}"
                 );
             }
@@ -516,7 +516,10 @@ mod tests {
             let (s, body) = call(&c, "GET", u, None).await;
             assert_eq!(
                 (s, body),
-                (StatusCode::NOT_FOUND, json!({"error": "not found"})),
+                (
+                    StatusCode::NOT_FOUND,
+                    json!({"error": "not found", "code": "not_found"})
+                ),
                 "{u}"
             );
         }

@@ -1,0 +1,1942 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ApiTypes",
+  "description": "Root of the published schema: one field per public type, so every type is\na named definition (the SDK generators turn definitions into types).",
+  "type": "object",
+  "properties": {
+    "widget_put": {
+      "$ref": "#/definitions/WidgetPut"
+    },
+    "widget_item": {
+      "$ref": "#/definitions/WidgetItem"
+    },
+    "put_widget_response": {
+      "$ref": "#/definitions/PutWidgetResponse"
+    },
+    "ui_action_request": {
+      "$ref": "#/definitions/UiActionRequest"
+    },
+    "ui_action_frame": {
+      "$ref": "#/definitions/UiActionFrame"
+    },
+    "notice_request": {
+      "$ref": "#/definitions/NoticeRequest"
+    },
+    "session_input_request": {
+      "$ref": "#/definitions/SessionInputRequest"
+    },
+    "open_pane_response": {
+      "$ref": "#/definitions/OpenPaneResponse"
+    },
+    "close_pane_response": {
+      "$ref": "#/definitions/ClosePaneResponse"
+    },
+    "plugin_list": {
+      "$ref": "#/definitions/PluginList"
+    },
+    "widgets_snapshot": {
+      "$ref": "#/definitions/WidgetsSnapshot"
+    },
+    "panes_response": {
+      "$ref": "#/definitions/PanesResponse"
+    },
+    "run_context": {
+      "$ref": "#/definitions/RunContext"
+    },
+    "event_name": {
+      "$ref": "#/definitions/EventName"
+    },
+    "event_payloads": {
+      "$ref": "#/definitions/EventPayloads"
+    },
+    "features_response": {
+      "$ref": "#/definitions/FeaturesResponse"
+    },
+    "health": {
+      "$ref": "#/definitions/Health"
+    },
+    "sessions": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/Session"
+      }
+    },
+    "workspaces": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/Workspace"
+      }
+    },
+    "usage": {
+      "$ref": "#/definitions/Usage"
+    },
+    "error": {
+      "$ref": "#/definitions/ErrorBody"
+    },
+    "ack": {
+      "$ref": "#/definitions/Ack"
+    }
+  },
+  "required": [
+    "widget_put",
+    "widget_item",
+    "put_widget_response",
+    "ui_action_request",
+    "ui_action_frame",
+    "notice_request",
+    "session_input_request",
+    "open_pane_response",
+    "close_pane_response",
+    "plugin_list",
+    "widgets_snapshot",
+    "panes_response",
+    "run_context",
+    "event_name",
+    "event_payloads",
+    "features_response",
+    "health",
+    "sessions",
+    "workspaces",
+    "usage",
+    "error",
+    "ack"
+  ],
+  "definitions": {
+    "WidgetPut": {
+      "description": "Body of `PUT /api/plugins/{id}/widgets/{widget}`.",
+      "type": "object",
+      "properties": {
+        "scopes": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "array",
+            "items": {
+              "$ref": "#/definitions/WidgetItem"
+            }
+          }
+        },
+        "ttl_secs": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "scopes"
+      ]
+    },
+    "WidgetItem": {
+      "description": "One thing a widget shows. `segments` and `frames` are mutually exclusive;\nthe gutter fields (`row` / `kind`) apply to `tile.gutter`, and\n`row_style` / `click` to `rail.extra_rows` rows (and gutter markers).",
+      "type": "object",
+      "properties": {
+        "priority": {
+          "type": "integer",
+          "format": "int32",
+          "default": 0
+        },
+        "placement": {
+          "default": {
+            "kind": "flow"
+          },
+          "allOf": [
+            {
+              "$ref": "#/definitions/Placement"
+            }
+          ]
+        },
+        "segments": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "$ref": "#/definitions/Segment"
+          }
+        },
+        "frames": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/definitions/Segment"
+            }
+          }
+        },
+        "frame_ms": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0
+        },
+        "frame_x": {
+          "description": "`strip.right` filler items only: the filler column of each frame, in\nstep with `frames` (same length), overriding `placement.x`. A walking\npet changes column from frame to frame; a plain `x` cannot say that.",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "integer",
+            "format": "uint16",
+            "minimum": 0,
+            "maximum": 65535
+          }
+        },
+        "row": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "kind": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "row_style": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Style"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "click": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Click"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "session": {
+          "description": "`rail.extra_rows` only: the session this row is about (a closed chat),\nwhich scopes its click so a core action such as `session.restore`\ntakes it as its target. Must be a session of the row's workspace.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "Placement": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "flow"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "description": "Strip only: drawn at column `x`, after the flow items. Build it with\n[`Placement::filler`].",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "filler"
+            },
+            "x": {
+              "type": "integer",
+              "format": "uint16",
+              "minimum": 0,
+              "maximum": 65535
+            },
+            "caption": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "kind",
+            "x"
+          ]
+        }
+      ]
+    },
+    "Segment": {
+      "type": "object",
+      "properties": {
+        "text": {
+          "type": "string"
+        },
+        "style": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Style"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "click": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Click"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "text"
+      ]
+    },
+    "Style": {
+      "description": "`fg`/`bg`: a theme token or `#rrggbb`.\n\nBuild one with [`Style::new`] and the setters; fields may be added in\nlater v1 releases, so a struct literal is not available outside this crate.",
+      "type": "object",
+      "properties": {
+        "fg": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "bg": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "bold": {
+          "type": "boolean"
+        },
+        "italic": {
+          "type": "boolean"
+        },
+        "underline": {
+          "type": "boolean"
+        },
+        "dim": {
+          "type": "boolean"
+        }
+      }
+    },
+    "Click": {
+      "description": "What a click on a segment (or a whole row) runs. `action` is a core id,\n`plugin:action`, or a bare local id.",
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string"
+        },
+        "args": true
+      },
+      "required": [
+        "action"
+      ]
+    },
+    "PutWidgetResponse": {
+      "description": "Reply of `PUT /api/plugins/{id}/widgets/{widget}`.",
+      "type": "object",
+      "properties": {
+        "ok": {
+          "type": "boolean"
+        },
+        "rev": {
+          "description": "Grows on every change of the stored content.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "ok",
+        "rev"
+      ]
+    },
+    "UiActionRequest": {
+      "description": "`POST /api/plugins/ui/action` (needs `ui.invoke`).",
+      "type": "object",
+      "properties": {
+        "action": {
+          "description": "A core id, `plugin:action`, or a bare local action id.",
+          "type": "string"
+        },
+        "args": true,
+        "target": {
+          "default": {},
+          "allOf": [
+            {
+              "$ref": "#/definitions/UiTarget"
+            }
+          ]
+        }
+      },
+      "required": [
+        "action"
+      ]
+    },
+    "UiTarget": {
+      "description": "Where a `ui_action` request applies. Core actions take their session and\nworkspace from here and nowhere else.",
+      "type": "object",
+      "properties": {
+        "session": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "workspace": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "UiActionFrame": {
+      "description": "The SSE `ui_action` frame: a plugin asked the TUI to run an action. There\nis deliberately no `confirmed` field: whether a dangerous action runs is\nthe human's decision at the TUI, never the plugin's.",
+      "type": "object",
+      "properties": {
+        "plugin": {
+          "type": "string"
+        },
+        "action": {
+          "type": "string"
+        },
+        "args": {
+          "default": null
+        },
+        "target": {
+          "default": {},
+          "allOf": [
+            {
+              "$ref": "#/definitions/UiTarget"
+            }
+          ]
+        }
+      },
+      "required": [
+        "plugin",
+        "action"
+      ]
+    },
+    "NoticeRequest": {
+      "description": "`POST /api/plugins/{id}/notice` (needs `ui.notice`).",
+      "type": "object",
+      "properties": {
+        "text": {
+          "description": "Cut to 120 characters.",
+          "type": "string"
+        },
+        "ttl_ms": {
+          "description": "1000..=10000, default 5000.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "text"
+      ]
+    },
+    "SessionInputRequest": {
+      "description": "`POST /api/sessions/input` (needs `sessions.input`, dangerous).",
+      "type": "object",
+      "properties": {
+        "id": {
+          "description": "A `garage/<workspace>/<label>` session id.",
+          "type": "string"
+        },
+        "text": {
+          "description": "Typed into the session, then Enter.",
+          "type": "string"
+        },
+        "if_status": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/IfStatus"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "text"
+      ]
+    },
+    "IfStatus": {
+      "description": "Refuse the input (409) when the session is in one of these statuses.",
+      "type": "object",
+      "properties": {
+        "not": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "not"
+      ]
+    },
+    "OpenPaneResponse": {
+      "description": "Reply of `POST /api/plugins/{id}/panes/{pane}/open`.",
+      "type": "object",
+      "properties": {
+        "ok": {
+          "type": "boolean"
+        },
+        "session": {
+          "description": "The backend session id of the pane.",
+          "type": "string"
+        },
+        "reused": {
+          "description": "The pane was already open (a singleton) and was reused.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "ok",
+        "session",
+        "reused"
+      ]
+    },
+    "ClosePaneResponse": {
+      "description": "Reply of `DELETE /api/plugins/{id}/panes/{pane}`.",
+      "type": "object",
+      "properties": {
+        "ok": {
+          "type": "boolean"
+        },
+        "closed": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "ok",
+        "closed"
+      ]
+    },
+    "PluginList": {
+      "description": "`GET /api/plugins`: the plugins in install order (which is also the\ntiebreak for two plugins that suggest the same key).",
+      "type": "object",
+      "properties": {
+        "plugins": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/PluginSummary"
+          }
+        }
+      },
+      "required": [
+        "plugins"
+      ]
+    },
+    "PluginSummary": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "active": {
+          "description": "Enabled, approved, loaded: only an active plugin's actions, buttons\nand widgets reach the screen.",
+          "type": "boolean"
+        },
+        "version": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "permissions": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
+        "bindings": {
+          "description": "The user's own key bindings (`action` local id to key).",
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "default": {}
+        },
+        "actions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/ActionSummary"
+          },
+          "default": []
+        },
+        "buttons": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/ButtonSummary"
+          },
+          "default": []
+        },
+        "widgets": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/WidgetSummary"
+          },
+          "default": []
+        },
+        "panes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/PaneSummary"
+          },
+          "default": []
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "enabled",
+        "active"
+      ]
+    },
+    "ActionSummary": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "description": "The full id, `plugin:action`.",
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "default_key": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "contexts": {
+          "description": "`global`, `workspace` or `session`: what must be focused.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
+        "confirm": {
+          "type": "boolean",
+          "default": false
+        },
+        "pane": {
+          "description": "The local pane id when the action opens a pane instead of running a command.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "id",
+        "title"
+      ]
+    },
+    "ButtonSummary": {
+      "type": "object",
+      "properties": {
+        "slot": {
+          "$ref": "#/definitions/WidgetSlot"
+        },
+        "label": {
+          "type": "string"
+        },
+        "tooltip": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "on_click": {
+          "description": "A core id, `plugin:action`, or a bare local id.",
+          "type": "string"
+        },
+        "args": {
+          "default": null
+        },
+        "confirm": {
+          "type": "boolean",
+          "default": false
+        },
+        "priority": {
+          "type": "integer",
+          "format": "int32",
+          "default": 0
+        }
+      },
+      "required": [
+        "slot",
+        "label",
+        "on_click"
+      ]
+    },
+    "WidgetSlot": {
+      "description": "Where a widget draws. The scope key of its content depends on the slot.",
+      "type": "string",
+      "enum": [
+        "tile.title.right",
+        "tile.gutter",
+        "rail.row",
+        "rail.extra_rows",
+        "rail.header",
+        "strip.right"
+      ]
+    },
+    "WidgetSummary": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "slot": {
+          "$ref": "#/definitions/WidgetSlot"
+        }
+      },
+      "required": [
+        "id",
+        "slot"
+      ]
+    },
+    "PaneSummary": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "placement": {
+          "description": "`tile`, `overlay` or `popup`.",
+          "type": "string"
+        },
+        "cols": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint16",
+          "minimum": 0,
+          "maximum": 65535,
+          "default": null
+        },
+        "rows": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint16",
+          "minimum": 0,
+          "maximum": 65535,
+          "default": null
+        },
+        "pct": {
+          "description": "`cols`/`rows` are percent of the screen.",
+          "type": "boolean",
+          "default": false
+        }
+      },
+      "required": [
+        "id",
+        "title",
+        "placement"
+      ]
+    },
+    "WidgetsSnapshot": {
+      "description": "`GET /api/plugins/widgets[?plugin=]`.",
+      "type": "object",
+      "properties": {
+        "plugins": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/definitions/PluginWidgets"
+          }
+        }
+      },
+      "required": [
+        "plugins"
+      ]
+    },
+    "PluginWidgets": {
+      "type": "object",
+      "properties": {
+        "rev": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "widgets": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/definitions/WidgetContent"
+          }
+        }
+      },
+      "required": [
+        "rev",
+        "widgets"
+      ]
+    },
+    "WidgetContent": {
+      "description": "One stored widget as `GET /api/plugins/widgets` returns it.",
+      "type": "object",
+      "properties": {
+        "slot": {
+          "$ref": "#/definitions/WidgetSlot"
+        },
+        "scopes": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "array",
+            "items": {
+              "$ref": "#/definitions/WidgetItem"
+            }
+          }
+        }
+      },
+      "required": [
+        "slot",
+        "scopes"
+      ]
+    },
+    "PanesResponse": {
+      "description": "`GET /api/plugins/panes`.",
+      "type": "object",
+      "properties": {
+        "panes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/PaneInstance"
+          }
+        }
+      },
+      "required": [
+        "panes"
+      ]
+    },
+    "PaneInstance": {
+      "description": "One open plugin pane, with how to attach to it.",
+      "type": "object",
+      "properties": {
+        "plugin": {
+          "type": "string"
+        },
+        "pane": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "placement": {
+          "type": "string"
+        },
+        "session": {
+          "description": "The backend session id (`plugin/<plugin>/<pane>`); not a `garage/` id,\nso it is never in the session list.",
+          "type": "string"
+        },
+        "attach": {
+          "$ref": "#/definitions/AttachSpec"
+        },
+        "cols": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint16",
+          "minimum": 0,
+          "maximum": 65535,
+          "default": null
+        },
+        "rows": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint16",
+          "minimum": 0,
+          "maximum": 65535,
+          "default": null
+        },
+        "pct": {
+          "type": "boolean",
+          "default": false
+        }
+      },
+      "required": [
+        "plugin",
+        "pane",
+        "title",
+        "placement",
+        "session",
+        "attach"
+      ]
+    },
+    "AttachSpec": {
+      "description": "How a client attaches a terminal to a session: the seam between the TUI's\nHow the TUI attaches to a session. Deliberately data, not a command line:\nthe TUI builds the fixed command itself, so whatever answers on the daemon\nport can never make it run an arbitrary program or dial an arbitrary host.",
+      "oneOf": [
+        {
+          "description": "`tmux [-L <socket>] attach -t =<session>` in a PTY. `socket` matches\n`^[A-Za-z0-9_-]{1,64}$` or the TUI refuses it.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "tmux"
+            },
+            "socket": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "description": "The session runs in a host process registered as `hosts/<id>.json` in\nthe garage dir (user-private); the TUI reads address and token there.\nThe token is never sent over HTTP. An empty `id` means \"no such host\".",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "host"
+            },
+            "id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "id"
+          ]
+        }
+      ]
+    },
+    "RunContext": {
+      "description": "The JSON every action, event, pane and CLI run receives: in\n`GARAGE_CONTEXT` (or the file `GARAGE_CONTEXT_FILE` names) and on stdin.\nKeys are never absent; a missing value is `null`.",
+      "type": "object",
+      "properties": {
+        "api_version": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "plugin": {
+          "$ref": "#/definitions/ContextPlugin"
+        },
+        "trigger": {
+          "$ref": "#/definitions/ContextTrigger"
+        },
+        "focus": {
+          "$ref": "#/definitions/ContextFocus"
+        },
+        "selection": {
+          "$ref": "#/definitions/ContextSelection"
+        },
+        "worktree": {
+          "description": "The focused session's worktree, if it has one.",
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ContextWorktree"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "event": {
+          "description": "Set for event hook runs.",
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ContextEvent"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "ui": {
+          "$ref": "#/definitions/ContextUi"
+        }
+      },
+      "required": [
+        "api_version",
+        "plugin",
+        "trigger",
+        "focus",
+        "selection",
+        "worktree",
+        "event",
+        "ui"
+      ]
+    },
+    "ContextPlugin": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "version": {
+          "type": "string"
+        },
+        "state_dir": {
+          "description": "The plugin's own writable folder.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "version",
+        "state_dir"
+      ]
+    },
+    "ContextTrigger": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "description": "`key`, `button`, `widget`, `palette`, `event`, `timer`, `pane` or `cli`.",
+          "type": "string"
+        },
+        "key": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "slot": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "action": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "args": {
+          "description": "The `args` of the button or click; `{}` when none. For a `cli` run,\n`{\"argv\": [...]}`."
+        }
+      },
+      "required": [
+        "kind",
+        "key",
+        "slot",
+        "action",
+        "args"
+      ]
+    },
+    "ContextFocus": {
+      "type": "object",
+      "properties": {
+        "workspace": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "session": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ContextSession"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "dir": {
+          "description": "CLI runs: the caller's working directory. `null` for every other run.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "workspace",
+        "session",
+        "dir"
+      ]
+    },
+    "ContextSession": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "dir": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "status": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "branch": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "worktree": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ContextWorktree"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "dir",
+        "status",
+        "branch",
+        "worktree"
+      ]
+    },
+    "ContextWorktree": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string"
+        },
+        "branch": {
+          "type": "string"
+        },
+        "repo_dir": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "path",
+        "branch",
+        "repo_dir"
+      ]
+    },
+    "ContextSelection": {
+      "type": "object",
+      "properties": {
+        "session": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "index": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "view": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "session",
+        "index",
+        "view"
+      ]
+    },
+    "ContextEvent": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "One of the event names (see [`EventName`]).",
+          "type": "string"
+        },
+        "at": {
+          "description": "Unix milliseconds.",
+          "type": "integer",
+          "format": "int64"
+        },
+        "data": {
+          "description": "The payload; its shape depends on `name` (see [`EventPayloads`])."
+        }
+      },
+      "required": [
+        "name",
+        "at",
+        "data"
+      ]
+    },
+    "ContextUi": {
+      "type": "object",
+      "properties": {
+        "slots": {
+          "description": "Slot geometry the wall reported (`width`, `max_cols`, `filler`), by\nslot name. May be empty."
+        }
+      },
+      "required": [
+        "slots"
+      ]
+    },
+    "EventName": {
+      "description": "Event names a manifest `[[events]] on` may use.",
+      "type": "string",
+      "enum": [
+        "session.created",
+        "session.closed",
+        "session.turn",
+        "session.forgotten",
+        "session.status_changed",
+        "worktree.created",
+        "workspace.added",
+        "workspace.removed",
+        "daemon.started",
+        "timer"
+      ]
+    },
+    "EventPayloads": {
+      "description": "The payload (`event.data`) of each event, by event name. `daemon.started`\nand `timer` carry `{}`.",
+      "type": "object",
+      "properties": {
+        "session.created": {
+          "$ref": "#/definitions/SessionCreated"
+        },
+        "session.closed": {
+          "$ref": "#/definitions/SessionClosed"
+        },
+        "session.turn": {
+          "$ref": "#/definitions/SessionTurn"
+        },
+        "session.forgotten": {
+          "$ref": "#/definitions/SessionForgotten"
+        },
+        "session.status_changed": {
+          "$ref": "#/definitions/SessionStatusChanged"
+        },
+        "worktree.created": {
+          "$ref": "#/definitions/WorktreeCreated"
+        },
+        "workspace.added": {
+          "$ref": "#/definitions/WorkspaceNamed"
+        },
+        "workspace.removed": {
+          "$ref": "#/definitions/WorkspaceNamed"
+        }
+      },
+      "required": [
+        "session.created",
+        "session.closed",
+        "session.turn",
+        "session.forgotten",
+        "session.status_changed",
+        "worktree.created",
+        "workspace.added",
+        "workspace.removed"
+      ]
+    },
+    "SessionCreated": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "dir": {
+          "type": "string"
+        },
+        "workspace": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "dir",
+        "workspace"
+      ]
+    },
+    "SessionClosed": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "dir": {
+          "type": "string"
+        },
+        "workspace": {
+          "type": "string"
+        },
+        "reason": {
+          "description": "`user`, `crash` or `daemon_restart`.",
+          "type": "string"
+        },
+        "last_status": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "dir",
+        "workspace",
+        "reason",
+        "last_status"
+      ]
+    },
+    "SessionTurn": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "workspace": {
+          "type": "string"
+        },
+        "at": {
+          "description": "Unix milliseconds.",
+          "type": "integer",
+          "format": "int64"
+        },
+        "anchor": {
+          "description": "Where the turn ended. Left out when nothing could be measured.",
+          "anyOf": [
+            {
+              "$ref": "#/definitions/TurnAnchor"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "workspace",
+        "at"
+      ]
+    },
+    "TurnAnchor": {
+      "description": "The `anchor` of a `session.turn` event. Each value is `null` when it could\nnot be measured.",
+      "type": "object",
+      "properties": {
+        "transcript_offset": {
+          "description": "The transcript's byte length when the turn ended.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "row": {
+          "description": "Absolute scrollback row where the turn ended (0 is the oldest kept line).",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "history_limit": {
+          "description": "How many history lines the backend keeps.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "transcript_offset",
+        "row",
+        "history_limit"
+      ]
+    },
+    "SessionForgotten": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "workspace": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "workspace"
+      ]
+    },
+    "SessionStatusChanged": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "dir": {
+          "type": "string"
+        },
+        "workspace": {
+          "type": "string"
+        },
+        "from": {
+          "$ref": "#/definitions/SessionStatus"
+        },
+        "to": {
+          "$ref": "#/definitions/SessionStatus"
+        },
+        "since": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "int64"
+        }
+      },
+      "required": [
+        "id",
+        "dir",
+        "workspace",
+        "from",
+        "to",
+        "since"
+      ]
+    },
+    "SessionStatus": {
+      "description": "Session state. `Restorable` only appears in list entries built from\nresume metadata; the status store itself never holds it.",
+      "type": "string",
+      "enum": [
+        "idle",
+        "working",
+        "needs-input",
+        "done",
+        "restorable"
+      ]
+    },
+    "WorktreeCreated": {
+      "type": "object",
+      "properties": {
+        "workspace": {
+          "type": "string"
+        },
+        "session": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "branch": {
+          "type": "string"
+        },
+        "repo_dir": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "workspace",
+        "session",
+        "path",
+        "branch",
+        "repo_dir"
+      ]
+    },
+    "WorkspaceNamed": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ]
+    },
+    "FeaturesResponse": {
+      "description": "`GET /api/plugins/features`.",
+      "type": "object",
+      "properties": {
+        "api_versions": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0
+          }
+        },
+        "garage": {
+          "description": "The garage version.",
+          "type": "string"
+        },
+        "features": {
+          "$ref": "#/definitions/Features"
+        }
+      },
+      "required": [
+        "api_versions",
+        "garage",
+        "features"
+      ]
+    },
+    "Features": {
+      "description": "The `features` object. New keys may appear in later garage versions.",
+      "type": "object",
+      "properties": {
+        "api.v1.frozen": {
+          "type": "boolean"
+        },
+        "events": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "permissions": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "dangerous_permissions": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "theme_tokens": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "routes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/RouteInfo"
+          }
+        },
+        "slots": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "widgets.click_args": {
+          "type": "boolean"
+        },
+        "widgets.filler": {
+          "type": "boolean"
+        },
+        "widgets.animated": {
+          "type": "boolean"
+        },
+        "widgets.frame_x": {
+          "type": "boolean"
+        },
+        "widgets.slot_geometry": {
+          "type": "boolean"
+        },
+        "ui.notice": {
+          "type": "boolean"
+        },
+        "cli.fallback": {
+          "type": "boolean"
+        },
+        "panes.placements": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "sessions.input": {
+          "type": "boolean"
+        },
+        "actions.core_invocable": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "limits": {
+          "$ref": "#/definitions/FeatureLimits"
+        }
+      },
+      "required": [
+        "api.v1.frozen",
+        "events",
+        "permissions",
+        "dangerous_permissions",
+        "theme_tokens",
+        "routes",
+        "slots",
+        "widgets.click_args",
+        "widgets.filler",
+        "widgets.animated",
+        "widgets.frame_x",
+        "widgets.slot_geometry",
+        "ui.notice",
+        "cli.fallback",
+        "panes.placements",
+        "sessions.input",
+        "actions.core_invocable",
+        "limits"
+      ]
+    },
+    "RouteInfo": {
+      "description": "One entry of `features.routes`.",
+      "type": "object",
+      "properties": {
+        "method": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "needs": {
+          "description": "`none` or a permission name.",
+          "type": "string"
+        },
+        "tokenless": {
+          "description": "`deprecated` when the route answers without a plugin token today but\ntakes one; plugins always send theirs. Absent otherwise.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "method",
+        "path",
+        "needs"
+      ]
+    },
+    "FeatureLimits": {
+      "type": "object",
+      "properties": {
+        "widget_items": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "widget_segments": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "widget_cols": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "widget_body_bytes": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "widget_puts_per_sec": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "widget_ttl_secs": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "widget_frames": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "notice_chars": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "widget_items",
+        "widget_segments",
+        "widget_cols",
+        "widget_body_bytes",
+        "widget_puts_per_sec",
+        "widget_ttl_secs",
+        "widget_frames",
+        "notice_chars"
+      ]
+    },
+    "Health": {
+      "description": "`GET /api/health`.",
+      "type": "object",
+      "properties": {
+        "status": {
+          "type": "string"
+        },
+        "version": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "pid": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "status",
+        "pid"
+      ]
+    },
+    "Session": {
+      "description": "One entry of `GET /api/sessions`: live, or restorable (`status` is\n`restorable`, `restorable` is `true`, no `createdAt`).",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "workspace": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        },
+        "dir": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "attached": {
+          "type": "boolean"
+        },
+        "createdAt": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "int64"
+        },
+        "status": {
+          "$ref": "#/definitions/SessionStatus"
+        },
+        "message": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "since": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "int64"
+        },
+        "branch": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "title": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "context": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Context"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "restorable": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "workspace",
+        "label",
+        "attached",
+        "status"
+      ]
+    },
+    "Context": {
+      "description": "`context` of a session list entry. The percentage is clamped to 0-100 by\nthe daemon but may be fractional (statusline) or rounded (transcript).",
+      "type": "object",
+      "properties": {
+        "usedPercentage": {
+          "type": "number",
+          "format": "double"
+        },
+        "source": {
+          "$ref": "#/definitions/ContextSource"
+        }
+      },
+      "required": [
+        "usedPercentage",
+        "source"
+      ]
+    },
+    "ContextSource": {
+      "type": "string",
+      "enum": [
+        "statusline",
+        "transcript"
+      ]
+    },
+    "Workspace": {
+      "description": "One entry of `GET /api/workspaces`.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "dir": {
+          "type": "string"
+        },
+        "branch": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "name",
+        "dir"
+      ]
+    },
+    "Usage": {
+      "type": "object",
+      "properties": {
+        "fiveHour": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/UsageWindow"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "sevenDay": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/UsageWindow"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "UsageWindow": {
+      "description": "One rate-limit window of `GET /api/usage`. `resetsAt` is whatever scalar\nClaude Code's statusline carried (an ISO string in practice), or null.",
+      "type": "object",
+      "properties": {
+        "usedPercentage": {
+          "type": "number",
+          "format": "double"
+        },
+        "resetsAt": true
+      },
+      "required": [
+        "usedPercentage",
+        "resetsAt"
+      ]
+    },
+    "ErrorBody": {
+      "description": "Body of every non-2xx response: `{\"error\": \"<message>\", \"code\":\n\"<stable_snake_code>\"}`, plus `\"permission\"` on a 403 for a missing\npermission. `error` is for people and may change; `code` is the contract.\nRoutes may add other fields.",
+      "type": "object",
+      "properties": {
+        "error": {
+          "type": "string"
+        },
+        "code": {
+          "type": "string"
+        },
+        "permission": {
+          "description": "The permission the caller lacks (`code` is `permission_denied`).",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "error",
+        "code"
+      ]
+    },
+    "Ack": {
+      "description": "`{\"ok\": true}` acknowledgements.",
+      "type": "object",
+      "properties": {
+        "ok": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "ok"
+      ]
+    }
+  }
+}

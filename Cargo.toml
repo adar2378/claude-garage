@@ -9,7 +9,16 @@ exclude = ["plugins/tile-buttons"]
 [workspace.package]
 version = "0.6.2" # keep in step with package.json
 edition = "2024"
+license = "MIT"
+repository = "https://github.com/adar2378/claude-garage"
+homepage = "https://github.com/adar2378/claude-garage"
 rust-version = "1.88" # edition 2024 + let chains; ratatui, tachyonfx, time and bon need 1.88
+
+# garage-protocol and garage-plugin-sdk are published on their own version
+# (1.x), independent of the app. A published crate needs a version on its path
+# dependencies; `1` means any 1.x, so a protocol patch never forces an SDK release.
+[workspace.dependencies]
+garage-protocol = { path = "crates/protocol", version = "1" }
 
 [profile.release]
 debug = false

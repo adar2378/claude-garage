@@ -7,6 +7,7 @@
 
 use std::collections::BTreeMap;
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -15,12 +16,12 @@ use crate::widgets::{WidgetItem, WidgetSlot};
 
 /// `GET /api/plugins`: the plugins in install order (which is also the
 /// tiebreak for two plugins that suggest the same key).
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct PluginList {
     pub plugins: Vec<PluginSummary>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct PluginSummary {
     pub id: String,
     pub name: String,
@@ -45,7 +46,7 @@ pub struct PluginSummary {
     pub panes: Vec<PaneSummary>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct ActionSummary {
     /// The full id, `plugin:action`.
     pub id: String,
@@ -62,7 +63,7 @@ pub struct ActionSummary {
     pub pane: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct ButtonSummary {
     pub slot: WidgetSlot,
     pub label: String,
@@ -78,13 +79,13 @@ pub struct ButtonSummary {
     pub priority: i32,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct WidgetSummary {
     pub id: String,
     pub slot: WidgetSlot,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct PaneSummary {
     pub id: String,
     pub title: String,
@@ -100,26 +101,26 @@ pub struct PaneSummary {
 }
 
 /// One stored widget as `GET /api/plugins/widgets` returns it.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct WidgetContent {
     pub slot: WidgetSlot,
     pub scopes: BTreeMap<String, Vec<WidgetItem>>,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct PluginWidgets {
     pub rev: u64,
     pub widgets: BTreeMap<String, WidgetContent>,
 }
 
 /// `GET /api/plugins/widgets[?plugin=]`.
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct WidgetsSnapshot {
     pub plugins: BTreeMap<String, PluginWidgets>,
 }
 
 /// One open plugin pane, with how to attach to it.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct PaneInstance {
     pub plugin: String,
     pub pane: String,
@@ -138,14 +139,14 @@ pub struct PaneInstance {
 }
 
 /// `GET /api/plugins/panes`.
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct PanesResponse {
     pub panes: Vec<PaneInstance>,
 }
 
 /// Where a `ui_action` request applies. Core actions take their session and
 /// workspace from here and nowhere else.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct UiTarget {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub session: Option<String>,
@@ -156,7 +157,7 @@ pub struct UiTarget {
 /// The SSE `ui_action` frame: a plugin asked the TUI to run an action. There
 /// is deliberately no `confirmed` field: whether a dangerous action runs is
 /// the human's decision at the TUI, never the plugin's.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct UiActionFrame {
     pub plugin: String,
     pub action: String,

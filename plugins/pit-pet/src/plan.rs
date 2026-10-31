@@ -332,18 +332,13 @@ impl State {
 }
 
 fn seg(text: &str, fg: &str, bold: bool, click: Option<&str>) -> Segment {
-    Segment {
-        text: text.to_owned(),
-        style: Some(Style {
-            fg: Some(fg.to_owned()),
-            bold,
-            ..Style::default()
-        }),
-        click: click.map(|action| garage_plugin_sdk::Click {
-            action: action.to_owned(),
-            args: None,
-        }),
+    let mut style = Style::new().fg(fg);
+    if bold {
+        style = style.bold();
     }
+    let mut seg = Segment::new(text).style(style);
+    seg.click = click.map(garage_plugin_sdk::Click::new);
+    seg
 }
 
 fn segments(f: &FrameSpec) -> Vec<Segment> {
@@ -357,21 +352,13 @@ fn segments(f: &FrameSpec) -> Vec<Segment> {
         Some(click),
     )];
     if f.bang {
-        out.push(Segment {
-            text: " ".into(),
-            style: None,
-            click: None,
-        });
+        out.push(Segment::new(" "));
         out.push(if f.bang_lit {
             // Amber while a session needs input (the wall decides; the
             // token is neutral the rest of the time).
-            seg("!", "needs-input", true, None)
+            seg("!", "needs_input", true, None)
         } else {
-            Segment {
-                text: " ".into(),
-                style: None,
-                click: None,
-            }
+            Segment::new(" ")
         });
     }
     out
@@ -380,21 +367,18 @@ fn segments(f: &FrameSpec) -> Vec<Segment> {
 /// The widget body for a window: one animated filler item whose column
 /// follows the frame, the caption beside it.
 pub fn build_put(frames: &[FrameSpec], caption: Option<&str>) -> WidgetPut {
-    let item = WidgetItem {
-        priority: 100,
-        placement: garage_plugin_sdk::Placement::Filler {
-            x: frames.first().map_or(0, |f| f.x),
-            caption: caption.map(str::to_owned),
-        },
-        frames: Some(frames.iter().map(segments).collect()),
-        frame_ms: Some(TICK_MS as u32),
-        frame_x: Some(frames.iter().map(|f| f.x).collect()),
-        ..WidgetItem::default()
-    };
-    WidgetPut {
-        scopes: [("*".to_owned(), vec![item])].into(),
-        ttl_secs: Some(PUSH_TTL_SECS),
+    let mut placement = garage_plugin_sdk::Placement::filler(frames.first().map_or(0, |f| f.x));
+    if let Some(caption) = caption {
+        placement = placement.caption(caption);
     }
+    let item = WidgetItem::new()
+        .priority(100)
+        .placement(placement)
+        .frames(frames.iter().map(segments).collect(), TICK_MS as u32)
+        .frame_x(frames.iter().map(|f| f.x).collect());
+    WidgetPut::new()
+        .scope("*", vec![item])
+        .ttl_secs(PUSH_TTL_SECS)
 }
 
 #[cfg(test)]
@@ -684,7 +668,7 @@ mod tests {
                 .collect()
         };
         assert!(clicks(&put).iter().all(|a| a == "jump.blocked"));
-        // The lit bang uses the needs-input token, never a fixed colour.
+        // The lit bang uses the needs_input token, never a fixed colour.
         let bang_colours: Vec<_> = put.scopes["*"][0]
             .frames
             .as_ref()
@@ -695,7 +679,7 @@ mod tests {
             .map(|s| s.style.as_ref().unwrap().fg.clone().unwrap())
             .collect();
         assert!(!bang_colours.is_empty());
-        assert!(bang_colours.iter().all(|c| c == "needs-input"));
+        assert!(bang_colours.iter().all(|c| c == "needs_input"));
         let mut calm = cat();
         let frames = calm.plan(&inputs(0, true, 1), T + 60_000).unwrap();
         assert!(clicks(&build_put(&frames, None)).iter().all(|a| a == "pet"));

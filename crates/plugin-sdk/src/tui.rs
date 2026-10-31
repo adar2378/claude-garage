@@ -15,9 +15,13 @@ use crate::fuzzy;
 
 /// What a key did to a widget.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum Outcome<T> {
+    /// Keep going; nothing was decided.
     Continue,
+    /// The user chose; the value is the result.
     Done(T),
+    /// The user backed out (Esc or Ctrl-C).
     Cancel,
 }
 
@@ -37,6 +41,7 @@ pub struct Picker {
 }
 
 impl Picker {
+    /// A picker with a title over `items`.
     pub fn new(title: &str, items: Vec<String>) -> Self {
         let shown = (0..items.len()).collect();
         Self {
@@ -53,6 +58,7 @@ impl Picker {
         self.sel = 0;
     }
 
+    /// Feed one key; `Done(i)` is the index into the original items.
     pub fn on_key(&mut self, k: KeyEvent) -> Outcome<usize> {
         if k.kind == KeyEventKind::Release {
             return Outcome::Continue;
@@ -95,15 +101,18 @@ impl Picker {
         }
     }
 
+    /// The text typed so far.
     pub fn query(&self) -> &str {
         &self.query
     }
 
     /// The matching item texts, best first.
+    /// The items that match the query, best first.
     pub fn visible(&self) -> Vec<&str> {
         self.shown.iter().map(|&i| self.items[i].as_str()).collect()
     }
 
+    /// The highlighted row among the visible ones.
     pub fn selected(&self) -> usize {
         self.sel
     }
@@ -186,6 +195,7 @@ impl Prompt {
         self
     }
 
+    /// Feed one key; `Done(text)` is the confirmed text.
     pub fn on_key(&mut self, k: KeyEvent) -> Outcome<String> {
         if k.kind == KeyEventKind::Release {
             return Outcome::Continue;
@@ -231,6 +241,7 @@ impl Prompt {
         }
     }
 
+    /// The screen text for a terminal `cols` wide.
     pub fn lines(&self, cols: usize) -> Vec<String> {
         if self.stage == Stage::Warn {
             let mut v = vec![
@@ -258,6 +269,7 @@ impl Prompt {
         v
     }
 
+    /// Is the prompt waiting for the confirm word?
     pub fn in_confirm(&self) -> bool {
         self.stage == Stage::Confirm
     }

@@ -8,7 +8,7 @@ use axum::response::{IntoResponse, Response};
 use garage_protocol::SessionStatus;
 use serde_json::{Map, Value, json};
 
-use crate::error::error_response;
+use crate::error::{coded, error_response};
 use crate::install::{InstallError, read_settings_or_refuse, write_settings_atomic};
 use crate::security::token_matches;
 use crate::state::AppState;
@@ -133,8 +133,9 @@ pub(crate) fn parse_body(body: &Bytes) -> Result<Value, Box<Response>> {
     match serde_json::from_slice::<Value>(body) {
         Ok(Value::Null) => Ok(json!({})),
         Ok(v) => Ok(v),
-        Err(e) => Err(Box::new(error_response(
+        Err(e) => Err(Box::new(coded(
             StatusCode::BAD_REQUEST,
+            garage_protocol::ErrorCode::InvalidJson,
             format!("invalid JSON body: {e}"),
         ))),
     }
@@ -223,13 +224,26 @@ pub async fn claude(
                 id: id.clone(),
                 workspace,
                 at: crate::state::status::now_ms(),
-                transcript_offset: offset,
-                row: anchor.map(|a| a.row()),
-                history_limit: anchor.and_then(|a| a.history_limit),
+                anchor: turn_anchor(offset, anchor),
             });
         }
     }
     Json(json!({"ok": true, "applied": ids})).into_response()
+}
+
+/// The `anchor` of a `session.turn`: left out when nothing was measured.
+fn turn_anchor(
+    transcript_offset: Option<u64>,
+    pane: Option<crate::backend::PaneAnchor>,
+) -> Option<garage_protocol::api::TurnAnchor> {
+    if transcript_offset.is_none() && pane.is_none() {
+        return None;
+    }
+    Some(garage_protocol::api::TurnAnchor {
+        transcript_offset,
+        row: pane.map(|a| a.row()),
+        history_limit: pane.and_then(|a| a.history_limit),
+    })
 }
 
 pub async fn snippet(State(state): State<AppState>) -> Response {
@@ -496,7 +510,7 @@ mod tests {
                 (s, body),
                 (
                     StatusCode::UNAUTHORIZED,
-                    json!({"error": "missing or invalid hook token"})
+                    json!({"error": "missing or invalid hook token", "code": "unauthorized"})
                 ),
                 "{u}"
             );

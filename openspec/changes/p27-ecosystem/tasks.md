@@ -4,14 +4,14 @@ Rough; refined when the phase starts.
 
 ## 1. API v1
 
-- [ ] 1.1 Export the API schema from the protocol crate
+- [x] 1.1 Export the API schema from the protocol crate (`schemas/garage-plugin-api.schema.json`, `garage_protocol::api`)
 - [ ] 1.2 Version negotiation: manifest `api` + capabilities, actionable refusal message
 - [ ] 1.3 API reference docs generated from the schema
 
 ## 2. SDKs
 
-- [ ] 2.1 Rust SDK crate generated from the schema
-- [ ] 2.2 TypeScript SDK package generated from the schema
+- [x] 2.1 Rust SDK crate generated from the schema (hand-written over the protocol types, publishable; see design part A3)
+- [x] 2.2 TypeScript SDK package generated from the schema (`sdk/ts`; types generated, client hand-written)
 - [ ] 2.3 Contract tests: both SDKs against a test daemon
 
 ## 3. Authoring tools
@@ -24,7 +24,7 @@ Rough; refined when the phase starts.
 ## 4. Discovery and docs
 
 - [x] 4.1 `claude-garage plugin search` over the `claude-garage-plugin` topic
-- [ ] 4.2 Docs: concepts, manifest reference, slots and actions, permissions, examples
+- [x] 4.2 Docs: concepts, manifest reference, slots and actions, permissions, examples (`docs/plugins/`)
 
 ## 4b. Example plugin: OpenSpec progress
 

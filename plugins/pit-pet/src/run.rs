@@ -366,12 +366,12 @@ mod tests {
         assert_eq!(item["frame_ms"], TICK_MS);
         assert_eq!(item["placement"]["kind"], "filler");
         // One session needs input: the cat alerts, the bang is lit in the
-        // needs-input colour, and a click goes straight to the blocked session.
+        // needs_input colour, and a click goes straight to the blocked session.
         let frame = &item["frames"][((NOW / TICK_MS) % FRAMES as i64) as usize];
         assert_eq!(frame[0]["text"], "=O_O=");
         assert_eq!(frame[0]["click"]["action"], "jump.blocked");
         assert_eq!(frame[2]["text"], "!");
-        assert_eq!(frame[2]["style"]["fg"], "needs-input");
+        assert_eq!(frame[2]["style"]["fg"], "needs_input");
         assert_eq!(puts[0]["ttl_secs"], PUSH_TTL_SECS, "a dead pet disappears");
         assert_eq!(r.state().rev, 1);
         assert!(

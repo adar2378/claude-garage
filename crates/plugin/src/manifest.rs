@@ -41,12 +41,6 @@ pub enum Permission {
     SessionsRead,
     #[serde(rename = "sessions.input")]
     SessionsInput,
-    #[serde(rename = "sessions.manage")]
-    SessionsManage,
-    #[serde(rename = "workspaces.read")]
-    WorkspacesRead,
-    #[serde(rename = "workspaces.write")]
-    WorkspacesWrite,
     #[serde(rename = "ui.widgets")]
     UiWidgets,
     #[serde(rename = "ui.panes")]
@@ -61,8 +55,6 @@ pub enum Permission {
     // Show a short notice (toast) in the TUI.
     #[serde(rename = "ui.notice")]
     UiNotice,
-    #[serde(rename = "network")]
-    Network,
 }
 
 impl Permission {
@@ -70,16 +62,12 @@ impl Permission {
         match self {
             Permission::SessionsRead => "sessions.read",
             Permission::SessionsInput => "sessions.input",
-            Permission::SessionsManage => "sessions.manage",
-            Permission::WorkspacesRead => "workspaces.read",
-            Permission::WorkspacesWrite => "workspaces.write",
             Permission::UiWidgets => "ui.widgets",
             Permission::UiPanes => "ui.panes",
             Permission::UiInvoke => "ui.invoke",
             Permission::CoreActions => "core.actions",
             Permission::UiNavigate => "ui.navigate",
             Permission::UiNotice => "ui.notice",
-            Permission::Network => "network",
         }
     }
 
@@ -174,36 +162,50 @@ pub enum PanePlacement {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Manifest {
+    /// Unique id: `^[a-z][a-z0-9-]{1,30}$`, not a reserved word.
     pub id: String,
+    /// Display name.
     pub name: String,
     /// Semver.
     pub version: String,
     /// The plugin API major version.
     pub api_version: u32,
+    /// Systems the plugin runs on.
     pub platforms: Vec<Platform>,
+    /// One line for the install preview and `plugin list`.
     #[serde(default)]
     pub description: Option<String>,
     #[serde(default)]
+    /// A URL shown in the install preview.
     pub homepage: Option<String>,
-    /// Feature names from `/api/plugin/features` the plugin needs.
+    /// Feature names from `/api/plugins/features` the plugin needs.
     #[serde(default)]
     pub requires: Vec<String>,
     #[serde(default)]
+    /// What the plugin uses. Shown at install; the daemon checks it on API calls.
     pub permissions: Vec<Permission>,
+    /// Commands bindable to keys, buttons and the palette (`[[actions]]`).
     #[serde(default)]
     pub actions: Vec<Action>,
+    /// Commands run when something happens (`[[events]]`).
     #[serde(default)]
     pub events: Vec<EventHook>,
+    /// Programs shown in a tile, overlay or popup (`[[panes]]`).
     #[serde(default)]
     pub panes: Vec<Pane>,
+    /// Named spots the plugin fills at runtime (`[[widgets]]`).
     #[serde(default)]
     pub widgets: Vec<Widget>,
+    /// Clickable labels that run an action (`[[buttons]]`).
     #[serde(default)]
     pub buttons: Vec<Button>,
+    /// Subcommands of `claude-garage` (`[[cli]]`).
     #[serde(default)]
     pub cli: Vec<Cli>,
+    /// Commands run once at install and update (`[[build]]`).
     #[serde(default)]
     pub build: Vec<Build>,
+    /// Per-system binary downloads that replace `[[build]]` (`[release]`).
     #[serde(default)]
     pub release: Option<Release>,
 }
@@ -218,9 +220,12 @@ fn yes() -> bool {
 pub struct Action {
     /// Local id; the full id is `<plugin>:<id>`.
     pub id: String,
+    /// Shown in help and the palette.
     pub title: String,
+    /// What must be focused for the action to be available.
     #[serde(default = "default_contexts")]
     pub contexts: Vec<ActionContext>,
+    /// The program and arguments to run (no shell). Exactly one of `command` and `pane`.
     #[serde(default)]
     pub command: Option<Vec<String>>,
     /// Open one of this plugin's panes instead of running a command.
@@ -229,6 +234,7 @@ pub struct Action {
     /// A suggestion; never overrides an existing binding.
     #[serde(default)]
     pub default_key: Option<String>,
+    /// Ask the user before a plugin-origin trigger (click, `ui/action`) runs it.
     #[serde(default)]
     pub confirm: bool,
     /// 1..=300, default 30.
@@ -243,10 +249,12 @@ fn default_contexts() -> Vec<ActionContext> {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct EventHook {
+    /// The event, or `timer`.
     pub on: EventName,
     /// Only with `on = "timer"`; at least 5.
     #[serde(default)]
     pub every_secs: Option<u32>,
+    /// The program and arguments to run (no shell).
     pub command: Vec<String>,
     /// 1..=60, default 10.
     #[serde(default)]
@@ -256,7 +264,9 @@ pub struct EventHook {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct PaneSize {
+    /// Columns (or percent of the screen width).
     pub cols: u16,
+    /// Rows (or percent of the screen height).
     pub rows: u16,
     /// `cols`/`rows` are percent of the screen.
     #[serde(default)]
@@ -267,14 +277,19 @@ pub struct PaneSize {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Pane {
+    /// Local id, used in `pane = "..."` and the open-pane route.
     pub id: String,
+    /// Shown in the pane frame.
     pub title: String,
+    /// Where it appears.
     pub placement: PanePlacement,
+    /// The program and arguments to run (no shell).
     pub command: Vec<String>,
     /// Opening again focuses the existing pane. Default true.
     #[serde(default = "yes")]
     pub singleton: bool,
     #[serde(default)]
+    /// A size hint for overlay and popup panes.
     pub size: Option<PaneSize>,
 }
 
@@ -282,16 +297,21 @@ pub struct Pane {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Widget {
+    /// Local id, used in the push route.
     pub id: String,
+    /// Where it is drawn; decides the scope key of its content.
     pub slot: Slot,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Button {
+    /// Where the button is drawn.
     pub slot: Slot,
+    /// The text of the button.
     pub label: String,
     #[serde(default)]
+    /// Shown on hover.
     pub tooltip: Option<String>,
     /// A core id, `plugin:action`, or a bare local action id.
     pub on_click: String,
@@ -310,9 +330,12 @@ pub struct Button {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Cli {
+    /// The subcommand: `claude-garage <name>`.
     pub name: String,
+    /// Shown in help.
     #[serde(default)]
     pub description: Option<String>,
+    /// The program and arguments to run (no shell).
     pub command: Vec<String>,
     /// Also receives an unknown first word. At most one installed plugin.
     #[serde(default)]
@@ -330,6 +353,7 @@ pub struct Build {
     /// Default: all header platforms.
     #[serde(default)]
     pub platforms: Vec<Platform>,
+    /// The program and arguments to run (no shell).
     pub command: Vec<String>,
     /// Default 600.
     #[serde(default)]
@@ -341,6 +365,7 @@ pub struct Build {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Release {
+    /// Default: the repo the plugin was installed from.
     #[serde(default)]
     pub repo: Option<String>,
     /// Template; `{version}` is replaced.

@@ -312,7 +312,7 @@ async fn delete_if_empty(
             };
             (
                 StatusCode::CONFLICT,
-                Json(json!({"error": text, "reason": reason})),
+                Json(json!({"error": text, "code": "conflict", "reason": reason})),
             )
                 .into_response()
         }

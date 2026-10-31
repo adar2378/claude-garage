@@ -1,6 +1,6 @@
 //! turn-markers: one gutter marker per finished agent turn.
 //!
-//! The daemon anchors each turn: its `session.turn` event carries `row`, the
+//! The daemon anchors each turn: its `session.turn` event carries `anchor.row`, the
 //! absolute scrollback row the session's cursor was on when the turn ended
 //! (history size plus cursor row, measured by the backend). The plugin keeps
 //! the last [`MAX_PER_SESSION`] turns per session and pushes them as
@@ -46,19 +46,10 @@ pub struct Turns {
 }
 
 fn marker(row: u64) -> WidgetItem {
-    WidgetItem {
-        row: Some(row),
-        kind: Some("marker".into()),
-        segments: Some(vec![Segment {
-            text: GLYPH.into(),
-            style: Some(Style {
-                fg: Some("accent".into()),
-                ..Style::default()
-            }),
-            click: None,
-        }]),
-        ..WidgetItem::default()
-    }
+    WidgetItem::new()
+        .row(row)
+        .kind("marker")
+        .segments(vec![Segment::new(GLYPH).style(Style::new().fg("accent"))])
 }
 
 impl Turns {
@@ -120,10 +111,7 @@ impl Turns {
         }
         // Oldest first, like the stored order.
         scopes.values_mut().for_each(|items| items.reverse());
-        (!scopes.is_empty()).then_some(WidgetPut {
-            scopes,
-            ttl_secs: None,
-        })
+        (!scopes.is_empty()).then(|| WidgetPut::new().scopes(scopes))
     }
 }
 
@@ -170,9 +158,12 @@ pub fn run(api: &Api, dir: &Path, cmd: Cmd, context: &Value) -> Result<(), Error
             let (Some(session), Some(at)) = (session, at) else {
                 return Err(Error::Context("session.turn without id and at".into()));
             };
-            // No row: the backend could not say where the cursor was, so there
+            // No anchor, or no row in it: the backend could not say where the cursor was, so there
             // is nowhere to draw this turn. Nothing to store, nothing to push.
-            let Some(row) = data.and_then(|d| d.get("row")).and_then(Value::as_u64) else {
+            let Some(row) = data
+                .and_then(|d| d.pointer("/anchor/row"))
+                .and_then(Value::as_u64)
+            else {
                 return Ok(());
             };
             turns.add(session, Turn { at, row });
@@ -197,7 +188,7 @@ mod tests {
     const PUT: &str = "/api/plugins/turn-markers/widgets/markers";
 
     fn event(id: &str, at: u64, row: u64) -> Value {
-        json!({"event": {"name": "session.turn", "data": {"id": id, "workspace": "w", "at": at, "transcript_offset": null, "row": row, "history_limit": 2000}}})
+        json!({"event": {"name": "session.turn", "data": {"id": id, "workspace": "w", "at": at, "anchor": {"transcript_offset": null, "row": row, "history_limit": 2000}}}})
     }
 
     fn rig(tag: &str) -> (FakeDaemon, Api, std::path::PathBuf) {
@@ -236,8 +227,15 @@ mod tests {
     #[test]
     fn a_turn_the_daemon_could_not_anchor_draws_nothing_and_stores_nothing() {
         let (d, api, dir) = rig("norow");
-        let no_row = json!({"event": {"data": {"id": "garage/w/a", "at": 5, "row": null}}});
-        run(&api, &dir, Cmd::Turn, &no_row).unwrap();
+        // no `anchor` at all (nothing measured), an anchor with a null row, and
+        // the draft-era flat `row` (no longer part of the event): none draws.
+        for data in [
+            json!({"id": "garage/w/a", "at": 5}),
+            json!({"id": "garage/w/a", "at": 5, "anchor": {"transcript_offset": 9, "row": null, "history_limit": null}}),
+            json!({"id": "garage/w/a", "at": 5, "row": 12}),
+        ] {
+            run(&api, &dir, Cmd::Turn, &json!({"event": {"data": data}})).unwrap();
+        }
         assert!(d.seen().is_empty());
         assert!(!dir.join(STORE).exists());
     }
@@ -324,7 +322,7 @@ mod tests {
                 &api,
                 &dir,
                 Cmd::Turn,
-                &json!({"event": {"data": {"id": "x", "row": 3}}})
+                &json!({"event": {"data": {"id": "x", "anchor": {"row": 3}}}})
             )
             .is_err()
         );
