@@ -31,10 +31,10 @@ impl App {
             ActionSource::Plugin { plugin, .. } => Some(plugin.clone()),
             _ => None,
         };
-        let was_garage = self.store.state().layer == KeyLayer::Garage;
+        let was_engaged = self.store.state().layer == KeyLayer::Engaged;
         let effects = self.dispatch_action_inner(id, ctx, now);
         if let Some(plugin) = plugin {
-            if was_garage && self.store.state().layer == KeyLayer::Engaged {
+            if !was_engaged && self.store.state().layer == KeyLayer::Engaged {
                 self.store.disengage();
                 self.router.notices.show(
                     format!("plugin {plugin} tried to put you into a session — press Enter to engage"),

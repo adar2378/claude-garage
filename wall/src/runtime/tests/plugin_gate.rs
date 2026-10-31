@@ -694,3 +694,19 @@ fn a_human_jump_blocked_still_lands_engaged() {
     assert_eq!(app.store.state().layer, KeyLayer::Engaged);
     assert_eq!(app.store.state().focused_session_id.as_deref(), Some("garage/a/stuck"));
 }
+
+#[test]
+fn a_plugin_jump_blocked_through_the_open_triage_queue_never_engages() {
+    use crate::state::wall_state::OverlayKind;
+    let (tx, _rx) = mpsc::unbounded_channel();
+    let mut app = App::new(tx, "http://127.0.0.1:0", 0);
+    app.store.workspaces_fetched(vec![ws("a")]);
+    app.store.sessions_fetched(vec![si("a", "one"), si_status("a", "stuck", "needs-input")]);
+    app.store.open_overlay(OverlayKind::TriageQueue);
+    app.dispatch_action_at(ids::JUMP_BLOCKED, &plugin(&app, ONE), 1000);
+    let state = app.store.state();
+    assert_ne!(state.layer, KeyLayer::Engaged);
+    assert_eq!(state.focused_session_id.as_deref(), Some("garage/a/stuck"));
+    let notice = app.router.notices.current(1000).expect("the user is told");
+    assert!(notice.contains("press Enter to engage"), "{notice}");
+}
