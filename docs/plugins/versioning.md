@@ -72,4 +72,4 @@ Going the other way: a plugin that says `api_version = 2` on a garage that only 
 
 ## SDK versions
 
-The Rust crate `garage-plugin-sdk` and the TypeScript package `@claude-garage/plugin-sdk` speak API v1. A new SDK release may add methods. It will not remove one within the same major SDK version.
+The Rust crate `garage-plugin-sdk` and the TypeScript package `@claude-garage/plugin-sdk` speak API v1. While the SDKs are 0.x, a minor release may change them; a patch release will not. From 1.0, methods are only added within a major version.

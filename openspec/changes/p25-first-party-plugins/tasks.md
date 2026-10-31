@@ -21,7 +21,7 @@
 - [x] 3.4 Quiet startup (`GARAGE_VERBOSE=1` for full output)
 
 ## 4. API freeze
-- [x] 4.1 List every plugin API gap found in group 2 and close it in the plugin host
+- [x] 4.1 List every plugin API gap found in group 2 and close it in the plugin host (all gaps are listed; G6, G8, G10 and the G3 "box" mood stay open as additive v1.x work, the rest are closed or worked around)
   Gaps found by closed-chats, jump-palette, quick-send, tile-buttons, prune-empty-projects and cli-extras (usage-bar, pit-pet and turn-markers list theirs after). Closed in the host:
   - [x] `DELETE /api/sessions/{id}?meta=1` published no plugin-visible event, so a forgotten closed chat stayed in the rail: new additive event `session.forgotten {id, workspace}` (manifest enum, features list, schema, SSE frame).
   - [x] The same route answered 404 for a deliberately closed session (a close removes the resume metadata, only the closed record is left), so `session.delete` on a closed-chat row could never work: it now forgets a closed-only record.
