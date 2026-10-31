@@ -312,7 +312,10 @@ dependencies = [
  "anyhow",
  "clap",
  "garage-daemon",
+ "libc",
+ "serde_json",
  "tokio",
+ "ureq",
 ]
 
 [[package]]
