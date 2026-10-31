@@ -241,7 +241,7 @@ impl Poller {
     fn publish_membership(&self, m: Membership) {
         for (id, dir, last_status) in m.closed {
             let reason = match self.intents.take(&id) {
-                Some(Intent::Renamed) => continue,
+                Some(Intent::Renamed | Intent::Forgotten) => continue,
                 Some(Intent::Reason(r)) => r,
                 None => CloseReason::Crash,
             };

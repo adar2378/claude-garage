@@ -46,6 +46,9 @@ pub enum Intent {
     Reason(CloseReason),
     /// The id changed (workspace rename): neither a close nor a create.
     Renamed,
+    /// Killed and forgotten (`DELETE /api/sessions/{id}?forget=1`): there is
+    /// no `session.closed` and no closed record, only `session.forgotten`.
+    Forgotten,
 }
 
 #[derive(Clone, Default)]
@@ -59,6 +62,11 @@ impl ClosingIntents {
     /// The id is about to stop existing because it is being renamed.
     pub fn mark_renamed(&self, id: &str) {
         self.put(id, Intent::Renamed);
+    }
+
+    /// The session is about to be killed and forgotten without a trace.
+    pub fn mark_forgotten(&self, id: &str) {
+        self.put(id, Intent::Forgotten);
     }
 
     fn put(&self, id: &str, intent: Intent) {

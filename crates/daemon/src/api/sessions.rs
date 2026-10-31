@@ -785,6 +785,31 @@ pub async fn remove(
     if !live {
         return error_response(StatusCode::NOT_FOUND, format!("no such session: {id}"));
     }
+    // `?forget=1` kills a LIVE session and leaves no history: no closed
+    // record, no resume metadata, no `session.closed`; the bus says
+    // `session.forgotten` instead.
+    if q.get("forget").map(String::as_str) == Some("1") {
+        let meta = st.registry.get_session_meta(&id).await;
+        st.closing.mark_forgotten(&id);
+        if let Err(e) = st.backend.kill(&id).await {
+            st.closing.clear(&id);
+            return server_error(e);
+        }
+        let _ = st.registry.remove_session_meta(&id).await;
+        let _ = st.registry.remove_closed(&id).await;
+        st.telemetry.context.drop_session(&id);
+        st.telemetry.transcripts.clear_cache(&id);
+        st.status.drop_session(&id);
+        let worktree = match meta.as_ref().and_then(|m| m.worktree.as_ref()) {
+            Some(w) => with_target(w).await,
+            None => Value::Null,
+        };
+        let (workspace, _) = split_session_id(&id);
+        st.bus
+            .publish(crate::bus::DaemonEvent::SessionForgotten { id, workspace });
+        return Json(json!({"deleted": true, "forgotten": true, "worktree": worktree}))
+            .into_response();
+    }
     // Capture the meta BEFORE removing it: the worktree record rides the
     // response so the caller can drive worktrees/finish afterwards.
     let meta = st.registry.get_session_meta(&id).await;
@@ -1750,6 +1775,76 @@ mod tests {
         // gone now: 404
         let (c, _) = h
             .call("DELETE", "/api/sessions/garage%2Fws%2Fa", None)
+            .await;
+        assert_eq!(c, StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn forgetting_a_live_session_kills_it_and_leaves_no_closed_record_and_no_close_event() {
+        let h = harness();
+        let dir = h.workspace("ws").await;
+        h.live("garage/ws/a", &dir).await;
+        h.live("garage/ws/b", &dir).await;
+        h.st.registry
+            .upsert_session_meta("garage/ws/a", meta(Some("conv-1"), "ws", "a"))
+            .await
+            .unwrap();
+        let recorder = crate::closed::spawn(&h.st.bus, h.st.registry.clone(), h.st.backend.clone());
+        let poller = h.st.shared_poller();
+        poller.poll_once().await; // the poller knows both sessions
+        let mut rx = h.st.bus.subscribe();
+
+        let (c, body) = h
+            .call("DELETE", "/api/sessions/garage%2Fws%2Fa?forget=1", None)
+            .await;
+        assert_eq!(c, StatusCode::OK, "{body}");
+        assert!(!h.st.backend.has("garage/ws/a").await.unwrap(), "killed");
+        assert!(
+            h.st.registry
+                .get_session_meta("garage/ws/a")
+                .await
+                .is_none()
+        );
+        // a plain close of the other one for contrast: it does leave a record
+        let (c, _) = h
+            .call("DELETE", "/api/sessions/garage%2Fws%2Fb", None)
+            .await;
+        assert_eq!(c, StatusCode::OK);
+
+        poller.poll_once().await; // sees both vanish
+        h.tmux
+            .wait_for_async(|| async { h.st.registry.get_closed("garage/ws/b").await.is_some() })
+            .await;
+        assert!(
+            h.st.registry.get_closed("garage/ws/a").await.is_none(),
+            "no history for a forgotten session"
+        );
+        let mut seen = Vec::new();
+        while !seen.contains(&"closed garage/ws/b".to_string()) {
+            let ev = tokio::time::timeout(std::time::Duration::from_secs(5), rx.recv())
+                .await
+                .expect("b's close is announced")
+                .unwrap();
+            match ev {
+                DaemonEvent::SessionForgotten { id, .. } => seen.push(format!("forgotten {id}")),
+                DaemonEvent::SessionClosed { id, .. } => seen.push(format!("closed {id}")),
+                _ => {}
+            }
+        }
+        assert!(
+            seen.contains(&"forgotten garage/ws/a".to_string()),
+            "{seen:?}"
+        );
+        assert!(seen.contains(&"closed garage/ws/b".to_string()), "{seen:?}");
+        assert!(
+            !seen.contains(&"closed garage/ws/a".to_string()),
+            "{seen:?}"
+        );
+        recorder.abort();
+
+        // a session that is not live cannot be forgotten this way
+        let (c, _) = h
+            .call("DELETE", "/api/sessions/garage%2Fws%2Fa?forget=1", None)
             .await;
         assert_eq!(c, StatusCode::NOT_FOUND);
     }

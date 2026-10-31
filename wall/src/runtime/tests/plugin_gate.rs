@@ -661,7 +661,7 @@ fn an_unknown_plugin_action_id_is_not_refused() {
 }
 
 #[test]
-fn session_delete_arms_for_a_human_too_and_forgets_only_a_closed_session() {
+fn session_delete_arms_for_a_human_too_and_a_live_tile_is_killed_with_no_history() {
     let mut app = fixture();
     // A human first trigger arms, it does not delete on the spot.
     let key = ActionCtx::from_focus(app.store.state(), ActionSource::Key("D".into()))
@@ -688,14 +688,22 @@ fn session_delete_arms_for_a_human_too_and_forgets_only_a_closed_session() {
         "ends in DELETE /api/sessions/<id>?meta=1"
     );
 
-    // A live session is refused with a hint, even after a confirm.
+    // A live session arms with the no-way-back wording, and a confirm kills it
+    // for good (DELETE ?forget=1), it does not just refuse.
     let mut app = fixture();
     app.dispatch_action_at(ids::SESSION_DELETE, &widget(&app, TWO), 1000);
-    let effects = key_at(&mut app.router, &mut app.store, "y", 1400);
-    assert!(effects.is_empty(), "{effects:?}");
     assert_eq!(
-        app.router.notices.current(1400),
-        Some("close it first — delete forgets a closed session")
+        app.router.notices.current(1000),
+        Some("Delete a/two? (kills it, no history) — click again or press y")
+    );
+    let effects = key_at(&mut app.router, &mut app.store, "y", 1400);
+    assert_eq!(
+        effects,
+        vec![Effect::Forget {
+            id: TWO.into(),
+            label: "two".into()
+        }],
+        "{effects:?}"
     );
 
     // A closed-session record the store no longer lists can still be forgotten.

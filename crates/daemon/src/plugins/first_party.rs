@@ -126,6 +126,30 @@ fn every_shipped_action_plugin_is_on_the_compiled_allowlist_and_a_changed_manife
 }
 
 #[tokio::test]
+async fn tile_buttons_offers_close_and_delete_and_both_ask_before_acting() {
+    let r = Rig::new();
+    let root = staged(&ACTION_PLUGINS);
+    seed(&r.paths(), root.path()).unwrap();
+    r.st.plugins.reload().unwrap();
+    let p = r.st.plugins.plugin("tile-buttons").unwrap();
+    let m = p.manifest().unwrap();
+    let buttons: Vec<(&str, bool)> = m
+        .buttons
+        .iter()
+        .map(|b| (b.on_click.as_str(), b.confirm))
+        .collect();
+    assert_eq!(
+        buttons,
+        [("session.close", true), ("session.delete", true)],
+        "the delete button works on a live tile now: it forgets the session"
+    );
+    assert!(
+        m.buttons[0].priority > m.buttons[1].priority,
+        "narrow tiles keep close and drop delete"
+    );
+}
+
+#[tokio::test]
 async fn the_six_seed_with_the_documented_defaults_load_together_and_none_is_refused() {
     let r = Rig::new();
     let root = staged(&ACTION_PLUGINS);

@@ -1489,7 +1489,11 @@ async fn session_input_with_a_status_guard_refuses_a_session_that_is_waiting_for
 
     // the same call without the guard still goes through (old callers)
     // and a bad guard is a 400, not a silent send
-    for bad in [json!("needs-input"), json!({"not": "needs-input"}), json!({"not": [1]})] {
+    for bad in [
+        json!("needs-input"),
+        json!({"not": "needs-input"}),
+        json!({"not": [1]}),
+    ] {
         let body = json!({"id": "garage/ws/s", "text": "hi", "if_status": bad}).to_string();
         let (s, _, _) = r
             .call("POST", "/api/sessions/input", Some(&qs), Some(&body))
