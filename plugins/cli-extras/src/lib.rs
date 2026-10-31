@@ -220,19 +220,92 @@ pub fn empty_workspaces(workspaces: &Value, sessions: &Value) -> Vec<String> {
     names
 }
 
-/// Remove every empty project (or only list them with `dry_run`); returns
-/// the names. A project removed meanwhile (404) still counts as done.
-pub fn prune(api: &Api, dry_run: bool) -> Result<Vec<String>, Error> {
-    let names = empty_workspaces(&api.get("/api/workspaces")?, &api.get("/api/sessions")?);
-    if !dry_run {
-        for n in &names {
-            match api.delete(&format!("/api/workspaces/{n}")) {
-                Ok(_) | Err(Error::Http { status: 404, .. }) => {}
-                Err(e) => return Err(e),
-            }
+/// A project registered more recently than this is never removed as empty:
+/// it was probably just added and is waiting for its first chat. The daemon
+/// enforces it.
+pub const MIN_AGE_SECS: u32 = 600;
+
+/// What `prune` would do.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct PrunePlan {
+    /// No session and no closed chat: candidates for removal.
+    pub remove: Vec<String>,
+    /// No session, but closed chats the user may want back: left alone.
+    pub keep_for_history: Vec<String>,
+}
+
+/// Look for projects `prune` may remove.
+pub fn plan_prune(api: &Api) -> Result<PrunePlan, Error> {
+    let empty = empty_workspaces(&api.get("/api/workspaces")?, &api.get("/api/sessions")?);
+    let mut plan = PrunePlan::default();
+    for name in empty {
+        let closed = match api.get(&format!("/api/workspaces/{name}/closed")) {
+            Ok(v) => v.as_array().map_or(0, Vec::len),
+            // removed meanwhile
+            Err(Error::Http { status: 404, .. }) => continue,
+            Err(e) => return Err(e),
+        };
+        if closed > 0 {
+            plan.keep_for_history.push(name);
+        } else {
+            plan.remove.push(name);
         }
     }
-    Ok(names)
+    Ok(plan)
+}
+
+/// What happened to one project.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Pruned {
+    Removed,
+    /// The daemon refused: it holds something now, or is too new. The text is
+    /// the daemon's.
+    Kept(String),
+}
+
+/// Remove `names`, each only if the daemon still finds it empty and old
+/// enough (`DELETE ...?if_empty=1&min_age_secs=...`, decided atomically).
+/// A project removed meanwhile (404) counts as done.
+pub fn prune(api: &Api, names: &[String]) -> Result<Vec<(String, Pruned)>, Error> {
+    let mut out = Vec::new();
+    for n in names {
+        let res = api.delete(&format!(
+            "/api/workspaces/{n}?if_empty=1&min_age_secs={MIN_AGE_SECS}"
+        ));
+        let r = match res {
+            Ok(_) | Err(Error::Http { status: 404, .. }) => Pruned::Removed,
+            Err(e @ Error::Http { status: 409, .. }) => Pruned::Kept(reason(&e)),
+            Err(e) => return Err(e),
+        };
+        out.push((n.clone(), r));
+    }
+    Ok(out)
+}
+
+/// What to do about asking before `prune` removes anything.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Confirm {
+    /// `--yes`: no question.
+    Go,
+    /// A person is at the terminal: ask `[y/N]`.
+    Ask,
+    /// No terminal and no `--yes`: do not guess.
+    Refuse,
+}
+
+pub fn confirm_mode(yes: bool, interactive: bool) -> Confirm {
+    if yes {
+        Confirm::Go
+    } else if interactive {
+        Confirm::Ask
+    } else {
+        Confirm::Refuse
+    }
+}
+
+/// Does `answer` (a line typed at the `[y/N]` question) mean yes?
+pub fn is_yes(answer: &str) -> bool {
+    matches!(answer.trim().to_lowercase().as_str(), "y" | "yes")
 }
 
 #[cfg(test)]
@@ -440,25 +513,51 @@ mod tests {
         );
     }
 
-    #[test]
-    fn prune_removes_only_projects_with_no_session_at_all() {
-        let d = FakeDaemon::start(|req| {
+    fn prune_daemon() -> FakeDaemon {
+        FakeDaemon::start(|req| {
             match (req.method.as_str(), req.path.as_str()) {
             ("GET", "/api/workspaces") => (
                 200,
-                r#"[{"name":"live"},{"name":"crashed"},{"name":"empty-b"},{"name":"empty-a"}]"#.into(),
+                r#"[{"name":"live"},{"name":"crashed"},{"name":"has-history"},{"name":"empty-b"},{"name":"empty-a"}]"#.into(),
             ),
             ("GET", "/api/sessions") => (
                 200,
                 r#"[{"id":"garage/live/claude-1","workspace":"live"},{"id":"garage/crashed/claude-1","workspace":"crashed","restorable":true}]"#.into(),
             ),
-            ("DELETE", "/api/workspaces/empty-b") => (404, "{}".into()),
+            ("GET", "/api/workspaces/has-history/closed") => (200, r#"[{"id":"garage/has-history/x"}]"#.into()),
+            ("GET", p) if p.ends_with("/closed") => (200, "[]".into()),
+            ("DELETE", "/api/workspaces/empty-b?if_empty=1&min_age_secs=600") => (404, "{}".into()),
             ("DELETE", _) => (204, "".into()),
             _ => (500, "{}".into()),
         }
-        });
-        let removed = prune(&d.api("p"), false).unwrap();
-        assert_eq!(removed, ["empty-a", "empty-b"]);
+        })
+    }
+
+    #[test]
+    fn the_plan_lists_only_projects_with_no_session_and_no_closed_chat() {
+        let d = prune_daemon();
+        let plan = plan_prune(&d.api("p")).unwrap();
+        assert_eq!(plan.remove, ["empty-a", "empty-b"]);
+        assert_eq!(plan.keep_for_history, ["has-history"]);
+        assert!(
+            d.log().iter().all(|l| l.starts_with("GET")),
+            "planning removes nothing: {:?}",
+            d.log()
+        );
+    }
+
+    #[test]
+    fn pruning_asks_the_daemon_to_remove_each_only_if_empty_and_not_brand_new() {
+        let d = prune_daemon();
+        let done = prune(&d.api("p"), &["empty-a".into(), "empty-b".into()]).unwrap();
+        assert_eq!(
+            done,
+            [
+                ("empty-a".to_owned(), Pruned::Removed),
+                ("empty-b".to_owned(), Pruned::Removed)
+            ],
+            "404 (gone already) is done"
+        );
         let deletes: Vec<_> = d
             .log()
             .into_iter()
@@ -467,20 +566,54 @@ mod tests {
         assert_eq!(
             deletes,
             [
-                "DELETE /api/workspaces/empty-a",
-                "DELETE /api/workspaces/empty-b"
+                "DELETE /api/workspaces/empty-a?if_empty=1&min_age_secs=600",
+                "DELETE /api/workspaces/empty-b?if_empty=1&min_age_secs=600"
             ]
         );
     }
 
     #[test]
-    fn a_dry_run_lists_and_deletes_nothing() {
-        let d = FakeDaemon::start(|req| match req.path.as_str() {
-            "/api/workspaces" => (200, r#"[{"name":"gone"}]"#.into()),
-            "/api/sessions" => (200, "[]".into()),
-            _ => (500, "{}".into()),
+    fn a_project_that_filled_up_or_is_brand_new_is_reported_kept_with_the_daemons_reason() {
+        let d = FakeDaemon::start(|req| {
+            if req.path.starts_with("/api/workspaces/fresh") {
+                (
+                    409,
+                    r#"{"error":"fresh was registered 30s ago","reason":"too-new"}"#.into(),
+                )
+            } else {
+                (
+                    409,
+                    r#"{"error":"busy has 1 live session(s)","reason":"live"}"#.into(),
+                )
+            }
         });
-        assert_eq!(prune(&d.api("p"), true).unwrap(), ["gone"]);
-        assert!(d.log().iter().all(|l| l.starts_with("GET")));
+        let done = prune(&d.api("p"), &["fresh".into(), "busy".into()]).unwrap();
+        assert_eq!(
+            done,
+            [
+                (
+                    "fresh".to_owned(),
+                    Pruned::Kept("fresh was registered 30s ago".into())
+                ),
+                (
+                    "busy".to_owned(),
+                    Pruned::Kept("busy has 1 live session(s)".into())
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn nothing_is_removed_without_yes_or_a_person_to_ask() {
+        assert_eq!(confirm_mode(true, false), Confirm::Go);
+        assert_eq!(confirm_mode(true, true), Confirm::Go);
+        assert_eq!(confirm_mode(false, true), Confirm::Ask);
+        assert_eq!(
+            confirm_mode(false, false),
+            Confirm::Refuse,
+            "a script that forgot --yes removes nothing"
+        );
+        assert!(is_yes(" Y\n") && is_yes("yes"));
+        assert!(!is_yes("") && !is_yes("no") && !is_yes("sure"));
     }
 }

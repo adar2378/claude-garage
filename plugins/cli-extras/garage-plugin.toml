@@ -25,9 +25,11 @@ description  = "Install the garage hooks and statusline into Claude Code setting
 command      = ["{plugin_dir}/bin/cli-extras", "install"]
 needs_daemon = true
 
-# Remove every project that has no session at all (--dry-run lists them).
+# Remove projects that have no session and no closed chat. It lists them and
+# asks first (--yes skips the question, --dry-run only lists). A project added
+# in the last ten minutes is never removed.
 [[cli]]
 name         = "prune"
-description  = "Remove projects with no sessions"
+description  = "Remove projects with no sessions (asks first; --yes, --dry-run)"
 command      = ["{plugin_dir}/bin/cli-extras", "prune"]
 needs_daemon = true

@@ -1,11 +1,13 @@
 //! prune-empty-projects: when the user closes a project's last chat, the
-//! project goes too. "Empty" means the workspace has no entry at all in
-//! `GET /api/sessions`: not live, and not `restorable` (a restorable entry is
-//! a crash waiting to be resumed).
+//! project goes too. The daemon decides whether it is empty, atomically with
+//! the removal (`DELETE /api/workspaces/{name}?if_empty=1&drop_closed=1`): a
+//! live session or a restorable one (a crash waiting to be resumed) keeps the
+//! project. Closed records do not; they are the chat the user just closed and
+//! go with the project.
 
 use std::time::Duration;
 
-use garage_plugin_sdk::{Api, Error, Value, workspace_has_sessions};
+use garage_plugin_sdk::{Api, Error, Value};
 
 /// How long to wait after the close before looking: a user who closes one
 /// chat and opens another a moment later keeps the project.
@@ -21,11 +23,6 @@ pub enum Outcome {
     Pruned(String),
 }
 
-/// Does `sessions` (the `GET /api/sessions` array) hold nothing for `workspace`?
-pub fn is_empty(sessions: &Value, workspace: &str) -> bool {
-    !workspace_has_sessions(sessions, workspace)
-}
-
 /// Handle one `session.closed` event payload.
 pub fn handle(api: &Api, data: &Value, settle: Duration) -> Result<Outcome, Error> {
     if data.get("reason").and_then(Value::as_str) != Some("user") {
@@ -39,12 +36,13 @@ pub fn handle(api: &Api, data: &Value, settle: Duration) -> Result<Outcome, Erro
         return Ok(Outcome::Ignored);
     };
     std::thread::sleep(settle);
-    if !is_empty(&api.get("/api/sessions")?, workspace) {
-        return Ok(Outcome::Kept);
-    }
-    match api.delete(&format!("/api/workspaces/{workspace}")) {
+    match api.delete(&format!(
+        "/api/workspaces/{workspace}?if_empty=1&drop_closed=1"
+    )) {
         // closing many chats at once races several events against one delete
         Ok(_) | Err(Error::Http { status: 404, .. }) => Ok(Outcome::Pruned(workspace.to_owned())),
+        // the daemon found a session in it
+        Err(Error::Http { status: 409, .. }) => Ok(Outcome::Kept),
         Err(e) => Err(e),
     }
 }
@@ -61,40 +59,31 @@ mod tests {
         json!({"id": "garage/app/main", "workspace": "app", "reason": reason})
     }
 
-    fn daemon(sessions: &'static str, delete_status: u16) -> FakeDaemon {
+    fn daemon(delete_status: u16) -> FakeDaemon {
         FakeDaemon::start(move |req| match (req.method.as_str(), req.path.as_str()) {
-            ("GET", "/api/sessions") => (200, sessions.into()),
-            ("DELETE", "/api/workspaces/app") => (delete_status, "{}".into()),
+            ("DELETE", "/api/workspaces/app?if_empty=1&drop_closed=1") => {
+                (delete_status, "{}".into())
+            }
             _ => (500, "{}".into()),
         })
     }
 
     #[test]
-    fn only_a_session_of_that_workspace_makes_it_non_empty() {
-        let list = json!([
-            {"id": "garage/other/a", "workspace": "other", "status": "idle"},
-            {"id": "garage/app/b", "workspace": "app", "restorable": true, "status": "restorable"},
-        ]);
-        assert!(!is_empty(&list, "app"), "a restorable entry still counts");
-        assert!(is_empty(&list, "third"));
-        assert!(is_empty(&json!([]), "app"));
-        assert!(is_empty(&Value::Null, "app"));
-        // an entry with no workspace field is matched by its id
-        assert!(!is_empty(&json!([{"id": "garage/app/c"}]), "app"));
-    }
-
-    #[test]
-    fn a_user_close_of_the_last_chat_removes_the_project() {
-        let d = daemon("[]", 204);
+    fn a_user_close_of_the_last_chat_asks_the_daemon_to_remove_the_project_if_empty() {
+        let d = daemon(204);
         let out = handle(&d.api("p"), &closed("user"), NONE).unwrap();
         assert_eq!(out, Outcome::Pruned("app".into()));
-        assert_eq!(d.log(), ["GET /api/sessions", "DELETE /api/workspaces/app"]);
+        assert_eq!(
+            d.log(),
+            ["DELETE /api/workspaces/app?if_empty=1&drop_closed=1"],
+            "one atomic call: no list-then-delete window"
+        );
     }
 
     #[test]
     fn a_crash_or_a_daemon_restart_never_prunes_and_does_not_even_look() {
         for reason in ["crash", "daemon-restart", "something-new"] {
-            let d = daemon("[]", 204);
+            let d = daemon(204);
             assert_eq!(
                 handle(&d.api("p"), &closed(reason), NONE).unwrap(),
                 Outcome::Ignored
@@ -104,26 +93,24 @@ mod tests {
     }
 
     #[test]
-    fn a_workspace_that_still_has_a_chat_is_kept() {
-        let d = daemon(
-            r#"[{"id":"garage/app/other","workspace":"app","status":"idle"}]"#,
-            204,
-        );
+    fn a_workspace_the_daemon_finds_occupied_is_kept() {
+        // the daemon answers 409 for a live or restorable session
+        let d = daemon(409);
         assert_eq!(
             handle(&d.api("p"), &closed("user"), NONE).unwrap(),
             Outcome::Kept
         );
-        assert_eq!(d.log(), ["GET /api/sessions"], "nothing is deleted");
+        assert_eq!(d.requests().len(), 1);
     }
 
     #[test]
     fn an_already_removed_workspace_is_success_and_a_real_failure_is_not() {
-        let d = daemon("[]", 404);
+        let d = daemon(404);
         assert_eq!(
             handle(&d.api("p"), &closed("user"), NONE).unwrap(),
             Outcome::Pruned("app".into())
         );
-        let d = daemon("[]", 500);
+        let d = daemon(500);
         assert!(matches!(
             handle(&d.api("p"), &closed("user"), NONE),
             Err(Error::Http { status: 500, .. })
@@ -132,7 +119,7 @@ mod tests {
 
     #[test]
     fn an_event_without_a_workspace_is_ignored() {
-        let d = daemon("[]", 204);
+        let d = daemon(204);
         let data = json!({"reason": "user"});
         assert_eq!(handle(&d.api("p"), &data, NONE).unwrap(), Outcome::Ignored);
     }

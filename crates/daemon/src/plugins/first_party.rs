@@ -276,11 +276,40 @@ async fn prune_removes_a_project_after_a_user_close_but_never_after_a_crash() {
         .set_enabled("prune-empty-projects", true)
         .unwrap();
     let _events = r.st.plugins.start();
-    for ws in ["crashed", "closed"] {
+    for ws in ["crashed", "closed", "busy"] {
         r.st.registry.upsert_workspace(ws, "/tmp").await.unwrap();
     }
+    // what the daemon has already written when it announces a user close
+    for ws in ["closed", "busy"] {
+        r.st.registry
+            .record_closed(ClosedRecord {
+                id: format!("garage/{ws}/claude-1"),
+                workspace: ws.into(),
+                dir: "/tmp".into(),
+                branch: None,
+                closed_at: 1,
+                reason: "user".into(),
+                last_status: None,
+                claude_session_id: None,
+                worktree: None,
+            })
+            .await
+            .unwrap();
+    }
+    // "busy" has another chat that can be resumed
+    r.st.registry
+        .upsert_session_meta(
+            "garage/busy/claude-2",
+            crate::state::registry::MetaUpdate {
+                workspace: Some("busy".into()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
 
     r.st.bus.publish(closed("crashed", CloseReason::Crash));
+    r.st.bus.publish(closed("busy", CloseReason::User));
     r.st.bus.publish(closed("closed", CloseReason::User));
     let gone = |ws: &'static str| {
         let reg = r.st.registry.clone();
@@ -299,6 +328,10 @@ async fn prune_removes_a_project_after_a_user_close_but_never_after_a_crash() {
     assert!(
         !gone("crashed").await,
         "a crash must not remove the project"
+    );
+    assert!(
+        !gone("busy").await,
+        "a project with a restorable chat is kept (the daemon answered 409)"
     );
     let _ = json!(null);
 }

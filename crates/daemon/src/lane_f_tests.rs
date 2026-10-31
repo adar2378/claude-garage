@@ -407,6 +407,175 @@ async fn delete_workspace_plain_is_204_drops_metadata_and_never_touches_tmux() {
 }
 
 #[tokio::test]
+async fn delete_workspace_if_empty_refuses_anything_with_content_and_removes_only_a_bare_one() {
+    use crate::state::registry::{ClosedRecord, MetaUpdate};
+    let tmux = TestTmux::new();
+    let garage = tempfile::tempdir().unwrap();
+    let backend = spawn_sessions(&tmux, &["garage/live/a"]).await;
+    let st = state_with(Arc::new(FakeOs::default()), backend, garage.path());
+    for ws in ["live", "restorable", "closed", "bare"] {
+        st.registry.upsert_workspace(ws, "/proj").await.unwrap();
+    }
+    st.registry
+        .upsert_session_meta(
+            "garage/restorable/b",
+            MetaUpdate {
+                workspace: Some("restorable".into()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    st.registry
+        .record_closed(ClosedRecord {
+            id: "garage/closed/old".into(),
+            workspace: "closed".into(),
+            dir: "/proj".into(),
+            branch: None,
+            closed_at: 1,
+            reason: "user".into(),
+            last_status: None,
+            claude_session_id: Some("c".into()),
+            worktree: None,
+        })
+        .await
+        .unwrap();
+
+    for (ws, reason) in [
+        ("live", "live"),
+        ("restorable", "restorable"),
+        ("closed", "closed"),
+    ] {
+        let (s, b) = call(
+            &st,
+            "DELETE",
+            &format!("/api/workspaces/{ws}?if_empty=1"),
+            None,
+        )
+        .await;
+        assert_eq!(s, StatusCode::CONFLICT, "{ws}: {b}");
+        assert_eq!(b["reason"], reason, "{ws}");
+        assert!(st.registry.get_workspace(ws).await.is_some(), "{ws} stays");
+    }
+    assert!(
+        st.registry.get_closed("garage/closed/old").await.is_some(),
+        "a refusal drops no history"
+    );
+    assert!(
+        st.registry
+            .get_session_meta("garage/restorable/b")
+            .await
+            .is_some()
+    );
+    assert_eq!(live(&tmux), ["garage/live/a"]);
+
+    // with drop_closed the closed records are not content: they go along
+    let (s, _) = call(
+        &st,
+        "DELETE",
+        "/api/workspaces/closed?if_empty=1&drop_closed=1",
+        None,
+    )
+    .await;
+    assert_eq!(s, StatusCode::NO_CONTENT);
+    assert!(st.registry.get_workspace("closed").await.is_none());
+    assert!(st.registry.get_closed("garage/closed/old").await.is_none());
+    // but drop_closed never overrides a session
+    let (s, _) = call(
+        &st,
+        "DELETE",
+        "/api/workspaces/live?if_empty=1&drop_closed=1",
+        None,
+    )
+    .await;
+    assert_eq!(s, StatusCode::CONFLICT);
+
+    let (s, b) = call(&st, "DELETE", "/api/workspaces/bare?if_empty=1", None).await;
+    assert_eq!((s, b), (StatusCode::NO_CONTENT, Value::Null));
+    assert!(st.registry.get_workspace("bare").await.is_none());
+    assert_eq!(
+        call(&st, "DELETE", "/api/workspaces/bare?if_empty=1", None)
+            .await
+            .0,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        call(
+            &st,
+            "DELETE",
+            "/api/workspaces/live?if_empty=1&sessions=kill",
+            None
+        )
+        .await
+        .0,
+        StatusCode::BAD_REQUEST
+    );
+}
+
+#[tokio::test]
+async fn delete_workspace_if_empty_spares_a_project_registered_minutes_ago() {
+    let tmux = TestTmux::new();
+    let garage = tempfile::tempdir().unwrap();
+    let backend = spawn_sessions(&tmux, &[]).await;
+    let st = state_with(Arc::new(FakeOs::default()), backend, garage.path());
+    st.registry
+        .upsert_workspace("fresh", "/proj")
+        .await
+        .unwrap();
+    let (s, b) = call(
+        &st,
+        "DELETE",
+        "/api/workspaces/fresh?if_empty=1&min_age_secs=600",
+        None,
+    )
+    .await;
+    assert_eq!(s, StatusCode::CONFLICT, "{b}");
+    assert_eq!(b["reason"], "too-new");
+    assert!(st.registry.get_workspace("fresh").await.is_some());
+
+    // re-pointing keeps the original time, so it cannot be reset to dodge or earn the guard
+    let before = st
+        .registry
+        .get_workspace("fresh")
+        .await
+        .unwrap()
+        .registered_at;
+    st.registry
+        .upsert_workspace("fresh", "/elsewhere")
+        .await
+        .unwrap();
+    assert_eq!(
+        st.registry
+            .get_workspace("fresh")
+            .await
+            .unwrap()
+            .registered_at,
+        before
+    );
+
+    // an old one (or one from before the daemon recorded the time) goes
+    let (s, _) = call(
+        &st,
+        "DELETE",
+        "/api/workspaces/fresh?if_empty=1&min_age_secs=0",
+        None,
+    )
+    .await;
+    assert_eq!(s, StatusCode::NO_CONTENT);
+    assert_eq!(
+        call(
+            &st,
+            "DELETE",
+            "/api/workspaces/x?if_empty=1&min_age_secs=soon",
+            None
+        )
+        .await
+        .0,
+        StatusCode::BAD_REQUEST
+    );
+}
+
+#[tokio::test]
 async fn delete_workspace_with_sessions_kill_kills_only_that_workspaces_sessions() {
     let tmux = TestTmux::new();
     let garage = tempfile::tempdir().unwrap();

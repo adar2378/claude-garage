@@ -185,11 +185,21 @@ pub async fn patch(
 /// fatal) and answers 200 `{removed, killedSessions, failedSessions?}`.
 /// Worktree directories and branches are deliberately left alone: bulk
 /// removal must never silently discard branch work.
+///
+/// `?if_empty=1` removes the workspace only if it holds nothing, decided and
+/// removed under one registry lock: any live or restorable session, or any
+/// closed record, answers 409 `{error, reason}` and removes nothing. Two
+/// optional refinements: `drop_closed=1` lets closed records go with it (for
+/// a caller acting on a deliberate close), and `min_age_secs=N` refuses a
+/// workspace registered less than N seconds ago.
 pub async fn delete(
     State(state): State<AppState>,
     Path(name): Path<String>,
     Query(query): Query<HashMap<String, String>>,
 ) -> Response {
+    if query.get("if_empty").map(String::as_str) == Some("1") {
+        return delete_if_empty(&state, &name, &query).await;
+    }
     if state.registry.get_workspace(&name).await.is_none() {
         return error_response(StatusCode::NOT_FOUND, format!("unknown workspace: {name}"));
     }
@@ -232,4 +242,80 @@ pub async fn delete(
         out.insert("failedSessions".into(), json!(failed));
     }
     Json(Value::Object(out)).into_response()
+}
+
+async fn delete_if_empty(
+    state: &AppState,
+    name: &str,
+    query: &HashMap<String, String>,
+) -> Response {
+    use crate::state::registry::{EmptyRules, NotEmpty, RemovedIfEmpty};
+    if query.contains_key("sessions") {
+        return error_response(
+            StatusCode::BAD_REQUEST,
+            "if_empty cannot be combined with sessions",
+        );
+    }
+    let min_age_ms = match query.get("min_age_secs") {
+        None => None,
+        Some(v) => match v.parse::<i64>() {
+            Ok(n) if n >= 0 => Some(n.saturating_mul(1000)),
+            _ => {
+                return error_response(
+                    StatusCode::BAD_REQUEST,
+                    "min_age_secs must be a whole number of seconds",
+                );
+            }
+        },
+    };
+    let rules = EmptyRules {
+        drop_closed: query.get("drop_closed").map(String::as_str) == Some("1"),
+        min_age_ms,
+    };
+    let backend = state.backend.clone();
+    let outcome = state
+        .registry
+        .remove_workspace_if_empty(name, rules, async || {
+            backend
+                .list()
+                .await
+                .map(|l| l.into_iter().map(|s| s.id).collect())
+                .map_err(std::io::Error::other)
+        })
+        .await;
+    match outcome {
+        Ok(RemovedIfEmpty::Removed) => {
+            state
+                .bus
+                .publish(crate::bus::DaemonEvent::WorkspaceRemoved {
+                    name: name.to_owned(),
+                });
+            StatusCode::NO_CONTENT.into_response()
+        }
+        Ok(RemovedIfEmpty::Unknown) => {
+            error_response(StatusCode::NOT_FOUND, format!("unknown workspace: {name}"))
+        }
+        Ok(RemovedIfEmpty::Refused(why)) => {
+            let (reason, text) = match &why {
+                NotEmpty::Live(ids) => {
+                    ("live", format!("{name} has {} live session(s)", ids.len()))
+                }
+                NotEmpty::Restorable(ids) => (
+                    "restorable",
+                    format!("{name} has {} restorable session(s)", ids.len()),
+                ),
+                NotEmpty::Closed(n) => ("closed", format!("{name} has {n} closed chat record(s)")),
+                NotEmpty::TooNew { age_ms } => (
+                    "too-new",
+                    format!("{name} was registered {}s ago", age_ms / 1000),
+                ),
+            };
+            (
+                StatusCode::CONFLICT,
+                Json(json!({"error": text, "reason": reason})),
+            )
+                .into_response()
+        }
+        Err(e) => internal(e.into()),
+    }
 }

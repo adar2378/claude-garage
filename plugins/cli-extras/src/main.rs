@@ -9,7 +9,10 @@ fn main() {
     let code = match args.first().map(String::as_str) {
         Some("open") => open(),
         Some("install") => report(lib::install),
-        Some("prune") => prune(args.iter().any(|a| a == "--dry-run")),
+        Some("prune") => prune(
+            args.iter().any(|a| a == "--dry-run"),
+            args.iter().any(|a| a == "--yes" || a == "-y"),
+        ),
         other => {
             eprintln!("cli-extras: unknown command {other:?} (open | install | prune)");
             2
@@ -38,7 +41,8 @@ fn report(f: impl FnOnce(&Api) -> Vec<String>) -> i32 {
     i32::from(failed)
 }
 
-fn prune(dry_run: bool) -> i32 {
+fn prune(dry_run: bool, yes: bool) -> i32 {
+    use std::io::{BufRead, IsTerminal, Write};
     let api = match api() {
         Ok(a) => a,
         Err(e) => {
@@ -46,15 +50,57 @@ fn prune(dry_run: bool) -> i32 {
             return 1;
         }
     };
-    match lib::prune(&api, dry_run) {
-        Ok(names) if names.is_empty() => {
-            println!("no empty projects");
-            0
+    let plan = match lib::plan_prune(&api) {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("cli-extras: {e}");
+            return 1;
         }
-        Ok(names) => {
-            let verb = if dry_run { "would remove" } else { "removed" };
-            for n in names {
-                println!("{verb} {n}");
+    };
+    if !plan.keep_for_history.is_empty() {
+        println!(
+            "keeping {} (no sessions, but closed chats you can still restore)",
+            plan.keep_for_history.join(", ")
+        );
+    }
+    if plan.remove.is_empty() {
+        println!("no empty projects");
+        return 0;
+    }
+    let verb = if dry_run {
+        "would remove"
+    } else {
+        "will remove"
+    };
+    for n in &plan.remove {
+        println!("{verb} {n}");
+    }
+    if dry_run {
+        return 0;
+    }
+    match lib::confirm_mode(yes, std::io::stdin().is_terminal()) {
+        lib::Confirm::Go => {}
+        lib::Confirm::Refuse => {
+            eprintln!("cli-extras: not removing anything without --yes (or a terminal to ask on)");
+            return 1;
+        }
+        lib::Confirm::Ask => {
+            print!("Remove {} project(s)? [y/N] ", plan.remove.len());
+            let _ = std::io::stdout().flush();
+            let mut answer = String::new();
+            if std::io::stdin().lock().read_line(&mut answer).is_err() || !lib::is_yes(&answer) {
+                println!("nothing removed");
+                return 0;
+            }
+        }
+    }
+    match lib::prune(&api, &plan.remove) {
+        Ok(done) => {
+            for (name, what) in done {
+                match what {
+                    lib::Pruned::Removed => println!("removed {name}"),
+                    lib::Pruned::Kept(why) => println!("kept {name}: {why}"),
+                }
             }
             0
         }
