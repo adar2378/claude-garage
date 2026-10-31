@@ -1,0 +1,28 @@
+#:schema https://raw.githubusercontent.com/adar2378/claude-garage/main/schemas/garage-plugin.schema.json
+id = "usage-bar"
+name = "Usage bar"
+version = "0.1.0"
+api_version = 1
+platforms = ["macos", "linux"]
+description = "5-hour and weekly usage in the status strip, kept across restarts"
+permissions = ["ui.widgets"]
+
+# The daemon forgets widgets when it restarts: draw again at once from the last
+# known figures, then follow the statusline (it reports after every turn) and
+# a slow timer for the case where no hook ever fires.
+[[events]]
+on = "daemon.started"
+command = ["{plugin_dir}/bin/usage-bar", "refresh"]
+
+[[events]]
+on = "session.turn"
+command = ["{plugin_dir}/bin/usage-bar", "refresh"]
+
+[[events]]
+on = "timer"
+every_secs = 60
+command = ["{plugin_dir}/bin/usage-bar", "refresh"]
+
+[[widgets]]
+id = "usage"
+slot = "strip.right"

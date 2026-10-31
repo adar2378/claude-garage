@@ -1003,6 +1003,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "garage-plugin-pit-pet"
+version = "0.6.2"
+dependencies = [
+ "garage-plugin-sdk",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "garage-plugin-prune-empty-projects"
 version = "0.6.2"
 dependencies = [
@@ -1022,10 +1031,29 @@ version = "0.6.2"
 dependencies = [
  "crossterm",
  "garage-protocol",
+ "serde",
  "serde_json",
  "tempfile",
  "ureq",
  "uzers",
+]
+
+[[package]]
+name = "garage-plugin-turn-markers"
+version = "0.6.2"
+dependencies = [
+ "garage-plugin-sdk",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "garage-plugin-usage-bar"
+version = "0.6.2"
+dependencies = [
+ "garage-plugin-sdk",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

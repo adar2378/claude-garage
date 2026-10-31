@@ -323,7 +323,7 @@ async fn a_linked_manifest_that_asks_for_more_keeps_the_last_good_one_and_toasts
         .collect();
     assert_eq!(notices.len(), 1);
     assert!(
-        matches!(&notices[0], DaemonEvent::PluginNotice { plugin, message } if plugin == "lp" && message.contains(want))
+        matches!(&notices[0], DaemonEvent::PluginNotice { plugin, message, .. } if plugin == "lp" && message.contains(want))
     );
 
     // 2. touched again with the same ask: no second toast
@@ -644,7 +644,7 @@ async fn five_failed_hook_runs_in_a_row_switch_hooks_off_until_reload_but_not_ac
         .next_event(|e| matches!(e, DaemonEvent::PluginNotice { .. }))
         .await;
     assert!(
-        matches!(&notice, DaemonEvent::PluginNotice { plugin, message } if plugin == "flaky" && message.contains("failed 5 times")),
+        matches!(&notice, DaemonEvent::PluginNotice { plugin, message, .. } if plugin == "flaky" && message.contains("failed 5 times")),
         "{notice:?}"
     );
     assert!(r.st.plugins.events_disabled("flaky"));
@@ -1274,6 +1274,183 @@ async fn a_widget_click_on_a_core_action_needs_core_actions_and_a_plugin_invocab
         StatusCode::UNPROCESSABLE_ENTITY,
         "not a core id"
     );
+}
+
+#[tokio::test]
+async fn ui_navigate_allows_navigation_clicks_and_ui_actions_but_nothing_that_changes_things() {
+    let mut r = Rig::new();
+    r.install(
+        "nav",
+        &manifest("nav", &["ui.widgets", "ui.invoke", "ui.navigate"], WIDGETS),
+    );
+    let t = r.token("nav");
+    let click = |action: &str| {
+        json!({"scopes": {"*": [{"segments": [{"text": "x", "click": {"action": action}}]}]}})
+            .to_string()
+    };
+    // Widget clicks: navigation ids pass, a close does not (it needs core.actions).
+    for ok in [
+        "jump.blocked",
+        "session.focus",
+        "workspace.focus",
+        "view.cycle",
+    ] {
+        assert_eq!(
+            pw(&r, "nav", Some(&t), &click(ok)).await.0,
+            StatusCode::OK,
+            "{ok}"
+        );
+    }
+    for no in [
+        "session.close",
+        "session.restore",
+        "session.spawn",
+        "daemon.restart",
+    ] {
+        let (s, _, b) = pw(&r, "nav", Some(&t), &click(no)).await;
+        assert_eq!(s, StatusCode::FORBIDDEN, "{no}");
+        assert!(b["error"].as_str().unwrap().contains("core.actions"), "{b}");
+    }
+    // The same holds for a plugin's own ui/action request.
+    r.events();
+    let (s, _, _) = ui_post(&r, Some(t.clone()), json!({"action": "jump.blocked"})).await;
+    assert_eq!(s, StatusCode::ACCEPTED);
+    let (s, _, _) = ui_post(&r, Some(t.clone()), json!({"action": "session.close"})).await;
+    assert_eq!(s, StatusCode::FORBIDDEN);
+    assert_eq!(r.events().len(), 1, "only the navigation reached the TUI");
+    // A plugin with neither permission is refused, naming the narrow one.
+    r.install("bare", &manifest("bare", &["ui.widgets"], WIDGETS));
+    let tb = r.token("bare");
+    let (s, _, b) = pw(&r, "bare", Some(&tb), &click("jump.blocked")).await;
+    assert_eq!(s, StatusCode::FORBIDDEN);
+    assert!(b["error"].as_str().unwrap().contains("ui.navigate"), "{b}");
+}
+
+async fn notice_post(
+    r: &Rig,
+    plugin: &str,
+    token: Option<&str>,
+    body: Value,
+) -> (StatusCode, axum::http::HeaderMap, Value) {
+    r.call(
+        "POST",
+        &format!("/api/plugins/{plugin}/notice"),
+        token,
+        Some(&body.to_string()),
+    )
+    .await
+}
+
+#[tokio::test]
+async fn a_notice_needs_ui_notice_is_cleaned_capped_clamped_and_published_as_a_toast() {
+    let mut r = Rig::new();
+    r.install("toast", &manifest("toast", &["ui.notice"], ""));
+    r.install("mute", &manifest("mute", &["ui.widgets"], WIDGETS));
+    let (tt, tm) = (r.token("toast"), r.token("mute"));
+    r.events();
+
+    assert_eq!(
+        notice_post(&r, "toast", None, json!({"text": "hi"}))
+            .await
+            .0,
+        StatusCode::UNAUTHORIZED
+    );
+    let (s, _, b) = notice_post(&r, "mute", Some(&tm), json!({"text": "hi"})).await;
+    assert_eq!(
+        (s, b["error"].as_str().unwrap()),
+        (
+            StatusCode::FORBIDDEN,
+            "plugin mute lacks permission ui.notice"
+        )
+    );
+    let (s, _, _) = notice_post(&r, "toast", Some(&tm), json!({"text": "hi"})).await;
+    assert_eq!(
+        s,
+        StatusCode::FORBIDDEN,
+        "a token speaks for its own plugin only"
+    );
+    assert_eq!(
+        notice_post(&r, "toast", Some(&tt), json!({"text": " \u{202e}\n\t "}))
+            .await
+            .0,
+        StatusCode::BAD_REQUEST,
+        "nothing left after cleaning"
+    );
+    assert!(r.events().is_empty(), "refused notices reach nobody");
+
+    // Control and bidi characters go, the text is trimmed and cut to 120 characters.
+    let long = format!("  quiet\u{202e}\u{7}\nagain {}", "x".repeat(200));
+    let (s, _, _) = notice_post(
+        &r,
+        "toast",
+        Some(&tt),
+        json!({"text": long, "ttl_ms": 999_999}),
+    )
+    .await;
+    assert_eq!(s, StatusCode::ACCEPTED);
+    let ev = r.events();
+    let [
+        DaemonEvent::PluginNotice {
+            plugin,
+            message,
+            ttl_ms,
+        },
+    ] = ev.as_slice()
+    else {
+        panic!("{ev:?}")
+    };
+    assert_eq!(plugin, "toast");
+    assert_eq!(message.chars().count(), 120);
+    assert!(message.starts_with("quietagain xxx"), "{message}");
+    assert_eq!(*ttl_ms, Some(10_000), "clamped to the longest toast");
+    notice_post(
+        &r,
+        "toast",
+        Some(&tt),
+        json!({"text": "short", "ttl_ms": 5}),
+    )
+    .await;
+    notice_post(&r, "toast", Some(&tt), json!({"text": "plain"})).await;
+    let ttls: Vec<_> = r
+        .events()
+        .into_iter()
+        .filter_map(|e| match e {
+            DaemonEvent::PluginNotice { ttl_ms, .. } => ttl_ms,
+            _ => None,
+        })
+        .collect();
+    assert_eq!(ttls, [1000, 5000], "a floor, and a default");
+}
+
+#[tokio::test]
+async fn notices_are_limited_to_one_a_second_with_a_burst_of_three() {
+    let mut r = Rig::new();
+    r.install("loud", &manifest("loud", &["ui.notice"], ""));
+    let t = r.token("loud");
+    r.events();
+    let mut statuses = Vec::new();
+    for i in 0..6 {
+        statuses.push(
+            notice_post(&r, "loud", Some(&t), json!({"text": format!("n{i}")}))
+                .await
+                .0,
+        );
+    }
+    assert_eq!(
+        statuses
+            .iter()
+            .filter(|s| **s == StatusCode::ACCEPTED)
+            .count(),
+        3,
+        "{statuses:?}"
+    );
+    assert!(
+        statuses[3..]
+            .iter()
+            .all(|s| *s == StatusCode::TOO_MANY_REQUESTS),
+        "{statuses:?}"
+    );
+    assert_eq!(r.events().len(), 3, "a limited notice is not published");
 }
 
 #[tokio::test]

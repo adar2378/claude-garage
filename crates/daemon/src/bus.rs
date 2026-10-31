@@ -48,12 +48,17 @@ pub enum DaemonEvent {
         last_status: Option<String>,
     },
     /// One Claude turn ended (the Stop hook). `transcript_offset` is the
-    /// transcript's byte length at that moment when the hook named one.
+    /// transcript's byte length at that moment when the hook named one. `row`
+    /// is where the session's cursor was in the scrollback (absolute, 0 is
+    /// the oldest retained line) and `history_limit` how many history lines
+    /// the backend keeps; both are `None` when the backend cannot say.
     SessionTurn {
         id: String,
         workspace: String,
         at: i64,
         transcript_offset: Option<u64>,
+        row: Option<u64>,
+        history_limit: Option<u64>,
     },
     WorktreeCreated {
         workspace: String,
@@ -84,6 +89,9 @@ pub enum DaemonEvent {
     PluginNotice {
         plugin: String,
         message: String,
+        /// How long the toast shows, when the plugin asked (clamped by the
+        /// route); `None` is the TUI's default.
+        ttl_ms: Option<u32>,
     },
     /// A plugin's widget content changed; `rev` is its new revision.
     WidgetsChanged {
@@ -145,9 +153,11 @@ impl DaemonEvent {
                 workspace,
                 at,
                 transcript_offset,
+                row,
+                history_limit,
             } => (
                 "session.turn",
-                json!({"id": id, "workspace": workspace, "at": at, "transcript_offset": transcript_offset}),
+                json!({"id": id, "workspace": workspace, "at": at, "transcript_offset": transcript_offset, "row": row, "history_limit": history_limit}),
             ),
             DaemonEvent::SessionForgotten { id, workspace } => (
                 "session.forgotten",

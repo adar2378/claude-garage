@@ -203,13 +203,25 @@ pub const FRAME_MS_MAX: u16 = 2000;
 pub struct Animated {
     pub frames: Arc<[Vec<Span<'static>>]>,
     pub frame_ms: u16,
+    /// A filler item's column per frame (same length as `frames`), when the
+    /// item moves as it animates.
+    pub frame_x: Option<Arc<[u16]>>,
+    /// The click of each frame (same length as `frames`) when frames differ
+    /// in what a click does (an alerting pet jumps to the blocked session, a
+    /// calm one is petted). Replaces the item's own click while that frame shows.
+    pub frame_clicks: Option<Arc<[Option<ClickTarget>]>>,
 }
 
 impl Animated {
+    /// Which frame is shown at `now_ms`: the wall clock modulo the set, so a
+    /// producer that knows the clock can line a sequence up with it.
+    pub fn index_at(&self, now_ms: i64) -> usize {
+        (now_ms.max(0) / i64::from(self.frame_ms)) as usize % self.frames.len()
+    }
+
     /// The frame shown at `now_ms`.
     pub fn frame_at(&self, now_ms: i64) -> &[Span<'static>] {
-        let index = (now_ms.max(0) / i64::from(self.frame_ms)) as usize % self.frames.len();
-        &self.frames[index]
+        &self.frames[self.index_at(now_ms)]
     }
 }
 
@@ -254,8 +266,32 @@ impl SlotItem {
         item.animated = Some(Animated {
             frames: frames.into(),
             frame_ms,
+            frame_x: None,
+            frame_clicks: None,
         });
         Some(item)
+    }
+
+    /// Give an animated filler item a column per frame. Ignored unless there
+    /// is exactly one per frame.
+    pub fn with_frame_x(mut self, xs: &[u16]) -> Self {
+        if let Some(anim) = self.animated.as_mut()
+            && xs.len() == anim.frames.len()
+        {
+            anim.frame_x = Some(xs.into());
+        }
+        self
+    }
+
+    /// Give an animated item a click per frame. Ignored unless there is
+    /// exactly one per frame.
+    pub fn with_frame_clicks(mut self, clicks: Vec<Option<ClickTarget>>) -> Self {
+        if let Some(anim) = self.animated.as_mut()
+            && clicks.len() == anim.frames.len()
+        {
+            anim.frame_clicks = Some(clicks.into());
+        }
+        self
     }
 
     pub fn width(&self) -> usize {
@@ -402,11 +438,24 @@ impl SlotRegistry {
         for item in &mut items {
             // Stamp before an animation swaps the text: the label is the
             // item's own (frame 0) text, so a spinner stays one region.
+            let label = text_hash(&item.text);
             if let Some(target) = item.on_click.as_mut() {
-                target.label = text_hash(&item.text);
+                target.label = label;
             }
             if let Some(anim) = &item.animated {
-                item.text = anim.frame_at(self.clock_ms.get()).to_vec();
+                let index = anim.index_at(self.clock_ms.get());
+                item.text = anim.frames[index].clone();
+                if let Some(clicks) = &anim.frame_clicks {
+                    item.on_click = clicks[index].clone().map(|mut t| {
+                        t.label = label;
+                        t
+                    });
+                }
+                if let (Some(xs), Placement::Filler { x, .. }) =
+                    (&anim.frame_x, &mut item.placement)
+                {
+                    *x = xs[index];
+                }
                 let current = self.animation_ms.get();
                 self.animation_ms.set(if current == 0 {
                     anim.frame_ms
@@ -425,7 +474,6 @@ impl SlotRegistry {
             SlotId::TileTitleRight,
             crate::ui::tile::context_meter_provider,
         );
-        registry.register(SlotId::StripRight, crate::ui::strip::usage_chip_provider);
         registry.register(SlotId::RailHeader, crate::ui::rail::family_label_provider);
         registry
     }
@@ -564,7 +612,7 @@ mod tests {
         let laid = layout(
             vec![
                 item("aa", 5),
-                clickable("bbb", 9, ids::PET_PET),
+                clickable("bbb", 9, ids::VIEW_CYCLE),
                 clickable("cccc", 1, ids::OVERLAY_OPEN_QUEUE),
                 item("d", 5),
             ],
@@ -574,10 +622,10 @@ mod tests {
         assert_eq!(joined(&laid.spans), "aabbbd");
         let cols: Vec<_> = laid.placed.iter().map(|p| p.cols.clone()).collect();
         assert_eq!(cols, vec![0..2, 2..5, 5..6]);
-        assert_eq!(laid.clicks(10, 100), vec![(12..15, ids::PET_PET.into())]);
+        assert_eq!(laid.clicks(10, 100), vec![(12..15, ids::VIEW_CYCLE.into())]);
         assert_eq!(
             laid.clicks(10, 13),
-            vec![(12..13, ids::PET_PET.into())],
+            vec![(12..13, ids::VIEW_CYCLE.into())],
             "clipped to the limit"
         );
         assert!(laid.clicks(10, 12).is_empty(), "fully clipped away");
@@ -598,6 +646,43 @@ mod tests {
         );
         assert_eq!(shown(-5), "a", "a clock before zero does not panic");
         assert_eq!(joined(&item.text), "a", "the base text is frame 0");
+    }
+
+    #[test]
+    fn a_filler_item_takes_the_column_of_the_frame_it_shows() {
+        let mut registry = SlotRegistry::default();
+        registry.register(SlotId::StripRight, |_: &SlotCtx| {
+            let mut item = SlotItem::animated(vec![spans("a"), spans("b")], 100, 1)
+                .unwrap()
+                .with_frame_x(&[3, 9]);
+            item.placement = Placement::Filler {
+                x: 0,
+                caption: Some("hi".into()),
+            };
+            // A column list of the wrong length is ignored, not trusted.
+            let bad = SlotItem::animated(vec![spans("a"), spans("b")], 100, 1)
+                .unwrap()
+                .with_frame_x(&[3]);
+            assert!(bad.animated.unwrap().frame_x.is_none());
+            vec![item]
+        });
+        let x_at = |t: i64| {
+            registry.begin_frame(t);
+            match registry.items(SlotId::StripRight, &SlotCtx::default())[0]
+                .placement
+                .clone()
+            {
+                Placement::Filler { x, caption } => (x, caption),
+                other => panic!("{other:?}"),
+            }
+        };
+        assert_eq!(x_at(0), (3, Some("hi".into())));
+        assert_eq!(
+            x_at(100),
+            (9, Some("hi".into())),
+            "the caption is untouched"
+        );
+        assert_eq!(x_at(200), (3, Some("hi".into())));
     }
 
     #[test]

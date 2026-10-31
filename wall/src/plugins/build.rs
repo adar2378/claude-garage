@@ -31,6 +31,40 @@ fn distance(a: (u8, u8, u8), b: (u8, u8, u8)) -> i32 {
     d(a.0, b.0) + d(a.1, b.1) + d(a.2, b.2)
 }
 
+/// What `needs-input` builds to: a stand-in colour no real palette entry
+/// uses. The slot provider swaps it for amber while a session needs input and
+/// for plain text otherwise (see [`resolve_needs_input`]), so a plugin can
+/// alert in the signal colour without owning it, and the colour is never lit
+/// when nothing is waiting.
+pub const NEEDS_INPUT_MARK: Color = Color::Rgb(254, 1, 77);
+
+/// Replace the [`NEEDS_INPUT_MARK`] colour in `item`'s text (every frame of an
+/// animated item too): amber when `lit`, plain text colour when not.
+pub fn resolve_needs_input(item: &mut SlotItem, lit: bool) {
+    let to = if lit { colors::AMBER } else { colors::FG };
+    let fix = |spans: &mut [Span<'static>]| {
+        for s in spans {
+            if s.style.fg == Some(NEEDS_INPUT_MARK) {
+                s.style.fg = Some(to);
+            }
+            if s.style.bg == Some(NEEDS_INPUT_MARK) {
+                s.style.bg = Some(to);
+            }
+        }
+    };
+    fix(&mut item.text);
+    if let Some(a) = &mut item.animated
+        && a.frames
+            .iter()
+            .flatten()
+            .any(|s| s.style.fg == Some(NEEDS_INPUT_MARK) || s.style.bg == Some(NEEDS_INPUT_MARK))
+    {
+        let mut frames: Vec<Vec<Span<'static>>> = a.frames.to_vec();
+        frames.iter_mut().for_each(|f| fix(f));
+        a.frames = frames.into();
+    }
+}
+
 /// A theme token or `#rrggbb` as a wall colour.
 pub fn color(spec: &str) -> Option<Color> {
     match spec {
@@ -42,6 +76,7 @@ pub fn color(spec: &str) -> Option<Color> {
         // amber is reserved for needs-input.
         "warn" => Some(colors::WARN),
         "error" => Some(colors::ERROR),
+        "needs-input" => Some(NEEDS_INPUT_MARK),
         hex if hex.len() == 7 && hex.starts_with('#') => {
             let n = u32::from_str_radix(&hex[1..], 16).ok()?;
             let rgb = ((n >> 16) as u8, (n >> 8) as u8, n as u8);
@@ -138,13 +173,27 @@ pub fn items(plugin: &str, slot: SlotId, item: &WidgetItem) -> Vec<SlotItem> {
             .iter()
             .map(|f| f.iter().map(span).collect())
             .collect();
-        let frame_click = frames
+        // Each frame's own click (the first on it), so a frame can do
+        // something else than its neighbours.
+        let per_frame: Vec<Option<ClickTarget>> = frames
             .iter()
-            .flatten()
-            .find_map(|s| s.click.as_ref())
-            .and_then(|c| resolve_click(plugin, c));
+            .map(|f| {
+                f.iter()
+                    .find_map(|s| s.click.as_ref())
+                    .and_then(|c| resolve_click(plugin, c))
+            })
+            .collect();
+        let frame_click = per_frame.iter().flatten().next().cloned();
+        // An item-level click covers every frame; per-frame ones only apply without it.
+        let per_frame = if item_click.is_some() {
+            Vec::new()
+        } else {
+            per_frame
+        };
         let ms = item.frame_ms.unwrap_or(250).min(u32::from(u16::MAX)) as u16;
         return SlotItem::animated(spans, ms, priority(item.priority))
+            .map(|it| it.with_frame_x(item.frame_x.as_deref().unwrap_or(&[])))
+            .map(|it| it.with_frame_clicks(per_frame))
             .map(|it| finish(it, item_click.or(frame_click)))
             .into_iter()
             .collect();

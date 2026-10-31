@@ -390,6 +390,18 @@ impl SessionBackend for HostBackend {
         .await?
     }
 
+    async fn pane_anchor(&self, id: &str) -> Result<Option<super::PaneAnchor>> {
+        let Some(entry) = self.find(id).await? else {
+            return Ok(None);
+        };
+        let anchor = blocking(move || proto::anchor(&entry.addr(), &entry.token)).await?;
+        Ok(anchor.map(|(history, cursor, limit)| super::PaneAnchor {
+            history_size: history.max(0) as u64,
+            cursor_y: cursor.max(0) as u64,
+            history_limit: u64::try_from(limit).ok(),
+        }))
+    }
+
     async fn send_text(&self, id: &str, text: &str) -> Result<()> {
         let entry = self
             .find(id)

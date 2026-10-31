@@ -21,7 +21,7 @@ use crate::ui::view_strip::render_view_strip;
 use crate::ui::workspace_add::render_workspace_add;
 use crate::ui::worktree_finish::render_worktree_finish;
 
-use super::{App, NoticeKind};
+use super::App;
 
 impl App {
     pub(super) fn draw_frame(&mut self, frame: &mut ratatui::Frame, now_ms: i64) {
@@ -185,15 +185,12 @@ impl App {
             self.motion.spinner_shown();
         }
 
-        if let Some(pet) = &self.pet {
-            pet.publish_frame(&self.router.notices, now_ms);
-        }
         let strip_cols = render_strip(
             buf,
             layout.strip,
             self.store.state(),
             &self.slots,
-            self.router.notices.current_of(NoticeKind::User, now_ms),
+            self.router.notices.current(now_ms),
         );
         self.badge_cols = strip_cols.badge;
         slot_clicks.extend(
@@ -209,7 +206,6 @@ impl App {
                 }),
         );
         self.slot_clicks = slot_clicks;
-        self.last_strip_filler = strip_cols.filler_width;
         // What each slot had room for this frame: providers read it (via
         // `SlotCtx::geometry`) the next time they are asked.
         self.slots
@@ -387,7 +383,7 @@ impl App {
         // `tile.gutter` markers and the scrollback row the body's top sits on:
         // a frozen view knows it, a live tail view needs the polled tmux
         // history size (and draws no gutter until the first poll lands).
-        let gutter_items = self.slots.items(
+        let mut gutter_items = self.slots.items(
             SlotId::TileGutter,
             &SlotCtx {
                 session: Some(session),
@@ -396,6 +392,18 @@ impl App {
         );
         if !gutter_items.is_empty() {
             self.gutter_sessions.insert(id.to_owned());
+        }
+        // A marker is anchored to the scrollback row the daemon measured when
+        // the turn ended; one that fell out of the kept history is dropped.
+        if let (Some(history), true) = (
+            self.registry.history(id),
+            gutter_items.iter().any(|i| i.gutter_row.is_some()),
+        ) {
+            let limit = self.registry.history_limit(id);
+            gutter_items.retain(|i| {
+                i.gutter_row
+                    .is_none_or(|row| crate::ui::tile::gutter_in_history(row, history, limit))
+            });
         }
         let top_abs = frozen
             .map(|f| f.model.top_abs())

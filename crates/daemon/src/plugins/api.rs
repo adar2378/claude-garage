@@ -36,6 +36,7 @@ pub fn routes() -> Router<AppState> {
         .route("/api/plugins", get(list))
         .route("/api/plugins/widgets", get(widgets_snapshot))
         .route("/api/plugins/ui/action", post(ui_action))
+        .route("/api/plugins/{id}/notice", post(notice))
         .route("/api/plugins/panes", get(panes))
         .route("/api/plugins/{id}/panes/{pane}/open", post(open_pane))
         .route(
@@ -469,11 +470,21 @@ fn check_action(
 ) -> Result<(), Box<Response>> {
     let refuse = |status, msg: String| Err(Box::new(error_response(status, msg)));
     if garage_protocol::widgets::is_core_action_id(a) {
-        if !manifest.has_permission(Permission::CoreActions) {
+        // Navigation (focus, view) is covered by the narrow ui.navigate;
+        // everything else a plugin may trigger needs core.actions.
+        let navigation = garage_plugin::core_actions::is_navigation(a);
+        if !manifest.has_permission(Permission::CoreActions)
+            && !(navigation && manifest.has_permission(Permission::UiNavigate))
+        {
+            let need = if navigation {
+                "ui.navigate (or core.actions)"
+            } else {
+                "core.actions"
+            };
             return refuse(
                 StatusCode::FORBIDDEN,
                 format!(
-                    "plugin {id} lacks permission core.actions (click.action {a:?} is a core action)"
+                    "plugin {id} lacks permission {need} (click.action {a:?} is a core action)"
                 ),
             );
         }
@@ -657,6 +668,56 @@ async fn ui_action(State(st): State<AppState>, headers: HeaderMap, body: Bytes) 
         action,
         args,
         target,
+    });
+    (StatusCode::ACCEPTED, Json(json!({"ok": true}))).into_response()
+}
+
+/// `POST /api/plugins/{id}/notice {text, ttl_ms?}`: a short message for the
+/// user, shown as a toast. The text is cleaned (no control or invisible
+/// characters), trimmed and cut to [`limits::NOTICE_LEN`] characters; the
+/// time is clamped; a plugin gets one notice a second (bursts of three).
+async fn notice(
+    State(st): State<AppState>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Response {
+    if let Err(r) = authed_for(&st, &headers, &id, Permission::UiNotice) {
+        return *r;
+    }
+    let body = match parse_body(&body) {
+        Ok(b) => b,
+        Err(r) => return *r,
+    };
+    let text: String =
+        garage_protocol::widgets::sanitise(body.get("text").and_then(Value::as_str).unwrap_or(""))
+            .trim()
+            .chars()
+            .take(limits::NOTICE_LEN)
+            .collect();
+    if text.is_empty() {
+        return error_response(StatusCode::BAD_REQUEST, "text must be a non-empty string");
+    }
+    let ttl_ms = body.get("ttl_ms").and_then(Value::as_u64).map(|t| {
+        t.clamp(
+            u64::from(limits::NOTICE_TTL_MS_MIN),
+            u64::from(limits::NOTICE_TTL_MS_MAX),
+        ) as u32
+    });
+    if let Err(wait) = st.plugins.acquire_notice(&id, Instant::now()) {
+        let secs = wait.as_secs_f64().ceil().max(1.0) as u64;
+        let mut res = error_response(
+            StatusCode::TOO_MANY_REQUESTS,
+            "notices are limited to 1 per second (burst 3)",
+        );
+        res.headers_mut()
+            .insert(RETRY_AFTER, secs.to_string().parse().expect("digits"));
+        return res;
+    }
+    st.bus.publish(crate::bus::DaemonEvent::PluginNotice {
+        plugin: id,
+        message: text,
+        ttl_ms: Some(ttl_ms.unwrap_or(limits::NOTICE_TTL_MS_DEFAULT)),
     });
     (StatusCode::ACCEPTED, Json(json!({"ok": true}))).into_response()
 }

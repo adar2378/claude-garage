@@ -58,11 +58,6 @@ jobs:
       - name: Rust workspace tests
         run: cargo test -p garage-protocol -p garage-host -p garage-daemon -p claude-garage
 
-      # The pit pet is a default-on cargo feature; keep the pet-less build working.
-      - name: TUI tests without the pit pet
-        working-directory: wall
-        run: cargo test --lib --bins --no-default-features
-
       - name: Build the TUI binary
         run: npm run build:tui
 

@@ -171,6 +171,8 @@ fn permission_blurb(p: &str) -> &'static str {
         "core.actions" => {
             "trigger garage's own actions, such as closing a session (closes and restarts still need a second confirmation)"
         }
+        "ui.navigate" => "move focus: jump to a blocked session, switch view (changes nothing)",
+        "ui.notice" => "show short notices (toasts) in the TUI",
         "network" => "plugin is expected to use the network (not enforced)",
         _ => "",
     }

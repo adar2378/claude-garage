@@ -6,7 +6,7 @@ use crate::actions::ActionId;
 
 fn app(workspaces: Vec<WorkspaceInfo>, sessions: Vec<SessionInfo>) -> App {
     let (tx, _rx) = mpsc::unbounded_channel();
-    let mut app = App::new(tx, "http://127.0.0.1:0", 0);
+    let mut app = App::new(tx, "http://127.0.0.1:0");
     app.store.workspaces_fetched(workspaces);
     app.store.sessions_fetched(sessions);
     app
@@ -270,18 +270,6 @@ fn app_with_strip_slots(
         })
         .collect();
     (app, row)
-}
-
-#[test]
-fn a_real_click_on_the_pet_slot_reaches_the_dispatcher() {
-    let (mut app, row) = app_with_strip_slots(vec![(50..60, ids::PET_PET.into())]);
-    app.store.engage();
-    assert!(!app.handle_click(55, row));
-    assert_eq!(
-        app.store.state().layer,
-        KeyLayer::Garage,
-        "the pet click is handled by the dispatcher, which leaves the engaged tile"
-    );
 }
 
 #[test]

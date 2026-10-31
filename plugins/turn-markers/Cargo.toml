@@ -1,0 +1,20 @@
+[package]
+name = "garage-plugin-turn-markers"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "claude-garage bundled plugin: a marker in the tile gutter where each agent turn ended"
+publish = false
+
+[[bin]]
+name = "turn-markers"
+path = "src/main.rs"
+
+[lib]
+name = "turn_markers"
+path = "src/lib.rs"
+
+[dependencies]
+garage-plugin-sdk = { path = "../../crates/plugin-sdk" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

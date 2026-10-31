@@ -307,6 +307,16 @@ pub fn parse_version(out: &str) -> Option<(u32, u32)> {
     Some((major, minor.parse().ok()?))
 }
 
+/// `"<history_size> <cursor_y> <history_limit>"` from `display-message`.
+fn parse_anchor(out: &str) -> Option<super::PaneAnchor> {
+    let mut it = out.split_whitespace().map(|n| n.parse::<u64>().ok());
+    Some(super::PaneAnchor {
+        history_size: it.next()??,
+        cursor_y: it.next()??,
+        history_limit: it.next().flatten(),
+    })
+}
+
 /// tmux's message for "there is no server (so no sessions)", across versions:
 /// `no server running on <socket>`, `error connecting to <socket> (No such
 /// file or directory)`, and `no sessions`.
@@ -476,6 +486,21 @@ impl SessionBackend for TmuxBackend {
             &start,
         ])
         .await
+    }
+
+    /// `#{history_size}`, `#{cursor_y}` and `#{history_limit}` of the
+    /// session's active pane in one call.
+    async fn pane_anchor(&self, id: &str) -> Result<Option<super::PaneAnchor>> {
+        let out = self
+            .run_args(&[
+                "display-message",
+                "-p",
+                "-t",
+                &format!("{}:", exact(id)),
+                "#{history_size} #{cursor_y} #{history_limit}",
+            ])
+            .await?;
+        Ok(parse_anchor(&out))
     }
 
     /// `send-keys -l` types the text literally (no key-name parsing), then a
@@ -979,6 +1004,56 @@ mod tests {
         })
         .await;
         assert!(b.capture("garage/ws/none", 5).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn pane_anchor_is_history_plus_cursor_row() {
+        let t = TestTmux::new();
+        let b = t.backend();
+        // 60 lines on a 24-row pane: most of them end up in history.
+        b.create(
+            "garage/ws/anchor",
+            t.dir(),
+            "sh",
+            &[
+                "-c".into(),
+                "i=0; while [ $i -lt 60 ]; do echo line-$i; i=$((i+1)); done; sleep 60".into(),
+            ],
+            &[],
+        )
+        .await
+        .unwrap();
+        t.wait_for_async(|| async {
+            b.capture("garage/ws/anchor", 200)
+                .await
+                .is_ok_and(|s| s.contains("line-59"))
+        })
+        .await;
+        let a = b.pane_anchor("garage/ws/anchor").await.unwrap().unwrap();
+        assert!(a.history_size >= 30, "{a:?}");
+        assert!(a.cursor_y < 200, "{a:?}");
+        assert_eq!(a.row(), a.history_size + a.cursor_y);
+        assert!(a.history_limit.is_some_and(|l| l >= 1000), "{a:?}");
+        // The row is absolute: the last printed line sits at or above it.
+        let all = b
+            .capture("garage/ws/anchor", a.history_size as usize)
+            .await
+            .unwrap();
+        assert!(all.contains("line-0"), "history starts at the first line");
+        // A session that does not exist has no anchor (never another session's).
+        let none = b.pane_anchor("garage/ws/none").await;
+        assert!(none.ok().flatten().is_none());
+    }
+
+    #[test]
+    fn the_anchor_format_is_three_numbers_and_a_missing_limit_is_tolerated() {
+        let a = parse_anchor("12 3 2000\n").unwrap();
+        assert_eq!(
+            (a.history_size, a.cursor_y, a.history_limit),
+            (12, 3, Some(2000))
+        );
+        assert_eq!(parse_anchor("12 3").unwrap().history_limit, None);
+        assert!(parse_anchor("").is_none() && parse_anchor("x 3 4").is_none());
     }
 
     // sessions.title.test.js, backend part: "a live session's set pane title

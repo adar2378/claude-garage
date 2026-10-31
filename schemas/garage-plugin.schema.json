@@ -144,6 +144,8 @@
         "ui.panes",
         "ui.invoke",
         "core.actions",
+        "ui.navigate",
+        "ui.notice",
         "network"
       ]
     },

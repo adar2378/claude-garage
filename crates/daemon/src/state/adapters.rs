@@ -97,4 +97,8 @@ impl TelemetryDeps for StoreDeps {
     ) -> Vec<String> {
         resolve_session_ids(self.backend.as_ref(), self.agents.as_ref(), session_id, cwd).await
     }
+
+    async fn pane_anchor(&self, id: &str) -> Option<crate::backend::PaneAnchor> {
+        self.backend.pane_anchor(id).await.ok().flatten()
+    }
 }

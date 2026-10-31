@@ -16,9 +16,14 @@ pub mod tui;
 
 use std::fmt;
 use std::io::Read;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
-pub use garage_protocol::widgets::{Click, Segment, Style, WidgetItem, WidgetPut};
+use serde::Serialize;
+use serde::de::DeserializeOwned;
+
+pub use garage_protocol::widgets::{
+    Click, Placement, Segment, Style, WidgetItem, WidgetPut, WidgetSlot, validate_put,
+};
 pub use serde_json::{Value, json};
 
 #[derive(Debug)]
@@ -31,6 +36,9 @@ pub enum Error {
     Http { status: u16, body: String },
     /// The daemon could not be reached.
     Transport(String),
+    /// A [`StateLock`] stayed held by another run past the wait. Not a
+    /// failure of this run: it has nothing to do and should skip.
+    LockHeld(String),
 }
 
 impl fmt::Display for Error {
@@ -40,6 +48,7 @@ impl fmt::Display for Error {
             Error::Context(e) => write!(f, "cannot read the run context: {e}"),
             Error::Http { status, body } => write!(f, "daemon answered {status}: {body}"),
             Error::Transport(e) => write!(f, "cannot reach the daemon: {e}"),
+            Error::LockHeld(name) => write!(f, "{name}.lock is held by another run"),
         }
     }
 }
@@ -165,6 +174,96 @@ pub fn workspace_has_sessions(sessions: &Value, workspace: &str) -> bool {
         s.get("workspace").and_then(Value::as_str) == Some(workspace)
             || s.get("id").and_then(Value::as_str).and_then(workspace_of) == Some(workspace)
     })
+}
+
+/// The plugin's own storage directory (`GARAGE_PLUGIN_STATE_DIR`): created by
+/// the daemon, kept across updates and restarts.
+pub fn state_dir() -> Result<PathBuf, Error> {
+    std::env::var_os("GARAGE_PLUGIN_STATE_DIR")
+        .map(PathBuf::from)
+        .ok_or(Error::Env("GARAGE_PLUGIN_STATE_DIR"))
+}
+
+/// Read `file` (JSON) from the storage directory. `None` when it is missing
+/// or does not parse: stored state is a cache of what the plugin can work out
+/// again, so a damaged file means "start fresh", never a failed run.
+pub fn read_state<T: DeserializeOwned>(file: &str) -> Option<T> {
+    read_state_in(&state_dir().ok()?, file)
+}
+
+/// Write `file` (JSON) to the storage directory: a temporary file in the same
+/// directory, then a rename, so a reader never sees half a file.
+pub fn write_state<T: Serialize>(file: &str, value: &T) -> Result<(), Error> {
+    write_state_in(&state_dir()?, file, value)
+}
+
+pub fn read_state_in<T: DeserializeOwned>(dir: &std::path::Path, file: &str) -> Option<T> {
+    serde_json::from_slice(&std::fs::read(dir.join(file)).ok()?).ok()
+}
+
+pub fn write_state_in<T: Serialize>(
+    dir: &std::path::Path,
+    file: &str,
+    value: &T,
+) -> Result<(), Error> {
+    let io = |e: std::io::Error| Error::Context(format!("{file}: {e}"));
+    std::fs::create_dir_all(dir).map_err(io)?;
+    let tmp = dir.join(format!("{file}.{}.tmp", std::process::id()));
+    let bytes = serde_json::to_vec(value).map_err(|e| Error::Context(e.to_string()))?;
+    std::fs::write(&tmp, bytes).map_err(io)?;
+    std::fs::rename(&tmp, dir.join(file)).map_err(io)
+}
+
+/// An exclusive hold on a file in the storage directory. The host may run
+/// several runs of one plugin at once; a plugin that reads, changes and
+/// rewrites its state takes this around the whole step. A lock older than
+/// `stale` belongs to a run that died and is taken over.
+pub struct StateLock {
+    path: PathBuf,
+}
+
+impl StateLock {
+    pub fn acquire(
+        dir: &std::path::Path,
+        name: &str,
+        stale: std::time::Duration,
+        wait: std::time::Duration,
+    ) -> Result<StateLock, Error> {
+        let io = |e: std::io::Error| Error::Context(format!("{name}.lock: {e}"));
+        std::fs::create_dir_all(dir).map_err(io)?;
+        let path = dir.join(format!("{name}.lock"));
+        let start = std::time::Instant::now();
+        loop {
+            match std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&path)
+            {
+                Ok(_) => return Ok(StateLock { path }),
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                    let age = std::fs::metadata(&path)
+                        .and_then(|m| m.modified())
+                        .ok()
+                        .and_then(|t| t.elapsed().ok());
+                    if age.is_some_and(|a| a > stale) {
+                        let _ = std::fs::remove_file(&path);
+                        continue;
+                    }
+                    if start.elapsed() > wait {
+                        return Err(Error::LockHeld(name.to_owned()));
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(15));
+                }
+                Err(e) => return Err(io(e)),
+            }
+        }
+    }
+}
+
+impl Drop for StateLock {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.path);
+    }
 }
 
 /// A client for the daemon's plugin routes.
@@ -294,6 +393,21 @@ impl Api {
         Ok(res.get("rev").and_then(Value::as_u64).unwrap_or(0))
     }
 
+    /// `POST /api/plugins/{me}/notice`: a short toast for the user (needs the
+    /// `ui.notice` permission; one a second, bursts of three).
+    pub fn notice(&self, text: &str, ttl_ms: Option<u32>) -> Result<(), Error> {
+        let mut body = json!({"text": text});
+        if let Some(ms) = ttl_ms {
+            body["ttl_ms"] = json!(ms);
+        }
+        self.request(
+            "POST",
+            &format!("/api/plugins/{}/notice", self.plugin),
+            Some(&body),
+        )
+        .map(|_| ())
+    }
+
     /// `DELETE /api/plugins/{me}/widgets/{widget}`.
     pub fn clear_widget(&self, widget: &str) -> Result<(), Error> {
         self.request(
@@ -321,6 +435,9 @@ pub fn text_widget(text: &str) -> WidgetPut {
         ttl_secs: None,
     }
 }
+
+#[doc(hidden)]
+pub mod fake;
 
 #[cfg(test)]
 mod tests {
@@ -393,6 +510,46 @@ mod tests {
             serde_json::json!({"scopes":{"*":[{"priority":0,"placement":{"kind":"flow"},"segments":[{"text":"hi"}]}]}}),
             "{seen}"
         );
+    }
+
+    #[test]
+    fn the_state_lock_excludes_until_released_and_takes_over_a_dead_one() {
+        use std::time::Duration;
+        let dir = std::env::temp_dir().join(format!("sdk-lock-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let a = StateLock::acquire(&dir, "s", Duration::from_secs(60), Duration::ZERO).unwrap();
+        assert!(
+            matches!(
+                StateLock::acquire(
+                    &dir,
+                    "s",
+                    Duration::from_secs(60),
+                    Duration::from_millis(40)
+                ),
+                Err(Error::LockHeld(name)) if name == "s"
+            ),
+            "held: a distinct error, so a plugin can skip instead of failing"
+        );
+        drop(a);
+        let b = StateLock::acquire(&dir, "s", Duration::from_secs(60), Duration::ZERO).unwrap();
+        // A lock nobody released (its run died) is stale after the timeout.
+        std::mem::forget(b);
+        std::thread::sleep(Duration::from_millis(30));
+        assert!(StateLock::acquire(&dir, "s", Duration::from_millis(10), Duration::ZERO).is_ok());
+    }
+
+    #[test]
+    fn state_files_round_trip_and_a_damaged_one_reads_as_absent() {
+        let dir = std::env::temp_dir().join(format!("sdk-state-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        write_state_in(&dir, "x.json", &json!({"a": 1})).unwrap();
+        assert_eq!(
+            read_state_in::<Value>(&dir, "x.json"),
+            Some(json!({"a": 1}))
+        );
+        std::fs::write(dir.join("x.json"), "{not json").unwrap();
+        assert_eq!(read_state_in::<Value>(&dir, "x.json"), None);
+        assert_eq!(read_state_in::<Value>(&dir, "missing.json"), None);
     }
 
     #[test]

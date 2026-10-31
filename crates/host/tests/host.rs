@@ -116,6 +116,11 @@ fn text_capture_history_and_formatted_capture_see_what_the_command_printed() {
 
     let hist = proto::history_size(&e.addr(), &e.token).unwrap();
     assert!(hist >= 20, "history {hist}");
+    // The anchor is the same history plus the cursor's row on the screen.
+    let (a_hist, cursor, limit) = proto::anchor(&e.addr(), &e.token).unwrap();
+    assert_eq!(a_hist, hist);
+    assert!((0..24).contains(&cursor), "cursor row {cursor}");
+    assert_eq!(limit, 10_000);
     let top = proto::capture_formatted(&e.addr(), &e.token, 0, 80, 2).unwrap();
     let top = String::from_utf8_lossy(&top).into_owned();
     assert!(top.contains("row-0") && top.contains("row-1"), "{top:?}");

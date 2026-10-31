@@ -23,7 +23,7 @@ pub mod limits {
     pub const SCOPES_PER_WIDGET: usize = 256;
     pub const GUTTER_ITEMS_PER_SCOPE: usize = 64;
     pub const EXTRA_ROWS_PER_WORKSPACE: usize = 8;
-    pub const FRAMES_PER_ITEM: usize = 16;
+    pub const FRAMES_PER_ITEM: usize = 24;
     pub const FRAME_MS_MIN: u32 = 100;
     pub const FRAME_MS_MAX: u32 = 2000;
     pub const FRAME_MS_DEFAULT: u32 = 250;
@@ -37,6 +37,16 @@ pub mod limits {
     pub const SLOTS_BODY_BYTES: usize = 16 * 1024;
     /// Largest column count a slot geometry value may claim.
     pub const GEOMETRY_COLS_MAX: u64 = 1000;
+    /// Longest plugin notice (toast) text, in characters.
+    pub const NOTICE_LEN: usize = 120;
+    /// How long a plugin notice shows when it names no time, and the bounds
+    /// of one that does (milliseconds).
+    pub const NOTICE_TTL_MS_DEFAULT: u32 = 5000;
+    pub const NOTICE_TTL_MS_MIN: u32 = 1000;
+    pub const NOTICE_TTL_MS_MAX: u32 = 10_000;
+    /// Plugin notices per plugin: one a second, bursts of three.
+    pub const NOTICES_PER_SEC: u32 = 1;
+    pub const NOTICE_BURST: u32 = 3;
 }
 
 /// Where a widget draws. The scope key of its content depends on the slot.
@@ -131,7 +141,18 @@ fn is_false(b: &bool) -> bool {
     !*b
 }
 
-pub const THEME_TOKENS: [&str; 6] = ["text", "dim", "accent", "ok", "warn", "error"];
+/// `needs-input` is amber, but only while some session needs input; the rest
+/// of the time it reads as plain text. It is how a plugin shows an alert
+/// without owning the signal colour (the wall decides when it is lit).
+pub const THEME_TOKENS: [&str; 7] = [
+    "text",
+    "dim",
+    "accent",
+    "ok",
+    "warn",
+    "error",
+    "needs-input",
+];
 
 fn color_ok(c: &str) -> bool {
     THEME_TOKENS.contains(&c)
@@ -183,7 +204,7 @@ pub enum Placement {
 }
 
 /// One thing a widget shows. `segments` and `frames` are mutually exclusive;
-/// the gutter fields (`row` / `turn` / `kind`) apply to `tile.gutter`, and
+/// the gutter fields (`row` / `kind`) apply to `tile.gutter`, and
 /// `row_style` / `click` to `rail.extra_rows` rows (and gutter markers).
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct WidgetItem {
@@ -197,10 +218,13 @@ pub struct WidgetItem {
     pub frames: Option<Vec<Vec<Segment>>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub frame_ms: Option<u32>,
+    /// `strip.right` filler items only: the filler column of each frame, in
+    /// step with `frames` (same length), overriding `placement.x`. A walking
+    /// pet changes column from frame to frame; a plain `x` cannot say that.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub frame_x: Option<Vec<u16>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub row: Option<u64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub turn: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub kind: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -469,10 +493,8 @@ pub fn validate_put(slot: WidgetSlot, mut put: WidgetPut) -> Result<WidgetPut, L
                     )));
                 }
             }
-            if slot == WidgetSlot::TileGutter && item.row.is_none() && item.turn.is_none() {
-                return Err(bad(format!(
-                    "{at}: a tile.gutter item needs `row` or `turn`"
-                )));
+            if slot == WidgetSlot::TileGutter && item.row.is_none() {
+                return Err(bad(format!("{at}: a tile.gutter item needs a `row`")));
             }
             match (&mut item.segments, &mut item.frames) {
                 (Some(_), Some(_)) => {
@@ -506,6 +528,20 @@ pub fn validate_put(slot: WidgetSlot, mut put: WidgetPut) -> Result<WidgetPut, L
             }
             if item.segments.is_some() {
                 item.frame_ms = None;
+            }
+            if let Some(xs) = &item.frame_x {
+                let frames = item.frames.as_ref().map_or(0, Vec::len);
+                if frames == 0 || xs.len() != frames {
+                    return Err(bad(format!(
+                        "{at}.frame_x: {} columns for {frames} frames; needs one per frame",
+                        xs.len()
+                    )));
+                }
+                if !item.placement.is_filler() {
+                    return Err(bad(format!(
+                        "{at}.frame_x: only valid with a filler placement"
+                    )));
+                }
             }
             if let Some(st) = &item.row_style {
                 check_style(&format!("{at}.row_style"), st)?;
@@ -612,6 +648,35 @@ mod tests {
         let back: WidgetItem =
             serde_json::from_value(serde_json::to_value(&item).unwrap()).unwrap();
         assert_eq!(back, item);
+    }
+
+    #[test]
+    fn frame_x_needs_one_column_per_frame_and_a_filler() {
+        let item = |frames: usize, xs: &[u16], placement: Value| {
+            put(json!({"scopes": {"*": [{
+                "placement": placement,
+                "frames": vec![json!([{"text": "a"}]); frames],
+                "frame_x": xs
+            }]}}))
+        };
+        let filler = json!({"kind": "filler", "x": 0});
+        let ok = validate_put(WidgetSlot::StripRight, item(3, &[1, 2, 3], filler.clone())).unwrap();
+        assert_eq!(ok.scopes["*"][0].frame_x, Some(vec![1, 2, 3]));
+        for (frames, xs, placement, why) in [
+            (3, &[1u16, 2][..], filler.clone(), "2 columns for 3 frames"),
+            (2, &[1, 2][..], json!({"kind": "flow"}), "filler placement"),
+        ] {
+            let e = validate_put(WidgetSlot::StripRight, item(frames, xs, placement)).unwrap_err();
+            assert_eq!(e.status, 422);
+            assert!(e.message.contains(why), "{}", e.message);
+        }
+        let plain = put(json!({"scopes": {"*": [{
+            "placement": filler, "segments": [{"text": "a"}], "frame_x": [1]
+        }]}}));
+        assert!(
+            validate_put(WidgetSlot::StripRight, plain).is_err(),
+            "no frames, no frame_x"
+        );
     }
 
     #[test]
@@ -815,10 +880,14 @@ mod tests {
         let p = validate_put(WidgetSlot::StripRight, anim(Value::Null, 2)).unwrap();
         assert_eq!(p.scopes["*"][0].frame_ms, Some(250));
         assert!(
-            validate_put(WidgetSlot::StripRight, anim(json!(300), 17))
+            validate_put(WidgetSlot::StripRight, anim(json!(300), 25))
                 .unwrap_err()
                 .message
-                .contains("16")
+                .contains("24")
+        );
+        assert!(
+            validate_put(WidgetSlot::StripRight, anim(json!(300), 24)).is_ok(),
+            "a 24-frame window is the limit"
         );
         let both = put(json!({"scopes": {"*": [{"segments": [], "frames": [[]]}]}}));
         assert!(
@@ -833,6 +902,21 @@ mod tests {
                 .unwrap_err()
                 .status,
             422
+        );
+    }
+
+    #[test]
+    fn needs_input_is_a_theme_token_and_a_gutter_item_needs_a_row() {
+        let styled = put(
+            json!({"scopes": {"*": [{"segments": [{"text": "!", "style": {"fg": "needs-input", "bg": "needs-input"}}]}]}}),
+        );
+        assert!(validate_put(WidgetSlot::StripRight, styled).is_ok());
+        let no_row = put(json!({"scopes": {"s": [{"kind": "marker"}]}}));
+        assert!(
+            validate_put(WidgetSlot::TileGutter, no_row)
+                .unwrap_err()
+                .message
+                .contains("`row`")
         );
     }
 

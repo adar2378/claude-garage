@@ -116,9 +116,6 @@ pub mod ids {
     /// Forget a session (`DELETE /api/sessions/{id}?meta=1`). No key; reached
     /// by plugin buttons, always through the confirm rule.
     pub const SESSION_DELETE: ActionId = ActionId("session.delete");
-    pub const PET_PET: ActionId = ActionId("pet.pet");
-    /// `P`: not a [`super::GarageCommand`] (the store has no pet dependency).
-    pub const PET_CYCLE_SPECIES: ActionId = ActionId("pet.cycle_species");
     /// `b` / `<` / `>`: hide or show the rail, move its divider. Wall layout,
     /// not session state, so the router handles them beside the store.
     pub const RAIL_TOGGLE: ActionId = ActionId("rail.toggle");
@@ -163,8 +160,6 @@ pub mod ids {
         SESSION_FOCUS,
         SESSION_RESTORE,
         SESSION_DELETE,
-        PET_PET,
-        PET_CYCLE_SPECIES,
         RAIL_TOGGLE,
         RAIL_NARROW,
         RAIL_WIDEN,
@@ -225,8 +220,6 @@ pub const META: &[ActionMeta] = &[
     meta_row(ids::SESSION_FOCUS, false, true),
     meta_row(ids::SESSION_RESTORE, false, true),
     meta_row(ids::SESSION_DELETE, true, true),
-    meta_row(ids::PET_PET, false, true),
-    meta_row(ids::PET_CYCLE_SPECIES, false, false),
     meta_row(ids::RAIL_TOGGLE, false, false),
     meta_row(ids::RAIL_NARROW, false, false),
     meta_row(ids::RAIL_WIDEN, false, false),
@@ -447,7 +440,7 @@ pub enum GarageCommand {
 }
 
 /// The [`GarageCommand`] an action id runs through the store/router, or
-/// `None` for ids with their own handling (clicks, overlay keys, the pet).
+/// `None` for ids with their own handling (clicks, overlay keys).
 pub fn command_for_action(id: ActionId, index: Option<usize>) -> Option<GarageCommand> {
     use GarageCommand as C;
     Some(match id {
@@ -504,8 +497,6 @@ mod tests {
             ids::SESSION_FOCUS,
             ids::SESSION_RESTORE,
             ids::SESSION_DELETE,
-            ids::PET_PET,
-            ids::PET_CYCLE_SPECIES,
             ids::RAIL_TOGGLE,
             ids::RAIL_NARROW,
             ids::RAIL_WIDEN,
@@ -578,7 +569,6 @@ mod tests {
             refused,
             [
                 "app.quit",
-                "pet.cycle_species",
                 "rail.toggle",
                 "rail.narrow",
                 "rail.widen",

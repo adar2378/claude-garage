@@ -18,7 +18,7 @@ const THREE: &str = "garage/b/three";
 
 fn fixture() -> App {
     let (tx, _rx) = mpsc::unbounded_channel();
-    let mut app = App::new(tx, "http://127.0.0.1:0", 0);
+    let mut app = App::new(tx, "http://127.0.0.1:0");
     app.store.workspaces_fetched(vec![ws("a"), ws("b")]);
     app.store.sessions_fetched(vec![
         si("a", "one"),
@@ -768,7 +768,7 @@ fn a_button_on_an_unfocused_tile_retargets_the_actions_that_act_on_the_focus() {
 #[tokio::test]
 async fn two_real_clicks_on_a_plugin_close_button_close_the_tile_it_sits_on() {
     let (tx, mut rx) = mpsc::unbounded_channel();
-    let mut app = App::new(tx, "http://127.0.0.1:1", 0);
+    let mut app = App::new(tx, "http://127.0.0.1:1");
     app.store.workspaces_fetched(vec![ws("a"), ws("b")]);
     app.store
         .sessions_fetched(vec![si("a", "one"), si("b", "three")]);
@@ -827,7 +827,7 @@ async fn two_real_clicks_on_a_plugin_close_button_close_the_tile_it_sits_on() {
 #[test]
 fn a_click_elsewhere_cancels_the_arm_and_the_button_then_only_re_arms() {
     let (tx, _rx) = mpsc::unbounded_channel();
-    let mut app = App::new(tx, "http://127.0.0.1:1", 0);
+    let mut app = App::new(tx, "http://127.0.0.1:1");
     app.store.workspaces_fetched(vec![ws("a"), ws("b")]);
     app.store
         .sessions_fetched(vec![si("a", "one"), si("b", "three")]);
@@ -973,7 +973,7 @@ fn a_burst_of_plugin_focus_moves_lands_once() {
 #[test]
 fn a_plugin_sourced_jump_blocked_focuses_the_blocked_session_but_never_engages() {
     let (tx, _rx) = mpsc::unbounded_channel();
-    let mut app = App::new(tx, "http://127.0.0.1:0", 0);
+    let mut app = App::new(tx, "http://127.0.0.1:0");
     app.store.workspaces_fetched(vec![ws("a")]);
     app.store
         .sessions_fetched(vec![si("a", "one"), si_status("a", "stuck", "needs-input")]);
@@ -1001,7 +1001,7 @@ fn a_plugin_sourced_jump_blocked_focuses_the_blocked_session_but_never_engages()
 #[test]
 fn a_human_jump_blocked_still_lands_engaged() {
     let (tx, _rx) = mpsc::unbounded_channel();
-    let mut app = App::new(tx, "http://127.0.0.1:0", 0);
+    let mut app = App::new(tx, "http://127.0.0.1:0");
     app.store.workspaces_fetched(vec![ws("a")]);
     app.store
         .sessions_fetched(vec![si("a", "one"), si_status("a", "stuck", "needs-input")]);
@@ -1018,7 +1018,7 @@ fn a_human_jump_blocked_still_lands_engaged() {
 fn a_plugin_jump_blocked_through_the_open_triage_queue_never_engages() {
     use crate::state::wall_state::OverlayKind;
     let (tx, _rx) = mpsc::unbounded_channel();
-    let mut app = App::new(tx, "http://127.0.0.1:0", 0);
+    let mut app = App::new(tx, "http://127.0.0.1:0");
     app.store.workspaces_fetched(vec![ws("a")]);
     app.store
         .sessions_fetched(vec![si("a", "one"), si_status("a", "stuck", "needs-input")]);

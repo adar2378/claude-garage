@@ -1,30 +1,7 @@
-//! Pit-pet and connection state, and the p16 restart chord arming.
+//! Connection state, and the p16 restart chord arming.
 use super::*;
 
-// ── p15: pit pet + connection state ────────────────────────────────
-
-#[test]
-fn set_pet_updates_state_and_bumps_views_revision() {
-    let mut store = store_with(vec![ws("a")], vec![si("a", "one")]);
-    assert_eq!(store.state().pet, None, "off by default");
-    let before = store.views_revision();
-
-    store.set_pet(Some("duck".to_owned()));
-
-    assert_eq!(store.state().pet.as_deref(), Some("duck"));
-    assert!(
-        store.views_revision() > before,
-        "a pet change must be as save-worthy as a view change — same wall.json"
-    );
-}
-
-#[test]
-fn set_pet_off_clears_the_choice() {
-    let mut store = store_with(vec![ws("a")], vec![si("a", "one")]);
-    store.set_pet(Some("cat".to_owned()));
-    store.set_pet(None);
-    assert_eq!(store.state().pet, None);
-}
+// ── p15: connection state ────────────────────────────────
 
 #[test]
 fn connection_updates_daemon_live_without_touching_views_revision() {

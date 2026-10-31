@@ -10,7 +10,7 @@ use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
 
 fn app_with_layout() -> App {
     let (tx, _rx) = mpsc::unbounded_channel();
-    let mut app = App::new(tx, "http://127.0.0.1:0", 0);
+    let mut app = App::new(tx, "http://127.0.0.1:0");
     app.store.workspaces_fetched(vec![ws("a")]);
     app.store
         .sessions_fetched(vec![si("a", "one"), si("a", "two")]);

@@ -35,6 +35,26 @@ pub struct PaneInfo {
     pub pid: Option<u32>,
 }
 
+/// Where a session's cursor is in its scrollback, in absolute rows (0 is the
+/// oldest retained history line): what a turn marker needs to stay on its
+/// line while output scrolls past.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PaneAnchor {
+    /// History lines above the visible screen.
+    pub history_size: u64,
+    /// The cursor's row on the visible screen (0 is the top).
+    pub cursor_y: u64,
+    /// The most history lines the backend keeps.
+    pub history_limit: Option<u64>,
+}
+
+impl PaneAnchor {
+    /// The cursor's absolute scrollback row.
+    pub fn row(&self) -> u64 {
+        self.history_size + self.cursor_y
+    }
+}
+
 #[async_trait]
 pub trait SessionBackend: Send + Sync {
     /// One-time server setup at daemon boot (tmux: extended keys). Idempotent.
@@ -63,6 +83,11 @@ pub trait SessionBackend: Send + Sync {
     async fn kill(&self, id: &str) -> Result<()>;
     async fn rename(&self, from: &str, to: &str) -> Result<()>;
     async fn capture(&self, id: &str, lines: usize) -> Result<String>;
+    /// The session's cursor in absolute scrollback rows, or `None` when the
+    /// backend cannot say.
+    async fn pane_anchor(&self, _id: &str) -> Result<Option<PaneAnchor>> {
+        Ok(None)
+    }
     fn attach_spec(&self, id: &str) -> AttachSpec; // how the TUI attaches a PTY
     /// Type `text` into the session as keystrokes, then press Enter. Backends
     /// without keystroke injection keep this default.

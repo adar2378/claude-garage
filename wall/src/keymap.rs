@@ -77,7 +77,6 @@ impl Keymap {
             ("?", ids::OVERLAY_OPEN_HELP),
             ("I", ids::HOOKS_INSTALL),
             ("t", ids::SESSION_OPEN_WINDOW),
-            ("P", ids::PET_CYCLE_SPECIES),
             ("b", ids::RAIL_TOGGLE),
             ("<", ids::RAIL_NARROW),
             (">", ids::RAIL_WIDEN),
@@ -405,7 +404,6 @@ mod tests {
             ("?", "overlay.open.help"),
             ("I", "hooks.install"),
             ("t", "session.open_window"),
-            ("P", "pet.cycle_species"),
             ("b", "rail.toggle"),
             ("<", "rail.narrow"),
             (">", "rail.widen"),
@@ -429,7 +427,6 @@ mod tests {
         let click_only = [
             ids::SESSION_FOCUS,
             ids::SESSION_RESTORE,
-            ids::PET_PET,
             ids::VIEW_FOCUS,
             ids::OVERLAY_VIEW_PICKER_PICK,
             // No key by design: only a plugin's click target reaches it

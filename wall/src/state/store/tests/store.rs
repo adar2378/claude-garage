@@ -21,36 +21,6 @@ fn first_fetch_focuses_the_first_group_and_grids_its_sessions() {
 }
 
 #[test]
-fn usage_fetched_replaces_the_account_wide_usage_and_nothing_else() {
-    use crate::api::models::UsageWindow;
-
-    let mut store = store_with(vec![ws("a")], vec![si("a", "one")]);
-    assert_eq!(store.state().usage, UsageInfo::default());
-    let before_version = store.version();
-
-    store.usage_fetched(UsageInfo {
-        five_hour: Some(UsageWindow {
-            used_percentage: 24,
-            resets_at: None,
-        }),
-        seven_day: None,
-    });
-    assert_eq!(
-        store
-            .state()
-            .usage
-            .five_hour
-            .as_ref()
-            .map(|w| w.used_percentage),
-        Some(24)
-    );
-    assert_eq!(store.state().usage.seven_day, None);
-    assert!(store.version() > before_version);
-    // Sessions/focus untouched by an account-wide usage refetch.
-    assert_eq!(store.state().focused_session_id, Some(id("a", "one")));
-}
-
-#[test]
 fn worktree_flag_derives_from_dir_differing_from_the_registered_dir() {
     let wt = SessionInfo {
         dir: Some("/repos/.garage-worktrees/a-wt".to_owned()),

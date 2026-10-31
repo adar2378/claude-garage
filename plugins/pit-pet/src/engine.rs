@@ -1,12 +1,13 @@
-//! Pit pet: the wall's one ambient, opt-in ASCII creature (spec `pit-pet`)
-//! on the TUI's one-row bottom strip (spec `tui-pit-pet`). Three pets with
-//! their own names, personalities and derived-mood rules; motion and art are
-//! cut for a single strip row.
+//! Pit pet engine: the one ambient, opt-in ASCII creature (spec `pit-pet`) of
+//! the TUI's one-row bottom strip (spec `tui-pit-pet`). Three pets with their
+//! own names, personalities and derived-mood rules; motion and art are cut
+//! for a single strip row. Moved here unchanged from the wall's `ui/pet`
+//! (p25): now the plugin runs the simulation and the wall only draws frames.
 //!
 //! Pure module: no ratatui, no IO, no `Instant`/`SystemTime`, no `rand`.
 //! Time and randomness are injected — `now_ms: i64` and `rng: &mut impl
 //! FnMut() -> f64` yielding `[0.0, 1.0)` — exactly the discipline
-//! `runtime::Notices` already uses, so every mood, motion, and chatter rule
+//! the wall's notices used, so every mood, motion, and chatter rule
 //! unit-tests without a terminal.
 //!
 //! Sprite widths are measured with `chars().count()` rather than the
@@ -22,13 +23,15 @@
 //! - "Species-true one-row motion" → [`PetSim::step`].
 //! - "Species-voiced chatter" → [`Intent`], [`LINES`], [`Chatter`].
 //!
-//! Click routing, strip rendering, and state/runtime wiring are out of
-//! scope for this file (see `ui/strip.rs`, `runtime.rs`, `state/`).
+//! Click routing, the frame set and state storage are out of scope for this
+//! file (see `frames.rs` and `run.rs`).
+
+use serde::{Deserialize, Serialize};
 
 // ── Species ─────────────────────────────────────────────────────────────
 
 /// The family, by name (named by the user, 2026-07-19).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Species {
     Cat,
     Duck,
@@ -127,7 +130,7 @@ impl Species {
 
 // ── Mood ────────────────────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Mood {
     Sleep,
     Watch,
@@ -250,7 +253,7 @@ pub fn sprite(species: Species, mood: Mood, frame: usize, ascii_pup: bool) -> Sp
 /// `last_text`/`last_bang_lit` are bookkeeping for `changed` — not part of
 /// the design.md field list, but needed so `changed` doesn't have to
 /// re-derive the previous frame's display state from scratch.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct PetSim {
     pub x: u16,
     pub target: u16,
@@ -263,7 +266,9 @@ pub struct PetSim {
     pub celebrate_until_ms: i64,
     pub prev_blocked: usize,
     prev_mood: Option<Mood>,
+    #[serde(skip)]
     last_text: Option<&'static str>,
+    #[serde(skip)]
     last_bang_lit: bool,
 }
 
@@ -733,6 +738,11 @@ impl Default for Chatter {
 }
 
 impl Chatter {
+    /// The rate-limit floor between ordinary lines.
+    pub fn floor_ms(&self) -> i64 {
+        self.floor_ms
+    }
+
     /// An E2E-only constructor with a lowered (or raised) rate-limit floor
     /// — everything else starts at `default()`'s values (spec "Rate limit"
     /// is otherwise unaffected: alert suppression, the user-notice gate, and

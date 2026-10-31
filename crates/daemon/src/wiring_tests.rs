@@ -88,3 +88,98 @@ async fn notification_hook_flows_through_real_adapters() {
     poller.poll_once().await;
     assert!(!state.status.has("garage/ws/a"));
 }
+
+#[tokio::test]
+async fn a_stop_hook_publishes_the_turn_with_the_scrollback_row_of_the_cursor() {
+    let tmux = TestTmux::new();
+    let garage = tempfile::tempdir().unwrap();
+    let claude_home = tempfile::tempdir().unwrap();
+    let backend = Arc::new(tmux.backend());
+    backend.init().await.unwrap();
+    backend
+        .create(
+            "garage/ws/a",
+            tmux.dir(),
+            "sh",
+            &[
+                "-c".into(),
+                "i=0; while [ $i -lt 80 ]; do echo out-$i; i=$((i+1)); done; sleep 60".into(),
+            ],
+            &[],
+        )
+        .await
+        .unwrap();
+    tmux.wait_for_async(|| async {
+        backend
+            .capture("garage/ws/a", 200)
+            .await
+            .is_ok_and(|s| s.contains("out-79"))
+    })
+    .await;
+
+    let agents: Arc<dyn AgentSource> = Arc::new(CommandAgents::new(
+        "sh",
+        vec!["-c".into(), "echo '[]'".into()],
+    ));
+    let config = Config {
+        port: 0,
+        garage_dir: garage.path().to_path_buf(),
+        tmux_socket: Some(tmux.socket().to_owned()),
+        tmux_control: false,
+        ui_origins: vec![],
+    };
+    let state = AppState::with_agents(
+        config,
+        backend.clone(),
+        Arc::new(crate::os::UnsupportedOs),
+        agents,
+        claude_home.path().to_path_buf(),
+    );
+    let mut events = state.bus.subscribe();
+    let token = state.registry.get_hook_token().await.unwrap();
+    let cwd = backend.list().await.unwrap()[0].dir.clone();
+    let expected = backend.pane_anchor("garage/ws/a").await.unwrap().unwrap();
+    assert!(
+        expected.history_size > 0,
+        "the output scrolled: {expected:?}"
+    );
+
+    let req = Request::builder()
+        .method("POST")
+        .uri(format!("/api/hooks/claude?token={token}"))
+        .header("content-type", "application/json")
+        .body(Body::from(
+            serde_json::json!({"hook_event_name": "Stop", "session_id": "nope", "cwd": cwd})
+                .to_string(),
+        ))
+        .unwrap();
+    assert_eq!(
+        app(state.clone()).oneshot(req).await.unwrap().status(),
+        StatusCode::OK
+    );
+    let turn = loop {
+        match events.try_recv().unwrap() {
+            DaemonEvent::SessionTurn {
+                id,
+                row,
+                history_limit,
+                ..
+            } => break (id, row, history_limit),
+            _ => continue,
+        }
+    };
+    assert_eq!(turn.0, "garage/ws/a");
+    assert_eq!(turn.1, Some(expected.row()), "history size plus cursor row");
+    assert_eq!(turn.2, expected.history_limit);
+    let (_, payload) = DaemonEvent::SessionTurn {
+        id: turn.0,
+        workspace: "ws".into(),
+        at: 1,
+        transcript_offset: None,
+        row: turn.1,
+        history_limit: turn.2,
+    }
+    .plugin_event()
+    .unwrap();
+    assert_eq!(payload["row"], expected.row());
+}

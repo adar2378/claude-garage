@@ -6,7 +6,7 @@
 use std::collections::HashMap;
 
 pub use crate::actions::GarageCommand;
-use crate::api::models::{SessionInfo, UsageInfo, WorkspaceInfo};
+use crate::api::models::{SessionInfo, WorkspaceInfo};
 use crate::state::armed_action::ArmedAction;
 use crate::state::salience::jump_target;
 use crate::state::views::{DEFAULT_VIEW, View, ViewsByWorkspace, derive_view_name, view_of};
@@ -168,28 +168,6 @@ impl WallStore {
         if views_changed {
             self.views_revision += 1;
         }
-        self.set(next);
-    }
-
-    /// `GET /api/usage` refetch (spec tui-context-meters "Strip usage
-    /// chip") — account-wide data, no session reconciliation involved.
-    pub fn usage_fetched(&mut self, usage: UsageInfo) {
-        let mut next = self.state.clone();
-        next.usage = usage;
-        self.set(next);
-    }
-
-    /// `P` cycles the pit-pet roster (spec tui-pit-pet "Opt-in roster cycled
-    /// by `P`"). `pet` is `"cat"` | `"duck"` | `"pup"` | `None` (off) — the
-    /// wiring phase is the one place that knows about `Species`; the store
-    /// just carries whatever it's given. Bumps `views_revision`, the same
-    /// debounced-save hook views mutations use: `wall.json` holds both, so a
-    /// pet change is exactly as save-worthy as a view change (see
-    /// `state::persistence::WallFile`).
-    pub fn set_pet(&mut self, pet: Option<String>) {
-        let mut next = self.state.clone();
-        next.pet = pet;
-        self.views_revision += 1;
         self.set(next);
     }
 

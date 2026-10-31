@@ -16,8 +16,6 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Paragraph, Widget};
 
-use crate::actions::ids;
-use crate::api::models::UsageInfo;
 use crate::slots::{self, ClickTarget, Placement, SlotCtx, SlotId, SlotItem, SlotRegistry};
 use crate::state::wall_state::{KeyLayer, WallState};
 use crate::ui::theme::colors;
@@ -30,100 +28,6 @@ use crate::ui::theme::colors;
 /// (see `runtime.rs`'s hint scheduling), so `strip_line` special-cases this
 /// text to pick the dim color instead of an ordinary notice's bright one.
 pub const STATUSLINE_HINT: &str = "press I to install hooks (instant status) + context meter";
-
-/// `5h N% · wk M%`-style account usage chip (spec tui-context-meters "Strip
-/// usage chip"): a null window is omitted, not zero-filled; both null hides
-/// the chip entirely (`None`).
-fn usage_chip_text(usage: &UsageInfo) -> Option<String> {
-    let five_hour = usage
-        .five_hour
-        .as_ref()
-        .map(|w| format!("5h {}%", w.used_percentage));
-    let seven_day = usage
-        .seven_day
-        .as_ref()
-        .map(|w| format!("wk {}%", w.used_percentage));
-    match (five_hour, seven_day) {
-        (None, None) => None,
-        (Some(a), None) => Some(a),
-        (None, Some(b)) => Some(b),
-        (Some(a), Some(b)) => Some(format!("{a} · {b}")),
-    }
-}
-
-/// The `strip.right` core provider: the account usage chip.
-pub fn usage_chip_provider(ctx: &SlotCtx) -> Vec<SlotItem> {
-    let Some(chip) = ctx.state.and_then(|st| usage_chip_text(&st.usage)) else {
-        return Vec::new();
-    };
-    vec![SlotItem::new(
-        vec![Span::styled(
-            format!(" {chip} "),
-            Style::default().fg(colors::DIM),
-        )],
-        50,
-    )]
-}
-
-/// The pit pet's current frame, as the render layer needs it (spec
-/// tui-pit-pet "One-row sprites and derived mood" / "Species-true one-row
-/// motion") — built by `runtime.rs`'s tick pass from a `pet::StepResult`,
-/// consumed here as plain data so `strip.rs` stays free of `ui::pet`
-/// simulation logic (it only lays the sprite out).
-#[derive(Debug, Clone)]
-pub struct PetRender {
-    /// The sprite frame's text (`pet::Sprite::text` — always single-width
-    /// ASCII/measured glyphs, see `pet.rs`'s width-measurement note).
-    pub text: &'static str,
-    /// Whether this mood carries a `!` column at all (reserved even unlit,
-    /// so the strip never jitters as the bang blinks).
-    pub bang: bool,
-    /// Whether the `!` is lit THIS frame (amber bold) vs reserved-but-blank.
-    pub bang_lit: bool,
-    /// Strip-local column, within the filler, where the sprite starts.
-    pub x: u16,
-    /// True while the mood is Sleep or Box — rendered dim instead of FG.
-    pub dim: bool,
-    /// A chatter/petting line to draw beside the sprite (spec tui-pit-pet
-    /// "Species-voiced chatter"): left of the sprite when there's room,
-    /// else right of it, else dropped for the frame — never in the
-    /// right-aligned notice slot, which can be a hundred columns away.
-    pub say: Option<String>,
-}
-
-/// The pit pet as a `strip.right` item: the sprite then a reserved bang
-/// column (reserved even unlit, so the strip never jitters as the bang
-/// blinks), floated into the filler at the sim's `x`, with the chatter line
-/// as its caption. A click on it is `pet.pet`.
-pub fn pet_slot_item(p: &PetRender) -> SlotItem {
-    let mut text = vec![Span::styled(
-        p.text,
-        Style::default().fg(if p.dim { colors::DIM } else { colors::FG }),
-    )];
-    if p.bang {
-        text.push(Span::raw(" "));
-        text.push(if p.bang_lit {
-            Span::styled(
-                "!",
-                Style::default()
-                    .fg(colors::AMBER)
-                    .add_modifier(Modifier::BOLD),
-            )
-        } else {
-            // Unlit: still a column-wide space (spec "bang unlit still
-            // reserves the column").
-            Span::raw(" ")
-        });
-    }
-    SlotItem {
-        on_click: Some(ids::PET_PET.into()),
-        placement: Placement::Filler {
-            x: p.x,
-            caption: p.say.clone(),
-        },
-        ..SlotItem::new(text, 100)
-    }
-}
 
 /// Where each filler item lands within a filler `filler` columns wide:
 /// `(offset, item)` pairs in column order. An item needs its width plus a
@@ -165,18 +69,13 @@ fn place_fillers(filler: usize, items: Vec<SlotItem>) -> Vec<(usize, SlotItem)> 
     kept
 }
 
-/// Both click-routed column ranges the strip paints, plus the filler width
-/// the pet tick needs for its next `PetSim::step` (spec tui-pit-pet "Narrow
-/// strip hides the pet" — the tick has to know how much room there'll be).
+/// The click-routed column ranges the strip paints, and the filler's span
+/// (reported to plugins as the room a `strip.right` filler item has).
 pub struct StripCols {
     /// Absolute column range of the blocked badge, when rendered.
     pub badge: Option<Range<u16>>,
-    /// Absolute click ranges of the clickable `strip.right` slot items (the
-    /// pet's sprite and reserved bang column among them).
+    /// Absolute click ranges of the clickable `strip.right` slot items.
     pub slots: Vec<(Range<u16>, ClickTarget)>,
-    /// The filler's width this frame — the room available for the pet,
-    /// independent of whether a pet is currently selected.
-    pub filler_width: u16,
     /// The filler's absolute column range (`x0..x1`); empty when there is no
     /// room.
     pub filler: Range<u16>,
@@ -188,17 +87,13 @@ pub struct StripLine {
     pub badge: Option<Range<u16>>,
     /// Strip-local click ranges of the clickable `strip.right` slot items.
     pub slots: Vec<(Range<u16>, ClickTarget)>,
-    /// The filler's width this frame, regardless of whether a pet occupies
-    /// any of it (spec tui-pit-pet: the tick pass needs this for the next
-    /// step's `filler_width`).
-    pub filler_width: u16,
     /// Strip-local column range of the filler.
     pub filler: Range<u16>,
 }
 
 /// Build the strip's line for `width` columns: tabs left, then a filler
-/// (with a floated `strip.right` item such as the pet inserted into it, when
-/// there's room), then
+/// (with a floated `strip.right` item such as a plugin's pet inserted into it,
+/// when there's room), then
 /// notice · badge · chip right-aligned.
 pub fn strip_line(
     state: &WallState,
@@ -335,15 +230,14 @@ pub fn strip_line(
             click_ranges.extend(laid.clicks(right_start + notice_w, usize::from(width)));
             click_ranges
         },
-        filler_width: filler as u16,
         filler: left_w.min(usize::from(width)) as u16
             ..(left_w + filler).min(usize::from(width)) as u16,
     }
 }
 
 /// Render the strip into its 1-row rect; returns the badge's and the
-/// clickable slot items' absolute column ranges for click routing, plus the filler width the
-/// pet's next tick needs (spec tui-pit-pet).
+/// clickable slot items' absolute column ranges for click routing, plus the
+/// filler's span.
 pub fn render_strip(
     buf: &mut Buffer,
     rect: Rect,
@@ -362,7 +256,6 @@ pub fn render_strip(
             .into_iter()
             .map(|(r, target)| (rect.x + r.start..rect.x + r.end, target))
             .collect(),
-        filler_width: built.filler_width,
         filler: rect.x + built.filler.start..rect.x + built.filler.end,
     }
 }
@@ -373,9 +266,66 @@ mod tests {
     //! text with amber dots, the blocked badge and its click range, chip
     //! variants, the notice slot.
     use super::*;
-    use crate::actions::ActionId;
-    use crate::api::models::{SessionInfo, UsageWindow, WorkspaceInfo};
+    use crate::actions::{ActionId, ids};
+    use crate::api::models::{SessionInfo, WorkspaceInfo};
     use crate::state::store::WallStore;
+
+    /// A sprite-shaped filler item for the layout tests below (the shape the
+    /// pit-pet plugin pushes: sprite, reserved bang column, caption).
+    #[derive(Debug, Clone)]
+    pub struct PetRender {
+        /// The sprite frame's text (`pet::Sprite::text` — always single-width
+        /// ASCII/measured glyphs, see `pet.rs`'s width-measurement note).
+        pub text: &'static str,
+        /// Whether this mood carries a `!` column at all (reserved even unlit,
+        /// so the strip never jitters as the bang blinks).
+        pub bang: bool,
+        /// Whether the `!` is lit THIS frame (amber bold) vs reserved-but-blank.
+        pub bang_lit: bool,
+        /// Strip-local column, within the filler, where the sprite starts.
+        pub x: u16,
+        /// True while the mood is Sleep or Box — rendered dim instead of FG.
+        pub dim: bool,
+        /// A chatter/petting line to draw beside the sprite (spec tui-pit-pet
+        /// "Species-voiced chatter"): left of the sprite when there's room,
+        /// else right of it, else dropped for the frame — never in the
+        /// right-aligned notice slot, which can be a hundred columns away.
+        pub say: Option<String>,
+    }
+
+    /// The pit pet as a `strip.right` item: the sprite then a reserved bang
+    /// column (reserved even unlit, so the strip never jitters as the bang
+    /// blinks), floated into the filler at the sim's `x`, with the chatter line
+    /// as its caption. A click on it is `pet.pet`.
+    pub fn pet_slot_item(p: &PetRender) -> SlotItem {
+        let mut text = vec![Span::styled(
+            p.text,
+            Style::default().fg(if p.dim { colors::DIM } else { colors::FG }),
+        )];
+        if p.bang {
+            text.push(Span::raw(" "));
+            text.push(if p.bang_lit {
+                Span::styled(
+                    "!",
+                    Style::default()
+                        .fg(colors::AMBER)
+                        .add_modifier(Modifier::BOLD),
+                )
+            } else {
+                // Unlit: still a column-wide space (spec "bang unlit still
+                // reserves the column").
+                Span::raw(" ")
+            });
+        }
+        SlotItem {
+            on_click: Some(ids::VIEW_CYCLE.into()),
+            placement: Placement::Filler {
+                x: p.x,
+                caption: p.say.clone(),
+            },
+            ..SlotItem::new(text, 100)
+        }
+    }
 
     fn ws(name: &str) -> WorkspaceInfo {
         WorkspaceInfo {
@@ -491,11 +441,24 @@ mod tests {
         }
     }
 
-    // ── p11: usage chip (spec tui-context-meters "Strip usage chip") ───────
+    // ── p25: the usage chip is the usage-bar plugin's flow item ─────────────
+
+    /// The usage-bar plugin's golden widget body (also asserted by the plugin
+    /// crate, so the two cannot drift).
+    const USAGE_BOTH: &str = include_str!("../../../plugins/usage-bar/golden/both.json");
+
+    fn usage_registry() -> SlotRegistry {
+        crate::plugins::test_support::registry_with(
+            "usage-bar",
+            &[],
+            garage_protocol::widgets::WidgetSlot::StripRight,
+            USAGE_BOTH,
+        )
+    }
 
     #[test]
-    fn usage_chip_hidden_entirely_when_both_windows_are_null() {
-        let store = store(); // fresh: no /api/usage post yet
+    fn no_plugin_no_chip_and_the_core_registry_has_none() {
+        let store = store();
         let text = strip_line(store.state(), &SlotRegistry::core(), None, 120)
             .line
             .to_string();
@@ -504,83 +467,19 @@ mod tests {
     }
 
     #[test]
-    fn usage_chip_shows_both_windows_dim() {
-        let mut store = store();
-        store.usage_fetched(UsageInfo {
-            five_hour: Some(UsageWindow {
-                used_percentage: 24,
-                resets_at: None,
-            }),
-            seven_day: Some(UsageWindow {
-                used_percentage: 61,
-                resets_at: None,
-            }),
-        });
-        let s = strip_line(store.state(), &SlotRegistry::core(), None, 120);
+    fn usage_chip_from_the_plugin_is_dim_and_never_displaces_the_notice_badge_or_keys_chip() {
+        let store = store(); // one blocked session (beta/blocked) baked in
+        let s = strip_line(store.state(), &usage_registry(), Some("closed ghost"), 140);
         let text = s.line.to_string();
+        assert!(text.contains("closed ghost"), "{text}");
         assert!(text.contains("5h 24% · wk 61%"), "{text}");
-        let chip_span = s
+        let chip = s
             .line
             .spans
             .iter()
             .find(|sp| sp.content.contains("5h 24%"))
             .unwrap();
-        assert_eq!(chip_span.style.fg, Some(colors::DIM));
-    }
-
-    #[test]
-    fn usage_chip_omits_a_null_window() {
-        let mut five_only = store();
-        five_only.usage_fetched(UsageInfo {
-            five_hour: Some(UsageWindow {
-                used_percentage: 24,
-                resets_at: None,
-            }),
-            seven_day: None,
-        });
-        let text = strip_line(five_only.state(), &SlotRegistry::core(), None, 120)
-            .line
-            .to_string();
-        assert!(text.contains("5h 24%"), "{text}");
-        assert!(!text.contains("wk"), "{text}");
-
-        let mut week_only = store();
-        week_only.usage_fetched(UsageInfo {
-            five_hour: None,
-            seven_day: Some(UsageWindow {
-                used_percentage: 61,
-                resets_at: None,
-            }),
-        });
-        let text = strip_line(week_only.state(), &SlotRegistry::core(), None, 120)
-            .line
-            .to_string();
-        assert!(text.contains("wk 61%"), "{text}");
-        assert!(!text.contains("5h"), "{text}");
-    }
-
-    #[test]
-    fn usage_chip_never_displaces_the_notice_badge_or_keys_chip() {
-        let mut store = store(); // one blocked session (beta/blocked) baked in
-        store.usage_fetched(UsageInfo {
-            five_hour: Some(UsageWindow {
-                used_percentage: 24,
-                resets_at: None,
-            }),
-            seven_day: Some(UsageWindow {
-                used_percentage: 61,
-                resets_at: None,
-            }),
-        });
-        let s = strip_line(
-            store.state(),
-            &SlotRegistry::core(),
-            Some("closed ghost"),
-            140,
-        );
-        let text = s.line.to_string();
-        assert!(text.contains("closed ghost"), "{text}");
-        assert!(text.contains("5h 24% · wk 61%"), "{text}");
+        assert_eq!(chip.style.fg, Some(colors::DIM));
         assert!(
             text.ends_with(" ● 1 blocked  keys → garage "),
             "badge and keys chip still land at the very end: {text}"
@@ -652,7 +551,7 @@ mod tests {
     fn pet_range(s: &StripLine) -> Option<Range<u16>> {
         s.slots
             .iter()
-            .find(|(_, t)| t.action == ids::PET_PET)
+            .find(|(_, t)| t.action == ids::VIEW_CYCLE)
             .map(|(r, _)| r.clone())
     }
 
@@ -811,7 +710,7 @@ mod tests {
         let b = strip_line(
             store.state(),
             &with_fillers(vec![SlotItem {
-                on_click: Some(ids::PET_PET.into()),
+                on_click: Some(ids::VIEW_CYCLE.into()),
                 placement: Placement::Filler {
                     x: 30,
                     caption: Some("hi there".into()),

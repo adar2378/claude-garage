@@ -216,11 +216,16 @@ pub async fn claude(
             .and_then(|p| crate::transcript::size_under(&state.telemetry.claude_home, p));
         for id in &ids {
             let (workspace, _) = crate::backend::tmux::split_session_id(id);
+            // Where the cursor is right now: a turn marker is anchored to
+            // this scrollback row.
+            let anchor = state.telemetry.deps.pane_anchor(id).await;
             state.bus.publish(crate::bus::DaemonEvent::SessionTurn {
                 id: id.clone(),
                 workspace,
                 at: crate::state::status::now_ms(),
                 transcript_offset: offset,
+                row: anchor.map(|a| a.row()),
+                history_limit: anchor.and_then(|a| a.history_limit),
             });
         }
     }

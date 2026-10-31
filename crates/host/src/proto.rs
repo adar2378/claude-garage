@@ -15,6 +15,7 @@
 //! - `5` rename, payload = new id utf8 (control; reply `[len u32=1][1]`)
 //! - `7` info (control; reply `[len u32][json]`, see [`Info`])
 //! - `8` plain-text capture: last N lines u32 (control; reply `[len u32][utf8]`)
+//! - `9` anchor (control; reply `[len u32=24][history i64][cursor row i64][history limit i64]`)
 //!
 //! An attach connection first receives a snapshot of the screen
 //! (`state_formatted`), then the raw output stream; snapshot and registration
@@ -39,6 +40,7 @@ pub const F_SHUTDOWN: u8 = 4;
 pub const F_RENAME: u8 = 5;
 pub const F_INFO: u8 = 7;
 pub const F_TEXT: u8 = 8;
+pub const F_ANCHOR: u8 = 9;
 
 /// Largest frame either side accepts.
 pub const MAX_FRAME: usize = 16 * 1024 * 1024;
@@ -171,6 +173,19 @@ pub fn info(addr: &str, token: &str) -> std::io::Result<Info> {
 pub fn history_size(addr: &str, token: &str) -> Option<i64> {
     let reply = control(addr, token, F_HISTORY, &[]).ok()?;
     Some(i64::from_le_bytes(reply.try_into().ok()?))
+}
+
+/// Where the cursor is in the absolute scrollback: `(history size, cursor row
+/// on the screen, history limit)`. The cursor's absolute row is the first
+/// plus the second.
+pub fn anchor(addr: &str, token: &str) -> Option<(i64, i64, i64)> {
+    let reply = control(addr, token, F_ANCHOR, &[]).ok()?;
+    let n = |i: usize| {
+        Some(i64::from_le_bytes(
+            reply.get(i * 8..i * 8 + 8)?.try_into().ok()?,
+        ))
+    };
+    Some((n(0)?, n(1)?, n(2)?))
 }
 
 /// `rows` formatted lines (with escapes, joined by `\n`) from absolute line `top_abs`.

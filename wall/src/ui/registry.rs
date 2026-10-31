@@ -106,6 +106,9 @@ struct Entry {
     /// row of a live tail view's top row. Refreshed only while a
     /// `tile.gutter` marker is showing for this tile.
     history: Option<i64>,
+    /// tmux `#{history_limit}` as of the same refresh: how many history lines
+    /// are kept at most.
+    history_limit: Option<i64>,
     /// What the last (re)attach used; scrollback and the `+N lines` counter
     /// query the same backend through it.
     spec: Option<Target>,
@@ -169,6 +172,7 @@ impl TileRegistry {
                 size: (80, 24),
                 frozen: None,
                 history: None,
+                history_limit: None,
                 spec: None,
             },
         );
@@ -351,9 +355,15 @@ impl TileRegistry {
         self.entries.get(id).and_then(|e| e.history)
     }
 
-    pub fn set_history(&mut self, id: &str, size: i64) {
+    /// The history limit that came with [`TileRegistry::history`].
+    pub fn history_limit(&self, id: &str) -> Option<i64> {
+        self.entries.get(id).and_then(|e| e.history_limit)
+    }
+
+    pub fn set_history(&mut self, id: &str, size: i64, limit: Option<i64>) {
         if let Some(entry) = self.entries.get_mut(id) {
             entry.history = Some(size);
+            entry.history_limit = limit;
         }
     }
 

@@ -69,6 +69,20 @@ pub fn gutter_screen_row(row: u64, top_abs: i64, height: u16) -> Option<u16> {
         .then_some(offset as u16)
 }
 
+/// Whether the marker at absolute `row` can still be on a line of the
+/// scrollback: not before the oldest line that `history_size` lines of
+/// history (at most `history_limit` of them are kept) can reach. Without a
+/// limit nothing is dropped. A marker is anchored to the row the daemon
+/// measured when the turn ended, so one that has fallen out of the kept
+/// history is not drawn at all rather than on the wrong line.
+pub fn gutter_in_history(row: u64, history_size: i64, history_limit: Option<i64>) -> bool {
+    let Some(limit) = history_limit else {
+        return true;
+    };
+    let oldest = history_size.saturating_sub(limit).max(0);
+    i64::try_from(row).is_ok_and(|r| r >= oldest)
+}
+
 /// Draw the gutter markers into the tile's left border column (no layout
 /// change, so the PTY never resizes as markers come and go) and return their
 /// click regions. A row holds one marker: the first by priority wins.
@@ -740,6 +754,18 @@ mod tests {
         );
         assert_eq!(gutter_screen_row(5, 100, 0), None, "no body rows");
         assert_eq!(gutter_screen_row(u64::MAX, 0, 10), None, "no overflow");
+    }
+
+    #[test]
+    fn markers_that_fell_out_of_the_kept_history_are_not_drawn() {
+        // 5000 lines of history on a 2000-line limit: nothing below row 3000 is left.
+        assert!(!gutter_in_history(2999, 5000, Some(2000)));
+        assert!(gutter_in_history(3000, 5000, Some(2000)));
+        assert!(gutter_in_history(4800, 5000, Some(2000)));
+        // History not yet at the limit keeps every row; no limit known drops nothing.
+        assert!(gutter_in_history(0, 1500, Some(2000)));
+        assert!(gutter_in_history(0, 99_999, None));
+        assert!(!gutter_in_history(u64::MAX, 10, Some(5)), "no overflow");
     }
 
     fn marker(row: u64, glyph: &str, priority: i16, clickable: bool) -> SlotItem {

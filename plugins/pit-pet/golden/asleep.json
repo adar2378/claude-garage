@@ -1,0 +1,1 @@
+{"scopes":{"*":[{"priority":100,"placement":{"kind":"filler","x":4},"frames":[[{"text":"=-.-=","style":{"fg":"dim"},"click":{"action":"pet"}}]],"frame_ms":300,"frame_x":[4]}]},"ttl_secs":15}
