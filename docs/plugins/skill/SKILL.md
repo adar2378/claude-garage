@@ -47,6 +47,14 @@ Do the work in a new folder; never touch `~/.garage`, tmux, or the user's sessio
 - Write only inside `$GARAGE_PLUGIN_STATE_DIR` or the plugin folder.
 - Plugins are not sandboxed; keep them small enough to read in one sitting.
 
+## Troubleshooting
+
+- A Rust plugin fails to build with "failed to find tag `vX.Y.Z`" or "could not find `garage-plugin-sdk`":
+  the template pins the SDK to the git tag of the garage version that created it, and that tag does not
+  exist (a development build) or does not contain `crates/plugin-sdk`. Point `Cargo.toml` at a tag that
+  exists (see the repository's releases), or create the plugin with a hidden `plugin new --sdk-path
+  <checkout>/crates/plugin-sdk` to use a local checkout.
+
 ## Example
 
 Request: "show how many sessions need input in the status strip".
