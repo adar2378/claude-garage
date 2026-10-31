@@ -78,6 +78,9 @@ impl Keymap {
             ("I", ids::HOOKS_INSTALL),
             ("t", ids::SESSION_OPEN_WINDOW),
             ("P", ids::PET_CYCLE_SPECIES),
+            ("b", ids::RAIL_TOGGLE),
+            ("<", ids::RAIL_NARROW),
+            (">", ids::RAIL_WIDEN),
             ("r", ids::CHORD_RESTART),
             ("q", ids::APP_QUIT),
         ];
@@ -403,6 +406,9 @@ mod tests {
             ("I", "hooks.install"),
             ("t", "session.open_window"),
             ("P", "pet.cycle_species"),
+            ("b", "rail.toggle"),
+            ("<", "rail.narrow"),
+            (">", "rail.widen"),
             ("r", "chord.restart"),
             ("q", "app.quit"),
         ];

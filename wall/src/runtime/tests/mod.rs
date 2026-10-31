@@ -101,6 +101,7 @@ mod dispatch;
 mod draw;
 mod layers;
 mod motion;
+mod p25;
 mod plugin_gate;
 mod plugins;
 mod router;

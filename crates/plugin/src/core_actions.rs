@@ -61,6 +61,9 @@ const NEVER: &[&str] = &[
     "overlay.view_picker.pick",
     "chord.restart",
     "pet.cycle_species",
+    "rail.toggle",
+    "rail.narrow",
+    "rail.widen",
 ];
 
 /// `None` when `id` is not a core id at all.

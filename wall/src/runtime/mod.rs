@@ -407,6 +407,13 @@ struct App {
     /// View-strip click targets from the last frame (absolute columns paired
     /// with the view name they focus) — empty when the strip isn't shown.
     view_strip_targets: Vec<(Range<u16>, String)>,
+    /// p25: the mouse button is down on the rail divider or inside a tile.
+    drag: Option<mouse::Drag>,
+    /// p25: the highlighted tile text, if any.
+    selection: Option<crate::input::selection::Selection>,
+    /// p25: text waiting to reach the system clipboard (drained by the loop,
+    /// which owns the terminal and the OS).
+    copies: Vec<String>,
     /// Modal rects from the last frame, per open overlay.
     triage_rect: Option<Rect>,
     ws_add_rect: Option<Rect>,
@@ -487,6 +494,9 @@ impl App {
             slot_clicks: Vec::new(),
             gutter_sessions: std::collections::HashSet::new(),
             view_strip_targets: Vec::new(),
+            drag: None,
+            selection: None,
+            copies: Vec::new(),
             triage_rect: None,
             ws_add_rect: None,
             view_picker_rect: None,
@@ -819,6 +829,11 @@ impl App {
 
     /// The three-layer dispatch; true = quit.
     fn handle_key(&mut self, key: &KeyEvent) -> bool {
+        // A highlighted selection: Ctrl+C copies it (and never reaches the
+        // session); any other key clears it. Overlays own their keys.
+        if self.store.state().layer != KeyLayer::Overlay && self.selection_key(key) {
+            return false;
+        }
         match self.store.state().layer {
             KeyLayer::Overlay => {
                 self.keylog
@@ -1091,6 +1106,7 @@ fn wall_file_snapshot(store: &WallStore) -> WallFile {
     WallFile {
         views: store.state().views.clone(),
         pet: store.state().pet.clone(),
+        rail: store.state().rail,
     }
 }
 
@@ -1149,7 +1165,11 @@ async fn state_loop(
     // so calling it before any session exists would prune every loaded
     // assignment on the spot and silently lose the whole file.
     let views_path = persistence::wall_json_path();
-    let mut pending_file = Some(persistence::load(&views_path));
+    let loaded_file = persistence::load(&views_path);
+    // The rail is layout, not session-shaped: apply it before the first
+    // frame so a restart opens at the remembered width with no flash.
+    app.store.load_rail(loaded_file.rail);
+    let mut pending_file = Some(loaded_file);
     let mut saved_views_revision = app.store.views_revision();
     let mut views_dirty_since: Option<Instant> = None;
     const VIEWS_SAVE_DEBOUNCE: Duration = Duration::from_millis(500);
@@ -1303,9 +1323,14 @@ async fn state_loop(
         // Downstream of the batch: registry sync, dead-tile disengage,
         // escalation. The bell/title bytes go straight to the terminal
         // between frames — same thread as the draw, so no interleaving.
-        if let Some(seq) = app.after_events() {
+        let mut tty = app.after_events().unwrap_or_default();
+        for text in app.copies.drain(..) {
+            tty.push_str(&crate::input::clipboard::osc52(&text));
+            crate::input::clipboard::native_copy(&text);
+        }
+        if !tty.is_empty() {
             let mut out = std::io::stdout();
-            let _ = out.write_all(seq.as_bytes());
+            let _ = out.write_all(tty.as_bytes());
             let _ = out.flush();
         }
     }

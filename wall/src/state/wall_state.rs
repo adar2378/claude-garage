@@ -198,6 +198,43 @@ pub struct WallState {
     /// *observed* drop should ever box the pet, not the gap before the
     /// first connect.
     pub daemon_live: bool,
+    /// p25: the rail's visibility and width (`b`, `<`, `>`, divider drag),
+    /// persisted in `wall.json`.
+    pub rail: RailPrefs,
+}
+
+/// The rail's remembered layout choice.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RailPrefs {
+    pub hidden: bool,
+    /// Columns, divider included; always within [`RailPrefs::MIN`]..=[`RailPrefs::MAX`].
+    pub width: u16,
+}
+
+impl RailPrefs {
+    pub const DEFAULT_WIDTH: u16 = 28;
+    pub const MIN: u16 = 16;
+    pub const MAX: u16 = 60;
+    /// Columns one `<` / `>` press moves the divider.
+    pub const STEP: u16 = 2;
+
+    pub fn clamp_width(width: u16) -> u16 {
+        width.clamp(Self::MIN, Self::MAX)
+    }
+
+    /// The width the layout gives the rail: nothing while hidden.
+    pub fn layout_width(self) -> u16 {
+        if self.hidden { 0 } else { self.width }
+    }
+}
+
+impl Default for RailPrefs {
+    fn default() -> Self {
+        RailPrefs {
+            hidden: false,
+            width: Self::DEFAULT_WIDTH,
+        }
+    }
 }
 
 impl Default for WallState {
@@ -227,6 +264,7 @@ impl WallState {
             usage: UsageInfo::default(),
             pet: None,
             daemon_live: true,
+            rail: RailPrefs::default(),
         }
     }
 

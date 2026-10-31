@@ -284,6 +284,22 @@ impl TileRegistry {
         }
     }
 
+    /// Run `f` on the tile's screen (the frozen snapshot when frozen, else
+    /// the live one); `None` when the tile has no screen yet.
+    pub fn with_screen<R>(&self, id: &str, f: impl FnOnce(&vt100::Screen) -> R) -> Option<R> {
+        let entry = self.entries.get(id)?;
+        if let Some(frozen) = &entry.frozen {
+            return Some(f(frozen.parser.screen()));
+        }
+        match &entry.slot {
+            Slot::Attached(client) => {
+                let parser = client.parser().lock().unwrap();
+                Some(f(parser.screen()))
+            }
+            _ => None,
+        }
+    }
+
     /// One rendered row of a tile's terminal as plain text, one char per
     /// cell (blank cells become spaces so byte-column == cell-column for
     /// the ASCII text URLs are made of). Reads the frozen snapshot when the
