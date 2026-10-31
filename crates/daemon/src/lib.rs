@@ -16,6 +16,9 @@ pub mod session_resolve;
 pub mod state;
 pub mod transcript;
 
+#[cfg(any(test, feature = "test-support"))]
+pub mod test_support;
+
 use std::sync::Arc;
 
 use anyhow::{Context, Result};

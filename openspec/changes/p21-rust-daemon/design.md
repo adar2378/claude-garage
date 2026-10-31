@@ -67,7 +67,7 @@ pub trait SessionBackend: Send + Sync {
 
 Handlers share one `AppState { config: Arc<Config>, bus: EventBus, backend: Arc<dyn SessionBackend>, os: Arc<dyn Os> }` (stores are added as fields by the port lanes); the router is `Router<AppState>` and the origin guard reads `state.config.ui_origins`.
 
-`TmuxBackend` implements it by porting `daemon/src/tmux.js` and the two direct `tmux` calls in `poller.js` and `session-resolve.js`. It always passes `-L <socket>` when `GARAGE_TMUX_SOCKET` is set. Unset means the default server, which is the user's normal setup. `ensureExtendedKeys` runs inside `create` and at startup, as today.
+`TmuxBackend` implements it by porting `daemon/src/tmux.js` and the two direct `tmux` calls in `poller.js` and `session-resolve.js`. It always passes `-L <socket> -f /dev/null` when `GARAGE_TMUX_SOCKET` is set, so a socket also means no user tmux.conf (intended, for tests and isolation). Unset means the default server, which is the user's normal setup. `ensureExtendedKeys` runs inside `create` and `respawn`, and at startup via `SessionBackend::init`.
 
 **5. tmux isolation, from the first commit.** Every daemon test that touches tmux creates a `TmuxBackend` with a unique socket (`garage-test-<pid>-<n>`) and kills that server (`tmux -L <socket> kill-server`) on drop. No test, agent or CI job uses the default tmux server. The TUI's attach path (`wall/src/pty.rs`) gets the same socket through `attach_spec`, so an end-to-end test can run a whole isolated garage.
 

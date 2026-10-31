@@ -3,6 +3,12 @@
 
 pub mod tmux;
 
+use std::time::Duration;
+
+/// Upper bound for any external command (tmux, git, `claude agents --json`).
+/// A hung child must never stall the poll tick or an API call.
+pub const COMMAND_TIMEOUT: Duration = Duration::from_secs(5);
+
 use std::collections::HashMap;
 use std::path::Path;
 
@@ -16,8 +22,8 @@ pub struct BackendSession {
     pub id: String,
     pub dir: String,
     pub attached: bool,
-    /// Epoch milliseconds.
-    pub created_at: i64,
+    /// Epoch milliseconds; `None` when the backend reports 0 or garbage.
+    pub created_at: Option<i64>,
 }
 
 /// A session's active pane (`cwd`, `title`, `pid`).
@@ -30,6 +36,8 @@ pub struct PaneInfo {
 
 #[async_trait]
 pub trait SessionBackend: Send + Sync {
+    /// One-time server setup at daemon boot (tmux: extended keys). Idempotent.
+    async fn init(&self) -> Result<()>;
     async fn list(&self) -> Result<Vec<BackendSession>>; // id, dir, attached, created_at
     async fn panes(&self) -> Result<HashMap<String, PaneInfo>>; // cwd, title, pid
     async fn has(&self, id: &str) -> Result<bool>;
