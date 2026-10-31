@@ -3,7 +3,7 @@ id          = "cli-extras"
 name        = "CLI extras"
 version     = "0.1.0"
 api_version = 1
-platforms   = ["macos", "linux"]
+platforms   = ["macos", "linux", "windows"]
 description = "claude-garage <folder> opens a folder as a project, plus install and prune"
 permissions = ["workspaces.read", "workspaces.write", "sessions.read", "sessions.manage"]
 

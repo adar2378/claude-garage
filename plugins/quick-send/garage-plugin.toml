@@ -3,7 +3,7 @@ id          = "quick-send"
 name        = "Quick send"
 version     = "0.1.0"
 api_version = 1
-platforms   = ["macos", "linux"]
+platforms   = ["macos", "linux", "windows"]
 description = "s sends one line to the focused session, S to every session of the project"
 permissions = ["sessions.input", "sessions.read", "ui.panes"]
 
