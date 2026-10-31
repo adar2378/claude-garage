@@ -154,9 +154,9 @@ fn placement(p: &WirePlacement) -> Placement {
     }
 }
 
-/// The SlotItems one wire item becomes. Usually one; a flow item whose
-/// segments carry clicks becomes one item per run of equal click, so each
-/// part is its own click region.
+/// The SlotItems one wire item becomes (always one today). A flow item whose
+/// segments carry clicks keeps one item with a click region per run of equal
+/// click (`click_parts`).
 pub fn items(plugin: &str, slot: SlotId, item: &WidgetItem) -> Vec<SlotItem> {
     let item_click = item.click.as_ref().and_then(|c| resolve_click(plugin, c));
     let session = item.session.as_deref();
@@ -216,25 +216,40 @@ pub fn items(plugin: &str, slot: SlotId, item: &WidgetItem) -> Vec<SlotItem> {
         // A gutter marker with no text is just a click target: a blank column.
         return vec![finish(SlotItem::new(text, priority(item.priority)), click)];
     }
-    let mut out: Vec<SlotItem> = Vec::new();
-    let mut run: Vec<&Segment> = Vec::new();
-    let flush = |run: &mut Vec<&Segment>, out: &mut Vec<SlotItem>| {
-        if run.is_empty() {
-            return;
-        }
-        let click = run[0].click.as_ref().and_then(|c| resolve_click(plugin, c));
-        let text = run.iter().map(|s| span(s)).collect();
-        out.push(finish(SlotItem::new(text, priority(item.priority)), click));
-        run.clear();
-    };
+    // One item, a click region per run of equal click: the row stays one
+    // row (rail) / one drop unit (strip, title) while each part keeps its
+    // own columns.
+    let mut parts: Vec<(std::ops::Range<u16>, Option<ClickTarget>)> = Vec::new();
+    let mut col = 0u16;
+    let mut prev: Option<&Option<garage_protocol::widgets::Click>> = None;
     for seg in segments {
-        if run.first().is_some_and(|f| f.click != seg.click) {
-            flush(&mut run, &mut out);
+        let w = span(seg).width().min(usize::from(u16::MAX)) as u16;
+        match (parts.last_mut(), prev) {
+            (Some(last), Some(p)) if *p == seg.click => last.0.end = col.saturating_add(w),
+            _ => parts.push((
+                col..col.saturating_add(w),
+                seg.click.as_ref().and_then(|c| resolve_click(plugin, c)),
+            )),
         }
-        run.push(seg);
+        prev = Some(&seg.click);
+        col = col.saturating_add(w);
     }
-    flush(&mut run, &mut out);
-    out
+    let text = segments.iter().map(span).collect();
+    let mut it = finish(SlotItem::new(text, priority(item.priority)), None);
+    it.click_parts = parts
+        .into_iter()
+        .filter_map(|(cols, t)| {
+            let t = t?;
+            Some((
+                cols,
+                match session {
+                    Some(s) => t.about_session(s),
+                    None => t,
+                },
+            ))
+        })
+        .collect();
+    vec![it]
 }
 
 /// A manifest button as a static flow item.
@@ -376,7 +391,7 @@ mod tests {
     }
 
     #[test]
-    fn segments_with_different_clicks_become_separate_regions_in_a_flow() {
+    fn segments_with_different_clicks_stay_one_item_with_a_region_each() {
         declared();
         let out = items(
             "bt",
@@ -388,24 +403,18 @@ mod tests {
                 {"text": "other", "click": {"action": "bt:other"}},
             ]})),
         );
-        let shown: Vec<(String, Option<&str>)> = out
+        assert_eq!(out.len(), 1, "one widget row is one item");
+        let it = &out[0];
+        assert_eq!(it.priority, 4);
+        assert!(it.on_click.is_none());
+        let text: String = it.text.iter().map(|s| s.content.to_string()).collect();
+        assert_eq!(text, "a goxother");
+        let parts: Vec<_> = it
+            .click_parts
             .iter()
-            .map(|i| {
-                (
-                    i.text.iter().map(|s| s.content.to_string()).collect(),
-                    i.on_click.as_ref().map(|c| c.action.as_str()),
-                )
-            })
+            .map(|(c, t)| (c.clone(), t.action.as_str()))
             .collect();
-        assert_eq!(
-            shown,
-            [
-                ("a ".into(), None),
-                ("gox".into(), Some("bt:go")),
-                ("other".into(), Some("bt:other"))
-            ]
-        );
-        assert!(out.iter().all(|i| i.priority == 4));
+        assert_eq!(parts, [(2..5, "bt:go"), (5..10, "bt:other")]);
     }
 
     #[test]

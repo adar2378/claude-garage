@@ -267,6 +267,16 @@ impl TileRegistry {
         changed
     }
 
+    /// Seat a ready-made client as the attached one (no tmux). Dev-only
+    /// frame renderer.
+    #[cfg(test)]
+    pub(crate) fn seat_for_render(&mut self, id: &str, client: TileClient) {
+        self.insert_pending(id);
+        if let Some(entry) = self.entries.get_mut(id) {
+            entry.slot = Slot::Attached(client);
+        }
+    }
+
     pub fn client_mut(&mut self, id: &str) -> Option<&mut TileClient> {
         match self.entries.get_mut(id).map(|e| &mut e.slot) {
             Some(Slot::Attached(client)) => Some(client),

@@ -242,6 +242,11 @@ pub struct SlotItem {
     /// Set for an animated item: `text` then holds frame 0 and the registry
     /// swaps in the frame for the current draw.
     pub animated: Option<Animated>,
+    /// Separate click targets inside one item (columns relative to the
+    /// item's own start), for a row with several clickable segments. When
+    /// set they replace `on_click` for hit-testing, so the item stays one
+    /// item (one rail row) with a region per segment.
+    pub click_parts: Vec<(Range<u16>, ClickTarget)>,
 }
 
 impl SlotItem {
@@ -254,6 +259,7 @@ impl SlotItem {
             row_style: None,
             gutter_row: None,
             animated: None,
+            click_parts: Vec::new(),
         }
     }
 
@@ -442,6 +448,9 @@ impl SlotRegistry {
             if let Some(target) = item.on_click.as_mut() {
                 target.label = label;
             }
+            for (_, target) in &mut item.click_parts {
+                target.label = label;
+            }
             if let Some(anim) = &item.animated {
                 let index = anim.index_at(self.clock_ms.get());
                 item.text = anim.frames[index].clone();
@@ -485,6 +494,8 @@ impl SlotRegistry {
 pub struct Placed {
     pub cols: Range<usize>,
     pub on_click: Option<ClickTarget>,
+    /// The item's own per-segment targets, columns relative to `cols.start`.
+    pub click_parts: Vec<(Range<u16>, ClickTarget)>,
 }
 
 /// The result of [`layout`]: the spans to draw and where each surviving item
@@ -499,15 +510,29 @@ impl Laid {
     /// Click ranges (`cols` shifted by `offset`) of the items that carry an
     /// action, clipped to `limit` columns.
     pub fn clicks(&self, offset: usize, limit: usize) -> Vec<(Range<u16>, ClickTarget)> {
-        self.placed
-            .iter()
-            .filter_map(|p| {
-                let target = p.on_click.clone()?;
-                let start = (offset + p.cols.start).min(limit);
-                let end = (offset + p.cols.end).min(limit);
-                (start < end).then_some((start as u16..end as u16, target))
-            })
-            .collect()
+        let mut out = Vec::new();
+        for p in &self.placed {
+            let mut push = |cols: Range<usize>, target: &ClickTarget| {
+                let start = (offset + cols.start).min(limit);
+                let end = (offset + cols.end).min(limit);
+                if start < end {
+                    out.push((start as u16..end as u16, target.clone()));
+                }
+            };
+            if p.click_parts.is_empty() {
+                if let Some(t) = &p.on_click {
+                    push(p.cols.clone(), t);
+                }
+            } else {
+                for (c, t) in &p.click_parts {
+                    push(
+                        p.cols.start + usize::from(c.start)..p.cols.start + usize::from(c.end),
+                        t,
+                    );
+                }
+            }
+        }
+        out
     }
 }
 
@@ -535,6 +560,7 @@ pub fn layout(mut items: Vec<SlotItem>, max_width: Option<usize>) -> Laid {
         laid.placed.push(Placed {
             cols: col..col + width,
             on_click: item.on_click.clone(),
+            click_parts: item.click_parts.clone(),
         });
         col += width;
         laid.spans.extend(item.text);
@@ -629,6 +655,32 @@ mod tests {
             "clipped to the limit"
         );
         assert!(laid.clicks(10, 12).is_empty(), "fully clipped away");
+    }
+
+    #[test]
+    fn layout_shifts_an_items_click_parts_to_their_own_columns() {
+        use crate::actions::ids;
+        let mut multi = item("ab-cd", 1);
+        multi.click_parts = vec![
+            (0..2, ids::VIEW_CYCLE.into()),
+            (3..5, ids::OVERLAY_OPEN_QUEUE.into()),
+        ];
+        let laid = layout(vec![item("xx", 1), multi], None);
+        assert_eq!(
+            laid.clicks(10, 100),
+            vec![
+                (12..14, ids::VIEW_CYCLE.into()),
+                (15..17, ids::OVERLAY_OPEN_QUEUE.into())
+            ]
+        );
+        assert_eq!(
+            laid.clicks(10, 16),
+            vec![
+                (12..14, ids::VIEW_CYCLE.into()),
+                (15..16, ids::OVERLAY_OPEN_QUEUE.into())
+            ],
+            "clipped to the limit"
+        );
     }
 
     fn spans(text: &str) -> Vec<Span<'static>> {

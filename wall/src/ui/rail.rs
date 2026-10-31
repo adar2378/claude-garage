@@ -76,7 +76,21 @@ pub fn rail_render(
         // Rows above the workspace row come from the `rail.header` slot;
         // `rail_target_at` counts them through the same call.
         for item in header_items(state, slots, group) {
-            if let Some(target) = item.on_click.clone() {
+            for (cols, target) in &item.click_parts {
+                clicks.push(RailClick {
+                    row: lines.len() as u16,
+                    cols: cols.clone(),
+                    target: target.clone(),
+                    slot: SlotId::RailHeader,
+                    session: None,
+                    workspace: Some(group.name.clone()),
+                });
+            }
+            if let Some(target) = item
+                .on_click
+                .clone()
+                .filter(|_| item.click_parts.is_empty())
+            {
                 clicks.push(RailClick {
                     row: lines.len() as u16,
                     cols: 0..item.width().min(usize::from(u16::MAX)) as u16,
@@ -126,7 +140,21 @@ pub fn rail_render(
         // `rail.extra_rows`: whole rows after the sessions. A click anywhere
         // on the row runs the item's target; `about_session` scopes it.
         for item in extra_row_items(state, slots, group) {
-            if let Some(target) = item.on_click.clone() {
+            for (cols, target) in &item.click_parts {
+                clicks.push(RailClick {
+                    row: lines.len() as u16,
+                    cols: cols.clone(),
+                    target: target.clone(),
+                    slot: SlotId::RailExtraRows,
+                    session: target.session.as_deref().map(str::to_owned),
+                    workspace: Some(group.name.clone()),
+                });
+            }
+            if let Some(target) = item
+                .on_click
+                .clone()
+                .filter(|_| item.click_parts.is_empty())
+            {
                 let session = target.session.as_deref().map(str::to_owned);
                 clicks.push(RailClick {
                     row: lines.len() as u16,
@@ -562,6 +590,70 @@ mod tests {
             "row style reaches past the text"
         );
         assert_eq!(buf[(1, 1)].bg, Color::Reset, "other rows untouched");
+    }
+
+    #[test]
+    fn a_multi_segment_extra_row_is_one_rail_row_with_a_region_per_segment() {
+        use crate::actions::ids;
+        let mut store = WallStore::new();
+        store.workspaces_fetched(vec![ws("alpha"), ws("beta")]);
+        store.sessions_fetched(vec![
+            si("alpha", "one", "idle", None),
+            si("beta", "two", "idle", None),
+        ]);
+        let item: garage_protocol::widgets::WidgetItem =
+            serde_json::from_value(serde_json::json!({
+                "session": "garage/alpha/gone",
+                "segments": [
+                    {"text": " o claude-3", "click": {"action": "session.restore"}},
+                    {"text": " - closed", "click": {"action": "session.restore"}},
+                    {"text": " x ", "click": {"action": "session.close"}},
+                ],
+            }))
+            .unwrap();
+        let built = crate::plugins::build::items("p", SlotId::RailExtraRows, &item);
+        assert_eq!(built.len(), 1, "one item, so one rail row");
+        let mut slots = SlotRegistry::core();
+        slots.register(SlotId::RailExtraRows, move |ctx: &SlotCtx| {
+            if ctx.group.is_some_and(|g| g.name == "alpha") {
+                built.clone()
+            } else {
+                Vec::new()
+            }
+        });
+        let lines = texts(&rail_lines(store.state(), &slots, 0));
+        assert_eq!(
+            lines,
+            [
+                " 1 alpha",
+                " ▸ ○ one",
+                " o claude-3 - closed x ",
+                " 2 beta",
+                "   ○ two"
+            ]
+        );
+        let rect = Rect::new(0, 0, 30, 6);
+        let mut buf = Buffer::empty(rect);
+        let regions = render_rail(&mut buf, rect, store.state(), &slots, 0);
+        let spans: Vec<_> = regions
+            .iter()
+            .map(|r| (r.rect.y, r.rect.x, r.rect.width, r.target.action))
+            .collect();
+        assert_eq!(
+            spans,
+            [
+                (2, 0, 20, ids::SESSION_RESTORE),
+                (2, 20, 3, ids::SESSION_CLOSE)
+            ],
+            "the name and status restore, only the x closes"
+        );
+        assert!(
+            regions
+                .iter()
+                .all(|r| r.session.as_deref() == Some("garage/alpha/gone"))
+        );
+        // The group below starts on the very next row.
+        assert!(texts(&rail_lines(store.state(), &slots, 0))[3].contains("beta"));
     }
 
     #[test]
