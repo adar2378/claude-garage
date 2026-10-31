@@ -54,6 +54,10 @@ test("slugifyCwd replaces every / with -", () => {
   assert.equal(transcript.slugifyCwd("/a/b/c"), "-a-b-c");
 });
 
+test("slugifyCwd also replaces . (garage worktrees live under ~/.garage)", () => {
+  assert.equal(transcript.slugifyCwd("/Users/x/.garage/wt"), "-Users-x--garage-wt");
+});
+
 test("windowForModel: unknown/missing model defaults to 1M (current models are natively 1M)", () => {
   assert.equal(transcript.windowForModel("claude-opus-5"), 1_000_000);
   assert.equal(transcript.windowForModel("claude-fable-5"), 1_000_000);

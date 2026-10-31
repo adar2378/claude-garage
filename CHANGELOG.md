@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.6.3 — fixes
+
+### Fixed
+
+- **Sessions in folders with a dot in the path now show their context.**
+  Worktrees live under `~/.garage`, and their transcripts were never found,
+  so the context meter stayed empty.
+- **Restarting a session that never got a prompt no longer makes it
+  disappear.** If there is nothing to resume, the session is created again
+  instead of failing.
+- **Finishing a worktree can no longer delete the wrong folder.** Discard
+  and merge now check the folder is a garage worktree on the expected
+  branch, and delete nothing if not.
+
 ## 0.6.2 — parent folders lead their group
 
 0.6.1 was tagged but never published; this is the same change.

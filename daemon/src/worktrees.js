@@ -112,6 +112,23 @@ export async function currentBranch(repoDir) {
   }
 }
 
+// Refuse to delete anything that is not a garage worktree: the path must sit
+// under <GARAGE_DIR>/worktrees/ and be checked out on the recorded branch.
+async function assertOwnWorktree(wtPath, branch) {
+  const fail = (msg) => {
+    const err = new Error(msg);
+    err.statusCode = 400;
+    return err;
+  };
+  if (typeof wtPath !== "string" || !path.resolve(wtPath).startsWith(WORKTREES_ROOT + path.sep)) {
+    throw fail("worktree path is not under the garage worktrees folder — nothing deleted");
+  }
+  const head = await git(wtPath, ["rev-parse", "--abbrev-ref", "HEAD"]).catch(() => null);
+  if (head?.stdout.trim() !== branch) {
+    throw fail("worktree is not on the recorded branch — nothing deleted");
+  }
+}
+
 // D-wt-finish: runs after the session is dead — repoDir/path/branch come
 // from the worktree record the caller already holds (DELETE's response
 // body), never re-derived. `merge` and `discard` are guarded to garage/*
@@ -130,6 +147,7 @@ export async function finishWorktree({ repoDir, path: wtPath, branch, action }) 
   }
 
   assertGarageBranch(branch);
+  await assertOwnWorktree(wtPath, branch);
 
   if (action === "merge") {
     // The most common failure isn't a conflict — it's an agent that edited

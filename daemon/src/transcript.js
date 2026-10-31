@@ -6,11 +6,11 @@ const TAIL_BYTES = 256 * 1024;
 const TTL_MS = 15_000;
 const DEFAULT_WINDOW = 1_000_000;
 
-// Claude Code's own project-directory naming: the cwd with every `/`
-// replaced by `-` (leading slash included). Exported — pure — for direct
+// Claude Code's own project-directory naming: the cwd with every `/` and
+// `.` replaced by `-` (`/Users/x/.garage/wt` -> `-Users-x--garage-wt`) (leading slash included). Exported — pure — for direct
 // testing.
 export function slugifyCwd(cwd) {
-  return cwd.replaceAll("/", "-");
+  return cwd.replaceAll(/[/.]/g, "-");
 }
 
 export function transcriptPath(dir, claudeSessionId) {
