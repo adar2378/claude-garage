@@ -9,7 +9,7 @@ use ratatui::widgets::{Block, BorderType, Widget as _};
 use crate::slots::{SlotClickRegion, SlotCtx, SlotId};
 use crate::state::views::ViewSummary;
 use crate::state::wall_state::{KeyLayer, OverlayKind};
-use crate::ui::help::render_help;
+use crate::ui::help::render_help_with;
 use crate::ui::layout::{slot_geometry, tile_inner, wall_layout};
 use crate::ui::rail::render_rail_fading;
 use crate::ui::strip::render_strip;
@@ -179,7 +179,7 @@ impl App {
         self.ws_add_rect = None;
         self.view_picker_rect = None;
         match self.store.state().overlay {
-            Some(OverlayKind::Help) => render_help(buf, area),
+            Some(OverlayKind::Help) => render_help_with(buf, area, &self.plugin_help_rows()),
             Some(OverlayKind::TriageQueue) => {
                 let rows = triage_queue_rows(&self.store.state().sessions);
                 self.triage_rect =
@@ -202,12 +202,82 @@ impl App {
             Some(OverlayKind::WorktreeFinish) => {
                 render_worktree_finish(buf, area, &self.wt_finish, now_ms);
             }
+            Some(OverlayKind::PluginPane) => self.draw_plugin_pane(buf, area, now_ms),
             None => {}
         }
         self.layout = Some(layout);
+        self.report_slot_geometry();
         // The strip (and its notice) is painted: a pending plugin arm's
         // prompt has now been on screen.
         self.router.mark_prompt_drawn(now_ms);
+    }
+
+    /// The help overlay's "Plugins" rows: per plugin its actions with the
+    /// key each one really has, then the keys that did not take effect.
+    fn plugin_help_rows(&self) -> Vec<(String, String)> {
+        let store = self.plugins.borrow();
+        let mut rows = Vec::new();
+        for p in store.list().plugins.iter().filter(|p| p.active && !p.actions.is_empty()) {
+            rows.push((p.name.clone(), String::new()));
+            for a in &p.actions {
+                let key = crate::actions::ActionId::lookup(&a.id).and_then(|id| self.keymap.key_for(id)).unwrap_or_default();
+                rows.push((key, a.title.clone()));
+            }
+            for c in self.plugin_key_conflicts.iter().filter(|c| c.plugin == p.id) {
+                rows.push((format!("! {}", c.key), format!("{} ({})", c.action.as_str(), c.reason)));
+            }
+        }
+        rows
+    }
+
+    /// Tell the daemon how much room each slot has, when it changed (and a
+    /// plugin is active to care): run contexts carry it as `ui.slots`.
+    fn report_slot_geometry(&mut self) {
+        if !self.plugins.borrow().has_active() || tokio::runtime::Handle::try_current().is_err() {
+            return;
+        }
+        let geometry = self.slots.geometry();
+        let Some(body) = self.geometry.due(&geometry, std::time::Instant::now()) else { return };
+        let base_url = self.base_url.clone();
+        let tx = self.tx.clone();
+        drop(tokio::task::spawn_blocking(move || {
+            if let Err(e) = crate::api::client::GarageClient::new(Some(base_url)).put_ui_slots(&body) {
+                super::send_notice(&tx, format!("slot geometry not reported: {e}"), 3000);
+            }
+        }));
+    }
+
+    /// The plugin pane overlay: a bordered PTY, sized to the screen (or the
+    /// popup's own size), with the close chord named in its frame.
+    fn draw_plugin_pane(&mut self, buf: &mut ratatui::buffer::Buffer, area: Rect, now_ms: i64) {
+        use tui_term::widget::{Cursor, PseudoTerminal};
+        let Some(pane) = self.pane.instance().cloned() else { return };
+        let rect = crate::plugins::panes::pane_rect(area, &pane);
+        self.pane.rect = Some(rect);
+        let (cols, rows) = crate::plugins::panes::inner(rect);
+        self.registry.apply_size(&pane.session, cols, rows);
+        ratatui::widgets::Clear.render(rect, buf);
+        let hint = if self.pane.close_pending(now_ms) { " ctrl+q again to close " } else { " ctrl+q ctrl+q closes " };
+        let block = Block::bordered()
+            .border_type(BorderType::Rounded)
+            .border_style(Style::default().fg(colors::DIM))
+            .title(format!(" {}: {} ", pane.plugin, pane.title))
+            .title_bottom(Line::styled(hint, Style::default().fg(colors::FAINT)));
+        if let Some(client) = self.registry.client(&pane.session) {
+            let parser = client.parser().lock().unwrap();
+            let cursor = Cursor::default()
+                .symbol(" ")
+                .style(Style::default().add_modifier(ratatui::style::Modifier::REVERSED));
+            PseudoTerminal::new(parser.screen()).block(block).cursor(cursor).render(rect, buf);
+        } else {
+            let inner = block.inner(rect);
+            block.render(rect, buf);
+            let text = match self.registry.dead_reason(&pane.session) {
+                Some(reason) => reason.to_owned(),
+                None => "… attaching".to_owned(),
+            };
+            render_centered_lines(buf, inner, vec![Line::styled(text, Style::default().fg(colors::DIM))]);
+        }
     }
 
     /// `(attached, needs-input, spinner showing)` for one tile — what the

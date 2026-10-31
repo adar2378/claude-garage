@@ -31,6 +31,34 @@ pub fn run_body(ctx: &ActionCtx) -> Value {
     })
 }
 
+/// The action and context for a plugin's `ui_action` request. The source is
+/// always `Plugin { confirmed: false }`: the frame has no way to say
+/// otherwise. A core action takes its session and workspace from `target`
+/// alone (never the focus, never `args`); a plugin action also gets the
+/// focus, since it runs with the user's context, and its `args`. `None` when
+/// no manifest or core id has that name.
+pub fn ui_action_ctx(state: &crate::state::wall_state::WallState, frame: &garage_protocol::plugins::UiActionFrame) -> Option<(crate::actions::ActionId, ActionCtx)> {
+    let id = crate::actions::ActionId::lookup(&frame.action)?;
+    let mut ctx = ActionCtx::from_focus(state, ActionSource::plugin(&frame.plugin));
+    if !id.is_plugin() {
+        ctx.session = None;
+        ctx.workspace = None;
+    }
+    if let Some(session) = &frame.target.session {
+        ctx.session = Some(session.clone());
+        if frame.target.workspace.is_none() {
+            ctx.workspace = state.session_by_id(Some(session)).map(|s| s.workspace.clone()).or(ctx.workspace);
+        }
+    }
+    if let Some(ws) = &frame.target.workspace {
+        ctx.workspace = Some(ws.clone());
+    }
+    if id.is_plugin() {
+        ctx.args = frame.args.clone().map(std::sync::Arc::new);
+    }
+    Some((id, ctx))
+}
+
 /// Why an action cannot run with this context, as a toast; `None` when it can.
 pub fn unmet(need: Need, title: &str, ctx: &ActionCtx) -> Option<String> {
     match need {

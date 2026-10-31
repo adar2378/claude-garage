@@ -141,7 +141,7 @@ pub fn items(plugin: &str, slot: SlotId, item: &WidgetItem) -> Vec<SlotItem> {
     }
     let mut out: Vec<SlotItem> = Vec::new();
     let mut run: Vec<&Segment> = Vec::new();
-    let mut flush = |run: &mut Vec<&Segment>, out: &mut Vec<SlotItem>| {
+    let flush = |run: &mut Vec<&Segment>, out: &mut Vec<SlotItem>| {
         if run.is_empty() {
             return;
         }

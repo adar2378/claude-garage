@@ -156,6 +156,9 @@ impl Drop for TimerGuard {
     }
 }
 
+/// A plugin process's environment and, when the context was too big for it, the context file.
+type RunEnv = (Vec<(String, String)>, Option<PathBuf>);
+
 pub struct Inner {
     paths: Paths,
     port: u16,
@@ -1087,7 +1090,7 @@ impl Inner {
     /// The environment every plugin process gets (actions, hooks and panes),
     /// with the context inline or, above [`CONTEXT_ENV_MAX`], as a private
     /// file whose path is returned for the caller to remove.
-    fn run_env(&self, state: &PluginState, trigger: &str, ctx_value: &Value) -> Result<(Vec<(String, String)>, Option<PathBuf>), String> {
+    fn run_env(&self, state: &PluginState, trigger: &str, ctx_value: &Value) -> Result<RunEnv, String> {
         let plugin = &state.entry.id;
         let version = state.manifest().map(|m| m.version.clone()).unwrap_or_default();
         let data_dir = self.paths.data(plugin);

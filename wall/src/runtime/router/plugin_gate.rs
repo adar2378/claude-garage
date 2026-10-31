@@ -136,6 +136,11 @@ impl GarageRouter {
         }
     }
 
+    /// True when the pending arm was raised by a human trigger of `id`.
+    pub(in crate::runtime) fn human_arm_is(&self, id: ActionId) -> bool {
+        self.plugin_arm.as_ref().is_some_and(|a| a.origin == ArmOrigin::Human && a.id == id)
+    }
+
     pub(in crate::runtime) fn plugin_arm_pending(&self) -> bool {
         self.plugin_arm.is_some()
     }
@@ -215,7 +220,10 @@ impl GarageRouter {
     ) -> bool {
         self.refresh_plugin_arm(now_ms);
         let info = meta(id);
-        let dangerous = info.is_some_and(|m| m.dangerous);
+        // A plugin action whose manifest says `confirm` goes through the same
+        // arm-then-confirm step as a dangerous core action.
+        let asks_confirm = self.plugin_actions.get(&id).is_some_and(|a| a.confirm);
+        let dangerous = info.is_some_and(|m| m.dangerous) || asks_confirm;
         // `confirmed` counts only with the token the confirm path issued for
         // this very action; a forged one is just another plugin trigger.
         let mut confirmed_force = None;
@@ -301,7 +309,7 @@ impl GarageRouter {
         }
         // ... and `session.delete`, which has no native double-press of its
         // own, arms on a human's first trigger instead of running at once.
-        if id == ids::SESSION_DELETE {
+        if id == ids::SESSION_DELETE || asks_confirm {
             self.arm_plugin(store, id, ctx, ArmOrigin::Human, now_ms);
             return true;
         }
@@ -309,7 +317,11 @@ impl GarageRouter {
     }
 
     fn arm_plugin(&mut self, store: &WallStore, id: ActionId, ctx: &ActionCtx, origin: ArmOrigin, now_ms: i64) {
-        let Some((notice, force)) = arm_prompt(store, id, ctx) else {
+        let prompt = match self.plugin_actions.get(&id) {
+            Some(action) => Some((format!("Run {}{CONFIRM_TAIL}", action.title), false)),
+            None => arm_prompt(store, id, ctx),
+        };
+        let Some((notice, force)) = prompt else {
             self.notices.show("nothing to act on", 2000, now_ms);
             return;
         };
@@ -408,6 +420,7 @@ impl GarageRouter {
                 }
             }
             ids::HOOKS_INSTALL => self.install_pressed(effects),
+            _ if id.is_plugin() => self.run_plugin_action(id, ctx, now_ms, effects),
             _ => {}
         }
     }

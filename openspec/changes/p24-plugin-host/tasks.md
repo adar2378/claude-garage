@@ -40,15 +40,15 @@ Order matters: group 1 changes the existing core seams and must pass the full ex
 - [ ] 4.4 `plugin list` shows bundled plugins with source `bundled` and their permissions
 
 ## 5. Widgets, panes, actions (daemon and TUI)
-- [ ] 5.1 Widget store and routes: `PUT/DELETE /api/plugins/{id}/widgets/{widget}`, limits (413/422), animated and gutter/extra-row forms, token-bucket rate limit (429 + Retry-After), equal-content no-op, 200 ms coalescing, ttl expiry, per-plugin `rev`, `GET /api/plugins/widgets[?plugin=]`; `click.action` core ids checked against `core.actions` (403); SSE frames `widgets` (`{plugin, rev}`) and `plugins`
-- [ ] 5.2 Plugin snapshot store + SSE/refetch task in the TUI: fetch only the named plugin's widgets when its `rev` changed, full snapshot on start/`plugins`/reconnect; redraw on change
-- [ ] 5.3 `PluginSlotProvider` per slot (incl. `tile.gutter`, `rail.extra_rows`) registered next to `SlotRegistry::core()`: scope selection from `SlotCtx`, style/token mapping via `ui/theme.rs`, click targets with args, ordering by (priority, install order); `SlotItem`s built once per snapshot and cached, not per frame; no-plugin case renders byte-identical (snapshot tests)
-- [ ] 5.4 Manifest buttons as static slot items; `confirm` handling via armed state
-- [ ] 5.5 Keymap rebuild on `PluginsChanged`: `default_key` via `bind`, user bindings via `bind_override`, conflict detection and reporting; `claude-garage plugin bind`
-- [ ] 5.6 Dispatch: `plugin:action` to `Effect::RunPluginAction` / `Effect::OpenPluginPane`; `contexts` gating with hint toast; context JSON builder from `ActionCtx`
-- [ ] 5.7 Panes: `kind: "plugin-pane"` sessions hidden from the agent session list/poller/restore, open/close routes, singleton handling, orphan cleanup, `GET /api/plugins/panes` with attach spec; TUI `OverlayKind::PluginPane` (overlay and popup) reusing the PTY tile code, reserved close chord, tile placement (excluded from salience/triage), exit handling
-- [ ] 5.8 `POST /api/plugins/ui/action` with `{action, args, target: {session?, workspace?}}` forwarded as SSE `invoke`; core actions take target only from `target`; a plugin invoking a dangerous action twice only arms it (test)
-- [ ] 5.9 Help overlay "Plugins" section (actions, keys, conflicts)
+- [x] 5.1 Widget store and routes: `PUT/DELETE /api/plugins/{id}/widgets/{widget}`, limits (413/422), animated and gutter/extra-row forms, token-bucket rate limit (429 + Retry-After), equal-content no-op, 200 ms coalescing, ttl expiry, per-plugin `rev`, `GET /api/plugins/widgets[?plugin=]`; `click.action` core ids checked against `core.actions` (403); SSE frames `widgets` (`{plugin, rev}`) and `plugins`
+- [x] 5.2 Plugin snapshot store + SSE/refetch task in the TUI: fetch only the named plugin's widgets when its `rev` changed, full snapshot on start/`plugins`/reconnect; redraw on change
+- [x] 5.3 `PluginSlotProvider` per slot (incl. `tile.gutter`, `rail.extra_rows`) registered next to `SlotRegistry::core()`: scope selection from `SlotCtx`, style/token mapping via `ui/theme.rs`, click targets with args, ordering by (priority, install order); `SlotItem`s built once per snapshot and cached, not per frame; no-plugin case renders byte-identical (snapshot tests)
+- [x] 5.4 Manifest buttons as static slot items; `confirm` handling via armed state
+- [x] 5.5 Keymap rebuild on `PluginsChanged`: `default_key` via `bind`, user bindings via `bind_override`, conflict detection and reporting; `claude-garage plugin bind` (the CLI command itself lands with 6.1)
+- [x] 5.6 Dispatch: `plugin:action` to `Effect::RunPluginAction` / `Effect::OpenPluginPane`; `contexts` gating with hint toast; context JSON builder from `ActionCtx`
+- [x] 5.7 Panes: `kind: "plugin-pane"` sessions hidden from the agent session list/poller/restore, open/close routes, singleton handling, orphan cleanup, `GET /api/plugins/panes` with attach spec; TUI `OverlayKind::PluginPane` (overlay and popup) reusing the PTY tile code, reserved close chord, tile placement (excluded from salience/triage; a `tile` pane is shown as the overlay for now), exit handling
+- [x] 5.8 `POST /api/plugins/ui/action` with `{action, args, target: {session?, workspace?}}` forwarded as SSE `invoke`; core actions take target only from `target`; a plugin invoking a dangerous action twice only arms it (test)
+- [x] 5.9 Help overlay "Plugins" section (actions, keys, conflicts)
 
 ## 6. CLI
 - [ ] 6.1 Replace the `Plugin` stub in `crates/cli/src/main.rs` with the real subcommands (`list`, `enable|disable`, `bind`, `logs`, `schema`); clap `external_subcommand` dispatch for `[[cli]]` (core names win, interactive stdio, exit code passthrough)

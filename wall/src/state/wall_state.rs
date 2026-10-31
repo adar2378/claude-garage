@@ -32,6 +32,10 @@ pub enum OverlayKind {
     /// `WorktreeFinishState` (like the `w` form and the `D` picker state) —
     /// this tag stays `Copy` so every `overlay == Some(..)` check holds.
     WorktreeFinish,
+    /// p24: a plugin pane (a plugin's process on a PTY) drawn as a modal.
+    /// Which pane lives in the runtime's `PluginPaneState`, like the other
+    /// overlays' state, so this tag stays `Copy`.
+    PluginPane,
 }
 
 /// One session as the wall tracks it. Mirrors the daemon entry plus the
@@ -291,6 +295,7 @@ impl WallState {
                 Some(OverlayKind::WorkspaceAdd) => "keys → add workspace".to_owned(),
                 Some(OverlayKind::ViewPicker) => "keys → move to group".to_owned(),
                 Some(OverlayKind::WorktreeFinish) => "keys → finish worktree".to_owned(),
+                Some(OverlayKind::PluginPane) => "keys → plugin pane".to_owned(),
                 _ => "keys → help".to_owned(),
             },
         }

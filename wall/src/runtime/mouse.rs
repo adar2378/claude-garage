@@ -16,6 +16,16 @@ use super::{App, now_ms, view_picker_entries};
 impl App {
     /// True when the event raised a quit.
     pub(super) fn handle_mouse(&mut self, mouse: &MouseEvent) -> bool {
+        // A plugin pane is modal: a click outside it closes it, nothing
+        // reaches the wall underneath.
+        if self.store.state().overlay == Some(OverlayKind::PluginPane) {
+            if matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left))
+                && !self.pane.rect.is_some_and(|r| r.contains((mouse.column, mouse.row).into()))
+            {
+                self.close_plugin_pane();
+            }
+            return false;
+        }
         match mouse.kind {
             MouseEventKind::Down(MouseButton::Left) => {
                 return self.handle_click(mouse.column, mouse.row);

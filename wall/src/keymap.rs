@@ -138,11 +138,24 @@ impl Keymap {
             })
     }
 
+    /// The garage-layer key bound to `action`, as the help overlay spells it.
+    pub fn key_for(&self, action: ActionId) -> Option<String> {
+        let key = &self.bindings.iter().find(|b| b.layer == Layer::Garage && b.action == action && b.index.is_none())?.key;
+        Some(match key.as_str() {
+            "\t" => "Tab".to_owned(),
+            "\r" | "\n" => "Enter".to_owned(),
+            k => k.to_owned(),
+        })
+    }
+
     /// Every bound action id, for reachability tests.
     pub fn bound_actions(&self) -> impl Iterator<Item = ActionId> + '_ {
         self.bindings.iter().map(|b| b.action)
     }
 }
+
+/// One plugin's actions for [`Keymap::with_plugins`]: (action, the user's key, the manifest's default key).
+pub type PluginKeys = Vec<(ActionId, Option<String>, Option<String>)>;
 
 /// A plugin key that did not take effect, and why.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -173,7 +186,7 @@ impl Keymap {
     /// when it displaces something); otherwise the manifest's `default_key`
     /// is added with [`Keymap::bind`], so a core key or an earlier plugin
     /// keeps it and the loser is reported.
-    pub fn with_plugins(plugins: &[(String, Vec<(ActionId, Option<String>, Option<String>)>)]) -> (Keymap, Vec<KeyConflict>) {
+    pub fn with_plugins(plugins: &[(String, PluginKeys)]) -> (Keymap, Vec<KeyConflict>) {
         let mut km = Keymap::defaults();
         let mut conflicts = Vec::new();
         for (plugin, actions) in plugins {
@@ -236,7 +249,9 @@ mod tests {
     use super::*;
 
 
-    fn with(plugins: &[(&str, &[(&str, Option<&str>, Option<&str>)])]) -> (Keymap, Vec<KeyConflict>) {
+    type Spec<'a> = &'a [(&'a str, Option<&'a str>, Option<&'a str>)];
+
+    fn with(plugins: &[(&str, Spec)]) -> (Keymap, Vec<KeyConflict>) {
         let plugins: Vec<_> = plugins
             .iter()
             .map(|(p, a)| {

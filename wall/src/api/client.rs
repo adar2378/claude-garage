@@ -370,6 +370,12 @@ impl GarageClient {
         self.ui_request("POST", &path, Some(context)).map(|_| ())
     }
 
+    /// `DELETE /api/plugins/{id}/panes/{pane}` with the UI token.
+    pub fn close_plugin_pane(&self, plugin: &str, pane: &str) -> Result<(), ApiError> {
+        let path = format!("/api/plugins/{}/panes/{}", encode_component(plugin), encode_component(pane));
+        self.ui_request("DELETE", &path, None).map(|_| ())
+    }
+
     /// `PUT /api/plugins/ui/slots` with the UI token.
     pub fn put_ui_slots(&self, geometry: &Value) -> Result<(), ApiError> {
         self.ui_request("PUT", "/api/plugins/ui/slots", Some(geometry)).map(|_| ())

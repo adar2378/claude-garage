@@ -302,15 +302,6 @@ fn a_forged_confirmed_source_without_the_routers_token_only_arms() {
     assert!(app.router.plugin_arm_pending(), "treated as a plugin trigger: armed, not run");
 }
 
-/// Placeholder for the daemon lane: `/api/plugins/ui/action` builds
-/// `ActionSource::plugin(..)` and must never deserialize `confirmed` from the
-/// request body. Wire a real request through the endpoint here.
-#[test]
-#[ignore = "daemon lane wires /api/plugins/ui/action"]
-fn the_ui_action_endpoint_ignores_a_confirmed_field_in_the_body() {
-    unimplemented!("POST {{\"action\":\"session.close\",\"confirmed\":true}} must arm, not close");
-}
-
 #[test]
 fn a_restart_prompt_warns_when_the_session_is_busy_and_forces_exactly_like_r_r() {
     // `one` is working: the warning wording, and the confirm forces.

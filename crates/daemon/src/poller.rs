@@ -421,13 +421,16 @@ pub(crate) mod fakes {
         }
     }
 
+    /// One `create` call: (id, dir, command, args, env).
+    pub type Created = (String, std::path::PathBuf, String, Vec<String>, Vec<(String, String)>);
+
     pub struct FakeBackend {
         pub sessions: Mutex<Vec<BackendSession>>,
         pub panes: Mutex<HashMap<String, PaneInfo>>,
         /// While set, `list` fails like a backend that cannot be reached.
         pub fail_list: std::sync::atomic::AtomicBool,
         /// Every `create` call, in order: (id, dir, command, args, env).
-        pub created: Mutex<Vec<(String, std::path::PathBuf, String, Vec<String>, Vec<(String, String)>)>>,
+        pub created: Mutex<Vec<Created>>,
     }
 
     impl FakeBackend {
