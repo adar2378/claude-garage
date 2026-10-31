@@ -61,7 +61,12 @@ fn overlay_key(
     key: KeyEvent,
 ) -> Vec<Effect> {
     let mut view_picker = ViewPickerState::default();
-    handle_overlay_key(store, &key, selection, form, &mut view_picker, "/home/me", &|_| true).0
+    let ui = OverlayRefs {
+        queue_selection: selection,
+        form,
+        view_picker: &mut view_picker,
+    };
+    handle_overlay_key(store, &Keymap::defaults(), &key, ui, "/home/me", &|_| true).0
 }
 
 #[test]
@@ -188,10 +193,13 @@ fn workspace_add_validation_failure_keeps_the_overlay_open_with_the_error() {
     let mut view_picker = ViewPickerState::default();
     let (effects, _) = handle_overlay_key(
         &mut store,
+        &Keymap::defaults(),
         &plain(KeyCode::Enter),
-        &mut sel,
-        &mut form,
-        &mut view_picker,
+        OverlayRefs {
+            queue_selection: &mut sel,
+            form: &mut form,
+            view_picker: &mut view_picker,
+        },
         "/h",
         &|_| false,
     );

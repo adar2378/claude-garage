@@ -211,8 +211,6 @@ pub struct GarageRouter {
     /// True between the `r` prefix press and the very next key (p16-restart,
     /// design.md D5: a one-shot prefix, like `X` → `X`/`K`).
     restart_prefix: bool,
-    /// Key → action table (p22 tui-actions); arming stays in this router.
-    keymap: Keymap,
     pub notices: Notices,
 }
 
@@ -234,11 +232,12 @@ impl GarageRouter {
     }
 
     /// Handle one garage-layer key (already reduced to its string form by
-    /// [`garage_key_string`]). The garage layer consumes everything; the
+    /// [`garage_key_string`]) against the app's `keymap`. The garage layer consumes everything; the
     /// returned effects are the caller's IO.
     pub fn on_garage_key(
         &mut self,
         store: &mut WallStore,
+        keymap: &Keymap,
         key: &str,
         now_ms: i64,
     ) -> KeyOutcome {
@@ -247,7 +246,7 @@ impl GarageRouter {
         // next key is the chord's second half, resolved BEFORE anything else
         // so `r a` / `r d` never reach the plain `a` / `d` bindings.
         if std::mem::take(&mut self.restart_prefix) {
-            let action = self.restart_chord(key).map(|id| {
+            let action = self.restart_chord(keymap, key).map(|id| {
                 let ctx = ActionCtx::from_focus(store.state(), ActionSource::Key(key.to_owned()));
                 (id, ctx)
             });
@@ -256,7 +255,7 @@ impl GarageRouter {
         // Resolve the key to its action once; arming below is keyed on the
         // action (so `x`'s double-press is "session.close twice"), which is
         // byte-identical for the default keymap.
-        let mut resolved = self.keymap.resolve(Layer::Garage, key);
+        let mut resolved = keymap.resolve(Layer::Garage, key);
         let mut action = resolved.map(|r| r.action);
         // p8.4: while an `X` remove arm is active, `K` confirms the removal
         // WITH session kill — checked BEFORE the disarm pass (K would
@@ -636,12 +635,9 @@ impl GarageRouter {
     /// consumed, a pending `r r` arm disarms, and the key does NOT fall
     /// through to its own binding — a mistyped chord must never fire an
     /// unrelated command.
-    fn restart_chord(&mut self, key: &str) -> Option<ActionId> {
+    fn restart_chord(&mut self, keymap: &Keymap, key: &str) -> Option<ActionId> {
         self.notices.clear_prefix(RESTART_PREFIX_HINT);
-        let action = self
-            .keymap
-            .resolve(Layer::RestartChord, key)
-            .map(|r| r.action);
+        let action = keymap.resolve(Layer::RestartChord, key).map(|r| r.action);
         if action.is_none() {
             self.disarm_restart();
         }

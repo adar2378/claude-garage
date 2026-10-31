@@ -76,7 +76,7 @@ fn key_at(
     key: &str,
     now: i64,
 ) -> Vec<Effect> {
-    let outcome = router.on_garage_key(store, key, now);
+    let outcome = router.on_garage_key(store, &Keymap::defaults(), key, now);
     let mut effects = outcome.effects;
     if let Some((id, ctx)) = outcome.action {
         router.run_action(store, id, &ctx, now, &mut effects);

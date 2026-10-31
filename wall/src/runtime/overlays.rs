@@ -4,6 +4,14 @@
 
 use super::*;
 
+/// The per-overlay UI state the overlay handlers mutate (all owned by the
+/// app): the triage queue's selection, the `w` form and the `D` picker.
+pub struct OverlayRefs<'a> {
+    pub queue_selection: &'a mut usize,
+    pub form: &'a mut WorkspaceAddForm,
+    pub view_picker: &'a mut ViewPickerState,
+}
+
 /// Overlay-layer key routing (task 4.3/4.4): the overlay layer consumes
 /// everything, keyed by [`OverlayKind`]. Help: Esc/`?`/`q` close. Triage
 /// queue: `j`/`k` (and arrows) move the selection with wrap, Enter closes
@@ -15,13 +23,17 @@ use super::*;
 /// picker call).
 pub fn handle_overlay_key(
     store: &mut WallStore,
+    keymap: &Keymap,
     key: &KeyEvent,
-    queue_selection: &mut usize,
-    form: &mut WorkspaceAddForm,
-    view_picker: &mut ViewPickerState,
+    ui: OverlayRefs,
     home: &str,
     dir_exists: &dyn Fn(&str) -> bool,
 ) -> (Vec<Effect>, Option<String>) {
+    let OverlayRefs {
+        queue_selection,
+        form,
+        view_picker,
+    } = ui;
     let Some(kind) = store.state().overlay else {
         return (Vec::new(), None);
     };
@@ -42,12 +54,17 @@ pub fn handle_overlay_key(
         // through the keymap (the text-input overlays below own their keys).
         OverlayKind::Help | OverlayKind::TriageQueue => {
             let action = overlay_key_string(key)
-                .and_then(|k| Keymap::shared_defaults().resolve(Layer::Overlay(kind), &k))
+                .and_then(|k| keymap.resolve(Layer::Overlay(kind), &k))
                 .map(|r| r.action);
             if let Some(id) = action {
                 let ctx = ActionCtx::from_focus(store.state(), ActionSource::Key(String::new()))
                     .with_selection(*queue_selection);
-                overlay_action(store, id, &ctx, queue_selection, form, view_picker);
+                let ui = OverlayRefs {
+                    queue_selection,
+                    form,
+                    view_picker,
+                };
+                overlay_action(store, id, &ctx, ui);
             }
         }
         OverlayKind::WorkspaceAdd => match key.code {
@@ -103,10 +120,13 @@ pub(super) fn overlay_action(
     store: &mut WallStore,
     id: ActionId,
     ctx: &ActionCtx,
-    queue_selection: &mut usize,
-    form: &mut WorkspaceAddForm,
-    view_picker: &mut ViewPickerState,
+    ui: OverlayRefs,
 ) -> (bool, Option<String>) {
+    let OverlayRefs {
+        queue_selection,
+        form,
+        view_picker,
+    } = ui;
     match id {
         ids::OVERLAY_CLOSE => {
             match store.state().overlay {

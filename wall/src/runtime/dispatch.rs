@@ -24,14 +24,12 @@ impl App {
             self.handle_pet_click(now);
             return Vec::new();
         }
-        let (handled, notice) = overlay_action(
-            &mut self.store,
-            id,
-            ctx,
-            &mut self.queue_selection,
-            &mut self.ws_form,
-            &mut self.view_picker,
-        );
+        let ui = OverlayRefs {
+            queue_selection: &mut self.queue_selection,
+            form: &mut self.ws_form,
+            view_picker: &mut self.view_picker,
+        };
+        let (handled, notice) = overlay_action(&mut self.store, id, ctx, ui);
         if handled {
             if let Some(text) = notice {
                 self.router.notices.show(text, 2000, now);

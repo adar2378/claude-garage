@@ -322,6 +322,9 @@ pub fn run(terminal: &mut crate::term::WallTerminal, base_url: &str) -> std::io:
 struct App {
     store: WallStore,
     router: GarageRouter,
+    /// Key → action table (p22 tui-actions): the router and the overlay key
+    /// handlers resolve through this one instance.
+    keymap: Keymap,
     registry: TileRegistry,
     /// The slot providers every renderer asks for its items.
     slots: SlotRegistry,
@@ -373,6 +376,7 @@ impl App {
         App {
             store: WallStore::new(),
             router: GarageRouter::default(),
+            keymap: Keymap::defaults(),
             registry: TileRegistry::new(tx.clone()),
             slots,
             escalation: EscalationPolicy::default(),
@@ -525,10 +529,13 @@ impl App {
                 let home = std::env::var("HOME").unwrap_or_default();
                 let (effects, notice) = handle_overlay_key(
                     &mut self.store,
+                    &self.keymap,
                     key,
-                    &mut self.queue_selection,
-                    &mut self.ws_form,
-                    &mut self.view_picker,
+                    OverlayRefs {
+                        queue_selection: &mut self.queue_selection,
+                        form: &mut self.ws_form,
+                        view_picker: &mut self.view_picker,
+                    },
                     &home,
                     &|path| std::path::Path::new(path).is_dir(),
                 );
@@ -552,7 +559,7 @@ impl App {
                 };
                 let outcome = self
                     .router
-                    .on_garage_key(&mut self.store, &key_str, now_ms());
+                    .on_garage_key(&mut self.store, &self.keymap, &key_str, now_ms());
                 let mut effects = outcome.effects;
                 if let Some((id, ctx)) = outcome.action {
                     effects.extend(self.dispatch_action(id, &ctx));

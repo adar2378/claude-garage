@@ -102,7 +102,9 @@ impl Keymap {
         DEFAULTS.get_or_init(Keymap::defaults)
     }
 
-    fn bind(&mut self, layer: Layer, key: &str, action: ActionId) {
+    /// Bind `key` in `layer` (the first binding for a key wins on lookup, so
+    /// this extends the table rather than overriding a default).
+    pub fn bind(&mut self, layer: Layer, key: &str, action: ActionId) {
         self.bindings.push(Binding {
             layer,
             key: key.to_owned(),

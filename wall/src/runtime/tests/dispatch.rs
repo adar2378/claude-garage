@@ -139,3 +139,19 @@ fn the_restart_ids_produce_their_effects() {
     assert_eq!(app.dispatch_action(ids::DAEMON_RESTART, &ctx), vec![Effect::RestartDaemon]);
     assert_eq!(app.router.notices.current(now_ms()), Some("restarting the daemon…"));
 }
+
+#[test]
+fn the_apps_one_keymap_drives_garage_keys_and_overlay_keys_alike() {
+    use crate::keymap::Layer;
+    let mut app = two_workspaces();
+    app.keymap.bind(Layer::Garage, "z", ids::SESSION_MAXIMIZE);
+    app.keymap.bind(Layer::Overlay(OverlayKind::Help), "x", ids::OVERLAY_CLOSE);
+
+    app.handle_key(&plain(KeyCode::Char('z')));
+    assert!(app.store.state().maximized_session_id.is_some(), "a garage key bound on the app's keymap");
+
+    app.handle_key(&plain(KeyCode::Char('?')));
+    assert_eq!(app.store.state().overlay, Some(OverlayKind::Help));
+    app.handle_key(&plain(KeyCode::Char('x')));
+    assert_eq!(app.store.state().overlay, None, "an overlay key bound on the same keymap");
+}
