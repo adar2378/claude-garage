@@ -137,6 +137,18 @@ fn is_executable(p: &Path) -> bool {
     }
 }
 
+/// `GARAGE_TUI_BIN`'s value as an override of the wall program, when it is
+/// honoured (`allowed`: debug builds only) and set.
+fn tui_override(var: Option<String>, allowed: bool) -> Option<Result<PathBuf, Fail>> {
+    let o = var.filter(|s| allowed && !s.is_empty())?;
+    let p = PathBuf::from(&o);
+    Some(if is_executable(&p) {
+        Ok(p)
+    } else {
+        Err(Fail(format!("GARAGE_TUI_BIN is set but not an executable file: {o}")))
+    })
+}
+
 /// The running binary, symlinks resolved (npm and Homebrew expose a link).
 fn own_exe() -> Option<PathBuf> {
     let exe = std::env::current_exe().ok()?;
@@ -308,18 +320,14 @@ impl Host for RealHost {
             .elapsed()
             .as_millis() as u64
     }
-    /// The wall is part of this binary. `GARAGE_TUI_BIN` (kept for tests and
-    /// for trying another build) names a separate program to run instead.
+    /// The wall is part of this binary. In a debug build `GARAGE_TUI_BIN` (for
+    /// tests and for trying another build) names a separate program to run
+    /// instead; a release build ignores it, so an environment variable can
+    /// never swap the program the launcher runs.
     fn resolve_tui(&self) -> Result<PathBuf, Fail> {
-        if let Some(o) = std::env::var("GARAGE_TUI_BIN").ok().filter(|s| !s.is_empty()) {
-            let p = PathBuf::from(&o);
-            return if is_executable(&p) {
-                Ok(p)
-            } else {
-                Err(Fail(format!(
-                    "GARAGE_TUI_BIN is set but not an executable file: {o}"
-                )))
-            };
+        let var = std::env::var("GARAGE_TUI_BIN").ok();
+        if let Some(over) = tui_override(var, cfg!(debug_assertions)) {
+            return over;
         }
         own_exe().ok_or_else(|| Fail("cannot locate claude-garage".into()))
     }
@@ -352,6 +360,18 @@ impl Host for RealHost {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_wall_override_is_honoured_in_debug_builds_only() {
+        let me = std::env::current_exe().unwrap().to_string_lossy().into_owned();
+        assert_eq!(tui_override(Some(me.clone()), true), Some(Ok(PathBuf::from(&me))));
+        assert!(matches!(tui_override(Some("/no/such/wall".into()), true), Some(Err(_))));
+        // a release build never looks at it, even when it names a real program
+        assert_eq!(tui_override(Some(me), false), None);
+        assert_eq!(tui_override(Some("/no/such/wall".into()), false), None);
+        assert_eq!(tui_override(None, true), None);
+        assert_eq!(tui_override(Some(String::new()), true), None);
+    }
 
     #[test]
     fn netstat_rows_give_the_single_listener_of_our_port() {
