@@ -406,7 +406,10 @@ pub fn run(cmd: PluginCmd) -> Result<i32, String> {
                 return Ok(0);
             }
             match std::fs::read_to_string(&path) {
-                Ok(t) => println!("{}", tail_lines(&t, lines)),
+                Ok(t) => println!(
+                    "{}",
+                    garage_protocol::strip_hostile_keep_lines(&tail_lines(&t, lines))
+                ),
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
                     let known = PluginsFile::read(&paths)?
                         .plugins

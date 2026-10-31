@@ -422,6 +422,29 @@ pub enum AttachSpec {
     Host { id: String },
 }
 
+/// Control characters (C0, DEL, C1) and invisible or direction-changing
+/// format characters. Text from outside (a plugin's log, a repository
+/// description, a manifest) must not carry any of them to a terminal: an ESC
+/// starts an escape sequence (title change, clipboard write), and a
+/// right-to-left override can rewrite what the reader sees.
+pub fn is_hostile_char(c: char) -> bool {
+    c.is_control()
+        || matches!(c, '\u{00AD}' | '\u{061C}' | '\u{180E}' | '\u{200B}'..='\u{200F}' | '\u{2028}'..='\u{202E}' | '\u{2060}'..='\u{206F}' | '\u{FEFF}' | '\u{FFF9}'..='\u{FFFB}' | '\u{E0000}'..='\u{E007F}')
+}
+
+/// `text` without any hostile character.
+pub fn strip_hostile(text: &str) -> String {
+    text.chars().filter(|c| !is_hostile_char(*c)).collect()
+}
+
+/// Like [`strip_hostile`] but keeps newlines and tabs, for multi-line text
+/// such as a log. A carriage return is dropped: it would overwrite the line.
+pub fn strip_hostile_keep_lines(text: &str) -> String {
+    text.chars()
+        .filter(|c| matches!(c, '\n' | '\t') || !is_hostile_char(*c))
+        .collect()
+}
+
 /// The tmux socket-name rule shared by the daemon (what it may advertise) and
 /// the TUI (what it will pass to `tmux -L`).
 pub fn is_valid_tmux_socket(name: &str) -> bool {
@@ -435,6 +458,17 @@ pub fn is_valid_tmux_socket(name: &str) -> bool {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn hostile_text_loses_escapes_and_bidi_but_logs_keep_their_lines() {
+        let osc52 = "a\u{1b}]52;c;aGVsbG8=\u{7}b\u{1b}[2Jc\u{9b}31md\u{202E}e\u{200B}f\r\n";
+        assert_eq!(strip_hostile(osc52), "a]52;c;aGVsbG8=b[2Jc31mdef");
+        assert_eq!(
+            strip_hostile_keep_lines("one\ttwo\n\u{1b}[31mthree\r\n"),
+            "one\ttwo\n[31mthree\n"
+        );
+        assert_eq!(strip_hostile("plain ünïcode ✓"), "plain ünïcode ✓");
+    }
 
     #[test]
     fn attach_spec_wire_shape() {

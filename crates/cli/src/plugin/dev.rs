@@ -16,6 +16,7 @@ use garage_daemon::plugins::layout::{MANIFEST_FILE, PluginsFile, Source};
 use super::fetch::run_builds;
 use garage_plugin::Manifest;
 use garage_plugin::manifest::sha256_hex;
+use garage_protocol::strip_hostile_keep_lines;
 
 use super::install::{self, Cx, Opts, read_manifest};
 use super::preview::{Mode, Surface};
@@ -196,7 +197,10 @@ pub struct LogTail {
 
 impl LogTail {
     /// Start at the end; the last `show` lines are returned so the terminal
-    /// opens with some context.
+    /// opens with some context. A plugin writes its own log, so the text
+    /// handed out (here and from [`poll`](Self::poll)) has control, bidi and
+    /// zero-width characters removed (newlines and tabs stay): an OSC 52 or CSI
+    /// sequence in a log must not reach the terminal.
     pub fn start(path: &Path, show: usize) -> (Self, String) {
         let text = std::fs::read_to_string(path).unwrap_or_default();
         let lines: Vec<&str> = text.lines().collect();
@@ -206,7 +210,7 @@ impl LogTail {
                 path: path.to_owned(),
                 pos: text.len() as u64,
             },
-            tail,
+            strip_hostile_keep_lines(&tail),
         )
     }
 
@@ -225,7 +229,7 @@ impl LogTail {
         let mut buf = Vec::new();
         let _ = f.read_to_end(&mut buf);
         self.pos += buf.len() as u64;
-        String::from_utf8_lossy(&buf).into_owned()
+        strip_hostile_keep_lines(&String::from_utf8_lossy(&buf))
     }
 }
 
@@ -606,6 +610,24 @@ mod tests {
         assert_eq!(t.poll(), "x\n", "a rotated log is read from the top");
         let (mut missing, _) = LogTail::start(&d.path().join("none.log"), 5);
         assert_eq!(missing.poll(), "");
+    }
+
+    #[test]
+    fn a_log_cannot_reach_the_terminal_with_escape_sequences() {
+        let d = tempfile::tempdir().unwrap();
+        let log = d.path().join("p.log");
+        let evil = "\u{1b}]52;c;aGVsbG8=\u{7}\u{1b}[2J\u{9b}31m\u{202E}x\u{200B}y\r\n";
+        std::fs::write(&log, format!("old {evil}")).unwrap();
+        let (mut t, recent) = LogTail::start(&log, 5);
+        assert_eq!(recent, "old ]52;c;aGVsbG8=[2J31mxy");
+        std::fs::write(&log, format!("old {evil}ok\tfine {evil}")).unwrap();
+        let more = t.poll();
+        assert_eq!(more, "ok\tfine ]52;c;aGVsbG8=[2J31mxy\n");
+        assert!(
+            !more
+                .chars()
+                .any(|c| !matches!(c, '\n' | '\t') && garage_protocol::is_hostile_char(c))
+        );
     }
 
     #[test]
