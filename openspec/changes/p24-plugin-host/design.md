@@ -15,9 +15,9 @@ The decisions below the "Decisions made earlier" heading were fixed before this 
 - `[[actions]]`: `id`, `title`, `contexts`, `command`. Bindable to keys and buttons.
 - `[[events]]`: `on` (for example `session.closed`, `session.status_changed`, `worktree.created`), `command`.
 - `[[panes]]`: `id`, `title`, `placement` (`tile` | `overlay` | `popup`), `command`. Runs as a backend session.
-- `[[widgets]]`: `id`, `slot` (`rail.row`, `tile.title.right`, `strip.right`, ...). Content is pushed at runtime over the daemon API.
+- `[[widgets]]`: `id`, `slot` (`rail.row`, `rail.extra_rows`, `rail.header`, `tile.title.right`, `tile.gutter`, `strip.right`, ...). Content is pushed at runtime over the daemon API.
 - `[[buttons]]`: `slot`, `label`, `on_click` (an action id, core or plugin), `confirm`.
-- `[[cli]]`: `name`, `command`. Exposed as `claude-garage <name>`.
+- `[[cli]]`: `name`, `command`, optional `fallback = true`. Exposed as `claude-garage <name>`; a `fallback` entry receives any unknown first word (see section 4).
 - `[[build]]`: commands run once at install, per platform.
 - `[release]`: per-OS binary asset names; garage downloads the right one at install, so authors need no install scripts.
 
@@ -45,6 +45,7 @@ The decisions below the "Decisions made earlier" heading were fixed before this 
 - A sandbox, a plugin marketplace, plugin signing, or a central registry.
 - In-process code, scripting or WASM.
 - Long-running plugin services managed by the daemon (see Open questions; panes and timers cover the need).
+- Cutting the ecosystem: GitHub install, release downloads with checksums and `[[build]]` stay in 1.0 (p27 ships the ecosystem); they are ordered after the bundled path in tasks only.
 - Windows and Linux process semantics beyond keeping the code paths portable (p26 does the work; this design names the places that need an OS seam).
 - Persisting widget content across daemon restarts.
 
@@ -134,7 +135,7 @@ size      = {cols = 80, rows = 24}   # optional hint for overlay/popup (percent 
 
 [[widgets]]
 id    = "bar"
-slot  = "strip.right"                # tile.title.right | rail.row | rail.header | strip.right | overlay(reserved)
+slot  = "strip.right"                # tile.title.right | tile.gutter | rail.row | rail.extra_rows | rail.header | strip.right | overlay(reserved)
 
 [[buttons]]
 slot     = "tile.title.right"
@@ -149,6 +150,7 @@ priority = 5                         # optional, default 0; higher survives narr
 name        = "usage"                # claude-garage usage ...
 description = "Print usage"
 command     = ["{plugin_dir}/bin/usage", "cli"]
+# fallback = true                    # optional: also receives an unknown first word, e.g. a folder path (section 4); at most one plugin
 
 [[build]]
 platforms = ["macos", "linux"]       # optional filter, default: all in header platforms
@@ -171,10 +173,10 @@ Argv substitution (done on array elements, never through a shell): `{plugin_dir}
 
 Validation (all done before anything runs, errors name the field path, for example `actions[1].command: missing`):
 - types and unknown keys via serde `deny_unknown_fields`;
-- `id` rules, unique local ids per kind, `on` is a known event name, `slot` is a known slot and the widget/button is valid for it (`rail.row` and `tile.title.right` are session-scoped, `rail.header` is workspace-scoped, `strip.right` is global);
+- `id` rules, unique local ids per kind, `on` is a known event name, `slot` is a known slot and the widget/button is valid for it (`rail.row`, `tile.title.right` and `tile.gutter` are session-scoped, `rail.header` and `rail.extra_rows` are workspace-scoped, `strip.right` is global);
 - `on_click` resolves to a known core id, a plugin action, or a local action;
 - exactly one of `command` / `pane` per action; `timer` events need `every_secs >= 5`;
-- `[release]` requires `checksums`; `[[cli]]` name must not equal a core subcommand (`start`, `stop`, `status`, `restart`, `install`, `plugin`, ...) or another plugin's `[[cli]]` name;
+- `[release]` requires `checksums`; `[[cli]]` name must not equal a core subcommand (`start`, `stop`, `status`, `restart`, `plugin`, ...; `install` is NOT reserved, core has no such subcommand, so a plugin may own it) or another plugin's `[[cli]]` name; at most one installed plugin may set `fallback = true` (a second one is refused at load naming the first);
 - `requires` entries are known features, otherwise the plugin is refused with "needs garage feature X".
 
 **JSON schema.** `schemars` derives `schemas/garage-plugin.schema.json` from the Rust types. `claude-garage plugin schema` prints it. A unit test regenerates it and fails if the committed file differs. Docs tell authors to put `#:schema https://raw.githubusercontent.com/<garage repo>/main/schemas/garage-plugin.schema.json` on the first line for editor autocomplete (TOML language servers read that directive).
@@ -193,12 +195,13 @@ All subcommands live in `crates/cli` and call a library API in `garage-plugin` (
    - permissions, with `sessions.input` and `core.actions` marked DANGEROUS and explained in one line;
    - exactly what will run: each `[[build]]` command (or the release asset URLs and checksum file that will be downloaded), then each action/event/cli/pane command, as argv;
    - UI it adds: keys it suggests, buttons, widgets, panes;
-   - if updating: a diff of permissions, commands and keys against the installed version.
+   - if updating: a diff of permissions, commands and keys against the installed version;
+   - a plain closing line: "Later updates that change only plugin code (no new commands, permissions or URLs) apply without asking again."
 5. Ask `Install? [y/N]`. `--yes` skips the question but still prints the preview; if any dangerous permission is declared `--allow-dangerous` is also required (so scripts cannot grant it by accident).
 6. Get the binaries: if `[release.assets]` has the current `os-arch`, download it from `https://github.com/<repo>/releases/download/<tag>/<asset>` and the checksums file, verify sha256, store under `installed/<id>/bin/`. Otherwise run `[[build]]` commands in order in `installed/<id>/` with the build timeout, logging to `logs/<id>.log`. A build failure removes the half-installed directory and leaves the registry untouched.
 7. Move the checkout to `installed/<id>/`, create `data/<id>/`, create the token, write `plugins.json` atomically with `grantedPermissions` and `manifestSha256`.
 
-**`plugin link <path>`** registers a local folder with no build and no download. The preview and permission prompt still run (once, and again if the manifest's commands or permissions change on reload). Linked plugins show `dev` in `list`. The daemon polls linked manifests' mtime every 2 s and reloads on change (no file-watcher crate; the poller pattern already exists in `poller.rs`). Reload errors keep the previous working version loaded and show a toast.
+**`plugin link <path>`** registers a local folder with no build and no download. The preview and permission prompt still run (once, and again if the manifest's commands or permissions change on reload). Linked plugins show `dev` in `list`. The daemon polls linked manifests' mtime every 2 s and reloads on change (no file-watcher crate; the poller pattern already exists in `poller.rs`). Reload errors keep the previous working version loaded and show a toast. If the changed manifest adds permissions (or new dangerous ones), garage likewise keeps the last good manifest running and shows the toast "plugin X wants new permissions - run `claude-garage plugin link` to approve"; the new manifest takes effect only after the user re-runs `plugin link <path>` and confirms the preview.
 
 **`plugin update [id|--all]`** re-clones at the stored ref (or the default branch if none), builds a new preview diff, and prompts only if permissions, commands, build steps or download URLs changed (a pure version/code change is applied without a prompt, but still shows the new commit). It stages into a temp directory and swaps atomically, so a failed update leaves the old plugin working. `data/<id>` is untouched. Links are skipped.
 
@@ -251,13 +254,15 @@ New module `crates/daemon/src/plugins/` (`registry.rs`, `runner.rs`, `events.rs`
 **Triggering an action.** TUI: `Effect::RunPluginAction{plugin, action, ctx}` (in `runtime/effects.rs`) calls `POST /api/plugins/{id}/actions/{action}/run` with the context. The daemon answers `202 {"run_id": "..."}` immediately and runs the process in the background. On non-zero exit, timeout or spawn failure it publishes `DaemonEvent::PluginRunFailed{plugin, action, reason}`; the TUI shows a toast ("close-button: close failed, see `plugin logs close-button`"). Stdout is log output only in v1; a plugin changes the UI through the API (widgets, panes), not by printing.
 
 **Event hooks.** `DaemonEvent` today has only `StatusTransition` and `SessionsChanged` (no payload). The bus gains payload variants, produced where the knowledge lives:
-- `SessionCreated{id, dir, workspace}` and `SessionClosed{id, dir, workspace, reason}`: the poller already diffs the live session set to emit `SessionsChanged`; it also emits the typed events from that diff. `SessionsChanged` stays for the existing SSE consumers.
+- `SessionCreated{id, dir, workspace}` and `SessionClosed{id, dir, workspace, reason}` with `reason` one of `user` (closed through garage), `crash` (the backend session vanished or its process died without a close request) or `daemon-restart` (closed as part of a restart/stop sequence); the poller already diffs the live session set to emit `SessionsChanged`, and it emits the typed events from that diff, taking the reason from a small "closing intent" marker the close and restart paths set before killing (no marker means `crash`). `SessionsChanged` stays for the existing SSE consumers.
+- `SessionTurn{id, workspace, at, transcript_offset: Option<u64>}`: derived from the Stop hook, i.e. the end of one Claude turn. `at` is the hook timestamp; `transcript_offset` is the byte offset in the session transcript at that point when the hook payload lets the daemon compute it, otherwise `null`. The hook route already receives Stop; it publishes the event and changes nothing else.
+- Core also keeps **closed-session records** (data, not UI): when a session closes the registry keeps `{id, workspace, dir, branch, closed_at, reason, last_status}` in a bounded list per workspace (default 20, oldest dropped), exposed at `GET /api/workspaces/{name}/closed` and in the plugin snapshot. Restoring or forgetting removes the record. This is the data the closed-chats plugin renders through `rail.extra_rows` (section 5).
 - `WorktreeCreated{...}` from `api/worktrees.rs`/`sessions::create`; `WorkspaceAdded/Removed{name}` from `api/workspaces.rs`.
 - `PluginRunFailed`, `WidgetsChanged{plugin}`, `PluginsChanged`, `PaneEvent` (plugin-host internal; all become SSE frames).
 
-Plugin-visible event names (v1): `session.created`, `session.closed`, `session.status_changed`, `worktree.created`, `workspace.added`, `workspace.removed`, `daemon.started`, `timer`. The event dispatcher is one more subscriber of `EventBus`. For each matching `[[events]]` entry it enqueues a run on that plugin's bounded queue (64; when full the oldest queued run is dropped and logged). At most 4 runs per plugin execute at once. `timer` entries run on a tokio interval, skipped (not queued) if the previous run of that entry is still going. Event runs default to a 10 s timeout, actions 30 s, build 600 s; a CLI run is interactive and has no timeout. On timeout: `SIGTERM` to the process group, `SIGKILL` after 2 s. A plugin that fails 5 event runs in a row is auto-disabled for events until reload, with a toast and a log line (stops a broken hook from spawning forever).
+Plugin-visible event names (v1): `session.created`, `session.closed` (payload includes `reason`), `session.turn`, `session.status_changed`, `worktree.created`, `workspace.added`, `workspace.removed`, `daemon.started`, `timer`. The event dispatcher is one more subscriber of `EventBus`. For each matching `[[events]]` entry it enqueues a run on that plugin's bounded queue (64; when full the oldest queued run is dropped and logged). At most 4 runs per plugin execute at once. `timer` entries run on a tokio interval, skipped (not queued) if the previous run of that entry is still going. Event runs default to a 10 s timeout, actions 30 s, build 600 s; a CLI run is interactive and has no timeout. On timeout: `SIGTERM` to the process group, `SIGKILL` after 2 s. A plugin that fails 5 event runs in a row is auto-disabled for events until reload, with a toast and a log line (stops a broken hook from spawning forever).
 
-**`[[cli]]`.** `crates/cli` adds clap `#[command(external_subcommand)] External(Vec<OsString>)`. The first word is looked up in `plugins.json` (+ manifests); core subcommands always win. The command runs with inherited stdio, the same env (the context has `trigger.kind = "cli"`, the cwd as `focus` directory and no session), and the exit code is passed through. It needs the daemon only if the plugin calls the API.
+**`[[cli]]`.** `crates/cli` adds clap `#[command(external_subcommand)] External(Vec<OsString>)`. The first word is looked up in `plugins.json` (+ manifests); core subcommands always win. If no `[[cli]]` name matches and exactly one installed, enabled plugin declares `[[cli]] fallback = true`, that plugin's command receives the whole argv (first word included, e.g. `claude-garage ~/dev/app` hands `~/dev/app` to the fallback) with `trigger.kind = "cli"` and `trigger.args.argv` set. There is at most one fallback across installed plugins (enforced at install/load); a first-party plugin wins over a third-party claim, which is then refused with a message naming the owner. With no fallback installed an unknown word is the usual clap error. The command runs with inherited stdio, the same env (the context has `trigger.kind = "cli"`, the cwd as `focus` directory and no session), and the exit code is passed through. It needs the daemon only if the plugin calls the API.
 
 **Uninstall / disable.** Order: mark disabled so new triggers are refused; kill process groups of all running runs; kill and unregister pane sessions; drop its widgets and publish `WidgetsChanged`; publish `PluginsChanged` so the TUI unbinds its keys and removes its buttons; then remove files.
 
@@ -293,17 +298,21 @@ Scope keys: session id for `tile.title.right` and `rail.row`; workspace name for
 ```
 
 - `placement`: `{"kind":"flow"}` (default) or `{"kind":"filler","x":2,"caption":"..."}` (strip only, see section 7).
+- **Animated form.** Instead of `segments`, an item may carry `{"frames": [[<segment>, ...], ...], "frame_ms": 250}`: a list of segment lists and a frame interval (clamped to 100..=2000 ms). The TUI advances the frame itself from its own tick, so no plugin process ticks and no SSE frames flow while it animates. A plugin pushes a new frame set only when state changes (the pit-pet plugin pushes one set per mood, not one frame per tick). Limits: at most 16 frames, each frame is held to the normal segment/column limits, and the whole animated item counts once toward the item and body limits. `frames` and `segments` are mutually exclusive.
+- **Slot geometry in the widget context.** A plugin cannot lay itself out blind, so the snapshot (and the context JSON of every action/event/CLI run, under `ui.slots`) tells it the geometry of each slot it owns: for `strip.right`, `{"width": 38, "filler": {"x0": 4, "x1": 30}}` (strip width in columns, and the column range left free for filler items after flow items), for `tile.title.right` and `tile.gutter` the maximum item columns, for `rail.row`/`rail.extra_rows` the rail width. A pet plugin uses this to choose a filler `x` and a frame width that fit; the TUI still clips and drops on overlap (section 7, Gap D). Geometry is also pushed in the `plugins` SSE frame when the terminal is resized, so plugins that re-push on a change see it.
+- **`tile.gutter` items** carry a row address instead of flowing: `{"row": 120, "kind": "marker", ...}` where `row` is an absolute scrollback row counted from the first line of the session's scrollback (or `{"turn": N}` for the Nth turn marker); the item draws in the tile's left gutter column at that row if it is visible, with the usual style/click. The scope key is the session id, so markers are keyed by session. Limits: 64 gutter items per session scope (the 16-item limit does not apply to this slot).
+- **`rail.extra_rows` items** are whole rows under a workspace's sessions: a row item has `segments` (or `frames`), a `row_style` (`{"bg": ..}` optional) and a `click` that applies to the whole row. The scope key is the workspace name; limit 8 rows per workspace.
 - `style` (all optional): `fg` / `bg` are a theme token (`text`, `dim`, `accent`, `ok`, `warn`, `error`) or `#rrggbb`; booleans `bold`, `italic`, `underline`, `dim`. Theme tokens map to `ui/theme.rs` so plugins follow the user's theme; hex values are snapped to the terminal's colour depth by the renderer.
 - `click` (optional, per segment): `{"action": "<id>", "args": <any JSON>}`. `action` is a core id, `plugin:action` or a bare local id (resolved against the owning plugin).
-- Segments with the same `click` and adjacent columns form one click range.
+- Segments with the same `click` and adjacent columns form one click range. A `click.action` that is a core id is checked against the plugin's `core.actions` permission when the PUT arrives (403 naming the permission), exactly like a manifest button; `plugin:action` and bare local ids need no permission. Dangerous ids still go through the confirm rule of section 7 at click time.
 
 **Limits (daemon rejects with 413/422 and a message naming the limit):** 16 items per scope, 16 segments per item, 64 display columns of text per item, 512 bytes of `click.args`, 16 KiB total request body, 256 scopes per widget. Text is sanitised: control characters and newlines are dropped, width is measured with the same unicode-width rules ratatui uses.
 
 **Rate limits.** Per plugin: token bucket of 10 PUTs per second (burst 20); more gets `429` with `Retry-After`. A PUT whose body hashes equal to the stored content is a no-op (no event). Accepted changes are coalesced: the daemon emits at most one `WidgetsChanged{plugin}` per plugin per 200 ms (so at most 5 SSE frames per second per plugin), and the TUI redraws at most once per frame as it does now.
 
-**Daemon to TUI.** The daemon keeps `WidgetStore` in `AppState.plugins` (in memory only). The SSE stream gains `event: widgets` with `{"plugin": "usage-bar", "rev": 42}` and `event: plugins` (`{}`, installed set or bindings changed). The TUI then `GET /api/plugins/widgets` for the full snapshot (`{rev, widgets: [{plugin, widget, slot, scopes}], buttons: [...], actions: [...], bindings: [...]}`); the TUI never trusts an SSE payload for content, same pattern as `sessions` today. On SSE reconnect the TUI refetches. A lagged subscriber gets a `plugins` frame (the existing lag rule in `api/events.rs`).
+**Daemon to TUI.** The daemon keeps `WidgetStore` in `AppState.plugins` (in memory only). The SSE stream gains `event: widgets` with `{"plugin": "usage-bar", "rev": 42}` and `event: plugins` (`{}`, installed set or bindings changed). The TUI then fetches content; the never-trust-the-SSE-payload rule is the same as `sessions` today. To keep this cheap the `widgets` frame carries `{plugin, rev}` (the plugin whose content changed and its new revision): the TUI compares `rev` with the one it holds and, if different, calls `GET /api/plugins/widgets?plugin=<id>` and replaces only that plugin's entry; equal or older `rev` means no request. The full snapshot `GET /api/plugins/widgets` (`{rev, widgets: [{plugin, widget, slot, scopes}], buttons: [...], actions: [...], bindings: [...], ui: {slots: {...}}}`) is used on start, on `plugins` frames and on reconnect. On SSE reconnect the TUI refetches. A lagged subscriber gets a `plugins` frame (the existing lag rule in `api/events.rs`).
 
-**TUI side.** One `PluginSlotProvider` per slot is registered into `SlotRegistry` (next to `SlotRegistry::core()`); all share an `Arc<RwLock<WidgetSnapshot>>` that the SSE/refetch task updates, so drawing never blocks on I/O. `items(&SlotCtx)` picks the scope from `ctx.session` / `ctx.group` and maps each stored item to a `SlotItem` (styles to ratatui `Style`, clicks to `ClickTarget`). Items from several plugins in one slot are ordered by (`priority` desc, plugin install order); that resolves "two plugins claim the same slot" (the open item from the earlier decisions): both show, ordering is deterministic, and the existing width-budget `layout` drops the lowest priority first. Buttons are static `SlotItem`s from the manifest, registered by the same provider. With no plugins installed the provider returns empty vectors and nothing changes on screen.
+**TUI side.** One `PluginSlotProvider` per slot is registered into `SlotRegistry` (next to `SlotRegistry::core()`); all share an `Arc<RwLock<WidgetSnapshot>>` that the SSE/refetch task updates, so drawing never blocks on I/O. `items(&SlotCtx)` picks the scope from `ctx.session` / `ctx.group` and maps each stored item to a `SlotItem` (styles to ratatui `Style`, clicks to `ClickTarget`). The conversion cost is paid once per snapshot, not per frame: when a snapshot (or one plugin's entry) is replaced the provider rebuilds the `SlotItem`s for that plugin and caches them in the snapshot; `items()` then only clones `Arc` handles and picks the scope. Animated items store all frames pre-converted and the provider selects the frame index from the TUI tick, so a frame advance allocates nothing. Items from several plugins in one slot are ordered by (`priority` desc, plugin install order); that resolves "two plugins claim the same slot" (the open item from the earlier decisions): both show, ordering is deterministic, and the existing width-budget `layout` drops the lowest priority first. Buttons are static `SlotItem`s from the manifest, registered by the same provider. With no plugins installed the provider returns empty vectors and nothing changes on screen.
 
 **Expiry.** A widget with `ttl_secs` is dropped by a daemon timer when it elapses (publishing `WidgetsChanged`). A widget without a ttl stays until replaced, cleared, or the plugin is removed/disabled or the daemon restarts. Plugins are expected to re-push on `daemon.started`.
 
@@ -319,7 +328,7 @@ A pane is one process started through `SessionBackend::create` (tmux today, the 
   - `popup`: a small centred modal PTY (default 60x16) that closes when its process exits, like a menu or picker.
 - **Lifecycle.** `singleton = true` (default) reuses a live pane. A pane that exits closes overlay/popup; a `tile` pane stays as "exited" with a restart action until closed. Disabling or removing the plugin kills its panes. Closing the TUI leaves panes running (tmux owns them) until the daemon stops them or the process ends, mirroring agent sessions; stale `plugin.*` backend sessions with no registered plugin are killed at daemon start.
 - **Sizing.** The pane process learns its size from the PTY (`SIGWINCH`), nothing special.
-- **Selection of a target.** An overlay such as a session picker needs to say "jump to this session": it calls `POST /api/plugins/ui/action` (permission `ui.invoke`) with an action id and args, which the daemon forwards as an SSE `invoke` frame; the TUI runs it through the normal dispatcher with `ActionSource::Plugin`. This is the one path by which a plugin process asks the TUI to do something, and it is subject to the same allowlist and confirmation rules as a click (section 9).
+- **Selection of a target.** An overlay such as a session picker needs to say "jump to this session": it calls `POST /api/plugins/ui/action` (permission `ui.invoke`) with `{action, args, target: {session?, workspace?}}`, which the daemon forwards as an SSE `invoke` frame; the TUI runs it through the normal dispatcher with `ActionSource::Plugin`. `target` names the session and/or workspace the action applies to. Core actions take their target ONLY from `target` (or from the click region for clicks), never from `args`: `args` is opaque payload for plugin actions and is ignored by core actions, so a crafted `args` cannot redirect a close. A click on a `strip.right` item (scope `"*"`, no session of its own) that invokes a session-scoped core action targets the focused session. This is the one path by which a plugin process asks the TUI to do something, and it is subject to the same allowlist and confirmation rules as a click (section 9).
 
 ### 7. TUI integration: actions, keys, slots, dispatch
 
@@ -341,10 +350,15 @@ pub struct ClickTarget { pub action: ActionId, pub args: Option<Arc<serde_json::
 
 **Gap E: dangerous and chord-only actions, confirm step.** The restart actions (`session.restart`, `workspace.restart`, `daemon.restart`) run only for `ActionSource::Chord`. Plugins cannot produce a chord and should not be able to reach a restart in one click. Introduce an action metadata table next to `ids` (`ActionMeta { id, dangerous: bool, plugin_invocable: bool }`):
 - `plugin_invocable` core ids (allowlist): `session.close`, `session.focus`, `session.engage`, `session.maximize`, `session.spawn`, `session.spawn.worktree`, `session.detach`, `session.open_window`, `session.restore`, `session.restore_all`, `workspace.focus`, `focus.cycle.*`, `jump.blocked`, `view.cycle`, `view.focus`, `overlay.open.*`, `pet.pet`, `hooks.install`.
-- `dangerous` ones: `session.close`, `session.restart`, `workspace.restart`, `workspace.remove`, `workspace.remove.kill`, `daemon.restart`, `session.restore_all`, `hooks.install`. Restart and remove ids are plugin-invocable only with a confirm step.
+- `dangerous` ones: `session.close`, `session.delete`, `session.restart`, `workspace.restart`, `workspace.remove`, `workspace.remove.kill`, `daemon.restart`, `session.restore_all`, `hooks.install`.
+- `session.delete` is a new core action: forget a session (drop it from the registry and its metadata, the `DELETE /api/sessions/{*id}?meta=1` semantics, used on closed sessions). It is plugin-invocable and dangerous, so plugins always reach it through the confirm rule below; it is added to the allowlist. Restart and remove ids are plugin-invocable only with a confirm step.
 - `app.quit`, `overlay.close`, `overlay.select.*`, `chord.restart` are never plugin-invocable.
 
-Dispatch rule: when the source is `Widget`/`Plugin` (or a key bound by a plugin) and the target is `dangerous`, the dispatcher does not run it. It arms it through the existing armed-action state (`state/armed_action.rs`): the first click or key shows "Close garage/main? click again or press y" for 3 s, and the second matching trigger (or `y`) runs it with the real source the core action requires (the restart family accepts `ActionSource::Plugin{confirmed: true}` in addition to `Chord`). The manifest `confirm = true` on a button or action adds a confirm step to a non-dangerous target but never removes the mandatory one. This is what the "close button" example relies on. Plugin processes (not core actions) with `confirm = true` use the same armed state before the TUI sends `RunPluginAction`.
+**Confirm rule.** Sources `Plugin` and `Widget` may only ARM a dangerous action; only `Key`, `Mouse` or `Chord` (a human input event at the TUI) may CONFIRM it. So a plugin that triggers the same dangerous action twice (two `ui/action` calls, two widget re-pushes) never executes it: both calls just re-arm. A click on a widget or button is a `Mouse` event at the TUI, and the arming click and the confirming click are both human, so the close-button example works; a `ui/action` request is not human and can never be the second trigger. Dispatch rule: when the source is `Widget`/`Plugin` (or a key bound by a plugin) and the target is `dangerous`, the dispatcher does not run it. It arms it through the existing armed-action state (`state/armed_action.rs`): the first click or key shows "Close garage/main? click again or press y" for 3 s, and the second matching human trigger (a click on the same region, or `y`) runs it with the real source the core action requires (the restart family accepts `ActionSource::Plugin{confirmed: true}` in addition to `Chord`, set only by this confirm path). The manifest `confirm = true` on a button or action adds a confirm step to a non-dangerous target but never removes the mandatory one. This is what the "close button" example relies on. Plugin processes (not core actions) with `confirm = true` use the same armed state before the TUI sends `RunPluginAction`.
+
+**Gap F: new slots.** `tile.gutter` is a new slot rendered in a one-column strip at the left of an attached tile's body: the renderer asks the provider for items addressed by row (section 5), maps each to a screen row through the tile's current scrollback offset, and pushes `SlotClickRegion`s for clickable markers. It draws nothing when the provider returns nothing, so tiles with no gutter plugin lay out as before (the gutter column is allocated only when at least one gutter item exists for that session). `rail.extra_rows` is a new workspace-scoped slot that emits extra rows under a workspace's sessions in the rail; `rail_target_at` row maths counts them so hit-testing stays consistent, and their `click` becomes a `SlotClickRegion` with the workspace set. Both are session/workspace-keyed, so they follow the same `ClickTarget` and confirm rules.
+
+**Gap G: animation.** Items may be animated (section 5). `SlotItem` gains an optional frame list and interval; the TUI redraws on its existing tick only when at least one visible animated item exists, otherwise there is no extra wake-up. Nothing is animated for users with no animated widget.
 
 **Keys.** `PluginsChanged` makes the TUI rebuild its keymap: start from `Keymap::defaults()`, then for each plugin action with a key (user binding from `plugins.json` `bindings`, else `default_key`) call `bind`. The existing rule "the first binding for a key wins" means a plugin never displaces a core key by accident. A user binding (via `claude-garage plugin bind <action> <key>`) uses `bind_override` and can displace anything, including a core key (printed as a warning). A conflicting `default_key` between two plugins goes to the plugin installed first; the loser is listed under "conflicts" in `plugin list` and in the help overlay. Plugin keys bind in the normal wall layer only in v1 (not overlays, not the restart chord layer). `contexts` gates availability: a `session` action with no focused session is a no-op with a hint toast.
 
@@ -361,8 +375,10 @@ Plugin-facing HTTP surface (all under `127.0.0.1`, plugin routes require the bea
 | `GET /api/plugin/features` | versions and optional features (no token) | none |
 | `PUT/DELETE /api/plugins/{id}/widgets/{widget}` | push or clear widget content | `ui.widgets` |
 | `POST /api/plugins/{id}/panes/{pane}/open`, `DELETE ...` | open or close a pane | `ui.panes` |
-| `POST /api/plugins/ui/action` | ask the TUI to run an action | `ui.invoke` |
-| `POST /api/sessions/{id}/input` (new) | type text (and optionally Enter) into a session; needs a new `SessionBackend::send_text` | `sessions.input` |
+| `POST /api/plugins/ui/action` | body `{action, args, target: {session?, workspace?}}`: ask the TUI to run an action (see section 6 for target rules) | `ui.invoke` |
+| `GET /api/workspaces/{name}/closed` | closed-session records (core data) | `sessions.read` |
+| `DELETE /api/sessions/{*id}?meta=1` (existing semantics) | forget a session; reached from plugins only through the `session.delete` action | via `core.actions` |
+| `POST /api/sessions/input` (new) | body `{id, text}`: type text into the session named by the body id (body id, like restart, because session ids contain slashes) and press Enter; calls new `SessionBackend::send_text`. Token REQUIRED (unlike other core routes); a call without a valid plugin token is 401. Dangerous | `sessions.input` |
 | existing `GET /api/sessions`, `GET /api/workspaces`, `GET /api/events` | read state, subscribe | `sessions.read` / `workspaces.read` (soft, see section 11) |
 | existing workspace and session write routes | create, remove | `workspaces.write`, `sessions.manage` |
 
@@ -379,10 +395,13 @@ A plugin that wants live events without the hook mechanism can also open `GET /a
   "api_versions": [1],
   "garage": "0.7.0",
   "features": {
-    "events": ["session.created", "session.closed", "session.status_changed", "worktree.created", "workspace.added", "workspace.removed", "daemon.started", "timer"],
-    "slots": ["tile.title.right", "rail.row", "rail.header", "strip.right"],
+    "events": ["session.created", "session.closed", "session.turn", "session.status_changed", "worktree.created", "workspace.added", "workspace.removed", "daemon.started", "timer"],
+    "slots": ["tile.title.right", "tile.gutter", "rail.row", "rail.extra_rows", "rail.header", "strip.right"],
     "widgets.click_args": true,
     "widgets.filler": true,
+    "widgets.animated": true,
+    "widgets.slot_geometry": true,
+    "cli.fallback": true,
     "panes.placements": ["tile", "overlay", "popup"],
     "sessions.input": true,
     "actions.core_invocable": ["session.close", "..."],
@@ -427,12 +446,27 @@ Plugins are not sandboxed and cannot be: they are arbitrary executables running 
 2. **Pinned and re-consented.** Installs record the commit sha and manifest hash. Updates are explicit (`plugin update`), never automatic, and re-prompt if commands, permissions, build steps or download URLs changed. A manifest that changes under a linked path prompts again.
 3. **No shell, argv only,** so a crafted session name or path in the context cannot become code through our own spawning. Context is passed as JSON on stdin/env, not interpolated into argv.
 4. **Release downloads are verified.** Only from `github.com` releases of the declared repo, with a required checksums asset; a mismatch aborts the install. (The checksum file comes from the same release, so this guards corruption and CDN tampering, not a malicious author.)
-5. **Permissions are declared and soft-enforced at our API.** Token-authenticated plugin routes refuse a call outside the declared permissions (403 naming the permission). This catches mistakes and keeps manifests honest, and it makes `plugin list` meaningful. It is not a security boundary: a hostile plugin can ignore its token and call the unauthenticated core routes on `127.0.0.1`, run `tmux`, or read `~`. The docs and the preview say so.
+5. **Permissions are declared and soft-enforced at our API.** `POST /api/sessions/input` additionally requires a valid plugin token, since it types into sessions. Token-authenticated plugin routes refuse a call outside the declared permissions (403 naming the permission). This catches mistakes and keeps manifests honest, and it makes `plugin list` meaningful. It is not a security boundary: a hostile plugin can ignore its token and call the unauthenticated core routes on `127.0.0.1`, run `tmux`, or read `~`. The docs and the preview say so.
 6. **Limits protect the UI, not the user:** widget size and rate caps, process timeouts, process-group kill, run concurrency and queue caps, auto-disable of a hook that fails repeatedly. A plugin cannot make the TUI hang by sending huge content, and a runaway child dies on uninstall.
-7. **Dangerous core actions need a human.** Plugins cannot invoke restart/remove actions without the confirm step, and cannot invoke quit or overlay-internal actions at all (section 7, Gap E).
+7. **Dangerous core actions need a human.** Plugins can only arm dangerous actions; a human key or mouse event must confirm (section 7). Plugins cannot invoke restart/remove/delete actions without the confirm step, and cannot invoke quit or overlay-internal actions at all (section 7, Gap E).
 8. **Sensitive core features are not plugin territory** (p25: draft and screenshot recovery stay in the core).
 
 Known residual risks, stated rather than hidden: the daemon API itself is unauthenticated on loopback for local processes (pre-existing, outside p24); a malicious plugin that passes review once can change behaviour in a later `update` that the user accepts without reading the diff; there is no central vetting.
+
+### 12. Bundled first-party plugins
+
+First-party plugins are small Rust binaries living in the workspace as `plugins/<name>/` crates (`usage-bar`, `closed-chats`, `quick-send`, `tile-buttons`, `pit-pet`, `jump-palette`, `turn-markers`, `cli-extras`, `prune-empty-projects`). Each has its own `garage-plugin.toml`. The release build compiles them with the rest of the workspace, and the npm package ships the binaries and manifests under `plugins/` next to the `claude-garage` binary. There is no Node at runtime: bundled plugins are ordinary executables, loaded through the same host as third-party ones (source kind `bundled`, path inside the package).
+
+On first run the daemon seeds `plugins.json` with the bundled set and these defaults:
+
+| Plugin | Default |
+|---|---|
+| `usage-bar`, `closed-chats`, `quick-send`, `tile-buttons`, `pit-pet` | on |
+| `jump-palette`, `turn-markers`, `cli-extras`, `prune-empty-projects` | off |
+
+Seeding runs once (a `seeded` version marker in `plugins.json`); later releases add newly bundled plugins as off unless listed as default-on in a release note, and never re-enable one the user disabled. Bundled plugins are not removed by `plugin remove`; they can be disabled. They are trusted code from the same package, so they get no install preview, but `plugin list` shows their permissions like any other. `cli-extras` is the plugin that owns `[[cli]] fallback = true` (first-party wins over any third-party fallback).
+
+Which pieces each plugin leans on: `pit-pet` uses animated widgets and slot geometry in `strip.right`; `turn-markers` uses `session.turn` and `tile.gutter`; `closed-chats` uses closed-session records, `rail.extra_rows` and the `session.restore`/`session.delete` actions; `quick-send` uses `POST /api/sessions/input` (`sessions.input`); `tile-buttons` uses buttons in `tile.title.right` with core actions.
 
 ## Risks / Trade-offs
 
@@ -445,7 +479,7 @@ Known residual risks, stated rather than hidden: the daemon API itself is unauth
 
 ## Migration Plan
 
-Additive. With `plugins/plugins.json` absent nothing is created and nothing changes. The `Plugin` stub subcommand is replaced by the real subcommands. The SSE stream gains frames (`widgets`, `plugins`, `pane`, `invoke`, `plugin_run_failed`) that older TUIs ignore. Rolling back = delete the `plugins/` directory.
+Additive. The first run after upgrade seeds the bundled plugins (section 12); the core UI is unchanged apart from what the default-on plugins draw. With `plugins/plugins.json` absent nothing is created and nothing changes. The `Plugin` stub subcommand is replaced by the real subcommands. The SSE stream gains frames (`widgets`, `plugins`, `pane`, `invoke`, `plugin_run_failed`) that older TUIs ignore. Rolling back = delete the `plugins/` directory.
 
 ## Open questions
 
