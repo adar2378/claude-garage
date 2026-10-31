@@ -1,0 +1,71 @@
+/*
+ * Theme: dark-first, neutral greys, ONE brand accent.
+ * Change --brand (or the three derived values) to rebrand.
+ * Amber (--needs-input) is reserved for "needs input" mentions. Never use it as an accent.
+ *
+ * Contrast (WCAG), measured against the page background #0f1014:
+ *   --brand       #E85002  5.0:1  passes AA for text and links on dark
+ *   --brand-high  #FF7A3D  7.4:1  used for link text (AAA)
+ *   text on a --brand button: --on-brand #0b0b0e gives 5.3:1 (AA). White on #E85002 is only 3.8:1, so never use white there.
+ */
+:root {
+  --brand: #E85002;
+  --brand-hover: #FF6A1F;
+  --brand-pressed: #C24300;
+  --brand-high: #FF7A3D;
+  --brand-low: #3a1a0a;
+  --on-brand: #0b0b0e;
+  --needs-input: #FFB020;
+
+  --sl-font: 'Geist Variable', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --sl-font-mono: 'Geist Mono Variable', ui-monospace, 'SF Mono', Menlo, monospace;
+}
+
+:root,
+:root[data-theme='dark'] {
+  --sl-color-accent-low: var(--brand-low);
+  --sl-color-accent: var(--brand);
+  --sl-color-accent-high: var(--brand-high);
+  --sl-color-white: #f4f4f6;
+  --sl-color-gray-1: #dcdce1;
+  --sl-color-gray-2: #b4b4bc;
+  --sl-color-gray-3: #8a8a94;
+  --sl-color-gray-4: #4c4c55;
+  --sl-color-gray-5: #2a2b32;
+  --sl-color-gray-6: #1b1c23;
+  --sl-color-gray-7: #14151a;
+  --sl-color-black: #0f1014;
+}
+
+:root[data-theme='light'] {
+  --sl-color-accent-low: #ffd9c2;
+  --sl-color-accent: #C24300;
+  --sl-color-accent-high: #8f3000;
+  --sl-color-white: #0f1014;
+  --sl-color-gray-1: #24252c;
+  --sl-color-gray-2: #3c3d46;
+  --sl-color-gray-3: #62626c;
+  --sl-color-gray-4: #8d8d97;
+  --sl-color-gray-5: #cfcfd6;
+  --sl-color-gray-6: #ececf0;
+  --sl-color-gray-7: #f6f6f8;
+  --sl-color-black: #ffffff;
+}
+
+/* Primary buttons: dark text on the orange, never white. */
+.sl-link-button.primary,
+.site-btn-primary {
+  background: var(--brand);
+  border-color: var(--brand);
+  color: var(--on-brand);
+  font-weight: 600;
+}
+.sl-link-button.primary:hover,
+.site-btn-primary:hover { background: var(--brand-hover); border-color: var(--brand-hover); }
+.sl-link-button.primary:active,
+.site-btn-primary:active { background: var(--brand-pressed); border-color: var(--brand-pressed); }
+
+/* Utility for docs that mention the needs-input state. */
+.needs-input { color: var(--needs-input); font-weight: 600; }
+
+:focus-visible { outline: 2px solid var(--brand-high); outline-offset: 2px; }

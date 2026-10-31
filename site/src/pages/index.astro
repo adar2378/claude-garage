@@ -1,0 +1,24 @@
+---
+import Base from '../layouts/Base.astro';
+import Landing from '../components/Landing.astro';
+
+const title = 'claude-garage: a terminal wall for Claude Code';
+const description =
+  'See every Claude Code session at once, jump to the one that needs your answer, and keep sessions alive in tmux. One small binary for macOS and Linux.';
+const site = Astro.site ?? new URL('https://claude-garage.xyz');
+const jsonLd = {
+  '@context': 'https://schema.org',
+  '@type': 'SoftwareApplication',
+  name: 'claude-garage',
+  description,
+  url: site.href,
+  applicationCategory: 'DeveloperApplication',
+  operatingSystem: 'macOS, Linux, Windows (preview)',
+  offers: { '@type': 'Offer', price: '0', priceCurrency: 'USD' },
+  image: new URL('/og-default.png', site).href,
+  codeRepository: 'https://github.com/adar2378/claude-garage',
+};
+---
+<Base title={title} description={description} jsonLd={jsonLd}>
+  <Landing />
+</Base>
