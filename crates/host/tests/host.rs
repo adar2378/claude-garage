@@ -139,7 +139,7 @@ fn the_title_the_command_sets_reaches_info_and_the_registry() {
 }
 
 #[test]
-fn send_text_reaches_the_command_as_a_submitted_line_and_leaves_the_size_alone() {
+fn send_text_reaches_the_command_as_a_submitted_line() {
     let d = tempfile::tempdir().unwrap();
     // `read` only returns once Enter arrives, so seeing the echo proves both parts landed.
     let (e, host) = spawn_host(d.path(), "garage/ws/q", &["sh", "-c", "read line; echo got:$line; sleep 60"]);
