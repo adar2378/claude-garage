@@ -35,7 +35,7 @@ field path. Adding a permission needs the user to approve it again (it asks). Ne
   `tile.title.right`, `tile.gutter`.
 - `[[panes]]`: `id`, `title`, `placement` (`tile`, `overlay`, `popup`), `command`. A pane is a program
   that draws in a terminal; garage hosts it like a session.
-- `[[cli]]`: `claude-garage <name>` runs a command. `[[build]]`: commands run once at install.
+- `[[cli]]`: `claude-garage <name>` runs a command. `[[build]]`: commands run once at install and again on every `plugin dev` reload that follows a code change (not a manifest-only change), so keep them fast and safe to repeat.
 - `permissions` are declared and shown to the user, not enforced. Ask only for what you use:
   `ui.widgets`, `ui.panes`, `ui.notice`, `ui.invoke`, `ui.navigate`, `sessions.read`, `workspaces.read`,
   `workspaces.write`, `sessions.manage`, `network`, and the dangerous ones, `sessions.input` and
