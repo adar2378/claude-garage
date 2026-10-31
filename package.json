@@ -42,7 +42,7 @@
     "test": "node --import ./daemon/test/helpers/tmux-sandbox.js --test \"daemon/test/*.test.js\"",
     "test:contract": "cargo test --manifest-path tests/contract/Cargo.toml",
     "test:contract:rust": "cargo build -p claude-garage && GARAGE_DAEMON_CMD=\"$PWD/target/debug/claude-garage daemon\" cargo test --manifest-path tests/contract/Cargo.toml",
-    "build:plugins": "cargo build --release --workspace --exclude garage-wall && sh scripts/stage-plugins.sh release wall/dist/plugins",
+    "build:plugins": "cargo build --release --workspace && sh scripts/stage-plugins.sh release wall/dist/plugins",
     "build:tui": "cargo build --release -p garage-wall && mkdir -p wall/dist && rm -f wall/dist/garage-wall-$(node -p \"process.platform+'-'+process.arch\") && cp target/release/garage-wall wall/dist/garage-wall-$(node -p \"process.platform+'-'+process.arch\")"
   },
   "dependencies": {
