@@ -2,7 +2,7 @@
 //! `claude-garage prune`, as one plugin. Everything goes through the daemon's
 //! HTTP API (the CLI starts the daemon first: `needs_daemon`).
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use garage_plugin_sdk::folder::canonical_text;
 use garage_plugin_sdk::{Api, Error, Value, json, workspace_has_sessions, workspace_of};
