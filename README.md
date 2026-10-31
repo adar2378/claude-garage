@@ -41,7 +41,8 @@ It's small: one 17 MB binary (the plugins are inside it), about 6 MB of RAM and 
 
 You need:
 
-- macOS or Linux (Windows x64 is in progress)
+- macOS or Linux. Windows x64 is a preview: it has a prebuilt binary, but a
+  contributor still has to verify it on real Windows before 1.0.0.
 - [tmux](https://github.com/tmux/tmux) 3.2 or newer (garage offers to
   install it with `brew`)
 - [Claude Code](https://docs.claude.com/en/docs/claude-code) on your `PATH`
@@ -51,12 +52,11 @@ prebuilt binary; nothing is compiled.
 
 ```bash
 npx claude-garage                                   # needs Node.js 20 or newer
-brew install adar2378/tap/claude-garage             # Homebrew
 curl --proto '=https' --tlsv1.2 -LsSf \
   https://github.com/adar2378/claude-garage/releases/latest/download/claude-garage-installer.sh | sh
 ```
 
-On Windows, use the PowerShell installer from the same release page
+On Windows (preview), use the PowerShell installer from the same release page
 (`claude-garage-installer.ps1`).
 
 Upgrading from 0.6.x: run `claude-garage` again. It replaces the old
