@@ -4,12 +4,12 @@ Rules for every task: tmux tests use an isolated socket (`GARAGE_TMUX_SOCKET`), 
 
 ## 1. Scaffold
 
-- [ ] 1.1 Root `Cargo.toml` workspace with members `wall`, `crates/protocol`, `crates/daemon`, `crates/cli`; remove `wall/Cargo.toml`'s standalone `[workspace]` table; `cargo build` at the root and inside `wall/` both work; `npm run build:tui` unchanged
+- [x] 1.1 Root `Cargo.toml` workspace with members `wall`, `crates/protocol`, `crates/daemon`, `crates/cli`; remove `wall/Cargo.toml`'s standalone `[workspace]` table; `cargo build` at the root and inside `wall/` both work; `npm run build:tui` unchanged
 - [ ] 1.2 `crates/protocol`: serde types for every request, response and event in the `daemon-api` spec (camelCase on the wire), with round-trip tests against JSON captured from the JS daemon
-- [ ] 1.3 `crates/daemon`: axum router skeleton, origin guard layer, `{error}` body helper, `GET /api/health`; `SessionBackend` trait; `DaemonEvent` broadcast bus
-- [ ] 1.4 Module stubs, each with a header naming the JS file it ports: `backend/tmux.rs` (`tmux.js`), `state/registry.rs` (`registry.js`), `state/status.rs` (`status.js`), `poller.rs` (`poller.js`), `session_resolve.rs` (`session-resolve.js`), `api/sessions.rs` (`sessions.js`), `api/workspaces.rs` (`workspaces.js`), `api/events.rs` (`events.js`), `api/hooks.rs` (`hooks.js`), `api/statusline.rs` + `state/context.rs` (`statusline.js`), `transcript.rs` (`transcript.js`), `install.rs` (`settings-install.js`, `claude-home.js`), `api/worktrees.rs` + `git.rs` (`worktrees.js`), `api/editor.rs` (`editor.js`), `api/picker.rs` + `os/` (`picker.js`), `api/visibility.rs` + `os/notify` (`notify.js`), `api/daemon_restart.rs` (`daemon-restart.js`), `security.rs` (`security.js`, `token-auth.js`)
+- [x] 1.3 `crates/daemon`: axum router skeleton, origin guard layer, `{error}` body helper, `GET /api/health`; `SessionBackend` trait; `DaemonEvent` broadcast bus
+- [x] 1.4 Module stubs, each with a header naming the JS file it ports: `backend/tmux.rs` (`tmux.js`), `state/registry.rs` (`registry.js`), `state/status.rs` (`status.js`), `poller.rs` (`poller.js`), `session_resolve.rs` (`session-resolve.js`), `api/sessions.rs` (`sessions.js`), `api/workspaces.rs` (`workspaces.js`), `api/events.rs` (`events.js`), `api/hooks.rs` (`hooks.js`), `api/statusline.rs` + `state/context.rs` (`statusline.js`), `transcript.rs` (`transcript.js`), `install.rs` (`settings-install.js`, `claude-home.js`), `api/worktrees.rs` + `git.rs` (`worktrees.js`), `api/editor.rs` (`editor.js`), `api/picker.rs` + `os/` (`picker.js`), `api/visibility.rs` + `os/notify` (`notify.js`), `api/daemon_restart.rs` (`daemon-restart.js`), `security.rs` (`security.js`, `token-auth.js`)
 - [ ] 1.5 Test harness: `TestTmux` (unique `-L` socket, `kill-server` on drop), `TestDaemon` (own port, temp `GARAGE_DIR`, `GARAGE_CLAUDE_CMD=sh`, own tmux socket); a test that proves the default tmux server is never contacted
-- [ ] 1.6 `crates/cli`: `claude-garage` binary with `clap` subcommands `tui`, `daemon`, `restart`, `plugin` (stubbed); `daemon` runs the server in the foreground
+- [x] 1.6 `crates/cli`: `claude-garage` binary with `clap` subcommands `tui`, `daemon`, `restart`, `plugin` (stubbed); `daemon` runs the server in the foreground
 
 ## 2. Port the tests first
 
