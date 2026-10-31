@@ -489,7 +489,7 @@ Known residual risks, stated rather than hidden: the daemon API itself is unauth
 
 ### 12. Bundled first-party plugins
 
-First-party plugins are small Rust binaries living in the workspace as `plugins/<name>/` crates (`usage-bar`, `closed-chats`, `quick-send`, `tile-buttons`, `pit-pet`, `jump-palette`, `turn-markers`, `cli-extras`, `prune-empty-projects`). Each has its own `garage-plugin.toml`. The release build compiles them with the rest of the workspace, and the npm package ships the binaries and manifests under `plugins/` next to the `claude-garage` binary. There is no Node at runtime: bundled plugins are ordinary executables, loaded through the same host as third-party ones (source kind `bundled`, path inside the package).
+First-party plugins are small Rust binaries living in the workspace as `plugins/<name>/` crates (`usage-bar`, `closed-chats`, `quick-send`, `tile-buttons`, `pit-pet`, `jump-palette`, `turn-markers`, `cli-extras`, `prune-empty-projects`). Each has its own `garage-plugin.toml`. The release build compiles them with the rest of the workspace, and the `claude-garage` binary embeds the manifests and binaries (with SHA-256) and unpacks them under `<garage dir>/plugins/bundled/<version>/` at daemon start, because cargo-dist installers copy only executables (p21 packaging). The daemon checks each file against the embedded hash at load and before every start. A build without the `bundle-plugins` feature looks in `plugins/` next to the binary instead, unchecked. There is no Node at runtime: bundled plugins are ordinary executables, loaded through the same host as third-party ones (source kind `bundled`, path inside the package).
 
 On first run the daemon seeds `plugins.json` with the bundled set and these defaults:
 

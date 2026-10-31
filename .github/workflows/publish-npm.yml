@@ -1,0 +1,52 @@
+# Publish the npm package cargo-dist built (the `claude-garage` package that
+# downloads the native binary from the GitHub release).
+#
+# Called from the generated release.yml (dist-workspace.toml: publish-jobs).
+# npm trusted publishing (OIDC): no NPM_TOKEN and no 2FA prompt. The trusted
+# publisher is set up on npmjs.com for this repository; npm checks the
+# workflow file name, so it must name release.yml (the caller).
+name: publish-npm
+
+on:
+  workflow_call:
+    inputs:
+      plan:
+        description: dist's plan (JSON)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write # npm trusted publishing + provenance
+
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    env:
+      PLAN: ${{ inputs.plan }}
+    steps:
+      - name: Fetch the npm package
+        uses: actions/download-artifact@v8
+        with:
+          pattern: artifacts-*
+          path: npm/
+          merge-multiple: true
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 26
+          registry-url: https://registry.npmjs.org
+
+      # trusted publishing needs npm >= 11.5.1
+      - run: npm install -g npm@latest
+
+      - name: Publish
+        run: |
+          for release in $(echo "$PLAN" | jq --compact-output '.releases[] | select([.artifacts[] | endswith("-npm-package.tar.gz")] | any)'); do
+            pkg=$(echo "$release" | jq '.artifacts[] | select(endswith("-npm-package.tar.gz"))' --raw-output)
+            version=$(echo "$release" | jq .app_version --raw-output)
+            # a prerelease must never become `latest`
+            tag=latest
+            case "$version" in *-*) tag=next ;; esac
+            npm publish --provenance --access public --tag "$tag" "./npm/${pkg}"
+          done

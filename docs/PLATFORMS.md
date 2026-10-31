@@ -49,10 +49,9 @@ cargo test -p garage-host -p claude-garage   # real host processes in temp dirs,
   --target <triple>` passes from macOS with only `rustup target add`.
 - Runtime: `tmux` (required), `claude`; optional `notify-send` (libnotify-bin),
   `zenity` or `kdialog`.
-- Binaries to ship per target: `claude-garage` and `garage-wall` side by side
-  (the launcher falls back to a `garage-wall` beside itself); the npm package
-  names the TUI `wall/dist/garage-wall-linux-x64` / `garage-wall-linux-arm64`
-  (`process.platform-process.arch`). `build:tui` in package.json produces that name.
+- Binaries to ship per target: one `claude-garage` (TUI, daemon and launcher in
+  one program, first-party plugins embedded). cargo-dist builds it natively on
+  a macOS, Linux x64, Linux arm64 and Windows runner; see `dist-workspace.toml`.
 - glibc: build on the oldest distro you support (e.g. an Ubuntu 22.04 runner) or
   the binary needs the newer glibc of the build machine.
 - Live check (task 5.2) in an OrbStack Ubuntu machine: `sudo apt install tmux

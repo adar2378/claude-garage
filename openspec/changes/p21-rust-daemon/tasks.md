@@ -44,14 +44,14 @@ Rules for every task: tmux tests use an isolated socket (`GARAGE_TMUX_SOCKET`), 
 
 ## 7. Packaging
 
-- [ ] 7.1 Add `cargo-dist` config: targets macOS arm64/x64, Linux x64/arm64; npm installer with per-OS packages (package name `claude-garage`), Homebrew formula, shell installer
-- [ ] 7.2 Generated release workflow keeps npm trusted publishing (no token) and the GitHub release notes from `CHANGELOG.md`
-- [ ] 7.3 Dry run: `dist plan` and a pre-release tag on a fork or a `-rc` version; `npx claude-garage@<rc>` runs the TUI on a clean macOS account or container
+- [x] 7.1 Add `cargo-dist` 0.33.1 config (`dist-workspace.toml`): macOS arm64/x64, Linux x64/arm64 (gnu), Windows x64; shell, PowerShell, npm and Homebrew installers. One `claude-garage` binary (the wall is linked in, `garage_wall::app`); the first-party plugins and their SHA-256 are embedded at build time (`bundle-plugins` feature, `crates/daemon/build.rs`) because the installers copy only executables. Deviation: dist's npm installer is one `claude-garage` package that downloads the binary from the GitHub release, not per-OS packages. musl skipped (the nested plugin build is not cross-ready)
+- [x] 7.2 Generated release workflow (`dist generate`) plus `publish-npm.yml` (OIDC trusted publishing, provenance, `--tag next` for prereleases) and `release-tests.yml` (test gate via `plan-jobs`). The tag must equal the Cargo version (dist plan fails otherwise); release notes come from `CHANGELOG.md`. Prereleases skip npm and Homebrew (dist default)
+- [ ] 7.3 (`dist plan` and a host `dist build` pass locally; the tag run and the clean-account run are the user's) Dry run: `dist plan` and a pre-release tag on a fork or a `-rc` version; `npx claude-garage@<rc>` runs the TUI on a clean macOS account or container
 
 ## 8. Cutover
 
 - [ ] 8.1 Swap criterion met (design.md), all four checks recorded in `verification.md`
 - [ ] 8.2 Ask the user, then switch their wall to the new binary; record their live check
-- [ ] 8.3 Delete `daemon/`, `bin/garage.js`, the Node release workflow and the `build:tui` script; `package.json` becomes cargo-dist's
+- [ ] 8.3 Delete `daemon/` and `bin/garage.js` (kept until 8.1/8.2: they are the parity oracle for `npm test` and the contract tests). Done early: the Node release workflow and the `build:tui` / `build:plugins` scripts are gone, and the root `package.json` is `private` with no `bin`/`files`, so nothing Node can be published; the published package is cargo-dist's
 - [ ] 8.4 `CHANGELOG.md` entry; release as the next minor version
 - [ ] 8.5 `openspec validate p21-rust-daemon --strict`; archive

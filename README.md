@@ -35,27 +35,32 @@ whoever is waiting, and tmux keeping every session alive.
   terminal or reboot, and your sessions come back with their full
   conversation.
 
-It's small: a 2.6 MB binary, about 6 MB of RAM and ~2% CPU.
+It's small: one 17 MB binary (the plugins are inside it), about 6 MB of RAM and ~2% CPU.
 
 ## Install
 
 You need:
 
-- macOS
-- Node.js 20 or newer
+- macOS or Linux (Windows x64 is in progress)
 - [tmux](https://github.com/tmux/tmux) 3.2 or newer (garage offers to
   install it with `brew`)
 - [Claude Code](https://docs.claude.com/en/docs/claude-code) on your `PATH`
 
-Then run:
+Then install garage with whichever you prefer. Each one downloads a
+prebuilt binary; nothing is compiled.
 
 ```bash
-npx claude-garage
+npx claude-garage                                   # needs Node.js 20 or newer
+brew install adar2378/tap/claude-garage             # Homebrew
+curl --proto '=https' --tlsv1.2 -LsSf \
+  https://github.com/adar2378/claude-garage/releases/latest/download/claude-garage-installer.sh | sh
 ```
 
-On an Intel Mac, the first run builds the app from source, so you also
-need Rust ([rustup.rs](https://rustup.rs)). Apple Silicon needs nothing
-extra.
+On Windows, use the PowerShell installer from the same release page
+(`claude-garage-installer.ps1`).
+
+Upgrading from 0.6.x: run `claude-garage` again. It replaces the old
+background daemon by itself and leaves your sessions alone.
 
 ## First steps
 
@@ -172,7 +177,7 @@ Everything stays on your machine.
 
 ```
 tmux            runs every session
-  └─ daemon     small Node service: starts, lists and watches sessions
+  └─ daemon     the same binary run as `claude-garage daemon`: starts, lists and watches sessions
        └─ TUI   the Rust terminal wall you look at
 ```
 
@@ -182,11 +187,15 @@ with `tmux attach -t garage/<project>/<label>`.
 ## Development
 
 ```bash
-npm install
-npm test             # daemon tests
-npm run build:tui    # build the Rust app into wall/dist
-cd wall && cargo test --lib --bins
+cargo build                                  # the one binary: target/debug/claude-garage
+cargo test -p garage-wall --lib --bins       # the TUI
+cargo test -p garage-protocol -p garage-host -p garage-daemon -p claude-garage
 ```
+
+Releases are built by [cargo-dist](https://github.com/axodotdev/cargo-dist)
+(`dist-workspace.toml`; `dist plan` shows what a tag would publish). The
+first-party plugins are built into the release binary (`--features
+bundle-plugins`); a plain `cargo build` finds them in `plugins/` instead.
 
 Note: plain `cargo test` also starts and kills real tmux sessions.
 
