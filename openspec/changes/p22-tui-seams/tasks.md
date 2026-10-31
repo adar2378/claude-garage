@@ -1,0 +1,52 @@
+# Tasks: p22-tui-seams
+
+## 0. Preconditions
+
+- [ ] 0.1 p20-safety-net merged: insta snapshots of rail, strip, a tile title, and each overlay (help, triage queue, view picker, workspace add, worktree finish); CI on macOS, Linux, Windows
+- [ ] 0.2 Baseline recorded: `cd wall && cargo test --lib --bins` pass count (519 at proposal time) and snapshot set green
+
+## 1. Split without behaviour change (`wall/src/runtime.rs`, `wall/src/state/store.rs`)
+
+- [ ] 1.1 Move effects: `Effect`, `run_effect`, notice helpers → `runtime/effects.rs`
+- [ ] 1.2 Move background tasks: `spawn_*_task`, `fetch_and_send` → `runtime/tasks.rs`
+- [ ] 1.3 Move `GarageRouter`, `Notices`, `NoticeKind` → `runtime/router.rs`
+- [ ] 1.4 Move overlay key and click handlers → `runtime/overlays.rs`
+- [ ] 1.5 Move mouse handling (`handle_mouse`, `handle_click`, `handle_wheel`, `tile_at`) → `runtime/mouse.rs`
+- [ ] 1.6 Move `draw_frame`, `draw_tile` → `runtime/draw.rs`
+- [ ] 1.7 Split `runtime.rs` tests per area under `runtime/tests/`
+- [ ] 1.8 Move pure reconcile helpers out of `store.rs` → `state/reconcile.rs`
+- [ ] 1.9 After each step: tests and snapshots green, one commit per step
+
+## 2. Actions and keymap
+
+- [ ] 2.1 `actions/` module: `ActionId`, `ActionCtx`, the id list from design.md decision 1, `GarageCommand` mapped onto ids
+- [ ] 2.2 `keymap.rs`: `Keymap::defaults()` reproducing `garage_command_for`, `restart_command_for` and the overlay key arms exactly
+- [ ] 2.3 `GarageRouter::on_garage_key` resolves through the keymap; arming, disarm and prefix logic unchanged
+- [ ] 2.4 Overlay key handlers resolve through the keymap
+- [ ] 2.5 Unit tests: every default binding resolves to its id; every id in the spec list is reachable from a key or a click; chord prefixes still one-shot
+
+## 3. Mouse through actions
+
+- [ ] 3.1 `hit_targets::action_at` wrapping the existing hit-target functions
+- [ ] 3.2 `handle_click` dispatches resolved actions; family label rows still inert
+- [ ] 3.3 Tests: each clickable target resolves to the same id as its key
+
+## 4. Slot registry
+
+- [ ] 4.1 `slots/` module: `SlotId`, `SlotItem`, provider registration, priority layout with truncation
+- [ ] 4.2 Core providers: tile context meter → `tile.title.right`; usage chip and pet → `strip.right`; family label → `rail.header`
+- [ ] 4.3 `overlay` and `context.menu` slots defined, empty
+- [ ] 4.4 Snapshots unchanged byte-for-byte
+
+## 5. Pit pet boundary
+
+- [ ] 5.1 `ui/pet/` with `PetHost` (sim, chatter, mood, PRNG); `App` holds `Option<PetHost>`
+- [ ] 5.2 `pet` cargo feature, default on; `cargo build --no-default-features` and its tests pass
+- [ ] 5.3 Add the no-default-features build to CI
+
+## 6. Verification
+
+- [ ] 6.1 `cd wall && cargo test --lib --bins` green, same or higher count; `cargo clippy --all-targets` clean; snapshots unchanged
+- [ ] 6.2 No file under `wall/src/runtime/` or `wall/src/state/` over ~1,200 lines
+- [ ] 6.3 Live check on the user's wall (user relaunches with `GARAGE_TUI_BIN` on the branch build; main session only, ask first): keys `1`-`9`, `[` `]`, `a`, `A`, `n`, `x x`, `X X`, `X K`, `r r`, `r a`, `?`, `m`, `d`, `D`, `Tab`; clicks on tiles, rail rows, triage rows; pet clicks
+- [ ] 6.4 Record results in `verification.md`
