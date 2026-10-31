@@ -5,17 +5,16 @@
 //! TUI, Claude's hook posts and curl send none. So a missing `Origin` passes,
 //! and any `Origin` is refused on state-changing methods unless listed.
 
-use std::sync::Arc;
-
 use axum::extract::{Request, State};
 use axum::http::Method;
 use axum::middleware::Next;
 use axum::response::Response;
 
 use crate::error::error_response;
+use crate::state::AppState;
 
 pub async fn origin_guard(
-    State(allowed): State<Arc<Vec<String>>>,
+    State(state): State<AppState>,
     req: Request,
     next: Next,
 ) -> Response {
@@ -25,7 +24,7 @@ pub async fn origin_guard(
     );
     if state_changing {
         if let Some(origin) = req.headers().get("origin") {
-            let ok = origin.to_str().map(|o| allowed.iter().any(|a| a == o)).unwrap_or(false);
+            let ok = origin.to_str().map(|o| state.config.ui_origins.iter().any(|a| a == o)).unwrap_or(false);
             if !ok {
                 return error_response(axum::http::StatusCode::FORBIDDEN, "origin not allowed");
             }

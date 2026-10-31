@@ -12,6 +12,7 @@ pub mod visibility;
 pub mod workspaces;
 pub mod worktrees;
 
+use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::Response;
 use axum::routing::{delete, get, patch, post};
@@ -19,8 +20,9 @@ use axum::{Json, Router};
 use garage_protocol::Health;
 
 use crate::error::error_response;
+use crate::state::AppState;
 
-pub async fn health() -> Json<Health> {
+pub async fn health(State(_state): State<AppState>) -> Json<Health> {
     Json(Health {
         status: "ok".into(),
         version: Some(env!("CARGO_PKG_VERSION").into()),
@@ -37,7 +39,7 @@ pub async fn not_found() -> Response {
     error_response(StatusCode::NOT_FOUND, "not found")
 }
 
-pub fn routes() -> Router {
+pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/api/health", get(health))
         .route("/api/events", get(not_implemented))

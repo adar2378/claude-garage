@@ -22,23 +22,29 @@ use anyhow::{Context, Result};
 use axum::middleware;
 
 pub use config::Config;
+pub use state::AppState;
 
 /// The full application: routes plus the origin guard.
-pub fn app(config: &Config) -> axum::Router {
-    api::routes().layer(middleware::from_fn_with_state(
-        Arc::new(config.ui_origins.clone()),
-        security::origin_guard,
-    ))
+pub fn app(state: AppState) -> axum::Router {
+    api::routes()
+        .layer(middleware::from_fn_with_state(state.clone(), security::origin_guard))
+        .with_state(state)
 }
 
-/// Bind 127.0.0.1 and serve until ctrl-c. A taken port is an error naming the
-/// port and `GARAGE_PORT`.
-pub async fn run(config: Config) -> Result<()> {
-    let addr = ("127.0.0.1", config.port);
-    let listener = tokio::net::TcpListener::bind(addr).await.with_context(|| {
+/// Bind 127.0.0.1 only. A taken port is an error naming the port and
+/// `GARAGE_PORT`.
+pub async fn bind(config: &Config) -> Result<tokio::net::TcpListener> {
+    tokio::net::TcpListener::bind(("127.0.0.1", config.port)).await.with_context(|| {
         format!("cannot bind 127.0.0.1:{}; is it taken? set GARAGE_PORT to use another port", config.port)
-    })?;
-    axum::serve(listener, app(&config))
+    })
+}
+
+/// Serve on 127.0.0.1 until ctrl-c.
+pub async fn run(config: Config) -> Result<()> {
+    let listener = bind(&config).await?;
+    let backend = Arc::new(backend::tmux::TmuxBackend::new(config.tmux_socket.clone()));
+    let state = AppState::new(config, backend, Arc::new(os::UnsupportedOs));
+    axum::serve(listener, app(state))
         .with_graceful_shutdown(async {
             let _ = tokio::signal::ctrl_c().await;
         })
@@ -64,24 +70,31 @@ mod tests {
         }
     }
 
+    fn state(cfg: Config) -> AppState {
+        AppState::new(cfg, Arc::new(backend::tmux::TmuxBackend::new(None)), Arc::new(os::UnsupportedOs))
+    }
+
     async fn call(cfg: &Config, method: &str, uri: &str, origin: Option<&str>) -> (StatusCode, Value) {
         let mut req = Request::builder().method(method).uri(uri);
         if let Some(o) = origin {
             req = req.header("origin", o);
         }
-        let res = app(cfg).oneshot(req.body(Body::empty()).unwrap()).await.unwrap();
+        let res = app(state(cfg.clone())).oneshot(req.body(Body::empty()).unwrap()).await.unwrap();
         let status = res.status();
         let bytes = res.into_body().collect().await.unwrap().to_bytes();
         (status, serde_json::from_slice(&bytes).unwrap_or(Value::Null))
     }
 
+    /// The launcher's stale-daemon gate compares /api/health's version with
+    /// package.json's, so they must never drift.
     #[tokio::test]
-    async fn health_reports_status_version_and_pid() {
+    async fn health_reports_status_pid_and_the_package_json_version() {
         let (s, body) = call(&config(&[]), "GET", "/api/health", None).await;
         assert_eq!(s, StatusCode::OK);
         assert_eq!(body["status"], "ok");
         assert_eq!(body["pid"], std::process::id());
-        assert!(body["version"].is_string());
+        let pkg: Value = serde_json::from_str(include_str!("../../../package.json")).unwrap();
+        assert_eq!(body["version"], pkg["version"]);
     }
 
     #[tokio::test]
@@ -100,19 +113,29 @@ mod tests {
         assert_eq!(call(&c, "DELETE", "/api/sessions/x", Some("http://ok.test")).await.0, StatusCode::NOT_IMPLEMENTED);
     }
 
+    /// 405 means the path is registered (for another method); 404 means it is
+    /// not routed at all. Together they tell a real route from a typo, which a
+    /// bare 404 check cannot.
     #[tokio::test]
-    async fn spec_routes_exist_and_diff_route_is_404() {
+    async fn registered_paths_answer_405_for_other_methods_and_removed_diff_route_is_404() {
         let c = config(&[]);
         for (m, u) in [
-            ("GET", "/api/events"), ("GET", "/api/sessions"), ("POST", "/api/sessions/restore"),
-            ("POST", "/api/sessions/restart"), ("DELETE", "/api/sessions/garage%2Fws%2Fa"),
-            ("PUT", "/api/workspaces"), ("PATCH", "/api/workspaces/ws"), ("DELETE", "/api/workspaces/ws"),
-            ("POST", "/api/hooks/claude"), ("GET", "/api/usage"), ("POST", "/api/worktrees/finish"),
+            ("PUT", "/api/events"), ("PATCH", "/api/sessions"), ("GET", "/api/sessions/restore"),
+            ("GET", "/api/sessions/restart"), ("GET", "/api/sessions/x"), ("POST", "/api/workspaces/ws"),
+            ("GET", "/api/hooks/claude"), ("POST", "/api/usage"), ("GET", "/api/worktrees/finish"),
+            ("GET", "/api/daemon/restart"),
         ] {
-            assert_eq!(call(&c, m, u, None).await.0, StatusCode::NOT_IMPLEMENTED, "{m} {u}");
+            assert_eq!(call(&c, m, u, None).await.0, StatusCode::METHOD_NOT_ALLOWED, "{m} {u}");
         }
-        let (s, body) = call(&c, "GET", "/api/diff/ws", None).await;
-        assert_eq!(s, StatusCode::NOT_FOUND);
-        assert!(body["error"].is_string());
+        for u in ["/api/diff/ws", "/api/sesions"] {
+            let (s, body) = call(&c, "GET", u, None).await;
+            assert_eq!((s, body), (StatusCode::NOT_FOUND, json!({"error": "not found"})), "{u}");
+        }
+    }
+
+    #[tokio::test]
+    async fn binds_loopback_only() {
+        let listener = bind(&config(&[])).await.unwrap();
+        assert!(listener.local_addr().unwrap().ip().is_loopback());
     }
 }

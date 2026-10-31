@@ -397,10 +397,35 @@ impl Event {
     }
 }
 
+/// How a client attaches a terminal to a session: the seam between the TUI's
+/// PTY tiles and the session backend. `wall` does not consume it yet.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum AttachSpec {
+    /// Spawn `argv` in a PTY (a `tmux attach` client). To detach one client
+    /// cleanly, run `detach_argv` followed by that client's tty.
+    #[serde(rename_all = "camelCase")]
+    Tmux { argv: Vec<String>, detach_argv: Vec<String> },
+    /// Placeholder for the Windows host-process backend (p26): connect to
+    /// `addr` and authenticate with `token`.
+    #[serde(rename_all = "camelCase")]
+    Socket { addr: String, token: String },
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn attach_spec_wire_shape() {
+        roundtrip::<AttachSpec>(json!({
+            "kind": "tmux",
+            "argv": ["tmux", "attach", "-t", "=s"],
+            "detachArgv": ["tmux", "detach-client", "-t"]
+        }));
+        roundtrip::<AttachSpec>(json!({"kind": "socket", "addr": "127.0.0.1:9", "token": "t"}));
+    }
 
     /// Round-trip a JSON literal through `T` and require the exact same JSON
     /// back: proves both field naming and which optionals are omitted vs null.

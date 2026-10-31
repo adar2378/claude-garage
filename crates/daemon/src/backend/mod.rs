@@ -8,6 +8,7 @@ use std::path::Path;
 
 use anyhow::Result;
 use async_trait::async_trait;
+use garage_protocol::AttachSpec;
 
 /// One backend session (`id`, `dir`, `attached`, `created_at`).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -32,10 +33,12 @@ pub trait SessionBackend: Send + Sync {
     async fn list(&self) -> Result<Vec<BackendSession>>; // id, dir, attached, created_at
     async fn panes(&self) -> Result<HashMap<String, PaneInfo>>; // cwd, title, pid
     async fn has(&self, id: &str) -> Result<bool>;
-    async fn create(&self, id: &str, dir: &Path, cmd: &str, args: &[String]) -> Result<()>;
-    async fn respawn(&self, id: &str, dir: &Path, cmd: &str, args: &[String]) -> Result<()>;
+    /// `env` is set for the session's process; backends must not bake it into
+    /// backend-specific flags the caller could not reproduce elsewhere.
+    async fn create(&self, id: &str, dir: &Path, cmd: &str, args: &[String], env: &[(String, String)]) -> Result<()>;
+    async fn respawn(&self, id: &str, dir: &Path, cmd: &str, args: &[String], env: &[(String, String)]) -> Result<()>;
     async fn kill(&self, id: &str) -> Result<()>;
     async fn rename(&self, from: &str, to: &str) -> Result<()>;
     async fn capture(&self, id: &str, lines: usize) -> Result<String>;
-    fn attach_command(&self, id: &str) -> Vec<String>; // what the TUI spawns in a PTY
+    fn attach_spec(&self, id: &str) -> AttachSpec; // how the TUI attaches a PTY
 }
