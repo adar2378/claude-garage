@@ -23,7 +23,7 @@ pub struct Change {
 
 impl Change {
     pub fn percent(&self) -> usize {
-        if self.total == 0 { 0 } else { self.done * 100 / self.total }
+        (self.done * 100).checked_div(self.total).unwrap_or(0)
     }
 
     pub fn complete(&self) -> bool {
@@ -138,9 +138,17 @@ pub fn widget_put(by_workspace: &BTreeMap<String, Vec<Change>>) -> WidgetPut {
 
 /// A fixed-width bar: `[#####-----]`.
 pub fn bar(done: usize, total: usize, width: usize) -> String {
-    let filled = if total == 0 { 0 } else { (done * width).div_ceil(total).min(width) };
+    let filled = if total == 0 {
+        0
+    } else {
+        (done * width).div_ceil(total).min(width)
+    };
     // A bar is full only when everything is done.
-    let filled = if done < total { filled.min(width.saturating_sub(1)) } else { filled };
+    let filled = if done < total {
+        filled.min(width.saturating_sub(1))
+    } else {
+        filled
+    };
     format!("[{}{}]", "#".repeat(filled), "-".repeat(width - filled))
 }
 
@@ -155,7 +163,11 @@ fn fit(s: &str, width: usize) -> String {
 
 /// The text of the overlay, one row per change plus a total.
 pub fn overlay_lines(workspace: &str, dir: &str, changes: &[Change]) -> Vec<String> {
-    let mut lines = vec![format!("OpenSpec changes in {workspace}"), format!("  {dir}"), String::new()];
+    let mut lines = vec![
+        format!("OpenSpec changes in {workspace}"),
+        format!("  {dir}"),
+        String::new(),
+    ];
     if changes.is_empty() {
         lines.push("  No openspec/changes/*/tasks.md with checkboxes here.".into());
     }
@@ -173,7 +185,11 @@ pub fn overlay_lines(workspace: &str, dir: &str, changes: &[Change]) -> Vec<Stri
     if changes.len() > 1 {
         let (d, t) = totals(changes);
         lines.push(String::new());
-        lines.push(format!("  {} {} {d}/{t}", fit("all changes", 32), bar(d, t, 10)));
+        lines.push(format!(
+            "  {} {} {d}/{t}",
+            fit("all changes", 32),
+            bar(d, t, 10)
+        ));
     }
     lines.push(String::new());
     lines.push("  press any key to close".into());
@@ -187,7 +203,12 @@ fn workspaces(api: &Api) -> Result<Vec<(String, String)>, Error> {
         .as_array()
         .into_iter()
         .flatten()
-        .filter_map(|w| Some((w["name"].as_str()?.to_owned(), w["dir"].as_str()?.to_owned())))
+        .filter_map(|w| {
+            Some((
+                w["name"].as_str()?.to_owned(),
+                w["dir"].as_str()?.to_owned(),
+            ))
+        })
         .collect())
 }
 
@@ -301,10 +322,16 @@ Text with - [ ] in the middle
         let item = header_item(&[change("a", 1, 2), change("b", 3, 4)]).unwrap();
         let segs = item.segments.unwrap();
         assert_eq!(segs[1].text, "4/6");
-        assert_eq!(segs[1].style.as_ref().unwrap().fg.as_deref(), Some("accent"));
+        assert_eq!(
+            segs[1].style.as_ref().unwrap().fg.as_deref(),
+            Some("accent")
+        );
         assert_eq!(segs[1].click.as_ref().unwrap().action, OPEN_ACTION);
         let finished = header_item(&[change("a", 2, 2)]).unwrap().segments.unwrap();
-        assert_eq!(finished[1].style.as_ref().unwrap().fg.as_deref(), Some("ok"));
+        assert_eq!(
+            finished[1].style.as_ref().unwrap().fg.as_deref(),
+            Some("ok")
+        );
     }
 
     #[test]
@@ -312,9 +339,13 @@ Text with - [ ] in the middle
         let one = overlay_lines("app", "/w/app", &[change("add-search", 2, 4)]);
         let text = one.join("\n");
         assert!(text.contains("OpenSpec changes in app") && text.contains("/w/app"));
-        assert!(text.contains("add-search") && text.contains("2/4") && text.contains("50%"), "{text}");
+        assert!(
+            text.contains("add-search") && text.contains("2/4") && text.contains("50%"),
+            "{text}"
+        );
         assert!(!text.contains("all changes"));
-        let two = overlay_lines("app", "/w/app", &[change("a", 1, 1), change("b", 0, 3)]).join("\n");
+        let two =
+            overlay_lines("app", "/w/app", &[change("a", 1, 1), change("b", 0, 3)]).join("\n");
         assert!(two.contains("all changes") && two.contains("1/4"), "{two}");
         assert!(two.contains("100%  done"), "{two}");
         let none = overlay_lines("app", "/w/app", &[]).join("\n");
@@ -353,7 +384,11 @@ Text with - [ ] in the middle
             .unwrap();
         assert_eq!(put.path, "/api/plugins/openspec-progress/widgets/progress");
         let scopes = put.body["scopes"].as_object().unwrap();
-        assert_eq!(scopes.keys().collect::<Vec<_>>(), ["a"], "b has no tasks file");
+        assert_eq!(
+            scopes.keys().collect::<Vec<_>>(),
+            ["a"],
+            "b has no tasks file"
+        );
         assert_eq!(scopes["a"][0]["segments"][1]["text"], "1/2");
 
         // Nothing to show anywhere: the widget is cleared, not left stale.
@@ -374,7 +409,17 @@ Text with - [ ] in the middle
         let api = daemon.api("openspec-progress");
         let text = overlay(&api, Some("a")).unwrap().join("\n");
         assert!(text.contains("c1") && text.contains("1/1"), "{text}");
-        assert!(overlay(&api, None).unwrap().join("\n").contains("No focused workspace"));
-        assert!(overlay(&api, Some("gone")).unwrap().join("\n").contains("No focused workspace"));
+        assert!(
+            overlay(&api, None)
+                .unwrap()
+                .join("\n")
+                .contains("No focused workspace")
+        );
+        assert!(
+            overlay(&api, Some("gone"))
+                .unwrap()
+                .join("\n")
+                .contains("No focused workspace")
+        );
     }
 }

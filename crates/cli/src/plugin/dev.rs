@@ -57,8 +57,11 @@ pub fn snapshot(root: &Path) -> Snapshot {
                 {
                     walk(&e.path(), depth + 1, out);
                 }
-            } else if ft.is_file() && !skip_file(&name) {
-                if let Ok(md) = e.metadata() {
+            } else if ft.is_file()
+                && !skip_file(&name)
+                && let Ok(md) = e.metadata()
+            {
+                {
                     let mtime = md
                         .modified()
                         .ok()
