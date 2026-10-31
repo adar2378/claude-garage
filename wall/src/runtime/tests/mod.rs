@@ -104,5 +104,6 @@ fn plain(code: KeyCode) -> KeyEvent {
 
 mod dispatch;
 mod layers;
+mod plugin_gate;
 mod router;
 mod worktree;

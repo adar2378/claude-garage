@@ -5,6 +5,7 @@
 use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
 use ratatui::layout::Rect;
 
+use crate::actions::ActionSource;
 use crate::input::links::url_at;
 use crate::state::wall_state::{KeyLayer, OverlayKind, WallSession};
 use crate::ui::hit_targets::{self, action_at, ClickMap};
@@ -80,7 +81,15 @@ impl App {
             slot_clicks: &self.slot_clicks,
             slots: &self.slots,
         };
-        if let Some((id, ctx)) = action_at(&map, self.store.state(), col, row) {
+        if let Some((id, mut ctx)) = action_at(&map, self.store.state(), col, row) {
+            // A real click on the region a plugin armed is a human confirm:
+            // only here does a plugin item's `Widget` source become `Mouse`
+            // (the first click stays `Widget` and only arms).
+            if matches!(ctx.source, ActionSource::Widget { .. })
+                && self.router.plugin_arm_matches(id, &ctx, now_ms())
+            {
+                ctx.source = ActionSource::Mouse { col, row };
+            }
             let effects = self.dispatch_action(id, &ctx);
             return self.run_effects(effects);
         }

@@ -15,6 +15,8 @@ use crate::ui::pet::PetHost;
 
 use super::Effect;
 
+mod plugin_gate;
+
 /// The garage-layer typing hint (post-review Dart wording, verbatim — the
 /// click-smoke harness greps it).
 pub const TYPING_HINT: &str = "enter engages the focused terminal — keys go to garage now";
@@ -222,6 +224,11 @@ pub struct GarageRouter {
     /// True between the `r` prefix press and the very next key (p16-restart,
     /// design.md D5: a one-shot prefix, like `X` → `X`/`K`).
     restart_prefix: bool,
+    /// The arm a plugin trigger left on a dangerous action (p24 confirm
+    /// rule): independent of the native machines, armed only by
+    /// [`ArmedAction::arm`], confirmed only by a human key or click.
+    armed_plugin: ArmedAction,
+    plugin_arm: Option<plugin_gate::PluginArm>,
     pub notices: Notices,
 }
 
@@ -262,6 +269,15 @@ impl GarageRouter {
                 (id, ctx)
             });
             return KeyOutcome { effects, action };
+        }
+        // A pending plugin arm (p24): `y` confirms it, any other key drops it.
+        if self.plugin_arm_pending() {
+            if key == "y" {
+                if let Some(action) = self.plugin_confirm_key(now_ms) {
+                    return KeyOutcome { effects, action: Some(action) };
+                }
+            }
+            self.disarm_plugin();
         }
         // Resolve the key to its action once; arming below is keyed on the
         // action (so `x`'s double-press is "session.close twice"), which is
@@ -454,7 +470,7 @@ impl GarageRouter {
     /// `I`: fire the install effect (statusline + hooks), busy-guarded
     /// against a second press before the first settles (spec
     /// tui-context-meters "Install affordance", spec tui-hooks-install).
-    fn install_pressed(&mut self, effects: &mut Vec<Effect>) {
+    pub(super) fn install_pressed(&mut self, effects: &mut Vec<Effect>) {
         if self.installing {
             return;
         }
@@ -505,7 +521,7 @@ impl GarageRouter {
     }
 
     /// Restore one session, deduplicated against in-flight restores.
-    fn restore(&mut self, id: String, effects: &mut Vec<Effect>) {
+    pub(super) fn restore(&mut self, id: String, effects: &mut Vec<Effect>) {
         if self.restoring.contains(&id) {
             return;
         }

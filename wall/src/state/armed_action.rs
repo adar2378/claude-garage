@@ -65,6 +65,25 @@ impl ArmedAction {
         false
     }
 
+    /// Arm `id` without ever confirming, even when it is already armed and
+    /// inside the window. This is the only entry point a non-human trigger
+    /// (a plugin's request, a re-pushed widget) may use: it re-arms, so
+    /// triggering twice never runs the action (p24 confirm rule).
+    pub fn arm(&mut self, id: &str, now_ms: i64) {
+        self.armed_id = Some(id.to_owned());
+        self.armed_at_ms = now_ms;
+    }
+
+    /// Consume the arm when it is `id` and still inside the window. Called
+    /// only for a human key or click; true means run the action.
+    pub fn confirm(&mut self, id: &str, now_ms: i64) -> bool {
+        let live = self.armed_live(now_ms) == Some(id);
+        if live {
+            self.armed_id = None;
+        }
+        live
+    }
+
     /// Any other key disarms (spec: "any other key disarms").
     pub fn disarm(&mut self) {
         self.armed_id = None;
@@ -131,6 +150,29 @@ mod armed_action_tests {
         assert_eq!(armed.armed_live(4000), Some("discard"));
         assert_eq!(armed.armed_live(4001), None, "window expired");
         assert_eq!(armed.armed_id(), Some("discard"), "raw getter unchanged");
+    }
+
+    #[test]
+    fn arm_never_confirms_however_often_it_is_repeated() {
+        let mut armed = ArmedAction::default();
+        for t in [1000, 1100, 1200, 2000] {
+            armed.arm("close", t);
+            assert_eq!(armed.armed_live(t), Some("close"));
+        }
+        // A human confirm after the repeated arms still works exactly once.
+        assert!(armed.confirm("close", 2500));
+        assert!(!armed.confirm("close", 2600), "consumed");
+    }
+
+    #[test]
+    fn confirm_needs_the_same_target_inside_the_window() {
+        let mut armed = ArmedAction::default();
+        armed.arm("a", 1000);
+        assert!(!armed.confirm("b", 1100), "another target");
+        assert_eq!(armed.armed_id(), Some("a"), "a wrong confirm leaves the arm");
+        assert!(!armed.confirm("a", 4001), "expired");
+        armed.arm("a", 5000);
+        assert!(armed.confirm("a", 8000), "the window edge still confirms");
     }
 
     #[test]

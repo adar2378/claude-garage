@@ -139,6 +139,66 @@ pub mod ids {
     ];
 }
 
+/// What an action id may be asked to do by a plugin (p24 design.md Gap E).
+/// `dangerous` ids are never run by a plugin source: it can only arm them,
+/// and a human key or click confirms. Ids not `plugin_invocable` are refused
+/// outright. The table is an allowlist: an id missing from it is neither.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ActionMeta {
+    pub id: ActionId,
+    pub dangerous: bool,
+    pub plugin_invocable: bool,
+}
+
+const fn meta_row(id: ActionId, dangerous: bool, plugin_invocable: bool) -> ActionMeta {
+    ActionMeta { id, dangerous, plugin_invocable }
+}
+
+/// One row per core id (a test keeps it complete).
+pub const META: &[ActionMeta] = &[
+    meta_row(ids::WORKSPACE_FOCUS, false, true),
+    meta_row(ids::FOCUS_CYCLE_PREV, false, true),
+    meta_row(ids::FOCUS_CYCLE_NEXT, false, true),
+    meta_row(ids::JUMP_BLOCKED, false, true),
+    meta_row(ids::OVERLAY_OPEN_QUEUE, false, true),
+    meta_row(ids::OVERLAY_OPEN_HELP, false, true),
+    meta_row(ids::OVERLAY_OPEN_VIEW_PICKER, false, true),
+    meta_row(ids::OVERLAY_OPEN_WORKSPACE_ADD, false, true),
+    meta_row(ids::SESSION_SPAWN, false, true),
+    meta_row(ids::SESSION_SPAWN_WORKTREE, false, true),
+    meta_row(ids::SESSION_ENGAGE, false, true),
+    meta_row(ids::SESSION_MAXIMIZE, false, true),
+    meta_row(ids::SESSION_CLOSE, true, true),
+    meta_row(ids::SESSION_RESTORE_ALL, true, true),
+    meta_row(ids::SESSION_DETACH, false, true),
+    meta_row(ids::SESSION_OPEN_WINDOW, false, true),
+    meta_row(ids::SESSION_RESTART, true, true),
+    meta_row(ids::WORKSPACE_RESTART, true, true),
+    meta_row(ids::DAEMON_RESTART, true, true),
+    meta_row(ids::VIEW_CYCLE, false, true),
+    meta_row(ids::WORKSPACE_REMOVE, true, true),
+    meta_row(ids::WORKSPACE_REMOVE_KILL, true, true),
+    meta_row(ids::HOOKS_INSTALL, true, true),
+    meta_row(ids::APP_QUIT, false, false),
+    meta_row(ids::SESSION_FOCUS, false, true),
+    meta_row(ids::SESSION_RESTORE, false, true),
+    meta_row(ids::SESSION_DELETE, true, true),
+    meta_row(ids::PET_PET, false, true),
+    meta_row(ids::PET_CYCLE_SPECIES, false, false),
+    meta_row(ids::OVERLAY_CLOSE, false, false),
+    meta_row(ids::OVERLAY_SELECT_NEXT, false, false),
+    meta_row(ids::OVERLAY_SELECT_PREV, false, false),
+    meta_row(ids::OVERLAY_VIEW_PICKER_PICK, false, false),
+    meta_row(ids::VIEW_FOCUS, false, true),
+    meta_row(ids::CHORD_RESTART, false, false),
+];
+
+/// The metadata of a core id; `None` for a plugin id (never dangerous, always
+/// invocable: it is the plugin's own action).
+pub fn meta(id: ActionId) -> Option<&'static ActionMeta> {
+    META.iter().find(|m| m.id.as_str() == id.as_str())
+}
+
 /// What triggered an action.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ActionSource {
@@ -392,6 +452,49 @@ mod tests {
                 if has_command { "mapped to" } else { "missing from" }
             );
         }
+    }
+
+    #[test]
+    fn every_core_id_has_exactly_one_meta_row_and_plugin_ids_have_none() {
+        for id in ids::ALL {
+            assert_eq!(META.iter().filter(|m| m.id == *id).count(), 1, "{}", id.as_str());
+            assert!(meta(*id).is_some());
+        }
+        assert_eq!(META.len(), ids::ALL.len(), "no stray rows");
+        assert!(meta(ActionId::intern("p:act")).is_none());
+    }
+
+    #[test]
+    fn the_dangerous_and_invocable_sets_are_exactly_the_designed_ones() {
+        let dangerous: Vec<&str> = META.iter().filter(|m| m.dangerous).map(|m| m.id.as_str()).collect();
+        assert_eq!(
+            dangerous,
+            [
+                "session.close",
+                "session.restore_all",
+                "session.restart",
+                "workspace.restart",
+                "daemon.restart",
+                "workspace.remove",
+                "workspace.remove.kill",
+                "hooks.install",
+                "session.delete",
+            ]
+        );
+        let refused: Vec<&str> = META.iter().filter(|m| !m.plugin_invocable).map(|m| m.id.as_str()).collect();
+        assert_eq!(
+            refused,
+            [
+                "app.quit",
+                "pet.cycle_species",
+                "overlay.close",
+                "overlay.select.next",
+                "overlay.select.prev",
+                "overlay.view_picker.pick",
+                "chord.restart",
+            ]
+        );
+        assert!(META.iter().all(|m| m.plugin_invocable || !m.dangerous), "a refused id is never 'dangerous'");
     }
 
     #[test]
