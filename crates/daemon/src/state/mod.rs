@@ -9,6 +9,8 @@ pub mod status;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use crate::api::daemon_restart::Lifecycle;
+use crate::api::visibility::Visibility;
 use crate::backend::SessionBackend;
 use crate::bus::EventBus;
 use crate::config::Config;
@@ -31,6 +33,10 @@ pub struct AppState {
     pub status: StatusStore,
     /// Lane C: statusline context / rate limits, transcript cache, hook deps.
     pub telemetry: Telemetry,
+    /// Lane F: which UI clients are in view (notification suppression).
+    pub visibility: Visibility,
+    /// Lane F: shutdown signal and successor command for daemon restart.
+    pub lifecycle: Lifecycle,
 }
 
 impl AppState {
@@ -63,7 +69,17 @@ impl AppState {
             agents,
         };
         let telemetry = Telemetry::new(claude_home, Arc::new(deps));
-        Self { config: Arc::new(config), bus, backend, os, registry, status, telemetry }
+        Self {
+            config: Arc::new(config),
+            bus,
+            backend,
+            os,
+            registry,
+            status,
+            telemetry,
+            visibility: Visibility::default(),
+            lifecycle: Lifecycle::default(),
+        }
     }
 
     /// The poller (not started) over the real stores.

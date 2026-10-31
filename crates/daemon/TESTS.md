@@ -83,3 +83,27 @@ Not ported: the "real tmux" variants (session creation in statusline.test.js); s
 | `restartMain` | `launcher::restart_main` | `restart_asks_the_running_daemon_to_swap_and_waits_for_a_new_pid_and_matching_version`, `restart_surfaces_a_daemon_that_predates_the_endpoint`, `restart_with_no_daemon_just_starts_one` |
 
 Deviations from the JS: `garage-wall` beside the running binary is used when there is no `wall/` checkout (installed layout); `help`/unknown-subcommand text and exit code (2) come from clap; `ROOT` is found by walking up from the executable.
+
+## Lane F: workspaces, worktrees, editor, picker, visibility, restart
+
+Fake `Os` (`os::fake::FakeOs`) for every notification, picker and editor launch; temp `GARAGE_DIR`s; real tmux only through `TestTmux`; scratch git repos with repo-local identity. Route tests live in `src/lane_f_tests.rs`, git tests in `git::tests`, pure OS pieces in `os::{mod,macos,other,notify}::tests`.
+
+| JS test | Rust test |
+|---|---|
+| worktrees.finish.test.js: currentBranch returns the checked-out branch, null for a non-repo | `git::tests::current_branch_returns_the_checked_out_branch_null_for_a_non_repo` |
+| worktrees.finish.test.js: dirty worktree refuses merge with 409 | `git::tests::dirty_worktree_refuses_merge_with_409` |
+| worktrees.finish.test.js: merge conflict -> 409 with stderr, merge aborted, worktree and branch kept | `git::tests::merge_conflict_is_409_with_stderr_merge_aborted_worktree_and_branch_kept` |
+| restart.test.js: returns as soon as the probe reports the predecessor gone | `lane_f_tests::wait_returns_as_soon_as_the_probe_reports_the_predecessor_gone` |
+| restart.test.js: returns immediately when the predecessor is already gone | `lane_f_tests::wait_returns_immediately_when_the_predecessor_is_already_gone` |
+| restart.test.js: throws, naming the port and pid, once the deadline passes | `lane_f_tests::wait_fails_naming_port_and_pid_once_the_deadline_passes` |
+
+Not ported here (lane D, sessions): `planRestartTargets` (6), `needsPollBeforePlan` (3), `spawnClaudeResumed` (1) from `restart.test.js`.
+
+Rust-only tests (the JS daemon has no tests for these routes):
+
+- workspaces: `put_workspace_validates_name_and_dir_then_registers`, `get_workspaces_lists_name_dir_and_resolved_branch`, `patch_workspace_errors_unknown_bad_name_and_conflict`, `patch_workspace_renames_live_sessions_registry_and_resume_metadata` (real tmux; `ws` vs `ws2` prefix), `patch_workspace_reports_failed_session_renames_and_still_renames_the_registry`, `delete_workspace_plain_is_204_drops_metadata_and_never_touches_tmux`, `delete_workspace_with_sessions_kill_kills_only_that_workspaces_sessions`.
+- worktrees: `git::tests::{clean_merge_*, discard_*, keep_*, merge_and_discard_refuse_a_non_garage_branch_*, create_worktree_*}`, `lane_f_tests::finish_*` (validation order, 400 guard, keep echo, 409/500 bodies).
+- editor: `resolve_folds_dot_segments_*`, `open_editor_*` (404, path escape 400, dir / `--goto` args, `line ?? 1`, 501 / 500).
+- picker: `pick_directory_*` (route), `os::macos::tests::picker_*` (script, `User canceled`, stderr), `os::tests::trailing_slash_*`.
+- visibility and notifications: `visibility_requires_client_id_*`, `api::visibility::tests::*` (45 s TTL with an injected clock), `os::notify::tests::*` (edge rule, suppression, unsupported swallowed, bus subscription), `os::macos::tests::{terminal_notifier_*, osascript_fallback_*}`.
+- daemon restart: `restart_spawns_the_successor_*` (stand-in `sh` successor, pid handoff env, `daemon.log`), `restart_with_an_unspawnable_successor_*`, `the_default_successor_keeps_the_listening_port`, `default_probe_*`.
