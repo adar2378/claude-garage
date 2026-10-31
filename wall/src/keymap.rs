@@ -138,9 +138,83 @@ impl Keymap {
             })
     }
 
+    /// The garage-layer key bound to `action`, as the help overlay spells it.
+    pub fn key_for(&self, action: ActionId) -> Option<String> {
+        let key = &self.bindings.iter().find(|b| b.layer == Layer::Garage && b.action == action && b.index.is_none())?.key;
+        Some(match key.as_str() {
+            "\t" => "Tab".to_owned(),
+            "\r" | "\n" => "Enter".to_owned(),
+            k => k.to_owned(),
+        })
+    }
+
     /// Every bound action id, for reachability tests.
     pub fn bound_actions(&self) -> impl Iterator<Item = ActionId> + '_ {
         self.bindings.iter().map(|b| b.action)
+    }
+}
+
+/// One plugin's actions for [`Keymap::with_plugins`]: (action, the user's key, the manifest's default key).
+pub type PluginKeys = Vec<(ActionId, Option<String>, Option<String>)>;
+
+/// A plugin key that did not take effect, and why.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct KeyConflict {
+    pub plugin: String,
+    pub action: ActionId,
+    pub key: String,
+    /// What the key does instead (an action id), or the reason it is unusable.
+    pub reason: String,
+}
+
+/// The wall key a plugin's key spelling means: a single character, `tab` or
+/// `enter`. Modified keys (`ctrl+x`) never reach the garage layer, so they
+/// cannot be bound here.
+pub fn plugin_key(spec: &str) -> Option<String> {
+    match spec {
+        "tab" => Some("\t".to_owned()),
+        "enter" => Some("\r".to_owned()),
+        s if s.chars().count() == 1 && !s.chars().all(char::is_control) => Some(s.to_owned()),
+        _ => None,
+    }
+}
+
+impl Keymap {
+    /// The defaults plus the plugins' keys (design section 7, "Keys"). Per
+    /// plugin, in install order: the user's binding for an action replaces
+    /// whatever the key was bound to ([`Keymap::bind_override`], reported
+    /// when it displaces something); otherwise the manifest's `default_key`
+    /// is added with [`Keymap::bind`], so a core key or an earlier plugin
+    /// keeps it and the loser is reported.
+    pub fn with_plugins(plugins: &[(String, PluginKeys)]) -> (Keymap, Vec<KeyConflict>) {
+        let mut km = Keymap::defaults();
+        let mut conflicts = Vec::new();
+        for (plugin, actions) in plugins {
+            for (id, user, default) in actions {
+                let (spec, is_user) = match (user.as_deref(), default.as_deref()) {
+                    (Some(k), _) => (k, true),
+                    (None, Some(k)) => (k, false),
+                    (None, None) => continue,
+                };
+                let conflict = |reason: String| KeyConflict { plugin: plugin.clone(), action: *id, key: spec.to_owned(), reason };
+                let Some(key) = plugin_key(spec) else {
+                    conflicts.push(conflict("not a key the garage layer can bind (a single character, tab or enter)".into()));
+                    continue;
+                };
+                let taken = km.resolve(Layer::Garage, &key).map(|r| r.action);
+                if is_user {
+                    if let Some(old) = taken.filter(|old| old != id) {
+                        conflicts.push(conflict(format!("replaced {}", old.as_str())));
+                    }
+                    km.bind_override(Layer::Garage, &key, *id);
+                } else if let Some(owner) = taken {
+                    conflicts.push(conflict(format!("kept by {}", owner.as_str())));
+                } else {
+                    km.bind(Layer::Garage, &key, *id);
+                }
+            }
+        }
+        (km, conflicts)
     }
 }
 
@@ -173,6 +247,65 @@ pub fn overlay_key_string(key: &KeyEvent) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+
+    type Spec<'a> = &'a [(&'a str, Option<&'a str>, Option<&'a str>)];
+
+    fn with(plugins: &[(&str, Spec)]) -> (Keymap, Vec<KeyConflict>) {
+        let plugins: Vec<_> = plugins
+            .iter()
+            .map(|(p, a)| {
+                (
+                    p.to_string(),
+                    a.iter()
+                        .map(|(id, user, default)| (ActionId::intern(id), user.map(str::to_owned), default.map(str::to_owned)))
+                        .collect(),
+                )
+            })
+            .collect();
+        Keymap::with_plugins(&plugins)
+    }
+
+    #[test]
+    fn a_plugin_default_key_never_displaces_a_core_key_and_the_first_plugin_keeps_a_shared_key() {
+        let (km, conflicts) = with(&[
+            ("one", &[("one:go", None, Some("u")), ("one:close", None, Some("x"))]),
+            ("two", &[("two:go", None, Some("u")), ("two:free", None, Some("z"))]),
+        ]);
+        let at = |k: &str| km.resolve(Layer::Garage, k).map(|r| r.action.as_str());
+        assert_eq!(at("u"), Some("one:go"), "installed first");
+        assert_eq!(at("x"), Some("session.close"), "core wins");
+        assert_eq!(at("z"), Some("two:free"));
+        let why: Vec<_> = conflicts.iter().map(|c| (c.plugin.as_str(), c.key.as_str(), c.reason.as_str())).collect();
+        assert_eq!(why, [("one", "x", "kept by session.close"), ("two", "u", "kept by one:go")]);
+    }
+
+    #[test]
+    fn a_user_binding_displaces_anything_and_says_so() {
+        let (km, conflicts) = with(&[("one", &[("one:go", Some("x"), Some("u"))])]);
+        assert_eq!(km.resolve(Layer::Garage, "x").map(|r| r.action.as_str()), Some("one:go"));
+        assert_eq!(km.resolve(Layer::Garage, "u"), None, "the default is not also bound");
+        assert_eq!(conflicts.len(), 1);
+        assert_eq!(conflicts[0].reason, "replaced session.close");
+    }
+
+    #[test]
+    fn keys_the_garage_layer_cannot_see_are_reported_not_bound() {
+        let (km, conflicts) = with(&[("one", &[("one:go", None, Some("ctrl+u")), ("one:t", None, Some("tab")), ("one:e", None, Some("enter"))])]);
+        let why: Vec<_> = conflicts.iter().map(|c| c.reason.as_str()).collect();
+        assert_eq!(why, ["not a key the garage layer can bind (a single character, tab or enter)", "kept by view.cycle", "kept by session.engage"]);
+        assert_eq!(km.resolve(Layer::Garage, "\t").map(|r| r.action.as_str()), Some("view.cycle"), "tab stays core");
+        assert_eq!(km.resolve(Layer::Garage, "\r").map(|r| r.action.as_str()), Some("session.engage"));
+    }
+
+    #[test]
+    fn without_plugins_the_keymap_is_exactly_the_defaults() {
+        let (km, conflicts) = Keymap::with_plugins(&[]);
+        assert!(conflicts.is_empty());
+        let a: Vec<_> = km.bound_actions().map(ActionId::as_str).collect();
+        let b: Vec<_> = Keymap::defaults().bound_actions().map(ActionId::as_str).collect();
+        assert_eq!(a, b);
+    }
 
     fn garage(key: &str) -> Option<(&'static str, Option<usize>)> {
         Keymap::defaults()

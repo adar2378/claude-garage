@@ -230,6 +230,8 @@ pub fn action_at(
             // Modal: clicks anywhere are swallowed — an outside click must
             // not quietly "keep" a worktree the user never saw.
             OverlayKind::WorktreeFinish => None,
+            // The runtime handles the pane's clicks (outside closes it).
+            OverlayKind::PluginPane => None,
         };
     }
     // View-strip click: focus that view.

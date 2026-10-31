@@ -332,6 +332,77 @@ impl GarageClient {
         serde_json::from_value(body).map_err(|e| ApiError::Transport(format!("bad attach spec: {e}")))
     }
 
+    // ── Plugin host (p24) ────────────────────────────────────────────────
+
+    /// `GET /api/plugins`: the installed plugins with their actions, buttons
+    /// and panes.
+    pub fn fetch_plugins(&self) -> Result<garage_protocol::plugins::PluginList, ApiError> {
+        let body = self.get_json("/api/plugins")?.ok_or_else(|| ApiError::Transport("empty plugin list".into()))?;
+        serde_json::from_value(body).map_err(|e| ApiError::Transport(format!("bad plugin list: {e}")))
+    }
+
+    /// `GET /api/plugins/widgets[?plugin=]`: only the named plugin's content
+    /// when `plugin` is given.
+    pub fn fetch_plugin_widgets(&self, plugin: Option<&str>) -> Result<garage_protocol::plugins::WidgetsSnapshot, ApiError> {
+        let path = match plugin {
+            Some(p) => format!("/api/plugins/widgets?plugin={}", encode_component(p)),
+            None => "/api/plugins/widgets".to_owned(),
+        };
+        let body = self.get_json(&path)?.ok_or_else(|| ApiError::Transport("empty widget snapshot".into()))?;
+        serde_json::from_value(body).map_err(|e| ApiError::Transport(format!("bad widget snapshot: {e}")))
+    }
+
+    /// `GET /api/plugins/panes`.
+    pub fn fetch_plugin_panes(&self) -> Result<garage_protocol::plugins::PanesResponse, ApiError> {
+        let body = self.get_json("/api/plugins/panes")?.ok_or_else(|| ApiError::Transport("empty pane list".into()))?;
+        serde_json::from_value(body).map_err(|e| ApiError::Transport(format!("bad pane list: {e}")))
+    }
+
+    /// `POST /api/plugins/{id}/actions/{action}/run` with the UI token.
+    pub fn run_plugin_action(&self, plugin: &str, action: &str, context: &Value) -> Result<(), ApiError> {
+        let path = format!("/api/plugins/{}/actions/{}/run", encode_component(plugin), encode_component(action));
+        self.ui_request("POST", &path, Some(context)).map(|_| ())
+    }
+
+    /// `POST /api/plugins/{id}/panes/{pane}/open` with the UI token.
+    pub fn open_plugin_pane(&self, plugin: &str, pane: &str, context: &Value) -> Result<(), ApiError> {
+        let path = format!("/api/plugins/{}/panes/{}/open", encode_component(plugin), encode_component(pane));
+        self.ui_request("POST", &path, Some(context)).map(|_| ())
+    }
+
+    /// `DELETE /api/plugins/{id}/panes/{pane}` with the UI token.
+    pub fn close_plugin_pane(&self, plugin: &str, pane: &str) -> Result<(), ApiError> {
+        let path = format!("/api/plugins/{}/panes/{}", encode_component(plugin), encode_component(pane));
+        self.ui_request("DELETE", &path, None).map(|_| ())
+    }
+
+    /// `PUT /api/plugins/ui/slots` with the UI token.
+    pub fn put_ui_slots(&self, geometry: &Value) -> Result<(), ApiError> {
+        self.ui_request("PUT", "/api/plugins/ui/slots", Some(geometry)).map(|_| ())
+    }
+
+    /// A request that carries the UI token. The token is re-read from disk
+    /// once when the daemon answers 401 (it recreates the file only if it was
+    /// gone), and the call retried a single time.
+    fn ui_request(&self, method: &str, path: &str, body: Option<&Value>) -> Result<Option<Value>, ApiError> {
+        let tokens = UiToken::global();
+        for attempt in 0..2 {
+            let token = tokens.get().map_err(|e| ApiError::Transport(format!("no UI token: {e}")))?;
+            let req = self
+                .agent
+                .request(method, &format!("{}{}", self.base_url, path))
+                .set("Authorization", &format!("Bearer {token}"))
+                .set("Content-Type", "application/json");
+            let result = read_json(req.send_string(&body.map_or_else(|| "{}".to_owned(), Value::to_string)));
+            if attempt == 0 && matches!(result, Err(ApiError::Status { status: 401, .. })) {
+                tokens.forget();
+                continue;
+            }
+            return result;
+        }
+        unreachable!("the loop returns on its second pass")
+    }
+
     fn get_json(&self, path: &str) -> Result<Option<Value>, ApiError> {
         read_json(self.agent.get(&format!("{}{}", self.base_url, path)).call())
     }
@@ -343,6 +414,43 @@ impl GarageClient {
                 .set("Content-Type", "application/json")
                 .send_string(&body.to_string()),
         )
+    }
+}
+
+/// The per-install UI token (`<GARAGE_DIR>/ui-token`): sent on the plugin
+/// routes only the TUI may call, read once and cached. It is never put into a
+/// run context or forwarded anywhere else.
+pub struct UiToken {
+    path: std::path::PathBuf,
+    cached: std::sync::Mutex<Option<String>>,
+}
+
+impl UiToken {
+    pub fn at(path: std::path::PathBuf) -> UiToken {
+        UiToken { path, cached: std::sync::Mutex::new(None) }
+    }
+
+    pub fn global() -> &'static UiToken {
+        static TOKEN: std::sync::OnceLock<UiToken> = std::sync::OnceLock::new();
+        TOKEN.get_or_init(|| UiToken::at(crate::attach::garage_dir().join("ui-token")))
+    }
+
+    pub fn get(&self) -> std::io::Result<String> {
+        let mut cached = self.cached.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(t) = cached.as_ref() {
+            return Ok(t.clone());
+        }
+        let token = std::fs::read_to_string(&self.path)?.trim().to_owned();
+        if token.is_empty() {
+            return Err(std::io::Error::other("the ui-token file is empty"));
+        }
+        *cached = Some(token.clone());
+        Ok(token)
+    }
+
+    /// Drop the cached value so the next [`UiToken::get`] re-reads the file.
+    pub fn forget(&self) {
+        *self.cached.lock().unwrap_or_else(|e| e.into_inner()) = None;
     }
 }
 
@@ -445,6 +553,25 @@ mod tests {
         let msg = daemon_unreachable_message("http://127.0.0.1:4747");
         assert!(msg.contains("npx claude-garage"));
         assert!(msg.contains("http://127.0.0.1:4747"));
+    }
+
+    #[test]
+    fn the_ui_token_is_trimmed_cached_and_re_read_after_forget() {
+        let dir = std::env::temp_dir().join(format!("garage-ui-token-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("ui-token");
+        let tokens = UiToken::at(path.clone());
+        assert!(tokens.get().is_err(), "no file yet");
+        std::fs::write(&path, "abc123\n").unwrap();
+        assert_eq!(tokens.get().unwrap(), "abc123");
+        std::fs::write(&path, "rotated").unwrap();
+        assert_eq!(tokens.get().unwrap(), "abc123", "cached until a 401 says otherwise");
+        tokens.forget();
+        assert_eq!(tokens.get().unwrap(), "rotated");
+        std::fs::write(&path, "  \n").unwrap();
+        tokens.forget();
+        assert!(tokens.get().is_err(), "an empty file is no credential");
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]

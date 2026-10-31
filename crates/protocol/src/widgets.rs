@@ -202,6 +202,11 @@ pub struct WidgetItem {
     pub row_style: Option<Style>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub click: Option<Click>,
+    /// `rail.extra_rows` only: the session this row is about (a closed chat),
+    /// which scopes its click so a core action such as `session.restore`
+    /// takes it as its target. Must be a session of the row's workspace.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session: Option<String>,
 }
 
 /// Body of `PUT /api/plugins/{id}/widgets/{widget}`.
@@ -388,6 +393,15 @@ pub fn validate_put(slot: WidgetSlot, mut put: WidgetPut) -> Result<WidgetPut, L
             if let Placement::Filler { caption: Some(c), .. } = &mut item.placement {
                 *c = sanitise(c);
             }
+            if let Some(session) = &item.session {
+                let own = format!("garage/{scope}/");
+                if slot != WidgetSlot::RailExtraRows {
+                    return Err(bad(format!("{at}.session: only valid in rail.extra_rows")));
+                }
+                if !session.starts_with(&own) || session.len() == own.len() || session.chars().any(char::is_control) {
+                    return Err(bad(format!("{at}.session: must be a session of workspace {scope:?} (garage/{scope}/<label>)")));
+                }
+            }
             if slot == WidgetSlot::TileGutter && item.row.is_none() && item.turn.is_none() {
                 return Err(bad(format!("{at}: a tile.gutter item needs `row` or `turn`")));
             }
@@ -459,6 +473,19 @@ mod tests {
 
     fn seg(text: &str) -> Value {
         json!({"text": text})
+    }
+
+    #[test]
+    fn an_extra_row_names_a_session_of_its_own_workspace_and_nothing_else_may() {
+        let row = |session: &str| put(json!({"scopes": {"ws": [{"segments": [seg("x")], "session": session}]}}));
+        assert!(validate_put(WidgetSlot::RailExtraRows, row("garage/ws/one")).is_ok());
+        for bad_session in ["garage/other/one", "garage/ws/", "one", "garage/ws/a\nb"] {
+            let e = validate_put(WidgetSlot::RailExtraRows, row(bad_session)).unwrap_err();
+            assert_eq!(e.status, 422, "{bad_session:?}");
+            assert!(e.message.contains(".session"), "{}", e.message);
+        }
+        let e = validate_put(WidgetSlot::RailRow, row("garage/ws/one")).unwrap_err();
+        assert!(e.message.contains("only valid in rail.extra_rows"), "{}", e.message);
     }
 
     #[test]

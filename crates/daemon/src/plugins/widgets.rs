@@ -21,18 +21,25 @@ pub const COALESCE: Duration = Duration::from_millis(200);
 pub struct Bucket {
     tokens: f64,
     at: Instant,
+    rate: f64,
+    burst: f64,
 }
 
 impl Bucket {
     pub fn new(now: Instant) -> Self {
-        Self { tokens: f64::from(limits::PUT_BURST), at: now }
+        Self::with_limits(now, f64::from(limits::PUTS_PER_SEC), f64::from(limits::PUT_BURST))
+    }
+
+    /// A bucket that refills `rate` tokens a second up to `burst`, full at `now`.
+    pub fn with_limits(now: Instant, rate: f64, burst: f64) -> Self {
+        Self { tokens: burst, at: now, rate, burst }
     }
 
     /// Take one token, or say how long until one exists.
     pub fn take(&mut self, now: Instant) -> Result<(), Duration> {
-        let rate = f64::from(limits::PUTS_PER_SEC);
+        let rate = self.rate;
         let elapsed = now.saturating_duration_since(self.at).as_secs_f64();
-        self.tokens = (self.tokens + elapsed * rate).min(f64::from(limits::PUT_BURST));
+        self.tokens = (self.tokens + elapsed * rate).min(self.burst);
         self.at = now;
         if self.tokens >= 1.0 {
             self.tokens -= 1.0;

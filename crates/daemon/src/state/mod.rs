@@ -94,6 +94,7 @@ impl AppState {
             registry: registry.clone(),
         });
         let plugins = PluginHost::new(&config, bus.clone(), lookup);
+        plugins.set_backend(backend.clone());
         Self {
             config: Arc::new(config),
             bus,
@@ -121,6 +122,7 @@ impl AppState {
             registry: self.registry.clone(),
         });
         self.plugins = PluginHost::with_runner(&self.config, self.bus.clone(), lookup, runner);
+        self.plugins.set_backend(self.backend.clone());
         self
     }
 

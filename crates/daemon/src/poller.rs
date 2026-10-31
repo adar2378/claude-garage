@@ -421,16 +421,25 @@ pub(crate) mod fakes {
         }
     }
 
+    /// One `create` call: (id, dir, command, args, env).
+    pub type Created = (String, std::path::PathBuf, String, Vec<String>, Vec<(String, String)>);
+
     pub struct FakeBackend {
         pub sessions: Mutex<Vec<BackendSession>>,
         pub panes: Mutex<HashMap<String, PaneInfo>>,
         /// While set, `list` fails like a backend that cannot be reached.
         pub fail_list: std::sync::atomic::AtomicBool,
+        /// Every `create` call, in order: (id, dir, command, args, env).
+        pub created: Mutex<Vec<Created>>,
+        /// `mark_plugin_pane` calls: session id to plugin.
+        pub pane_tags: Mutex<HashMap<String, String>>,
+        /// How many times `has` was asked.
+        pub has_calls: std::sync::atomic::AtomicUsize,
     }
 
     impl FakeBackend {
         pub fn new() -> Self {
-            Self { sessions: Mutex::new(vec![]), panes: Mutex::new(HashMap::new()), fail_list: Default::default() }
+            Self { sessions: Mutex::new(vec![]), panes: Mutex::new(HashMap::new()), fail_list: Default::default(), created: Mutex::default(), pane_tags: Mutex::default(), has_calls: Default::default() }
         }
         pub fn set(&self, id: &str, dir: &str, pid: Option<u32>, title: &str) {
             let mut s = self.sessions.lock().unwrap();
@@ -449,6 +458,11 @@ pub(crate) mod fakes {
                     pid,
                 },
             );
+        }
+        /// A session as `create` + `mark_plugin_pane` leave it.
+        pub fn set_pane(&self, id: &str, plugin: &str) {
+            self.set(id, "/x", None, "");
+            self.pane_tags.lock().unwrap().insert(id.into(), plugin.into());
         }
         pub fn remove(&self, id: &str) {
             self.sessions.lock().unwrap().retain(|x| x.id != id);
@@ -471,17 +485,20 @@ pub(crate) mod fakes {
             Ok(self.panes.lock().unwrap().clone())
         }
         async fn has(&self, id: &str) -> anyhow::Result<bool> {
+            self.has_calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             Ok(self.sessions.lock().unwrap().iter().any(|s| s.id == id))
         }
         async fn create(
             &self,
-            _: &str,
-            _: &std::path::Path,
-            _: &str,
-            _: &[String],
-            _: &[(String, String)],
+            id: &str,
+            dir: &std::path::Path,
+            cmd: &str,
+            args: &[String],
+            env: &[(String, String)],
         ) -> anyhow::Result<()> {
-            unimplemented!()
+            self.created.lock().unwrap().push((id.into(), dir.into(), cmd.into(), args.to_vec(), env.to_vec()));
+            self.set(id, &dir.to_string_lossy(), None, "");
+            Ok(())
         }
         async fn respawn(
             &self,
@@ -493,8 +510,24 @@ pub(crate) mod fakes {
         ) -> anyhow::Result<()> {
             unimplemented!()
         }
-        async fn kill(&self, _: &str) -> anyhow::Result<()> {
-            unimplemented!()
+        async fn kill(&self, id: &str) -> anyhow::Result<()> {
+            self.remove(id);
+            Ok(())
+        }
+        async fn mark_plugin_pane(&self, id: &str, plugin: &str) -> anyhow::Result<()> {
+            self.pane_tags.lock().unwrap().insert(id.into(), plugin.into());
+            Ok(())
+        }
+        async fn plugin_pane_sessions(&self) -> anyhow::Result<Vec<String>> {
+            let tags = self.pane_tags.lock().unwrap();
+            Ok(self
+                .sessions
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|s| crate::plugins::panes::parse_pane_session(&s.id).is_some_and(|(plugin, _)| tags.get(&s.id).is_some_and(|t| t == plugin)))
+                .map(|s| s.id.clone())
+                .collect())
         }
         async fn rename(&self, _: &str, _: &str) -> anyhow::Result<()> {
             unimplemented!()
@@ -503,7 +536,7 @@ pub(crate) mod fakes {
             unimplemented!()
         }
         fn attach_spec(&self, _: &str) -> garage_protocol::AttachSpec {
-            unimplemented!()
+            garage_protocol::AttachSpec::Tmux { socket: Some("fake".into()) }
         }
     }
 

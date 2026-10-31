@@ -154,6 +154,13 @@ impl HostBackend {
             .stdout(log.try_clone()?)
             .stderr(log)
             .kill_on_drop(false);
+        if id.starts_with(crate::plugins::panes::PANE_PREFIX) {
+            // A pane starts from the same allowlist a plugin run does, not the
+            // daemon's whole environment (there is no `env` to wrap it with here).
+            c.env_clear()
+                .envs(crate::plugins::runner::base_env(std::env::vars()))
+                .envs(env.iter().map(|(k, v)| (k, v)));
+        }
         detach(&mut c);
         let mut child = c.spawn().with_context(|| format!("cannot start the session host ({program})"))?;
         let pid = child.id();
@@ -286,6 +293,24 @@ impl SessionBackend for HostBackend {
         let entry = self.find(id).await?.ok_or_else(|| anyhow!("can't find session: {id}"))?;
         let n = u32::try_from(lines).unwrap_or(u32::MAX);
         blocking(move || proto::capture_text(&entry.addr(), &entry.token, n).map_err(|e| anyhow!("capture failed: {e}"))).await?
+    }
+
+    async fn send_text(&self, id: &str, text: &str) -> Result<()> {
+        let entry = self.find(id).await?.ok_or_else(|| anyhow!("can't find session: {id}"))?;
+        let text = text.to_owned();
+        blocking(move || proto::send_text(&entry.addr(), &entry.token, &text).map_err(|e| anyhow!("send failed: {e}"))).await?
+    }
+
+    async fn plugin_pane_sessions(&self) -> Result<Vec<String>> {
+        let dir = self.hosts_dir.clone();
+        blocking(move || {
+            registry::read_all(&dir)
+                .into_iter()
+                .filter(|e| e.id.starts_with(crate::plugins::panes::PANE_PREFIX))
+                .map(|e| e.id)
+                .collect()
+        })
+        .await
     }
 
     /// Only the id: the token stays on disk (see [`AttachSpec::Host`]). An

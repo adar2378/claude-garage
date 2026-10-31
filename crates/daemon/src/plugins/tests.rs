@@ -3,6 +3,8 @@
 //! temp dirs; the backend is a fake or an isolated `TestTmux`.
 
 use std::collections::HashMap;
+use std::sync::atomic::Ordering;
+use std::sync::Arc;
 use std::time::Duration;
 
 use axum::http::StatusCode;
@@ -340,7 +342,7 @@ async fn failures_and_timeouts_publish_run_failed_and_unusable_targets_are_refus
 
     assert_eq!(r.call_ui("POST", "/api/plugins/pl/actions/nope/run", None).await.0, StatusCode::NOT_FOUND);
     assert_eq!(r.call_ui("POST", "/api/plugins/zz/actions/go/run", None).await.0, StatusCode::NOT_FOUND);
-    assert_eq!(r.call_ui("POST", "/api/plugins/pl/actions/open/run", None).await.0, StatusCode::NOT_IMPLEMENTED);
+    assert_eq!(r.call_ui("POST", "/api/plugins/pl/actions/open/run", None).await.0, StatusCode::ACCEPTED, "a pane action opens its pane");
     r.st.plugins.set_enabled("pl", false).unwrap();
     let (s, _, body) = r.call_ui("POST", "/api/plugins/pl/actions/go/run", None).await;
     assert_eq!((s, body["error"].as_str().unwrap()), (StatusCode::CONFLICT, "plugin pl is disabled"));
@@ -724,7 +726,9 @@ async fn a_widget_click_on_a_core_action_needs_core_actions_and_a_plugin_invocab
     assert!(b["error"].as_str().unwrap().contains("core.actions"), "{b}");
     assert_eq!(pw(&r, "plain", Some(&tp), &click("plain:go")).await.0, StatusCode::OK, "a plugin action needs no permission");
     assert_eq!(pw(&r, "plain", Some(&tp), &click("go")).await.0, StatusCode::OK, "nor does a bare local id");
-    assert_eq!(pw(&r, "plain", Some(&tp), &click("other:thing")).await.0, StatusCode::OK, "another plugin's action resolves at click time");
+    let (s, _, b) = pw(&r, "plain", Some(&tp), &click("other:thing")).await;
+    assert_eq!(s, StatusCode::UNPROCESSABLE_ENTITY, "another plugin's action is refused, whoever declares it");
+    assert!(b["error"].as_str().unwrap().contains("its own actions"), "{b}");
     assert_eq!(pw(&r, "plain", Some(&tp), &click("plain:nope")).await.0, StatusCode::UNPROCESSABLE_ENTITY);
     assert_eq!(pw(&r, "plain", Some(&tp), &click("nope")).await.0, StatusCode::UNPROCESSABLE_ENTITY);
 
@@ -1233,4 +1237,402 @@ async fn enable_disable_remove_and_bind_go_through_the_locked_registry_and_tear_
     r.install_bundled("shipped", &manifest("shipped", &[], ""));
     assert_eq!(r.call_ui("DELETE", "/api/plugins/shipped", None).await.0, StatusCode::CONFLICT);
     assert!(r.st.plugins.plugin("shipped").is_some());
+}
+
+// ---------------------------------------------------------------------
+// What the TUI reads: the listing, the widget snapshot, ui actions
+// ---------------------------------------------------------------------
+
+#[tokio::test]
+async fn the_listing_gives_the_tui_actions_buttons_panes_and_user_bindings_in_install_order() {
+    let r = Rig::new();
+    let extra = format!(
+        "{WIDGETS}[[actions]]\nid = \"go\"\ntitle = \"Go\"\ncommand = [\"./x\"]\ndefault_key = \"u\"\ncontexts = [\"session\"]\nconfirm = true\n\
+         [[actions]]\nid = \"look\"\ntitle = \"Look\"\npane = \"details\"\n\
+         [[panes]]\nid = \"details\"\ntitle = \"Details\"\nplacement = \"overlay\"\ncommand = [\"./p\"]\n\
+         [[buttons]]\nslot = \"tile.title.right\"\nlabel = \"[go]\"\non_click = \"go\"\nargs = {{k = 1}}\npriority = 3\n"
+    );
+    r.install("zeta", &manifest("zeta", &["ui.widgets", "ui.panes"], &extra));
+    r.install("alpha", &manifest("alpha", &[], ""));
+    PluginsFile::update(&r.paths(), |f| {
+        f.plugins.iter_mut().find(|e| e.id == "zeta").unwrap().bindings.insert("go".into(), "g".into());
+        (true, ())
+    })
+    .unwrap();
+    r.st.plugins.reload().unwrap();
+    let (s, _, b) = r.call("GET", "/api/plugins", None, None).await;
+    assert_eq!(s, StatusCode::OK, "core routes need no token");
+    let ids: Vec<&str> = b["plugins"].as_array().unwrap().iter().map(|p| p["id"].as_str().unwrap()).collect();
+    assert_eq!(ids, ["zeta", "alpha"], "registry order, not alphabetical: it is the keymap tiebreak");
+    let z = &b["plugins"][0];
+    assert_eq!(z["bindings"], json!({"go": "g"}));
+    assert_eq!(z["actions"][0], json!({"id": "zeta:go", "title": "Go", "default_key": "u", "contexts": ["session"], "confirm": true, "pane": null}));
+    assert_eq!(z["actions"][1]["pane"], "details");
+    assert_eq!(z["buttons"][0]["on_click"], "go");
+    assert_eq!(z["buttons"][0]["slot"], "tile.title.right");
+    assert_eq!(z["buttons"][0]["args"], json!({"k": 1}));
+    assert_eq!(z["panes"][0]["placement"], "overlay");
+    assert_eq!(z["widgets"][0], json!({"id": "bar", "slot": "strip.right"}));
+
+    // an inactive plugin lists bare: nothing of it may reach the screen
+    r.st.plugins.set_enabled("zeta", false).unwrap();
+    let (_, _, b) = r.call("GET", "/api/plugins", None, None).await;
+    assert_eq!(b["plugins"][0]["active"], false);
+    assert!(b["plugins"][0]["actions"].as_array().unwrap().is_empty() && b["plugins"][0]["buttons"].as_array().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn the_widget_snapshot_carries_revs_and_can_be_asked_for_one_plugin() {
+    let r = Rig::new();
+    r.install("one", &manifest("one", &["ui.widgets"], WIDGETS));
+    r.install("two", &manifest("two", &["ui.widgets"], WIDGETS));
+    pw(&r, "one", Some(&r.token("one")), &put_body("a")).await;
+    pw(&r, "one", Some(&r.token("one")), &put_body("b")).await;
+    pw(&r, "two", Some(&r.token("two")), &put_body("c")).await;
+    let (_, _, all) = r.call("GET", "/api/plugins/widgets", None, None).await;
+    assert_eq!(all["plugins"]["one"]["rev"], 2);
+    assert_eq!(all["plugins"]["two"]["rev"], 1);
+    assert_eq!(all["plugins"]["one"]["widgets"]["bar"]["slot"], "strip.right");
+    assert_eq!(all["plugins"]["one"]["widgets"]["bar"]["scopes"]["*"][0]["segments"][0]["text"], "b");
+    let (_, _, just) = r.call("GET", "/api/plugins/widgets?plugin=two", None, None).await;
+    assert_eq!(just["plugins"].as_object().unwrap().keys().collect::<Vec<_>>(), ["two"], "only the plugin asked for");
+}
+
+async fn ui_post(r: &Rig, t: Option<String>, body: Value) -> (StatusCode, axum::http::HeaderMap, Value) {
+    r.call("POST", "/api/plugins/ui/action", t.as_deref(), Some(&body.to_string())).await
+}
+
+#[tokio::test]
+async fn a_ui_action_needs_ui_invoke_and_an_allowed_action_and_is_forwarded_without_a_confirmed_field() {
+    let mut r = Rig::new();
+    r.install("asker", &manifest("asker", &["ui.invoke", "core.actions"], &action("go", "\"./x\"")));
+    r.install("nopermit", &manifest("nopermit", &["core.actions"], ""));
+    r.install("nocore", &manifest("nocore", &["ui.invoke"], ""));
+    let (ta, tn, tc) = (r.token("asker"), r.token("nopermit"), r.token("nocore"));
+    r.st.registry.upsert_workspace("w", "/w").await.unwrap();
+    r.backend.set("garage/w/a", "/w", None, "");
+    r.events();
+
+    assert_eq!(ui_post(&r, None, json!({"action": "session.close"})).await.0, StatusCode::UNAUTHORIZED);
+    let (s, _, b) = ui_post(&r, Some(tn), json!({"action": "session.close"})).await;
+    assert_eq!((s, b["error"].as_str().unwrap()), (StatusCode::FORBIDDEN, "plugin nopermit lacks permission ui.invoke"));
+    let (s, _, b) = ui_post(&r, Some(tc), json!({"action": "session.close"})).await;
+    assert_eq!(s, StatusCode::FORBIDDEN, "a core action needs core.actions too");
+    assert!(b["error"].as_str().unwrap().contains("core.actions"), "{b}");
+    r.install("victim", &manifest("victim", &[], &action("poke", "\"./x\"")));
+    r.events();
+    for bad in ["app.quit", "overlay.close", "session.teleport", "victim:poke"] {
+        assert_eq!(ui_post(&r, Some(ta.clone()), json!({"action": bad})).await.0, StatusCode::UNPROCESSABLE_ENTITY, "{bad}");
+    }
+    assert_eq!(ui_post(&r, Some(ta.clone()), json!({"action": "asker:nope"})).await.0, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(ui_post(&r, Some(ta.clone()), json!({})).await.0, StatusCode::BAD_REQUEST);
+    assert!(r.events().is_empty(), "nothing refused reached the TUI");
+
+    // The body claims it was confirmed, in the body and in the target: neither is read.
+    let (s, _, _) = ui_post(
+        &r,
+        Some(ta.clone()),
+        json!({"action": "session.close", "confirmed": true, "args": {"keep": 1}, "target": {"session": "garage/w/a", "workspace": "w", "confirmed": true}}),
+    )
+    .await;
+    assert_eq!(s, StatusCode::ACCEPTED);
+    let ev = r.events();
+    let [DaemonEvent::UiAction { plugin, action, args, target }] = ev.as_slice() else { panic!("{ev:?}") };
+    assert_eq!((plugin.as_str(), action.as_str()), ("asker", "session.close"));
+    assert_eq!(args, &Some(json!({"keep": 1})));
+    assert_eq!((target.session.as_deref(), target.workspace.as_deref()), (Some("garage/w/a"), Some("w")));
+
+    // a bare local id is the caller's own action, framed in full
+    ui_post(&r, Some(ta), json!({"action": "go"})).await;
+    let ev = r.events();
+    assert!(matches!(ev.as_slice(), [DaemonEvent::UiAction { action, .. }] if action == "asker:go"), "{ev:?}");
+}
+
+async fn target_post(r: &Rig, t: &str, target: Value) -> (StatusCode, axum::http::HeaderMap, Value) {
+    ui_post(r, Some(t.to_owned()), json!({"action": "session.focus", "target": target})).await
+}
+
+#[tokio::test]
+async fn a_ui_action_target_must_name_real_things_and_nothing_is_published_otherwise() {
+    let mut r = Rig::new();
+    r.install("asker", &manifest("asker", &["ui.invoke", "core.actions"], ""));
+    let t = r.token("asker");
+    r.st.registry.upsert_workspace("w", "/w").await.unwrap();
+    r.st.registry.upsert_workspace("other", "/o").await.unwrap();
+    r.backend.set("garage/w/live", "/w", None, "");
+    r.backend.set("plugin/asker/pane", "/w", None, "");
+    r.st
+        .registry
+        .record_closed(crate::state::registry::ClosedRecord {
+            id: "garage/w/gone".into(),
+            workspace: "w".into(),
+            dir: "/w".into(),
+            branch: None,
+            closed_at: 1,
+            reason: "user".into(),
+            last_status: None,
+            claude_session_id: None,
+        })
+        .await
+        .unwrap();
+    r.events();
+    for (why, target) in [
+        ("a plugin pane is not a session", json!({"session": "plugin/asker/pane"})),
+        ("a bare backend id", json!({"session": "garage-control"})),
+        ("an unknown session", json!({"session": "garage/w/nope"})),
+        ("a too-short id", json!({"session": "garage/w"})),
+        ("an unregistered workspace", json!({"workspace": "nope"})),
+        ("a session of another workspace", json!({"session": "garage/w/live", "workspace": "other"})),
+    ] {
+        let (s, _, b) = target_post(&r, &t, target).await;
+        assert_eq!(s, StatusCode::UNPROCESSABLE_ENTITY, "{why}: {b}");
+    }
+    assert!(r.events().is_empty(), "nothing refused was published");
+    assert_eq!(target_post(&r, &t, json!({"session": "garage/w/live", "workspace": "w"})).await.0, StatusCode::ACCEPTED, "live");
+    assert_eq!(target_post(&r, &t, json!({"session": "garage/w/gone"})).await.0, StatusCode::ACCEPTED, "a closed record is restorable");
+    assert_eq!(target_post(&r, &t, json!({"workspace": "other"})).await.0, StatusCode::ACCEPTED);
+    assert_eq!(r.events().len(), 3);
+}
+
+const PANE_PLUGIN: &str = "[[panes]]\nid = \"d\"\ntitle = \"Details\"\nplacement = \"overlay\"\ncommand = [\"{plugin_dir}/ui\", \"x\"]\n\
+    [[panes]]\nid = \"multi\"\ntitle = \"M\"\nplacement = \"popup\"\nsingleton = false\ncommand = [\"./m\"]\n\
+    [[actions]]\nid = \"show\"\ntitle = \"Show\"\npane = \"d\"\n";
+
+async fn open_pane_call(r: &Rig, t: Option<&str>, id: &str, pane: &str) -> (StatusCode, axum::http::HeaderMap, Value) {
+    r.call("POST", &format!("/api/plugins/{id}/panes/{pane}/open"), t, Some("{}")).await
+}
+
+#[tokio::test]
+async fn panes_run_as_hidden_backend_sessions_reuse_singletons_and_die_with_the_plugin() {
+    let mut r = Rig::new();
+    r.install("pp", &manifest("pp", &["ui.panes"], PANE_PLUGIN));
+    r.install("noperm", &manifest("noperm", &[], ""));
+    let (tp, tn) = (r.token("pp"), r.token("noperm"));
+    r.events();
+
+    assert_eq!(open_pane_call(&r, None, "pp", "d").await.0, StatusCode::UNAUTHORIZED);
+    assert_eq!(open_pane_call(&r, Some(&tn), "noperm", "d").await.0, StatusCode::FORBIDDEN, "ui.panes is required");
+    assert_eq!(open_pane_call(&r, Some(&tp), "noperm", "d").await.0, StatusCode::FORBIDDEN, "not another plugin's pane");
+    assert_eq!(open_pane_call(&r, Some(&tp), "pp", "nope").await.0, StatusCode::NOT_FOUND);
+
+    let (s, _, b) = open_pane_call(&r, Some(&tp), "pp", "d").await;
+    assert_eq!((s, b["session"].as_str(), b["reused"].clone()), (StatusCode::OK, Some("plugin/pp/d"), json!(false)));
+    {
+        let created = r.backend.created.lock().unwrap();
+        let (id, dir, cmd, args, env) = &created[0];
+        assert_eq!(id, "plugin/pp/d");
+        assert!(dir.ends_with("pp"));
+        if cfg!(unix) {
+            // Started through `env -i`: the tmux server's environment is not inherited.
+            assert_eq!((cmd.as_str(), args[0].as_str(), args[1].as_str()), ("/usr/bin/env", "-i", "--"), "{args:?}");
+            assert!(env.is_empty(), "the variables travel as env arguments: {env:?}");
+            let get = |k: &str| args.iter().find_map(|a| a.strip_prefix(&format!("{k}=")));
+            assert_eq!(get("GARAGE_TRIGGER"), Some("pane"));
+            assert_eq!(get("GARAGE_PLUGIN_TOKEN"), Some(tp.as_str()));
+            assert!(get("GARAGE_CONTEXT").is_some_and(|c| c.contains("\"api_version\":1")));
+            let n = args.len();
+            assert!(args[n - 2].ends_with("/ui") && args[n - 1] == "x", "the command comes last: {args:?}");
+        } else {
+            assert!(cmd.ends_with("/ui") && args == &["x"], "{cmd} {args:?}");
+            let get = |k: &str| env.iter().find(|(n, _)| n == k).map(|(_, v)| v.as_str());
+            assert_eq!(get("GARAGE_TRIGGER"), Some("pane"));
+        }
+    }
+    assert!(matches!(r.events().as_slice(), [DaemonEvent::PaneChanged { open: true, session, .. }] if session == "plugin/pp/d"));
+    assert_eq!(open_pane_call(&r, Some(&tp), "pp", "d").await.2["reused"], json!(true), "a singleton is reused");
+    assert_eq!(r.backend.created.lock().unwrap().len(), 1);
+    let m1 = open_pane_call(&r, Some(&tp), "pp", "multi").await.2["session"].as_str().unwrap().to_owned();
+    let m2 = open_pane_call(&r, Some(&r.ui_token()), "pp", "multi").await.2["session"].as_str().unwrap().to_owned();
+    assert_ne!(m1, m2, "a non-singleton opens another instance");
+
+    // listed with how to attach; never in the agent session list
+    let (_, _, b) = r.call("GET", "/api/plugins/panes", None, None).await;
+    assert_eq!(b["panes"].as_array().unwrap().len(), 3);
+    assert_eq!(b["panes"][0]["attach"], json!({"kind": "tmux", "socket": "fake"}));
+    assert_eq!(b["panes"][0]["placement"], "overlay");
+
+    // a pane whose process ended drops out of the list and is announced
+    r.backend.remove("plugin/pp/d");
+    r.events();
+    r.st.plugins.refresh_panes().await;
+    let (_, _, b) = r.call("GET", "/api/plugins/panes", None, None).await;
+    assert_eq!(b["panes"].as_array().unwrap().len(), 2);
+    assert!(r.events().iter().any(|e| matches!(e, DaemonEvent::PaneChanged { open: false, session, .. } if session == "plugin/pp/d")));
+
+    // closing, and disabling the plugin, kill the rest
+    assert_eq!(r.call("DELETE", "/api/plugins/pp/panes/multi", Some(&tp), None).await.2["closed"], 2);
+    open_pane_call(&r, Some(&tp), "pp", "d").await;
+    assert!(r.backend.sessions.lock().unwrap().iter().any(|s| s.id == "plugin/pp/d"));
+    r.st.plugins.set_enabled("pp", false).unwrap();
+    wait_for(|| !r.backend.sessions.lock().unwrap().iter().any(|s| s.id.starts_with("plugin/pp/"))).await;
+}
+
+#[tokio::test]
+async fn panes_that_outlived_the_daemon_are_adopted_or_killed() {
+    let r = Rig::new();
+    r.install("pp", &manifest("pp", &["ui.panes"], PANE_PLUGIN));
+    r.backend.set_pane("plugin/pp/d", "pp");
+    r.backend.set_pane("plugin/pp/gone-pane", "pp");
+    r.backend.set_pane("plugin/removed/d", "removed");
+    // Named like panes but never marked as one (a user's own sessions): untouched.
+    r.backend.set("plugin/pp/unmarked", "/x", None, "");
+    r.backend.set_pane("plugin/pp/forged", "someone-else");
+    r.st.plugins.adopt_panes().await;
+    let live: Vec<String> = r.backend.sessions.lock().unwrap().iter().map(|s| s.id.clone()).collect();
+    assert_eq!(
+        live,
+        ["plugin/pp/d", "plugin/pp/unmarked", "plugin/pp/forged"],
+        "the declared pane is adopted; the undeclared pane and the removed plugin's are killed; unmarked sessions are left alone"
+    );
+    let panes = r.st.plugins.live_panes().await;
+    assert_eq!(panes.len(), 1);
+    assert_eq!(panes[0].pane, "d");
+}
+
+#[tokio::test]
+async fn running_a_pane_action_needs_ui_panes_for_a_plugin_token_but_not_for_the_ui_token() {
+    let r = Rig::new();
+    r.install("pp", &manifest("pp", &["ui.panes"], PANE_PLUGIN));
+    let tp = r.token("pp");
+    let run = |t: String| {
+        let r = &r;
+        async move { r.call("POST", "/api/plugins/pp/actions/show/run", Some(&t), Some("{}")).await }
+    };
+    // The validator refuses a pane without ui.panes, so the state a permission
+    // revoked after load would leave is made by hand.
+    let revoke = || {
+        let mut st = r.st.plugins.0.state.lock().unwrap();
+        let good = st.plugins[0].good.as_mut().unwrap();
+        let mut m = (*good.manifest).clone();
+        m.permissions.retain(|p| p.as_str() != "ui.panes");
+        good.manifest = Arc::new(m);
+    };
+    revoke();
+    let (s, _, b) = run(tp.clone()).await;
+    assert_eq!(s, StatusCode::FORBIDDEN, "{b}");
+    assert!(r.backend.created.lock().unwrap().is_empty(), "no pane was started");
+    let (s, _, b) = run(r.ui_token()).await;
+    assert_eq!(s, StatusCode::ACCEPTED, "the UI token is the human: {b}");
+    assert_eq!(r.backend.created.lock().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn a_plugin_has_at_most_four_panes_and_concurrent_opens_cannot_exceed_it_or_duplicate_a_singleton() {
+    let r = Rig::new();
+    r.install("pp", &manifest("pp", &["ui.panes"], PANE_PLUGIN));
+    let tp = r.token("pp");
+    // Six at once: four are made, two are refused.
+    let calls: Vec<_> = (0..6).map(|_| open_pane_call(&r, Some(&tp), "pp", "multi")).collect();
+    let results = futures_util::future::join_all(calls).await;
+    let ok = results.iter().filter(|(s, _, _)| *s == StatusCode::OK).count();
+    let refused = results.iter().filter(|(s, _, _)| *s == StatusCode::TOO_MANY_REQUESTS).count();
+    assert_eq!((ok, refused), (4, 2), "{results:?}");
+    assert_eq!(r.backend.created.lock().unwrap().len(), 4);
+    // The limit is per plugin, and frees up when one closes.
+    r.install("other", &manifest("other", &["ui.panes"], PANE_PLUGIN));
+    assert_eq!(open_pane_call(&r, Some(&r.token("other")), "other", "multi").await.0, StatusCode::OK);
+    assert_eq!(r.call("DELETE", "/api/plugins/pp/panes/multi", Some(&tp), None).await.2["closed"], 4);
+    assert_eq!(open_pane_call(&r, Some(&tp), "pp", "multi").await.0, StatusCode::OK);
+
+    // A singleton opened by several at once is started once.
+    let before = r.backend.created.lock().unwrap().len();
+    let calls: Vec<_> = (0..5).map(|_| open_pane_call(&r, Some(&tp), "pp", "d")).collect();
+    let results = futures_util::future::join_all(calls).await;
+    assert!(results.iter().all(|(s, _, _)| *s == StatusCode::OK), "{results:?}");
+    assert_eq!(results.iter().filter(|(_, _, b)| b["reused"] == json!(false)).count(), 1, "{results:?}");
+    assert_eq!(r.backend.created.lock().unwrap().len(), before + 1);
+}
+
+#[tokio::test]
+async fn a_pane_that_died_does_not_count_against_the_limit_once_the_cache_is_refreshed() {
+    let r = Rig::new();
+    r.install("pp", &manifest("pp", &["ui.panes"], PANE_PLUGIN));
+    let tp = r.token("pp");
+    for _ in 0..4 {
+        assert_eq!(open_pane_call(&r, Some(&tp), "pp", "multi").await.0, StatusCode::OK);
+    }
+    let first = r.backend.sessions.lock().unwrap()[0].id.clone();
+    r.backend.remove(&first);
+    assert_eq!(open_pane_call(&r, Some(&tp), "pp", "multi").await.0, StatusCode::OK, "the dead one made room");
+}
+
+#[tokio::test]
+async fn listing_panes_costs_no_backend_call_per_pane_until_the_refresh_tick() {
+    let mut r = Rig::new();
+    r.install("pp", &manifest("pp", &["ui.panes"], PANE_PLUGIN));
+    let tp = r.token("pp");
+    for _ in 0..3 {
+        open_pane_call(&r, Some(&tp), "pp", "multi").await;
+    }
+    r.events();
+    r.backend.has_calls.store(0, Ordering::SeqCst);
+    for _ in 0..5 {
+        let (_, _, b) = r.call("GET", "/api/plugins/panes", None, None).await;
+        assert_eq!(b["panes"].as_array().unwrap().len(), 3);
+    }
+    assert_eq!(r.backend.has_calls.load(Ordering::SeqCst), 0, "served from the cache");
+    let gone = r.backend.sessions.lock().unwrap()[0].id.clone();
+    r.backend.remove(&gone);
+    let (_, _, b) = r.call("GET", "/api/plugins/panes", None, None).await;
+    assert_eq!(b["panes"].as_array().unwrap().len(), 3, "a death is noticed on the tick, not per request");
+    r.st.plugins.refresh_panes().await;
+    let (_, _, b) = r.call("GET", "/api/plugins/panes", None, None).await;
+    assert_eq!(b["panes"].as_array().unwrap().len(), 2);
+    assert!(r.events().iter().any(|e| matches!(e, DaemonEvent::PaneChanged { open: false, session, .. } if *session == gone)));
+}
+
+#[tokio::test]
+async fn a_pane_is_marked_with_its_plugin_when_created() {
+    let r = Rig::new();
+    r.install("pp", &manifest("pp", &["ui.panes"], PANE_PLUGIN));
+    let tp = r.token("pp");
+    open_pane_call(&r, Some(&tp), "pp", "d").await;
+    assert_eq!(r.backend.pane_tags.lock().unwrap().get("plugin/pp/d").map(String::as_str), Some("pp"));
+}
+
+#[test]
+fn the_pane_command_is_wrapped_in_env_i_with_the_allowlist_and_the_plugins_variables_only() {
+    use super::panes::{pane_launch, Launch};
+    let s = |v: &[&str]| v.iter().map(|x| (*x).to_owned()).collect::<Vec<_>>();
+    let kv = |v: &[(&str, &str)]| v.iter().map(|(k, v)| ((*k).to_owned(), (*v).to_owned())).collect::<Vec<_>>();
+    let parent = kv(&[("PATH", "/bin"), ("HOME", "/h"), ("GARAGE_PLUGIN_ID", "stale")]);
+    let plugin = kv(&[("GARAGE_PLUGIN_ID", "pp"), ("GARAGE_TRIGGER", "pane")]);
+    let l = pane_launch(&s(&["/p/ui", "x", "--y"]), &plugin, &parent, true).unwrap();
+    assert_eq!(
+        l,
+        Launch {
+            cmd: "/usr/bin/env".into(),
+            args: s(&["-i", "--", "PATH=/bin", "HOME=/h", "GARAGE_PLUGIN_ID=pp", "GARAGE_TRIGGER=pane", "/p/ui", "x", "--y"]),
+            env: vec![],
+        },
+        "the plugin's value replaces the inherited one, and nothing else is passed"
+    );
+    // Without `env` (Windows): plain command, the plugin's variables as env, the host backend clears the rest.
+    let l = pane_launch(&s(&["ui.exe", "x"]), &plugin, &parent, false).unwrap();
+    assert_eq!((l.cmd.as_str(), l.args, l.env), ("ui.exe", s(&["x"]), plugin.clone()));
+    // A program name `env` would read as an assignment is refused, as is an empty command.
+    assert!(pane_launch(&s(&["A=b"]), &plugin, &parent, true).is_err());
+    assert!(pane_launch(&[], &plugin, &parent, true).is_err());
+}
+
+#[tokio::test]
+async fn a_plugin_cannot_ask_the_wall_to_engage_a_session_and_ui_actions_are_limited_to_five_a_second() {
+    let mut r = Rig::new();
+    r.install("asker", &manifest("asker", &["ui.invoke", "core.actions"], "[[actions]]\nid = \"go\"\ntitle = \"Go\"\ncommand = [\"x\"]\n"));
+    let t = r.token("asker");
+    r.st.registry.upsert_workspace("w", "/w").await.unwrap();
+    r.backend.set("garage/w/live", "/w", None, "");
+    r.events();
+    let (s, _, b) = ui_post(&r, Some(t.clone()), json!({"action": "session.engage", "target": {"session": "garage/w/live"}})).await;
+    assert_eq!(s, StatusCode::FORBIDDEN, "{b}");
+    assert!(r.events().is_empty(), "nothing reached the wall");
+    // Other focus moves are fine, but only five a second.
+    let mut statuses = Vec::new();
+    for _ in 0..8 {
+        statuses.push(ui_post(&r, Some(t.clone()), json!({"action": "session.focus", "target": {"session": "garage/w/live"}})).await.0);
+    }
+    let accepted = statuses.iter().filter(|s| **s == StatusCode::ACCEPTED).count();
+    assert_eq!(accepted, 5, "{statuses:?}");
+    assert!(statuses[5..].iter().all(|s| *s == StatusCode::TOO_MANY_REQUESTS), "{statuses:?}");
+    assert_eq!(r.events().len(), 5, "a limited request is not forwarded");
 }

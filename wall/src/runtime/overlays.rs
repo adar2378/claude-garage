@@ -117,7 +117,7 @@ pub fn handle_overlay_key(
         }
         // Routed by `App::handle_key` to [`handle_worktree_finish_key`]: the
         // armed discard needs the clock, which this router never sees.
-        OverlayKind::WorktreeFinish => {}
+        OverlayKind::WorktreeFinish | OverlayKind::PluginPane => {}
     }
     (effects, notice)
 }

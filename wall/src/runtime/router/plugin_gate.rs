@@ -136,6 +136,11 @@ impl GarageRouter {
         }
     }
 
+    /// True when the pending arm was raised by a human trigger of `id`.
+    pub(in crate::runtime) fn human_arm_is(&self, id: ActionId) -> bool {
+        self.plugin_arm.as_ref().is_some_and(|a| a.origin == ArmOrigin::Human && a.id == id)
+    }
+
     pub(in crate::runtime) fn plugin_arm_pending(&self) -> bool {
         self.plugin_arm.is_some()
     }
@@ -215,7 +220,10 @@ impl GarageRouter {
     ) -> bool {
         self.refresh_plugin_arm(now_ms);
         let info = meta(id);
-        let dangerous = info.is_some_and(|m| m.dangerous);
+        // A plugin action whose manifest says `confirm` goes through the same
+        // arm-then-confirm step as a dangerous core action.
+        let asks_confirm = self.plugin_actions.get(&id).is_some_and(|a| a.confirm);
+        let dangerous = info.is_some_and(|m| m.dangerous) || asks_confirm;
         // `confirmed` counts only with the token the confirm path issued for
         // this very action; a forged one is just another plugin trigger.
         let mut confirmed_force = None;
@@ -269,6 +277,26 @@ impl GarageRouter {
                 );
                 return true;
             }
+            if matches!(ctx.source, ActionSource::Plugin { .. }) {
+                // Where the user types is theirs to change: a plugin's request
+                // never engages a session (a click on its button, a human act, may).
+                if id == ids::SESSION_ENGAGE {
+                    self.notices.show(
+                        format!("plugin {} asked to type into a session — only you can engage one", plugin_name(&ctx.source)),
+                        3000,
+                        now_ms,
+                    );
+                    return true;
+                }
+                // Focus moves are for a person to make at a person's pace: a
+                // burst from a plugin lands once and the rest is dropped.
+                if moves_focus(id) {
+                    if self.plugin_focus_at.is_some_and(|t| now_ms - t < PLUGIN_FOCUS_GAP_MS) {
+                        return true;
+                    }
+                    self.plugin_focus_at = Some(now_ms);
+                }
+            }
             if matches!(ctx.source, ActionSource::Widget { .. }) {
                 // A click on a plugin item lands like any click.
                 if store.state().layer == crate::state::wall_state::KeyLayer::Engaged {
@@ -301,7 +329,7 @@ impl GarageRouter {
         }
         // ... and `session.delete`, which has no native double-press of its
         // own, arms on a human's first trigger instead of running at once.
-        if id == ids::SESSION_DELETE {
+        if id == ids::SESSION_DELETE || asks_confirm {
             self.arm_plugin(store, id, ctx, ArmOrigin::Human, now_ms);
             return true;
         }
@@ -309,7 +337,11 @@ impl GarageRouter {
     }
 
     fn arm_plugin(&mut self, store: &WallStore, id: ActionId, ctx: &ActionCtx, origin: ArmOrigin, now_ms: i64) {
-        let Some((notice, force)) = arm_prompt(store, id, ctx) else {
+        let prompt = match self.plugin_actions.get(&id) {
+            Some(action) => Some((format!("Run {}{CONFIRM_TAIL}", action.title), false)),
+            None => arm_prompt(store, id, ctx),
+        };
+        let Some((notice, force)) = prompt else {
             self.notices.show("nothing to act on", 2000, now_ms);
             return;
         };
@@ -408,6 +440,7 @@ impl GarageRouter {
                 }
             }
             ids::HOOKS_INSTALL => self.install_pressed(effects),
+            _ if id.is_plugin() => self.run_plugin_action(id, ctx, now_ms, effects),
             _ => {}
         }
     }
@@ -480,6 +513,26 @@ fn arm_prompt(store: &WallStore, id: ActionId, ctx: &ActionCtx) -> Option<(Strin
         _ => return None,
     };
     Some((format!("{subject}{CONFIRM_TAIL}"), false))
+}
+
+/// Least time between two focus moves a plugin may make.
+pub(in crate::runtime) const PLUGIN_FOCUS_GAP_MS: i64 = 500;
+
+/// The ids whose whole point is to move the focus (or the typing target).
+fn moves_focus(id: ActionId) -> bool {
+    matches!(
+        id,
+        ids::SESSION_FOCUS
+            | ids::WORKSPACE_FOCUS
+            | ids::VIEW_FOCUS
+            | ids::VIEW_CYCLE
+            | ids::JUMP_BLOCKED
+            | ids::FOCUS_CYCLE_PREV
+            | ids::FOCUS_CYCLE_NEXT
+            | ids::SESSION_RESTORE
+            | ids::SESSION_MAXIMIZE
+            | ids::OVERLAY_OPEN_VIEW_PICKER
+    )
 }
 
 /// True when running `id` for `ctx` would move the focus (and so the typing

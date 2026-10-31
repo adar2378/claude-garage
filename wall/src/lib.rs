@@ -13,6 +13,7 @@ pub mod api;
 pub mod attach;
 pub mod input;
 pub mod keymap;
+pub mod plugins;
 pub mod pty;
 pub mod runtime;
 pub mod slots;

@@ -232,10 +232,41 @@ pub struct GarageRouter {
     /// One-shot proof that a `confirmed` plugin source came from this
     /// router's own confirm path: (arm key, restart force).
     confirm_token: Option<(String, bool)>,
+    /// The plugins' declared actions (from the listing): what `plugin:action`
+    /// ids run, which need a confirm, which open a pane.
+    plugin_actions: std::collections::HashMap<ActionId, crate::plugins::PluginAction>,
+    /// When a plugin last moved the focus (ms): a burst of such requests is
+    /// dropped, only the first lands.
+    plugin_focus_at: Option<i64>,
     pub notices: Notices,
 }
 
 impl GarageRouter {
+    /// Replace the declared plugin actions (a new listing arrived).
+    pub fn set_plugin_actions(&mut self, actions: std::collections::HashMap<ActionId, crate::plugins::PluginAction>) {
+        self.plugin_actions = actions;
+    }
+
+    /// A plugin action's effect: gated on its `contexts`, then either the
+    /// run request or the pane open. An id no manifest declared does nothing.
+    pub(super) fn run_plugin_action(&mut self, id: ActionId, ctx: &ActionCtx, now_ms: i64, effects: &mut Vec<Effect>) {
+        let Some(action) = self.plugin_actions.get(&id) else { return };
+        if let Some(hint) = crate::plugins::context::unmet(action.need, &action.title, ctx) {
+            self.notices.show(hint, 3000, now_ms);
+            return;
+        }
+        let body = crate::plugins::context::run_body(ctx);
+        effects.push(match &action.pane {
+            Some(pane) => Effect::OpenPluginPane {
+                plugin: action.plugin.clone(),
+                pane: pane.clone(),
+                body,
+                human: !matches!(ctx.source, ActionSource::Plugin { .. }),
+            },
+            None => Effect::RunPluginAction { plugin: action.plugin.clone(), action: action.local.clone(), body },
+        });
+    }
+
     pub fn restoring(&self) -> &HashSet<String> {
         &self.restoring
     }
@@ -286,7 +317,12 @@ impl GarageRouter {
                     plugin_gate::ConfirmKey::Gone => {}
                 }
             }
-            self.disarm_plugin();
+            // The same trigger again confirms a human-raised arm (that is its
+            // confirm); any other key drops it.
+            let repeats = keymap.resolve(Layer::Garage, key).is_some_and(|r| self.human_arm_is(r.action));
+            if !repeats {
+                self.disarm_plugin();
+            }
         }
         // Resolve the key to its action once; arming below is keyed on the
         // action (so `x`'s double-press is "session.close twice"), which is
@@ -374,6 +410,7 @@ impl GarageRouter {
             }
         }
         match id {
+            _ if id.is_plugin() => self.run_plugin_action(id, ctx, now_ms, effects),
             // `P` (spec tui-pit-pet "Opt-in roster cycled by `P`"): not a
             // `GarageCommand` — `pet.rs` (the render module) has no business
             // being a store dependency, so this stays here rather than

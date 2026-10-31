@@ -14,6 +14,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 pub mod auth;
+pub mod plugins;
 pub mod widgets;
 
 /// Body of every non-2xx response: `{"error": "..."}`. Routes may add fields.

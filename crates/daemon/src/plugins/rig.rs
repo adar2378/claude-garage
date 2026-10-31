@@ -325,6 +325,7 @@ impl Rig {
         });
         self.st.plugins = super::PluginHost::with_runner(&self.st.config, self.st.bus.clone(), lookup, self.runner.clone())
             .with_timer_unit(unit);
+        self.st.plugins.set_backend(self.st.backend.clone());
     }
 
     /// The next bus event matching `pred`, within 5 s.

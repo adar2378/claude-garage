@@ -69,6 +69,20 @@ pub trait SessionBackend: Send + Sync {
     async fn send_text(&self, id: &str, _text: &str) -> Result<()> {
         anyhow::bail!("this session backend cannot send text to {id}")
     }
+    /// Mark the just-created session `id` as a pane of `plugin`, so a later
+    /// [`SessionBackend::plugin_pane_sessions`] finds it and nothing else. A
+    /// backend whose sessions are all the daemon's own keeps this default.
+    async fn mark_plugin_pane(&self, _id: &str, _plugin: &str) -> Result<()> {
+        Ok(())
+    }
+    /// Ids of the plugin panes (`plugin/...`) that exist on this backend, for
+    /// the daemon to adopt or clean up after a restart. They are not in
+    /// [`SessionBackend::list`], which only knows `garage/` sessions. Only
+    /// sessions the daemon marked as panes count: a session of the user's
+    /// that happens to be named `plugin/...` is never adopted or killed.
+    async fn plugin_pane_sessions(&self) -> Result<Vec<String>> {
+        Ok(Vec::new())
+    }
 }
 
 /// Which backend a daemon runs, chosen once at start.

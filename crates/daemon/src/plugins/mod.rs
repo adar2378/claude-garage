@@ -13,6 +13,7 @@ pub mod api;
 pub mod bundled;
 pub mod context;
 pub mod layout;
+pub mod panes;
 pub mod runner;
 pub mod widgets;
 
@@ -28,8 +29,11 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
 
 use garage_plugin::argv::{self, Vars};
-use garage_plugin::manifest::{sha256_hex, EventName, Manifest, DEFAULT_ACTION_TIMEOUT_SECS, DEFAULT_EVENT_TIMEOUT_SECS};
+use garage_plugin::manifest::{sha256_hex, ActionContext, EventName, PanePlacement, Manifest, DEFAULT_ACTION_TIMEOUT_SECS, DEFAULT_EVENT_TIMEOUT_SECS};
 use garage_plugin::{check_cli_conflicts, check_host, parse};
+use garage_protocol::plugins::{
+    ActionSummary, ButtonSummary, PaneSummary, PluginList, PluginSummary, PluginWidgets, WidgetContent, WidgetSummary, WidgetsSnapshot,
+};
 use serde_json::{json, Value};
 use tokio::task::JoinHandle;
 
@@ -54,6 +58,10 @@ pub const LINK_POLL: Duration = Duration::from_secs(2);
 /// Event dispatches (context building plus queueing) running at once; past
 /// this an event is dropped with a log line rather than stalling the bus.
 pub const DISPATCH_INFLIGHT: usize = 256;
+/// `POST /api/plugins/ui/action` per plugin (burst and sustained).
+pub const UI_ACTIONS_PER_SEC: u32 = 5;
+/// How often the table of open panes is checked against the backend.
+pub const PANE_REFRESH: Duration = Duration::from_secs(2);
 
 /// One registry entry plus what loading it produced.
 #[derive(Clone)]
@@ -154,6 +162,9 @@ impl Drop for TimerGuard {
     }
 }
 
+/// A plugin process's environment and, when the context was too big for it, the context file.
+type RunEnv = (Vec<(String, String)>, Option<PathBuf>);
+
 pub struct Inner {
     paths: Paths,
     port: u16,
@@ -169,12 +180,20 @@ pub struct Inner {
     ui_slots: Mutex<Value>,
     /// Rate limit of `PUT /api/plugins/ui/slots`.
     slots_bucket: Mutex<Bucket>,
+    /// Rate limit of `POST /api/plugins/ui/action`, per plugin.
+    ui_action_buckets: Mutex<HashMap<String, Bucket>>,
+    /// One lock per plugin across a pane open (singleton check, limit, create).
+    pane_locks: Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
     /// The per-install credential of the TUI and CLI; empty when it could not
     /// be created (then nothing matches).
     ui_token: String,
     dispatch_permits: Arc<tokio::sync::Semaphore>,
     link_poller: Mutex<Option<JoinHandle<()>>>,
     run_seq: AtomicU64,
+    /// Open plugin panes (the mark that a backend session is a pane).
+    panes: Mutex<Vec<panes::PaneRec>>,
+    pane_seq: AtomicU64,
+    backend: std::sync::OnceLock<Arc<dyn crate::backend::SessionBackend>>,
     timer_unit: Duration,
     link_poll: Duration,
 }
@@ -207,10 +226,15 @@ impl PluginHost {
             logs: Mutex::default(),
             ui_slots: Mutex::new(json!({})),
             slots_bucket: Mutex::new(Bucket::new(std::time::Instant::now())),
+            ui_action_buckets: Mutex::default(),
+            pane_locks: Mutex::default(),
             ui_token,
             dispatch_permits: Arc::new(tokio::sync::Semaphore::new(DISPATCH_INFLIGHT)),
             link_poller: Mutex::new(None),
             run_seq: AtomicU64::new(1),
+            panes: Mutex::default(),
+            pane_seq: AtomicU64::new(1),
+            backend: std::sync::OnceLock::new(),
             timer_unit: Duration::from_secs(1),
             link_poll: LINK_POLL,
         }))
@@ -243,6 +267,17 @@ impl PluginHost {
         // Subscribe before returning so nothing published afterwards is missed.
         let mut rx = self.0.bus.subscribe();
         let host = self.clone();
+        tokio::spawn({
+            let host = host.clone();
+            async move {
+                host.adopt_panes().await;
+                // Liveness of panes is cached; this tick is what refreshes it.
+                loop {
+                    tokio::time::sleep(PANE_REFRESH).await;
+                    host.refresh_panes().await;
+                }
+            }
+        });
         tokio::spawn({
             let host = host.clone();
             async move { host.dispatch_event("daemon.started", json!({}), None, SessionInfo::default()).await }
@@ -329,6 +364,124 @@ impl PluginHost {
             .collect()
     }
 
+    /// `GET /api/plugins`: what the TUI binds and draws, in install order.
+    /// Only an active plugin lists its actions, buttons and widgets; the rest
+    /// show up bare so `plugin list` style views can say why they are off.
+    pub fn list(&self) -> PluginList {
+        let state = self.0.state.lock().unwrap();
+        let plugins = state
+            .plugins
+            .iter()
+            .map(|p| {
+                let manifest = p.manifest().filter(|_| p.active());
+                let id = &p.entry.id;
+                PluginSummary {
+                    id: id.clone(),
+                    name: p.manifest().map_or_else(|| id.clone(), |m| m.name.clone()),
+                    enabled: p.entry.enabled,
+                    active: p.active(),
+                    version: p.manifest().map(|m| m.version.clone()),
+                    permissions: p.manifest().map(|m| m.permission_names()).unwrap_or_default(),
+                    bindings: p.entry.bindings.clone(),
+                    actions: manifest
+                        .map(|m| {
+                            m.actions
+                                .iter()
+                                .map(|a| ActionSummary {
+                                    id: format!("{id}:{}", a.id),
+                                    title: a.title.clone(),
+                                    default_key: a.default_key.clone(),
+                                    contexts: a
+                                        .contexts
+                                        .iter()
+                                        .map(|c| match c {
+                                            ActionContext::Global => "global",
+                                            ActionContext::Workspace => "workspace",
+                                            ActionContext::Session => "session",
+                                        })
+                                        .map(str::to_owned)
+                                        .collect(),
+                                    confirm: a.confirm,
+                                    pane: a.pane.clone(),
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_default(),
+                    buttons: manifest
+                        .map(|m| {
+                            m.buttons
+                                .iter()
+                                .map(|b| ButtonSummary {
+                                    slot: b.slot.to_protocol(),
+                                    label: b.label.clone(),
+                                    tooltip: b.tooltip.clone(),
+                                    on_click: b.on_click.clone(),
+                                    args: b.args.clone(),
+                                    confirm: b.confirm,
+                                    priority: b.priority,
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_default(),
+                    widgets: manifest
+                        .map(|m| m.widgets.iter().map(|w| WidgetSummary { id: w.id.clone(), slot: w.slot.to_protocol() }).collect())
+                        .unwrap_or_default(),
+                    panes: manifest
+                        .map(|m| {
+                            m.panes
+                                .iter()
+                                .map(|pane| PaneSummary {
+                                    id: pane.id.clone(),
+                                    title: pane.title.clone(),
+                                    placement: match pane.placement {
+                                        PanePlacement::Tile => "tile",
+                                        PanePlacement::Overlay => "overlay",
+                                        PanePlacement::Popup => "popup",
+                                    }
+                                    .into(),
+                                    cols: pane.size.as_ref().map(|s| s.cols),
+                                    rows: pane.size.as_ref().map(|s| s.rows),
+                                    pct: pane.size.as_ref().is_some_and(|s| s.pct),
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_default(),
+                }
+            })
+            .collect();
+        PluginList { plugins }
+    }
+
+    /// `GET /api/plugins/widgets[?plugin=]`: the stored content of every
+    /// active plugin (or just `only`), with each plugin's revision.
+    pub fn widget_snapshot(&self, only: Option<&str>) -> WidgetsSnapshot {
+        let active: Vec<String> = self
+            .0
+            .state
+            .lock()
+            .unwrap()
+            .plugins
+            .iter()
+            .filter(|p| p.active() && only.is_none_or(|o| o == p.entry.id))
+            .map(|p| p.entry.id.clone())
+            .collect();
+        let plugins = active
+            .into_iter()
+            .map(|id| {
+                let widgets = self
+                    .0
+                    .widgets
+                    .widgets(&id)
+                    .into_iter()
+                    .map(|(name, w)| (name, WidgetContent { slot: w.slot, scopes: w.scopes }))
+                    .collect();
+                let rev = self.0.widgets.rev(&id);
+                (id, PluginWidgets { rev, widgets })
+            })
+            .collect();
+        WidgetsSnapshot { plugins }
+    }
+
     /// The state of one plugin, whether or not it is active.
     pub fn plugin(&self, id: &str) -> Option<PluginState> {
         self.0.state.lock().unwrap().plugins.iter().find(|p| p.entry.id == id).cloned()
@@ -383,6 +536,14 @@ impl PluginHost {
     /// Rate limit one `PUT /api/plugins/ui/slots`.
     pub fn acquire_slots(&self, now: std::time::Instant) -> Result<(), Duration> {
         self.0.slots_bucket.lock().unwrap().take(now)
+    }
+
+    /// Rate limit one `POST /api/plugins/ui/action` of `plugin`: at most
+    /// [`UI_ACTIONS_PER_SEC`] a second (the TUI would otherwise be asked to
+    /// move its focus as fast as a plugin can post).
+    pub fn acquire_ui_action(&self, plugin: &str, now: std::time::Instant) -> Result<(), Duration> {
+        let rate = f64::from(UI_ACTIONS_PER_SEC);
+        self.0.ui_action_buckets.lock().unwrap().entry(plugin.to_owned()).or_insert_with(|| Bucket::with_limits(now, rate, rate)).take(now)
     }
 
     pub fn set_ui_slots(&self, slots: Value) {
@@ -798,7 +959,7 @@ impl Inner {
 
     /// The disable/remove sequence (design section 4): refuse new triggers
     /// (the caller already marked it inactive), kill running process groups,
-    /// drop queued runs and timers, clear its widgets.
+    /// drop queued runs and timers, kill its panes, clear its widgets.
     fn teardown(self: &Arc<Self>, plugin: &str) {
         if let Some(handles) = self.timers.lock().unwrap().remove(plugin) {
             handles.into_iter().for_each(|h| h.abort());
@@ -807,7 +968,7 @@ impl Inner {
             q.queue.clear();
         }
         self.running.terminate(plugin);
-        // Panes are killed here once they exist (p24 group 5).
+        self.kill_panes_of(plugin);
         self.widgets.clear_plugin(plugin);
     }
 
@@ -937,37 +1098,11 @@ impl Inner {
     async fn execute(self: &Arc<Self>, plugin: &str, job: &Job) -> Option<RunOutcome> {
         // A plugin disabled while its run waited never starts.
         let state = self.state.lock().unwrap().plugins.iter().find(|p| p.entry.id == plugin && p.active()).cloned()?;
-        let version = state.manifest().map(|m| m.version.clone()).unwrap_or_default();
-        let data_dir = self.paths.data(plugin);
-        if let Err(e) = std::fs::create_dir_all(&data_dir) {
-            return Some(RunOutcome::SpawnFailed(format!("cannot create {}: {e}", data_dir.display())));
-        }
+        let (env, ctx_file) = match self.run_env(&state, job.trigger, &job.ctx) {
+            Ok(v) => v,
+            Err(e) => return Some(RunOutcome::SpawnFailed(e)),
+        };
         let ctx = serde_json::to_string(&job.ctx).unwrap_or_else(|_| "{}".into());
-        let mut env = vec![
-            ("GARAGE_API".to_owned(), format!("http://127.0.0.1:{}", self.port)),
-            ("GARAGE_API_VERSION".into(), "1".into()),
-            ("GARAGE_PLUGIN_ID".into(), plugin.to_owned()),
-            ("GARAGE_PLUGIN_VERSION".into(), version),
-            ("GARAGE_PLUGIN_DIR".into(), state.dir.to_string_lossy().into_owned()),
-            ("GARAGE_PLUGIN_STATE_DIR".into(), data_dir.to_string_lossy().into_owned()),
-            ("GARAGE_PLUGIN_TOKEN".into(), state.token.clone()),
-            ("GARAGE_TRIGGER".into(), job.trigger.to_owned()),
-        ];
-        let mut ctx_file: Option<PathBuf> = None;
-        if ctx.len() <= CONTEXT_ENV_MAX {
-            env.push(("GARAGE_CONTEXT".into(), ctx.clone()));
-        } else {
-            let dir = self.paths.tmp();
-            let path = dir.join(format!("{plugin}-{}.json", job.run_id));
-            // The context names sessions and directories: owner-only.
-            match create_private_dir(&dir).and_then(|_| write_private(&path, &ctx)) {
-                Ok(()) => {
-                    env.push(("GARAGE_CONTEXT_FILE".into(), path.to_string_lossy().into_owned()));
-                    ctx_file = Some(path);
-                }
-                Err(e) => return Some(RunOutcome::SpawnFailed(format!("cannot write the context file: {e}"))),
-            }
-        }
         let spec = RunSpec {
             plugin: plugin.to_owned(),
             run_id: job.run_id,
@@ -985,6 +1120,47 @@ impl Inner {
             let _ = std::fs::remove_file(path);
         }
         Some(outcome)
+    }
+
+    /// The environment every plugin process gets (actions, hooks and panes),
+    /// with the context inline or, above [`CONTEXT_ENV_MAX`], as a private
+    /// file whose path is returned for the caller to remove.
+    fn run_env(&self, state: &PluginState, trigger: &str, ctx_value: &Value) -> Result<RunEnv, String> {
+        let plugin = &state.entry.id;
+        let version = state.manifest().map(|m| m.version.clone()).unwrap_or_default();
+        let data_dir = self.paths.data(plugin);
+        std::fs::create_dir_all(&data_dir).map_err(|e| format!("cannot create {}: {e}", data_dir.display()))?;
+        let ctx = serde_json::to_string(ctx_value).unwrap_or_else(|_| "{}".into());
+        let mut env = vec![
+            ("GARAGE_API".to_owned(), format!("http://127.0.0.1:{}", self.port)),
+            ("GARAGE_API_VERSION".into(), "1".into()),
+            ("GARAGE_PLUGIN_ID".into(), plugin.to_owned()),
+            ("GARAGE_PLUGIN_VERSION".into(), version),
+            ("GARAGE_PLUGIN_DIR".into(), state.dir.to_string_lossy().into_owned()),
+            ("GARAGE_PLUGIN_STATE_DIR".into(), data_dir.to_string_lossy().into_owned()),
+            ("GARAGE_PLUGIN_TOKEN".into(), state.token.clone()),
+            ("GARAGE_TRIGGER".into(), trigger.to_owned()),
+        ];
+        let mut ctx_file: Option<PathBuf> = None;
+        if ctx.len() <= CONTEXT_ENV_MAX {
+            env.push(("GARAGE_CONTEXT".into(), ctx));
+        } else {
+            let dir = self.paths.tmp();
+            let path = dir.join(format!("{plugin}-{}.json", self.run_seq.fetch_add(1, Ordering::Relaxed)));
+            // The context names sessions and directories: owner-only.
+            create_private_dir(&dir).and_then(|_| write_private(&path, &ctx)).map_err(|e| format!("cannot write the context file: {e}"))?;
+            env.push(("GARAGE_CONTEXT_FILE".into(), path.to_string_lossy().into_owned()));
+            ctx_file = Some(path);
+        }
+        Ok((env, ctx_file))
+    }
+
+    /// `command` with the `{plugin_dir}`-style variables substituted.
+    fn argv_for(&self, state: &PluginState, command: &[String]) -> Vec<String> {
+        let state_dir = self.paths.data(&state.entry.id);
+        let platform = argv::platform_id();
+        let vars = Vars { plugin_id: &state.entry.id, plugin_dir: &state.dir, state_dir: &state_dir, platform: &platform };
+        argv::substitute(command, &vars)
     }
 
     fn finish(self: &Arc<Self>, plugin: &str, job: &Job, outcome: Option<RunOutcome>) {

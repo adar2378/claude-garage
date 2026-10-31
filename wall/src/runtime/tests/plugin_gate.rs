@@ -302,15 +302,6 @@ fn a_forged_confirmed_source_without_the_routers_token_only_arms() {
     assert!(app.router.plugin_arm_pending(), "treated as a plugin trigger: armed, not run");
 }
 
-/// Placeholder for the daemon lane: `/api/plugins/ui/action` builds
-/// `ActionSource::plugin(..)` and must never deserialize `confirmed` from the
-/// request body. Wire a real request through the endpoint here.
-#[test]
-#[ignore = "daemon lane wires /api/plugins/ui/action"]
-fn the_ui_action_endpoint_ignores_a_confirmed_field_in_the_body() {
-    unimplemented!("POST {{\"action\":\"session.close\",\"confirmed\":true}} must arm, not close");
-}
-
 #[test]
 fn a_restart_prompt_warns_when_the_session_is_busy_and_forces_exactly_like_r_r() {
     // `one` is working: the warning wording, and the confirm forces.
@@ -639,4 +630,37 @@ fn a_human_click_on_a_plugin_button_still_leaves_the_engaged_session() {
     app.dispatch_action_at(ids::SESSION_MAXIMIZE, &widget(&app, THREE), 1000);
     assert_eq!(app.store.state().layer, KeyLayer::Garage);
     assert_eq!(app.store.state().focused_session_id.as_deref(), Some(THREE));
+}
+
+#[test]
+fn a_plugin_may_never_engage_a_session_but_a_click_on_its_button_may() {
+    // From the garage layer, for the focused session and for another one.
+    for session in [ONE, TWO] {
+        let mut app = fixture();
+        let effects = app.dispatch_action_at(ids::SESSION_ENGAGE, &plugin(&app, session), 1000);
+        assert!(effects.is_empty());
+        assert_eq!(app.store.state().layer, KeyLayer::Garage, "{session}: typing never moves on a plugin's say-so");
+        let notice = app.router.notices.current(1000).expect("the user is told");
+        assert!(notice.contains("plugin closer") && notice.contains("only you can engage"), "{notice}");
+    }
+    // The same id from a human click on a plugin button lands like any click.
+    let mut app = fixture();
+    app.dispatch_action_at(ids::SESSION_ENGAGE, &widget(&app, TWO), 1000);
+    assert_eq!(app.store.state().layer, KeyLayer::Engaged);
+}
+
+#[test]
+fn a_burst_of_plugin_focus_moves_lands_once() {
+    let mut app = fixture();
+    app.dispatch_action_at(ids::SESSION_FOCUS, &plugin(&app, TWO), 1000);
+    assert_eq!(app.store.state().focused_session_id.as_deref(), Some(TWO));
+    for t in [1010, 1100, 1400] {
+        app.dispatch_action_at(ids::SESSION_FOCUS, &plugin(&app, THREE), t);
+        assert_eq!(app.store.state().focused_session_id.as_deref(), Some(TWO), "dropped at {t}");
+    }
+    // Other plugin ids are not focus moves; a human is never limited.
+    app.dispatch_action_at(ids::SESSION_FOCUS, &widget(&app, THREE), 1410);
+    assert_eq!(app.store.state().focused_session_id.as_deref(), Some(THREE), "a click is not a plugin burst");
+    app.dispatch_action_at(ids::SESSION_FOCUS, &plugin(&app, ONE), 1600);
+    assert_eq!(app.store.state().focused_session_id.as_deref(), Some(ONE), "after the gap it lands again");
 }
