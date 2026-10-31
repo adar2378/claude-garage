@@ -13,7 +13,7 @@ Fake `TelemetryDeps` (token, set_status, session resolution) and temp dirs for `
 | statusline.test.js: get/set/drop context, rate limits (5 tests) | `state::context::tests::*` |
 | statusline.test.js: 401, ignored, resolvable (cwd fallback via fake resolver), model window, rate-only, snippet | `api::statusline::tests::*` |
 | statusline.install.test.js: 6 sequential tests | `api::statusline::tests::install_flow_create_idempotent_corrupt_chain_rechain_and_fresh` (one sequence; runs the generated wrapper with `sh`) |
-| transcript.test.js: all 21 | `transcript::tests::*` (TTL test uses an injected clock instead of mocked `Date`) |
+| transcript.test.js: all 18 | `transcript::tests::*` (TTL test uses an injected clock instead of mocked `Date`) |
 | usage.test.js: 4 tests | `api::statusline::tests::usage_is_null_then_reflects_and_merges_posts` |
 | token-auth.js (no JS test) | `security::token_tests::matches_only_the_exact_token` |
 | settings-install.js / claude-home.js (no JS test) | `install::tests::*` |

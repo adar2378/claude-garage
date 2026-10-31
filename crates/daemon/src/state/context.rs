@@ -155,6 +155,9 @@ pub struct Telemetry {
     pub context: ContextStore,
     pub transcripts: TranscriptCache,
     pub deps: Arc<dyn TelemetryDeps>,
+    /// Serialises the hooks and statusline installs (both read-merge-write
+    /// settings.json), so concurrent installs cannot lose a merge.
+    pub install_lock: Arc<tokio::sync::Mutex<()>>,
 }
 
 impl Telemetry {
@@ -164,6 +167,7 @@ impl Telemetry {
             claude_home,
             context: ContextStore::default(),
             deps,
+            install_lock: Arc::default(),
         }
     }
 

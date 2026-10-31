@@ -89,6 +89,13 @@ pub async fn write_settings_atomic(
     raw: Option<&str>,
     merged: &Map<String, Value>,
 ) -> Result<Option<PathBuf>, InstallError> {
+    // A symlinked settings.json (dotfiles managers) is written through: the
+    // link stays a link and the resolved target gets the new content.
+    let resolved = match tokio::fs::canonicalize(path).await {
+        Ok(real) => real,
+        Err(_) => path.to_path_buf(),
+    };
+    let path = resolved.as_path();
     if let Some(dir) = path.parent() {
         tokio::fs::create_dir_all(dir).await.map_err(InstallError::io)?;
     }
@@ -102,6 +109,11 @@ pub async fn write_settings_atomic(
     let mut text = serde_json::to_string_pretty(merged).map_err(|e| InstallError::new(500, e.to_string()))?;
     text.push('\n');
     tokio::fs::write(&tmp, text).await.map_err(InstallError::io)?;
+    if raw.is_some() {
+        // Keep the original mode (a private 0600 settings.json must not widen).
+        let perms = tokio::fs::metadata(path).await.map_err(InstallError::io)?.permissions();
+        tokio::fs::set_permissions(&tmp, perms).await.map_err(InstallError::io)?;
+    }
     tokio::fs::rename(&tmp, path).await.map_err(InstallError::io)?;
     Ok(backup)
 }
@@ -190,5 +202,40 @@ mod tests {
         let backup = write_settings_atomic(&p, Some(&raw), &m).await.unwrap().unwrap();
         assert_eq!(std::fs::read_to_string(backup).unwrap(), raw);
         assert!(std::fs::read_to_string(&p).unwrap().contains("\"b\": 2"));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn write_through_a_symlink_updates_the_target_and_keeps_the_link() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("dotfiles/settings.json");
+        std::fs::create_dir_all(target.parent().unwrap()).unwrap();
+        std::fs::write(&target, "{}\n").unwrap();
+        let link = dir.path().join("settings.json");
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+
+        let mut m = Map::new();
+        m.insert("a".into(), Value::from(1));
+        write_settings_atomic(&link, Some("{}\n"), &m).await.unwrap();
+
+        assert!(std::fs::symlink_metadata(&link).unwrap().file_type().is_symlink());
+        assert_eq!(std::fs::read_link(&link).unwrap(), target);
+        assert!(std::fs::read_to_string(&target).unwrap().contains("\"a\": 1"));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn write_preserves_the_original_file_mode() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("settings.json");
+        std::fs::write(&p, "{}\n").unwrap();
+        std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o600)).unwrap();
+
+        let mut m = Map::new();
+        m.insert("a".into(), Value::from(1));
+        write_settings_atomic(&p, Some("{}\n"), &m).await.unwrap();
+
+        assert_eq!(std::fs::metadata(&p).unwrap().permissions().mode() & 0o777, 0o600);
     }
 }

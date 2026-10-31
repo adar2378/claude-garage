@@ -16,10 +16,11 @@ const TAIL_BYTES: u64 = 256 * 1024;
 const TTL_MS: i64 = 15_000;
 const DEFAULT_WINDOW: u64 = 1_000_000;
 
-/// Claude Code's own project-directory naming: the cwd with every `/`
-/// replaced by `-` (leading slash included).
+/// Claude Code's own project-directory naming: the cwd with every `/` and `.`
+/// replaced by `-` (leading slash included), so `/Users/x/.garage/wt` becomes
+/// `-Users-x--garage-wt`.
 pub fn slugify_cwd(cwd: &str) -> String {
-    cwd.replace('/', "-")
+    cwd.replace(['/', '.'], "-")
 }
 
 pub fn transcript_path(claude_home: &Path, dir: &str, claude_session_id: &str) -> PathBuf {
@@ -256,6 +257,12 @@ mod tests {
     fn slugify_cwd_replaces_every_slash() {
         assert_eq!(slugify_cwd("/Users/me/repo"), "-Users-me-repo");
         assert_eq!(slugify_cwd("/a/b/c"), "-a-b-c");
+    }
+
+    #[test]
+    fn slugify_cwd_maps_dots_to_dashes_too() {
+        assert_eq!(slugify_cwd("/Users/x/.garage/wt"), "-Users-x--garage-wt");
+        assert_eq!(slugify_cwd("/a/b.c/d"), "-a-b-c-d");
     }
 
     #[test]

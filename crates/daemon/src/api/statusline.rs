@@ -133,6 +133,7 @@ pub async fn install(State(state): State<AppState>) -> Response {
 
 async fn install_statusline(state: &AppState) -> Result<Value, InstallError> {
     let t = &state.telemetry;
+    let _guard = t.install_lock.lock().await;
     let (settings_path, wrapper_path) = (t.settings_path(), t.wrapper_path());
     let settings = read_settings_or_refuse(&settings_path).await?;
     let token = t.deps.hook_token().await.map_err(|e| InstallError { status: 500, message: e.to_string() })?;

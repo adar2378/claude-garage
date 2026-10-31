@@ -180,9 +180,34 @@ pub async fn install(State(state): State<AppState>) -> Response {
     }
 }
 
+/// Refuses (422) settings whose hook-related keys have the wrong shape, so a
+/// merge never silently replaces user data with an empty default.
+fn validate_hook_shapes(settings: &Map<String, Value>) -> Result<(), InstallError> {
+    let refuse = |what: &str, want: &str| {
+        Err(InstallError {
+            status: 422,
+            message: format!("settings.json: `{what}` is not {want} — fix it and retry; the file was left untouched"),
+        })
+    };
+    if let Some(hooks) = settings.get("hooks") {
+        let Some(hooks) = hooks.as_object() else { return refuse("hooks", "an object") };
+        for event in ["Stop", "Notification"] {
+            if hooks.get(event).is_some_and(|v| !v.is_array()) {
+                return refuse(&format!("hooks.{event}"), "an array");
+            }
+        }
+    }
+    if settings.get("allowedHttpHookUrls").is_some_and(|v| !v.is_array()) {
+        return refuse("allowedHttpHookUrls", "an array");
+    }
+    Ok(())
+}
+
 async fn install_hooks(state: &AppState) -> Result<Value, InstallError> {
+    let _guard = state.telemetry.install_lock.lock().await;
     let path = state.telemetry.settings_path();
     let settings = read_settings_or_refuse(&path).await?;
+    validate_hook_shapes(&settings.settings)?;
     let snippet = hook_snippet(state).await.map_err(|e| InstallError { status: 500, message: e.to_string() })?;
     let (merged, changed) = merge_hook_snippet(&settings.settings, &snippet);
     if !changed {
@@ -448,5 +473,42 @@ mod tests {
         assert_eq!(s, StatusCode::UNPROCESSABLE_ENTITY);
         assert!(body["error"].as_str().unwrap().contains("not valid JSON"));
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "{ not: valid json !!");
+    }
+
+    #[tokio::test]
+    async fn install_refuses_wrongly_typed_hook_keys_with_422_and_writes_nothing() {
+        let bodies = [
+            r#"{"hooks":[]}"#,
+            r#"{"hooks":"x"}"#,
+            r#"{"hooks":{"Stop":{}}}"#,
+            r#"{"hooks":{"Notification":"x"}}"#,
+            r#"{"hooks":{"Stop":null}}"#,
+            r#"{"allowedHttpHookUrls":"http://x/*"}"#,
+        ];
+        for body in bodies {
+            let h = Harness::new(47390);
+            let path = h.state.telemetry.settings_path();
+            std::fs::write(&path, body).unwrap();
+            let (s, resp) = h.call("POST", "/api/hooks/install", None).await;
+            assert_eq!(s, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+            assert!(resp["error"].as_str().unwrap().contains("left untouched"), "{body}");
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), body);
+            let siblings = std::fs::read_dir(path.parent().unwrap()).unwrap().count();
+            assert_eq!(siblings, 1, "no backup or tmp file for {body}");
+        }
+    }
+
+    #[tokio::test]
+    async fn reinstall_with_nothing_to_change_writes_no_new_backup() {
+        let h = Harness::new(47390);
+        let path = h.state.telemetry.settings_path();
+        h.call("POST", "/api/hooks/install", None).await;
+        // Existing file is now present; a second install must not back it up.
+        let count = || std::fs::read_dir(path.parent().unwrap()).unwrap().count();
+        let before = count();
+        let (_, body) = h.call("POST", "/api/hooks/install", None).await;
+        assert_eq!(body["alreadyInstalled"], true);
+        assert_eq!(body["backup"], Value::Null);
+        assert_eq!(count(), before);
     }
 }
