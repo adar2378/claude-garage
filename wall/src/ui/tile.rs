@@ -21,6 +21,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Paragraph, Widget};
 use tui_term::widget::{Cursor, PseudoTerminal};
 
+use crate::slots::{self, SlotCtx, SlotId, SlotItem, SlotRegistry};
 use crate::state::wall_state::WallSession;
 use crate::ui::theme::{colors, elapsed_for, glyph_for, status_color};
 
@@ -37,6 +38,8 @@ pub struct TileView<'a> {
     /// arrived since freezing).
     pub frozen_new_lines: Option<i64>,
     pub now_ms: i64,
+    /// The slot registry the title bar asks for its right-hand items.
+    pub slots: &'a SlotRegistry,
 }
 
 /// Border color + type per the salience ladder.
@@ -81,6 +84,21 @@ fn context_meter_color(pct: u32) -> Color {
 fn context_meter_text(pct: u32) -> String {
     let filled = context_segments(pct) as usize;
     format!("{}{} {pct}%", "▰".repeat(filled), "▱".repeat(4 - filled))
+}
+
+/// The `tile.title.right` core provider: the context meter, when the session
+/// has context telemetry.
+pub fn context_meter_provider(ctx: &SlotCtx) -> Vec<SlotItem> {
+    let Some(context) = ctx.session.and_then(|s| s.context.as_ref()) else {
+        return Vec::new();
+    };
+    vec![SlotItem::new(
+        vec![Span::styled(
+            format!(" {}", context_meter_text(context.used_percentage)),
+            Style::default().fg(context_meter_color(context.used_percentage)),
+        )],
+        100,
+    )]
 }
 
 /// Truncate `text` to `width` cells with a trailing ellipsis (the subtitle's
@@ -152,12 +170,17 @@ pub fn title_line(v: &TileView, width: u16) -> Line<'static> {
     }
     // Context meter (spec tui-context-meters "Tile context meter"): renders
     // unconditionally, never truncated. `None` renders as before.
-    if let Some(context) = &s.context {
-        tail.push(Span::styled(
-            format!(" {}", context_meter_text(context.used_percentage)),
-            Style::default().fg(context_meter_color(context.used_percentage)),
-        ));
-    }
+    let slot_ctx = SlotCtx {
+        session: Some(s),
+        ..SlotCtx::default()
+    };
+    tail.extend(
+        slots::layout(
+            v.slots.items(SlotId::TileTitleRight, &slot_ctx),
+            None,
+        )
+        .spans,
+    );
 
     let glyph = format!(" {} ", glyph_for(&s.status));
     let fixed: usize =
@@ -306,6 +329,11 @@ mod tests {
         }
     }
 
+    /// A registry for the tests' `TileView`s (leaked: a view borrows it).
+    fn test_slots() -> &'static SlotRegistry {
+        Box::leak(Box::new(SlotRegistry::core()))
+    }
+
     fn view(session: &WallSession) -> TileView<'_> {
         TileView {
             session,
@@ -315,6 +343,7 @@ mod tests {
             dead_reason: None,
             frozen_new_lines: None,
             now_ms: 65_000,
+            slots: test_slots(),
         }
     }
 

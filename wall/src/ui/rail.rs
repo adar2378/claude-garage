@@ -15,13 +15,14 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph, Widget};
 
+use crate::slots::{SlotCtx, SlotId, SlotItem, SlotRegistry};
 use crate::state::salience::WorkspaceGroup;
 use crate::state::wall_state::{WallSession, WallState};
 use crate::ui::theme::{colors, elapsed_for, glyph_for, status_color};
 
 /// One rendered line per rail row: each group's optional family label, its
 /// header, then its sessions — the exact rows `rail_target_at` maps clicks against.
-pub fn rail_lines(state: &WallState, now_ms: i64) -> Vec<Line<'static>> {
+pub fn rail_lines(state: &WallState, slots: &SlotRegistry, now_ms: i64) -> Vec<Line<'static>> {
     let gridded: HashSet<&str> = state
         .gridded_session_ids
         .iter()
@@ -30,11 +31,10 @@ pub fn rail_lines(state: &WallState, now_ms: i64) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
     for (i, group) in state.groups.iter().enumerate() {
         let focused_ws = state.focused_workspace.as_deref() == Some(group.name.as_str());
-        if let Some(label) = &group.family_label {
-            lines.push(Line::styled(
-                format!(" {label}"),
-                Style::default().fg(colors::FAINT),
-            ));
+        // Rows above the workspace row come from the `rail.header` slot;
+        // `rail_target_at` counts them through the same call.
+        for item in header_items(state, slots, group) {
+            lines.push(Line::from(item.text));
         }
         lines.push(workspace_row(group, i, focused_ws));
         for s in &group.sessions {
@@ -53,6 +53,33 @@ pub fn rail_lines(state: &WallState, now_ms: i64) -> Vec<Line<'static>> {
         ));
     }
     lines
+}
+
+/// The `rail.header` items above a group's workspace row, one rail row each.
+/// The renderer and the click router both ask here, so a plugin's header row
+/// can never shift clicks.
+pub fn header_items(state: &WallState, slots: &SlotRegistry, group: &WorkspaceGroup) -> Vec<SlotItem> {
+    let ctx = SlotCtx {
+        state: Some(state),
+        group: Some(group),
+        ..SlotCtx::default()
+    };
+    slots.items(SlotId::RailHeader, &ctx)
+}
+
+/// The `rail.header` core provider: the p18 family label row above the first
+/// member of a worktree family.
+pub fn family_label_provider(ctx: &SlotCtx) -> Vec<SlotItem> {
+    let Some(label) = ctx.group.and_then(|g| g.family_label.as_ref()) else {
+        return Vec::new();
+    };
+    vec![SlotItem::new(
+        vec![Span::styled(
+            format!(" {label}"),
+            Style::default().fg(colors::FAINT),
+        )],
+        0,
+    )]
 }
 
 fn workspace_row(group: &WorkspaceGroup, index: usize, focused: bool) -> Line<'static> {
@@ -128,13 +155,13 @@ fn session_row(s: &WallSession, gridded: bool, focused: bool, now_ms: i64) -> Li
 /// Render the rail with its right border. Rows stay aligned with `rect`'s
 /// rows (only a RIGHT border — no top inset), so the click router can map
 /// `row - rect.y` straight through `rail_target_at`.
-pub fn render_rail(buf: &mut Buffer, rect: Rect, state: &WallState, now_ms: i64) {
+pub fn render_rail(buf: &mut Buffer, rect: Rect, state: &WallState, slots: &SlotRegistry, now_ms: i64) {
     let block = Block::default()
         .borders(Borders::RIGHT)
         .border_style(Style::default().fg(colors::FAINT));
     let inner = block.inner(rect);
     block.render(rect, buf);
-    Paragraph::new(rail_lines(state, now_ms)).render(inner, buf);
+    Paragraph::new(rail_lines(state, slots, now_ms)).render(inner, buf);
 }
 
 #[cfg(test)]
@@ -184,7 +211,7 @@ mod tests {
             si("alpha", "two", "idle", None),
             si("beta", "other", "idle", None),
         ]);
-        let rows = texts(&rail_lines(store.state(), 60_000));
+        let rows = texts(&rail_lines(store.state(), &SlotRegistry::core(), 60_000));
         assert_eq!(rows.len(), 5);
         assert_eq!(rows[0], " 1 alpha");
         assert_eq!(rows[1], " ▸ ◐ one 1:00", "focused session carries the marker");
@@ -202,7 +229,7 @@ mod tests {
             si("a", "b2", "needs-input", Some(0)),
             si("a", "w", "working", Some(0)),
         ]);
-        let rows = texts(&rail_lines(store.state(), 0));
+        let rows = texts(&rail_lines(store.state(), &SlotRegistry::core(), 0));
         assert_eq!(rows[0], " 1 a  ● 2");
     }
 
@@ -211,7 +238,7 @@ mod tests {
         let mut store = WallStore::new();
         store.workspaces_fetched(vec![ws("a")]);
         store.sessions_fetched(vec![si("a", "blocked", "needs-input", Some(0))]);
-        let line = &rail_lines(store.state(), 60_000)[1];
+        let line = &rail_lines(store.state(), &SlotRegistry::core(), 60_000)[1];
         assert_eq!(line.to_string(), " ▸ ● blocked 1:00");
         // marker span is fg, glyph/label/elapsed spans amber.
         assert_eq!(line.spans[0].style.fg, Some(colors::FG));
@@ -225,7 +252,7 @@ mod tests {
         let mut store = WallStore::new();
         store.workspaces_fetched(vec![ws("a")]);
         store.sessions_fetched((1..=7).map(|i| si("a", &format!("s{i}"), "working", Some(0))).collect());
-        let lines = rail_lines(store.state(), 0);
+        let lines = rail_lines(store.state(), &SlotRegistry::core(), 0);
         let overflow = &lines[7]; // header + 6 gridded rows before it
         assert!(overflow.to_string().contains("s7"));
         assert_eq!(overflow.spans[1].style.fg, Some(colors::FAINT), "glyph dimmed");
@@ -241,16 +268,16 @@ mod tests {
             branch: None,
         };
         store.workspaces_fetched(vec![sib("et-a"), sib("et-b"), ws("solo")]);
-        let lines = rail_lines(store.state(), 0);
+        let lines = rail_lines(store.state(), &SlotRegistry::core(), 0);
         let rows = texts(&lines);
         assert_eq!(rows, [" elite-traders", " 1 et-a", " 2 et-b", " 3 solo"]);
-        assert_eq!(lines[0].style.fg, Some(colors::FAINT));
+        assert_eq!(lines[0].spans[0].style.fg, Some(colors::FAINT));
     }
 
     #[test]
     fn empty_rail_names_the_state() {
         let store = WallStore::new();
-        let rows = texts(&rail_lines(store.state(), 0));
+        let rows = texts(&rail_lines(store.state(), &SlotRegistry::core(), 0));
         assert_eq!(rows, [" no workspaces"]);
     }
 }

@@ -71,7 +71,8 @@ mod tests {
     //! Port of `tui/test/workspace_remove_test.dart` — the caller-level `K`
     //! branch and the strip wording.
     use super::*;
-    use crate::state::store::garage_command_for;
+    use crate::actions::{command_for_action, ids};
+    use crate::keymap::{Keymap, Layer};
     use serde_json::json;
     use std::time::Duration;
 
@@ -128,7 +129,9 @@ mod tests {
 
     #[test]
     fn k_outside_an_arm_maps_to_no_garage_command_typing_hint_path() {
-        assert_eq!(garage_command_for("K"), None);
+        let k = Keymap::defaults().resolve(Layer::Garage, "K").unwrap();
+        assert_eq!(k.action, ids::WORKSPACE_REMOVE_KILL);
+        assert_eq!(command_for_action(k.action, k.index), None, "K is a router branch, not a command");
     }
 
     // ── removeArmNotice wording ─────────────────────────────────────────

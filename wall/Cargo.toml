@@ -12,6 +12,11 @@ name = "garage-wall"
 version = "0.1.0"
 edition = "2021"
 
+[features]
+default = ["pet"]
+# The pit pet (spec tui-pit-pet). Off: the wall builds and runs without it.
+pet = []
+
 [lib]
 name = "garage_wall"
 path = "src/lib.rs"
@@ -47,3 +52,6 @@ serde_json = "1.0"
 
 [profile.release]
 debug = false
+
+[dev-dependencies]
+insta = "1"

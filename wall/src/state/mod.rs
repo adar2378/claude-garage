@@ -2,6 +2,7 @@
 
 pub mod armed_action;
 pub mod persistence;
+pub mod reconcile;
 pub mod salience;
 pub mod store;
 pub mod views;

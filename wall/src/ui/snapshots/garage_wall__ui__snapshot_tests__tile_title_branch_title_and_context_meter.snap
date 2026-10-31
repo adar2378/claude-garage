@@ -1,0 +1,59 @@
+---
+source: src/ui/snapshot_tests.rs
+expression: out
+---
+## wide focused
+|╭ ◐ Fixing the flaky login test ⎇ feat/x 2:00 ▰▰▰▰ 83% lbl ──────────╮|
+|│                                                                    │|
+|│                                                                    │|
+|╰────────────────────────────────────────────────────────────────────╯|
+--- styles ---
+r0 c0..4 fg=Gray bg=Reset mod=NONE
+r0 c4..31 fg=White bg=Reset mod=UNDERLINED
+r0 c31..40 fg=DarkGray bg=Reset mod=NONE
+r0 c40..45 fg=Gray bg=Reset mod=NONE
+r0 c45..54 fg=Red bg=Reset mod=NONE
+r0 c54..58 fg=DarkGray bg=Reset mod=NONE
+r0 c58..70 fg=Gray bg=Reset mod=NONE
+r1 c0..1 fg=Gray bg=Reset mod=NONE
+r1 c69..70 fg=Gray bg=Reset mod=NONE
+r2 c0..1 fg=Gray bg=Reset mod=NONE
+r2 c69..70 fg=Gray bg=Reset mod=NONE
+r3 c0..70 fg=Gray bg=Reset mod=NONE
+
+## narrow engaged
+|┏ ◐ Fixing t… ⎇ feat/x 2:00 ▰▰▰▰ 83┓|
+|┃                                  ┃|
+|┃                                  ┃|
+|┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛|
+--- styles ---
+r0 c0..1 fg=White bg=Reset mod=NONE
+r0 c1..4 fg=Gray bg=Reset mod=NONE
+r0 c4..13 fg=White bg=Reset mod=BOLD | UNDERLINED
+r0 c13..22 fg=DarkGray bg=Reset mod=NONE
+r0 c22..27 fg=Gray bg=Reset mod=NONE
+r0 c27..35 fg=Red bg=Reset mod=NONE
+r0 c35..36 fg=White bg=Reset mod=NONE
+r1 c0..1 fg=White bg=Reset mod=NONE
+r1 c1..2 fg=Reset bg=Reset mod=REVERSED
+r1 c35..36 fg=White bg=Reset mod=NONE
+r2 c0..1 fg=White bg=Reset mod=NONE
+r2 c35..36 fg=White bg=Reset mod=NONE
+r3 c0..36 fg=White bg=Reset mod=NONE
+
+## cool meter
+|╭ ◐ Fixing the flaky login test ⎇ feat/x 2:00 ▰▱▱▱ 10% lbl ──────────╮|
+|│                                                                    │|
+|│                                                                    │|
+|╰────────────────────────────────────────────────────────────────────╯|
+--- styles ---
+r0 c0..1 fg=DarkGray bg=Reset mod=NONE
+r0 c1..31 fg=Gray bg=Reset mod=NONE
+r0 c31..40 fg=DarkGray bg=Reset mod=NONE
+r0 c40..54 fg=Gray bg=Reset mod=NONE
+r0 c54..70 fg=DarkGray bg=Reset mod=NONE
+r1 c0..1 fg=DarkGray bg=Reset mod=NONE
+r1 c69..70 fg=DarkGray bg=Reset mod=NONE
+r2 c0..1 fg=DarkGray bg=Reset mod=NONE
+r2 c69..70 fg=DarkGray bg=Reset mod=NONE
+r3 c0..70 fg=DarkGray bg=Reset mod=NONE

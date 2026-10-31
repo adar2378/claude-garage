@@ -1,0 +1,15 @@
+---
+source: src/ui/snapshot_tests.rs
+expression: "strip_dump(&store, Some(\"a notice\"), 60)"
+---
+| 1:beta● 2:gamma● 3:alpha a notice  5h 98%  ● 2 blocked  key|
+--- styles ---
+r0 c0..7 fg=Gray bg=Black mod=NONE
+r0 c7..8 fg=Rgb(255, 179, 64) bg=Black mod=NONE
+r0 c8..16 fg=Gray bg=Black mod=NONE
+r0 c16..17 fg=Rgb(255, 179, 64) bg=Black mod=NONE
+r0 c17..25 fg=White bg=Black mod=BOLD
+r0 c25..35 fg=White bg=Black mod=NONE
+r0 c35..43 fg=Gray bg=Black mod=NONE
+r0 c43..56 fg=Rgb(255, 179, 64) bg=Black mod=NONE
+r0 c56..60 fg=Gray bg=Black mod=NONE

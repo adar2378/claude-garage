@@ -23,6 +23,8 @@ pub mod tile;
 pub mod triage;
 pub mod view_picker;
 pub mod view_strip;
+#[cfg(test)]
+mod snapshot_tests;
 pub mod window_open;
 pub mod workspace_add;
 pub mod worktree_finish;

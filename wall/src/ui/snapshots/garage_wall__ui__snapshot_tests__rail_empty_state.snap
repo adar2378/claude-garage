@@ -1,0 +1,12 @@
+---
+source: src/ui/snapshot_tests.rs
+expression: "render_rail_dump(&WallStore::new(), 30, 3)"
+---
+| no workspaces               │|
+|                             │|
+|                             │|
+--- styles ---
+r0 c0..14 fg=DarkGray bg=Reset mod=NONE
+r0 c29..30 fg=DarkGray bg=Reset mod=NONE
+r1 c29..30 fg=DarkGray bg=Reset mod=NONE
+r2 c29..30 fg=DarkGray bg=Reset mod=NONE
