@@ -50,7 +50,7 @@ use crate::api::sse::SseClient;
 use crate::input::encode::encode_key;
 use crate::input::links::url_at;
 use crate::input::paste::wrap_bracketed_paste;
-use crate::keymap::{Keymap, Layer};
+use crate::keymap::{overlay_key_string, Keymap, Layer};
 use crate::state::armed_action::{ArmedAction, ArmedClose};
 use crate::state::persistence::{self, WallFile};
 use crate::state::salience::restorable_session_ids;
@@ -1048,22 +1048,22 @@ pub fn handle_overlay_key(
         _ => None,
     };
     match kind {
-        OverlayKind::Help => {
-            if key.code == KeyCode::Esc || matches!(plain_char, Some('?' | 'q')) {
-                store.close_overlay();
-            }
-        }
-        OverlayKind::TriageQueue => {
+        // Help and the triage queue: pure key → action overlays, resolved
+        // through the keymap (the text-input overlays below own their keys).
+        OverlayKind::Help | OverlayKind::TriageQueue => {
+            let action = overlay_key_string(key)
+                .and_then(|k| Keymap::shared_defaults().resolve(Layer::Overlay(kind), &k))
+                .map(|r| r.action);
             let len = triage_queue_rows(&store.state().sessions).len();
-            match (key.code, plain_char) {
-                (KeyCode::Esc, _) => store.close_overlay(),
-                (KeyCode::Down, _) | (_, Some('j')) => {
+            match action {
+                Some(ids::OVERLAY_CLOSE) => store.close_overlay(),
+                Some(ids::OVERLAY_SELECT_NEXT) => {
                     *queue_selection = wrap_selection(*queue_selection, 1, len);
                 }
-                (KeyCode::Up, _) | (_, Some('k')) => {
+                Some(ids::OVERLAY_SELECT_PREV) => {
                     *queue_selection = wrap_selection(*queue_selection, -1, len);
                 }
-                (KeyCode::Enter, _) => {
+                Some(ids::JUMP_BLOCKED) => {
                     // Close first, then jump — jump_to_session refuses stale
                     // rows (gone / no longer blocked), same as the Dart flow.
                     store.close_overlay();
