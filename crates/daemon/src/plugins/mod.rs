@@ -888,6 +888,15 @@ impl Inner {
         for mut entry in file.plugins {
             let old = prev.get(&entry.id);
             let (mut state, notice) = self.load_one(&entry, old);
+            // A first-party plugin whose files differ from what this build
+            // shipped is not trusted, however its manifest reads.
+            if entry.is_first_party()
+                && state.good.is_some()
+                && let Err(e) = bundled::verify_embedded(&entry.id, &state.dir)
+            {
+                notices.push((entry.id.clone(), e.clone()));
+                state.refused = Some(e);
+            }
             let (mut grant, mut sha) = (None, None);
             if let Some(good) = &state.good {
                 // Approval is never automatic for code the user pointed us at:
@@ -1423,6 +1432,18 @@ impl Inner {
             .iter()
             .find(|p| p.entry.id == plugin && p.active())
             .cloned()?;
+        // The same check before every start: a binary swapped after the load
+        // is caught here.
+        if state.entry.is_first_party() {
+            let (id, dir) = (plugin.to_owned(), state.dir.clone());
+            let checked = tokio::task::spawn_blocking(move || bundled::verify_embedded(&id, &dir))
+                .await
+                .unwrap_or_else(|e| Err(e.to_string()));
+            if let Err(e) = checked {
+                self.log_for(plugin).append("verify", &e).await;
+                return Some(RunOutcome::SpawnFailed(e));
+            }
+        }
         let (env, ctx_file) = match self.run_env(&state, job.trigger, &job.ctx) {
             Ok(v) => v,
             Err(e) => return Some(RunOutcome::SpawnFailed(e)),

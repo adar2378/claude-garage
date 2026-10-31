@@ -45,6 +45,11 @@ impl Paths {
         &self.root
     }
 
+    /// Where the embedded first-party plugins are unpacked (one directory per version).
+    pub fn bundled(&self) -> PathBuf {
+        self.root.join("bundled")
+    }
+
     pub fn registry_file(&self) -> PathBuf {
         self.root.join("plugins.json")
     }

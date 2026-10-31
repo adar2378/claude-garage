@@ -134,7 +134,7 @@ pub async fn run(config: Config) -> Result<()> {
     let poller = shared.start();
     let notifier = os::notify::spawn(&state.bus, state.os.clone(), state.visibility.clone());
     // First-party plugins: register and refresh them before the host loads.
-    if let Some(root) = plugins::bundled::discover() {
+    if let Some(root) = plugins::bundled::prepare(state.plugins.paths()) {
         match plugins::bundled::seed(state.plugins.paths(), &root) {
             Ok(s) if !s.added.is_empty() || !s.refreshed.is_empty() => {
                 eprintln!(
