@@ -254,6 +254,10 @@ impl PluginHost {
         let host = self.clone();
         tokio::spawn({
             let host = host.clone();
+            async move { host.adopt_panes().await }
+        });
+        tokio::spawn({
+            let host = host.clone();
             async move { host.dispatch_event("daemon.started", json!({}), None, SessionInfo::default()).await }
         });
         tokio::spawn(async move {
