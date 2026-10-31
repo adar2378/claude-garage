@@ -14,6 +14,11 @@ pub mod layout;
 pub mod runner;
 pub mod widgets;
 
+#[cfg(test)]
+mod rig;
+#[cfg(test)]
+mod tests;
+
 use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -614,7 +619,7 @@ impl Inner {
     }
 
     fn finish_load(&self, mut state: PluginState, old: Option<&PluginState>) -> (PluginState, Option<String>) {
-        if state.good.is_some() && state.entry.enabled {
+        if state.good.is_some() {
             match ensure_token(&self.paths, &state.entry.id) {
                 Ok(t) => state.token = t,
                 Err(e) => state.problems.push(format!("cannot create the plugin token: {e}")),

@@ -114,6 +114,50 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn plugin_host_events_become_additive_frames_older_clients_ignore() {
+        use crate::closing::CloseReason;
+        let bus = EventBus::default();
+        let (_tx, sd) = watch::channel(false);
+        let mut body = Sse::new(events(bus.subscribe(), sd)).into_response().into_body();
+        assert_eq!(next_text(&mut body).await, ": connected\n\n");
+        let cases = [
+            (DaemonEvent::WidgetsChanged { plugin: "usage-bar".into(), rev: 42 }, "widgets", json!({"plugin": "usage-bar", "rev": 42})),
+            (DaemonEvent::PluginsChanged, "plugins", json!({})),
+            (
+                DaemonEvent::PluginRunFailed { plugin: "p".into(), action: "p:go".into(), reason: "exited with code 3".into() },
+                "plugin_run_failed",
+                json!({"plugin": "p", "action": "p:go", "reason": "exited with code 3"}),
+            ),
+            (DaemonEvent::PluginNotice { plugin: "p".into(), message: "hi".into() }, "plugin_notice", json!({"plugin": "p", "message": "hi"})),
+            (
+                DaemonEvent::SessionClosed {
+                    id: "garage/w/a".into(),
+                    dir: "/d".into(),
+                    workspace: "w".into(),
+                    reason: CloseReason::DaemonRestart,
+                    last_status: Some("idle".into()),
+                },
+                "session.closed",
+                json!({"id": "garage/w/a", "dir": "/d", "workspace": "w", "reason": "daemon-restart", "last_status": "idle"}),
+            ),
+            (
+                DaemonEvent::SessionTurn { id: "garage/w/a".into(), workspace: "w".into(), at: 5, transcript_offset: None },
+                "session.turn",
+                json!({"id": "garage/w/a", "workspace": "w", "at": 5, "transcript_offset": null}),
+            ),
+            (DaemonEvent::WorkspaceAdded { name: "w".into() }, "workspace.added", json!({"name": "w"})),
+        ];
+        for (ev, name, data) in cases {
+            bus.publish(ev);
+            let text = next_text(&mut body).await;
+            let (head, tail) = text.split_once('\n').unwrap();
+            assert_eq!(head, format!("event: {name}"));
+            let payload: serde_json::Value = serde_json::from_str(tail.trim().strip_prefix("data: ").unwrap()).unwrap();
+            assert_eq!(payload, data, "{name}");
+        }
+    }
+
+    #[tokio::test]
     async fn the_stream_ends_when_shutdown_is_signalled() {
         let bus = EventBus::default();
         let (tx, sd) = watch::channel(false);

@@ -111,6 +111,7 @@ impl Running {
 }
 
 /// Everything needed to start one run.
+#[derive(Clone)]
 pub struct RunSpec {
     pub plugin: String,
     pub run_id: u64,
@@ -265,6 +266,8 @@ mod tests {
     use super::*;
     use std::os::unix::fs::PermissionsExt;
 
+    /// Scripts run as `sh <file>`: executing a just-written file can fail with
+    /// ETXTBSY while another test thread forks.
     fn script(dir: &std::path::Path, name: &str, body: &str) -> String {
         let p = dir.join(name);
         std::fs::write(&p, format!("#!/bin/sh\n{body}\n")).unwrap();
@@ -294,7 +297,7 @@ mod tests {
     async fn a_real_script_gets_stdin_env_and_cwd_and_its_output_lands_in_the_log() {
         let d = tempfile::tempdir().unwrap();
         let sh = script(d.path(), "run.sh", "cat > got-stdin.json\necho \"id=$GARAGE_PLUGIN_ID cwd=$(pwd)\"\necho oops >&2\nexit 0");
-        let (s, log, running) = spec(d.path(), vec![sh], Some(Duration::from_secs(10)));
+        let (s, log, running) = spec(d.path(), vec!["/bin/sh".into(), sh], Some(Duration::from_secs(10)));
         assert_eq!(ProcessRunner.run(s).await, RunOutcome::Success);
         assert_eq!(std::fs::read_to_string(d.path().join("got-stdin.json")).unwrap(), "{\"hello\":1}");
         let text = std::fs::read_to_string(log.path()).unwrap();
@@ -307,7 +310,7 @@ mod tests {
     async fn argv_is_never_a_shell_metacharacters_stay_arguments() {
         let d = tempfile::tempdir().unwrap();
         let sh = script(d.path(), "args.sh", "printf '%s|' \"$@\" > args.txt");
-        let (s, _log, _r) = spec(d.path(), vec![sh, "a; touch pwned".into(), "$(touch pwned)".into(), "`x`".into()], None);
+        let (s, _log, _r) = spec(d.path(), vec!["/bin/sh".into(), sh, "a; touch pwned".into(), "$(touch pwned)".into(), "`x`".into()], None);
         assert_eq!(ProcessRunner.run(s).await, RunOutcome::Success);
         assert_eq!(std::fs::read_to_string(d.path().join("args.txt")).unwrap(), "a; touch pwned|$(touch pwned)|`x`|");
         assert!(!d.path().join("pwned").exists());
@@ -317,7 +320,7 @@ mod tests {
     async fn failures_report_the_exit_code_and_a_missing_program_a_spawn_error() {
         let d = tempfile::tempdir().unwrap();
         let sh = script(d.path(), "fail.sh", "echo boom; exit 3");
-        let (s, log, _r) = spec(d.path(), vec![sh], None);
+        let (s, log, _r) = spec(d.path(), vec!["/bin/sh".into(), sh], None);
         let out = ProcessRunner.run(s).await;
         assert_eq!(out, RunOutcome::Failed(Some(3)));
         assert_eq!(out.reason(), "exited with code 3");
@@ -332,7 +335,7 @@ mod tests {
         let pidfile = d.path().join("child.pid");
         // The shell backgrounds a sleeper (a grandchild) and waits on it.
         let sh = script(d.path(), "hang.sh", &format!("sleep 30 &\necho $! > {}\nwait", pidfile.display()));
-        let (s, _log, running) = spec(d.path(), vec![sh], Some(Duration::from_millis(1500)));
+        let (s, _log, running) = spec(d.path(), vec!["/bin/sh".into(), sh], Some(Duration::from_secs(3)));
         let started = std::time::Instant::now();
         let out = ProcessRunner.run(s).await;
         assert!(matches!(out, RunOutcome::TimedOut(_)), "{out:?}");
@@ -351,7 +354,7 @@ mod tests {
     async fn terminate_kills_running_groups_for_a_plugin_only() {
         let d = tempfile::tempdir().unwrap();
         let sh = script(d.path(), "long.sh", "sleep 30");
-        let (s, _log, running) = spec(d.path(), vec![sh], None);
+        let (s, _log, running) = spec(d.path(), vec!["/bin/sh".into(), sh], None);
         let r2 = running.clone();
         let run = tokio::spawn(async move { ProcessRunner.run(s).await });
         let end = std::time::Instant::now() + Duration::from_secs(5);

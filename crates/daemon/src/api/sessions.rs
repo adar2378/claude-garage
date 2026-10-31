@@ -1108,9 +1108,21 @@ mod tests {
         git(Path::new(&repo), &["init", "-q", "-b", "main"]);
         git(Path::new(&repo), &["commit", "-q", "--allow-empty", "-m", "init"]);
 
+        let mut bus = h.st.bus.subscribe();
         let (c, b) = h.call("POST", "/api/sessions", Some(r#"{"workspace":"ws","label":"fix","worktree":true}"#)).await;
         assert_eq!(c, StatusCode::CREATED);
         let wt_path = h.garage.path().join("worktrees/ws/fix").to_string_lossy().into_owned();
+        assert_eq!(
+            bus.try_recv().unwrap(),
+            DaemonEvent::WorktreeCreated {
+                workspace: "ws".into(),
+                session: "garage/ws/fix".into(),
+                path: wt_path.clone(),
+                branch: "garage/fix".into(),
+                repo_dir: repo.clone(),
+            },
+            "worktree.created fires once the session exists"
+        );
         assert_eq!(b["dir"], wt_path);
         assert_eq!(b["worktree"], json!({"path": wt_path, "branch": "garage/fix"}));
         // The record is saved at spawn, with the repo it was cut from.
@@ -1154,6 +1166,11 @@ mod tests {
         assert!(!h.st.backend.has("garage/ws/a").await.unwrap());
         assert!(!h.st.status.has("garage/ws/a"), "the status entry goes with the session");
         assert!(h.st.registry.get_session_meta("garage/ws/a").await.is_none(), "a deliberate kill offers no restore");
+        assert_eq!(
+            h.st.closing.take("garage/ws/a"),
+            Some(crate::closing::Intent::Reason(crate::closing::CloseReason::User)),
+            "the poller will report this vanish as a user close"
+        );
         // gone now: 404
         let (c, _) = h.call("DELETE", "/api/sessions/garage%2Fws%2Fa", None).await;
         assert_eq!(c, StatusCode::NOT_FOUND);
