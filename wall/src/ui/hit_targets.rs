@@ -10,7 +10,7 @@ use ratatui::layout::Rect;
 
 use crate::actions::{ids, ActionCtx, ActionId, ActionSource};
 use crate::state::wall_state::{KeyLayer, OverlayKind, WallState};
-use crate::slots::SlotRegistry;
+use crate::slots::{ClickTarget, SlotId, SlotRegistry};
 use crate::ui::layout::WallLayout;
 use crate::ui::rail::header_items;
 use crate::ui::triage::triage_queue_rows;
@@ -119,9 +119,21 @@ pub struct ClickMap<'a> {
     pub view_picker_typing: bool,
     pub badge_cols: Option<&'a Range<u16>>,
     /// Clickable `strip.right` slot items from the last frame.
-    pub strip_slots: &'a [(Range<u16>, ActionId)],
+    pub strip_slots: &'a [(Range<u16>, ClickTarget)],
     /// The registry the rail was drawn from (its header rows shift clicks).
     pub slots: &'a SlotRegistry,
+}
+
+/// The context a click on a slot item runs with: seeded from the focus (so a
+/// region with no scope of its own targets the focused session or
+/// workspace), carrying the item's payload. A plugin's item is a `Widget`
+/// source, a core item a plain `Mouse` one.
+pub fn click_ctx(state: &WallState, target: &ClickTarget, slot: SlotId, col: u16, row: u16) -> ActionCtx {
+    let source = match &target.plugin {
+        Some(plugin) => ActionSource::Widget { plugin: plugin.to_string(), slot },
+        None => ActionSource::Mouse { col, row },
+    };
+    ActionCtx::from_focus(state, source).with_args(target.args.clone())
 }
 
 /// The session id and rect under a grid point, honoring maximize (a
@@ -235,8 +247,8 @@ pub fn action_at(
     // near the badge never gets swallowed by it; then the strip badge (the
     // `A` binding).
     if row >= layout.strip.y {
-        if let Some((_, id)) = map.strip_slots.iter().find(|(r, _)| r.contains(&col)) {
-            return Some((*id, ctx()));
+        if let Some((_, target)) = map.strip_slots.iter().find(|(r, _)| r.contains(&col)) {
+            return Some((target.action, click_ctx(state, target, SlotId::StripRight, col, row)));
         }
     }
     if row >= layout.strip.y && map.badge_cols.is_some_and(|r| r.contains(&col)) {
@@ -538,7 +550,7 @@ mod tests {
             targets: Vec<(Range<u16>, String)>,
             badge: Range<u16>,
             /// A clickable `strip.right` item, overlapping the badge's start.
-            slots: Vec<(Range<u16>, ActionId)>,
+            slots: Vec<(Range<u16>, ClickTarget)>,
             registry: SlotRegistry,
         }
 
@@ -549,9 +561,9 @@ mod tests {
                 targets: Vec::new(),
                 badge: 80..95,
                 slots: vec![
-                    (30..40, ids::OVERLAY_OPEN_HELP),
-                    (50..60, ids::PET_PET),
-                    (78..84, ids::OVERLAY_OPEN_HELP),
+                    (30..40, ids::OVERLAY_OPEN_HELP.into()),
+                    (50..60, ids::PET_PET.into()),
+                    (78..84, ids::OVERLAY_OPEN_HELP.into()),
                 ],
                 registry: SlotRegistry::core(),
             }
@@ -653,6 +665,29 @@ mod tests {
             // 78..84 overlaps the badge (80..95): the slot item wins there.
             assert_eq!(click(&store, &f, 81, row).unwrap().0, "overlay.open.help");
             assert_eq!(click(&store, &f, 85, row).unwrap().0, "overlay.open.queue");
+        }
+
+        #[test]
+        fn a_plugin_items_click_is_a_widget_source_carrying_its_args() {
+            let store = store();
+            let mut f = fixture(&store);
+            let target = ClickTarget::new(ids::SESSION_CLOSE)
+                .with_args(serde_json::json!({"why": "button"}))
+                .from_plugin("closer");
+            f.slots = vec![(10..14, target.clone()), (20..24, ids::PET_PET.into())];
+            let row = f.layout.strip.y;
+            let (id, ctx) = click(&store, &f, 11, row).unwrap();
+            assert_eq!(id, "session.close");
+            assert_eq!(
+                ctx.source,
+                ActionSource::Widget { plugin: "closer".into(), slot: SlotId::StripRight }
+            );
+            assert_eq!(ctx.args.as_deref(), Some(&serde_json::json!({"why": "button"})));
+            assert_eq!(ctx.session, store.state().focused_session_id, "strip clicks target the focus");
+            // A core item keeps the plain mouse source and no payload.
+            let (_, core) = click(&store, &f, 21, row).unwrap();
+            assert!(matches!(core.source, ActionSource::Mouse { col: 21, .. }));
+            assert!(core.args.is_none());
         }
 
         #[test]

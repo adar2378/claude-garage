@@ -35,7 +35,7 @@ use crossterm::event::{
 use ratatui::layout::Rect;
 use tokio::sync::mpsc;
 
-use crate::actions::ActionId;
+use crate::slots::ClickTarget;
 use crate::api::client::{ApiError, GarageClient};
 use crate::api::models::{
     FinishAction, HooksInstallResult, SessionInfo, UsageInfo, WorkspaceInfo,
@@ -324,7 +324,7 @@ struct App {
     /// Strip badge columns from the last frame (absolute), when rendered.
     badge_cols: Option<Range<u16>>,
     /// Clickable `strip.right` slot items from the last frame (absolute).
-    strip_slots: Vec<(Range<u16>, ActionId)>,
+    strip_slots: Vec<(Range<u16>, ClickTarget)>,
     /// View-strip click targets from the last frame (absolute columns paired
     /// with the view name they focus) — empty when the strip isn't shown.
     view_strip_targets: Vec<(Range<u16>, String)>,

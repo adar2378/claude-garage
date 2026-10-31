@@ -5,7 +5,12 @@
 //! behaviour. The ids are the contract later phases (a user keymap, the
 //! plugin host) bind to — rename with care.
 
+use std::sync::Arc;
+
+use serde_json::Value;
+
 use crate::api::models::WorktreeRecord;
+use crate::slots::SlotId;
 use crate::state::wall_state::WallState;
 
 /// A stable, dotted action name (`session.close`, `jump.blocked`, …).
@@ -142,6 +147,29 @@ pub enum ActionSource {
     /// source may run the restart actions.
     Chord(String),
     Mouse { col: u16, row: u16 },
+    /// A click on a plugin-provided slot item. Like `Plugin`, it may only
+    /// ARM a dangerous action (p24 design.md Gap E); the confirming click is
+    /// a `Mouse` event.
+    Widget { plugin: String, slot: SlotId },
+    /// A plugin's own request (`POST /api/plugins/ui/action`). `confirmed`
+    /// is set only by the TUI's confirm path after a human key or click
+    /// armed-then-confirmed a dangerous action; a plugin never builds it.
+    Plugin { plugin: String, confirmed: bool },
+}
+
+impl ActionSource {
+    /// A plugin's request: never confirmed.
+    pub fn plugin(plugin: &str) -> ActionSource {
+        ActionSource::Plugin { plugin: plugin.to_owned(), confirmed: false }
+    }
+
+    /// True for the sources that may only arm a dangerous action.
+    pub fn is_plugin_origin(&self) -> bool {
+        matches!(
+            self,
+            ActionSource::Widget { .. } | ActionSource::Plugin { confirmed: false, .. }
+        )
+    }
 }
 
 /// The payload an action runs with. `session` is the focused session for a
@@ -158,6 +186,10 @@ pub struct ActionCtx {
     /// The held worktree record, when the action comes from the worktree
     /// finish flow (none of the key/click ids carry one yet).
     pub worktree: Option<WorktreeRecord>,
+    /// The clicked item's JSON payload. Only plugin actions read it: core
+    /// actions take their target from `session`/`workspace`, never from
+    /// here (p24 design.md Gap E).
+    pub args: Option<Arc<Value>>,
     pub source: ActionSource,
 }
 
@@ -171,8 +203,19 @@ impl ActionCtx {
             selection: None,
             view: None,
             worktree: None,
+            args: None,
             source,
         }
+    }
+
+    pub fn with_args(mut self, args: Option<Arc<Value>>) -> Self {
+        self.args = args;
+        self
+    }
+
+    pub fn with_workspace(mut self, name: String) -> Self {
+        self.workspace = Some(name);
+        self
     }
 
     pub fn with_index(mut self, index: Option<usize>) -> Self {

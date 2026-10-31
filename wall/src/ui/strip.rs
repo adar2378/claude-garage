@@ -16,9 +16,9 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Paragraph, Widget};
 
-use crate::actions::{ids, ActionId};
+use crate::actions::ids;
 use crate::api::models::UsageInfo;
-use crate::slots::{self, Placement, SlotCtx, SlotId, SlotItem, SlotRegistry};
+use crate::slots::{self, ClickTarget, Placement, SlotCtx, SlotId, SlotItem, SlotRegistry};
 use crate::state::wall_state::{KeyLayer, WallState};
 use crate::ui::theme::colors;
 
@@ -114,7 +114,7 @@ pub fn pet_slot_item(p: &PetRender) -> SlotItem {
         });
     }
     SlotItem {
-        on_click: Some(ids::PET_PET),
+        on_click: Some(ids::PET_PET.into()),
         placement: Placement::Filler {
             x: p.x,
             caption: p.say.clone(),
@@ -131,7 +131,7 @@ pub struct StripCols {
     pub badge: Option<Range<u16>>,
     /// Absolute click ranges of the clickable `strip.right` slot items (the
     /// pet's sprite and reserved bang column among them).
-    pub slots: Vec<(Range<u16>, ActionId)>,
+    pub slots: Vec<(Range<u16>, ClickTarget)>,
     /// The filler's width this frame — the room available for the pet,
     /// independent of whether a pet is currently selected.
     pub filler_width: u16,
@@ -142,7 +142,7 @@ pub struct StripLine {
     /// Column range (strip-local) of the blocked badge, when rendered.
     pub badge: Option<Range<u16>>,
     /// Strip-local click ranges of the clickable `strip.right` slot items.
-    pub slots: Vec<(Range<u16>, ActionId)>,
+    pub slots: Vec<(Range<u16>, ClickTarget)>,
     /// The filler's width this frame, regardless of whether a pet occupies
     /// any of it (spec tui-pit-pet: the tick pass needs this for the next
     /// step's `filler_width`).
@@ -224,7 +224,7 @@ pub fn strip_line(
     // sprite then a reserved bang column, then the rest of the filler as
     // before. Skipped for this frame — falling back to a plain filler span —
     // when there isn't room (spec "Narrow strip hides the pet").
-    let mut click_ranges: Vec<(Range<u16>, ActionId)> = Vec::new();
+    let mut click_ranges: Vec<(Range<u16>, ClickTarget)> = Vec::new();
     match floating {
         Some(item) if filler >= item.width() + 2 => {
             let Placement::Filler { x, caption } = &item.placement else {
@@ -252,10 +252,10 @@ pub fn strip_line(
             } else {
                 spans.push(Span::raw(" ".repeat(x)));
             }
-            if let Some(id) = item.on_click {
+            if let Some(target) = item.on_click.clone() {
                 let start = (left_w + x).min(usize::from(width)) as u16;
                 let end = (left_w + x + required).min(usize::from(width)) as u16;
-                click_ranges.push((start..end, id));
+                click_ranges.push((start..end, target));
             }
             spans.extend(item.text);
             if let Some(t) = say_right {
@@ -304,7 +304,7 @@ pub fn render_strip(
         slots: built
             .slots
             .into_iter()
-            .map(|(r, id)| (rect.x + r.start..rect.x + r.end, id))
+            .map(|(r, target)| (rect.x + r.start..rect.x + r.end, target))
             .collect(),
         filler_width: built.filler_width,
     }
@@ -538,7 +538,7 @@ mod tests {
 
     /// The pet's click range, when the strip showed it.
     fn pet_range(s: &StripLine) -> Option<Range<u16>> {
-        s.slots.iter().find(|(_, id)| *id == ids::PET_PET).map(|(r, _)| r.clone())
+        s.slots.iter().find(|(_, t)| t.action == ids::PET_PET).map(|(r, _)| r.clone())
     }
 
     fn pet_render(x: u16) -> PetRender {

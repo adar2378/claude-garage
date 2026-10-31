@@ -6,8 +6,11 @@
 //! slots later.
 
 use std::ops::Range;
+use std::sync::Arc;
 
+use ratatui::layout::Rect;
 use ratatui::text::Span;
+use serde_json::Value;
 
 use crate::actions::ActionId;
 use crate::state::salience::WorkspaceGroup;
@@ -38,6 +41,54 @@ impl SlotId {
     }
 }
 
+/// What a click on a slot item runs: the action and an optional JSON payload
+/// (p24 design.md Gap B). `plugin` names the contributing plugin, `None` for
+/// core items; it is what makes the click a `Widget` source (a plugin's
+/// item) instead of a plain `Mouse` one. Core providers pass
+/// `ClickTarget::from(ids::X)`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ClickTarget {
+    pub action: ActionId,
+    pub args: Option<Arc<Value>>,
+    pub plugin: Option<Arc<str>>,
+}
+
+impl ClickTarget {
+    pub fn new(action: ActionId) -> Self {
+        ClickTarget { action, args: None, plugin: None }
+    }
+
+    pub fn with_args(mut self, args: Value) -> Self {
+        self.args = Some(Arc::new(args));
+        self
+    }
+
+    pub fn from_plugin(mut self, plugin: &str) -> Self {
+        self.plugin = Some(Arc::from(plugin));
+        self
+    }
+}
+
+impl From<ActionId> for ClickTarget {
+    fn from(action: ActionId) -> Self {
+        ClickTarget::new(action)
+    }
+}
+
+/// One clickable screen region a renderer painted: where it is, what it
+/// runs, and whose it is. `session`/`workspace` are the item's own scope (the
+/// tile or rail row it sits on); `None` falls back to the focus, which is how
+/// a `strip.right` click on a session-scoped core action targets the focused
+/// session.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SlotClickRegion {
+    pub rect: Rect,
+    pub target: ClickTarget,
+    pub slot: SlotId,
+    pub session: Option<String>,
+    pub workspace: Option<String>,
+}
+
 /// Where a slot's renderer puts an item.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub enum Placement {
@@ -55,7 +106,7 @@ pub enum Placement {
 #[derive(Clone, Debug)]
 pub struct SlotItem {
     pub text: Vec<Span<'static>>,
-    pub on_click: Option<ActionId>,
+    pub on_click: Option<ClickTarget>,
     pub priority: i16,
     pub placement: Placement,
 }
@@ -138,7 +189,7 @@ impl SlotRegistry {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Placed {
     pub cols: Range<usize>,
-    pub on_click: Option<ActionId>,
+    pub on_click: Option<ClickTarget>,
 }
 
 /// The result of [`layout`]: the spans to draw and where each surviving item
@@ -152,14 +203,14 @@ pub struct Laid {
 impl Laid {
     /// Click ranges (`cols` shifted by `offset`) of the items that carry an
     /// action, clipped to `limit` columns.
-    pub fn clicks(&self, offset: usize, limit: usize) -> Vec<(Range<u16>, ActionId)> {
+    pub fn clicks(&self, offset: usize, limit: usize) -> Vec<(Range<u16>, ClickTarget)> {
         self.placed
             .iter()
             .filter_map(|p| {
-                let id = p.on_click?;
+                let target = p.on_click.clone()?;
                 let start = (offset + p.cols.start).min(limit);
                 let end = (offset + p.cols.end).min(limit);
-                (start < end).then_some((start as u16..end as u16, id))
+                (start < end).then_some((start as u16..end as u16, target))
             })
             .collect()
     }
@@ -188,7 +239,7 @@ pub fn layout(mut items: Vec<SlotItem>, max_width: Option<usize>) -> Laid {
         let width = item.width();
         laid.placed.push(Placed {
             cols: col..col + width,
-            on_click: item.on_click,
+            on_click: item.on_click.clone(),
         });
         col += width;
         laid.spans.extend(item.text);
@@ -225,7 +276,7 @@ mod tests {
 
     fn clickable(text: &str, priority: i16, on_click: ActionId) -> SlotItem {
         SlotItem {
-            on_click: Some(on_click),
+            on_click: Some(on_click.into()),
             ..item(text, priority)
         }
     }
@@ -246,9 +297,27 @@ mod tests {
         assert_eq!(joined(&laid.spans), "aabbbd");
         let cols: Vec<_> = laid.placed.iter().map(|p| p.cols.clone()).collect();
         assert_eq!(cols, vec![0..2, 2..5, 5..6]);
-        assert_eq!(laid.clicks(10, 100), vec![(12..15, ids::PET_PET)]);
-        assert_eq!(laid.clicks(10, 13), vec![(12..13, ids::PET_PET)], "clipped to the limit");
+        assert_eq!(laid.clicks(10, 100), vec![(12..15, ids::PET_PET.into())]);
+        assert_eq!(laid.clicks(10, 13), vec![(12..13, ids::PET_PET.into())], "clipped to the limit");
         assert!(laid.clicks(10, 12).is_empty(), "fully clipped away");
+    }
+
+    #[test]
+    fn a_click_target_carries_its_payload_and_plugin_through_layout() {
+        let target = ClickTarget::new(ActionId::intern("closer:close"))
+            .with_args(serde_json::json!({"keep": 2}))
+            .from_plugin("closer");
+        let laid = layout(
+            vec![
+                item("aa", 1),
+                SlotItem { on_click: Some(target.clone()), ..item("bb", 1) },
+            ],
+            None,
+        );
+        let clicks = laid.clicks(5, 100);
+        assert_eq!(clicks, vec![(7..9, target)]);
+        assert_eq!(clicks[0].1.args.as_deref(), Some(&serde_json::json!({"keep": 2})));
+        assert_eq!(clicks[0].1.plugin.as_deref(), Some("closer"));
     }
 
     #[test]
