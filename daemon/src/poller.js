@@ -2,7 +2,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { EventEmitter } from "node:events";
 import os from "node:os";
-import { listSessions, normalizeTitle } from "./tmux.js";
+import { listSessions, normalizeTitle, runTmux } from "./tmux.js";
 import { setStatus, getStatus, dropSession as dropStatus } from "./status.js";
 import { dropSession as dropStatuslineContext } from "./statusline.js";
 import { upsertSessionMeta } from "./registry.js";
@@ -54,7 +54,7 @@ async function getAgents() {
 // rejoined into it (same rationale as tmux.js's parsePaneLine).
 async function getPanePids() {
   try {
-    const { stdout } = await run("tmux", [
+    const { stdout } = await runTmux([
       "list-panes",
       "-a",
       "-F",

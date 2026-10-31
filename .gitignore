@@ -21,3 +21,6 @@ GAP.md
 # cargo workspace output
 /target
 wall/target/
+
+# contract test crate build output
+tests/contract/target/
