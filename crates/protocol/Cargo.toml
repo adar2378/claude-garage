@@ -1,6 +1,6 @@
 [package]
 name = "garage-protocol"
-version.workspace = true
+version = "1.0.0" # the wire contract, versioned on its own (not with the app)
 edition.workspace = true
 rust-version.workspace = true
 description = "Wire types and JSON schema for the claude-garage daemon and plugin HTTP API"

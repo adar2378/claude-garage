@@ -1,6 +1,6 @@
 [package]
 name = "garage-plugin-sdk"
-version.workspace = true
+version = "1.0.0" # the plugin SDK, versioned on its own (not with the app)
 edition.workspace = true
 rust-version.workspace = true
 description = "Helpers for claude-garage plugins: read the run context, call the daemon with the plugin token, push widgets and notices"

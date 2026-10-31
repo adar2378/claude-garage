@@ -1028,7 +1028,7 @@ dependencies = [
 
 [[package]]
 name = "garage-plugin-sdk"
-version = "0.6.2"
+version = "1.0.0"
 dependencies = [
  "crossterm",
  "garage-protocol",
@@ -1059,7 +1059,7 @@ dependencies = [
 
 [[package]]
 name = "garage-protocol"
-version = "0.6.2"
+version = "1.0.0"
 dependencies = [
  "getrandom 0.4.3",
  "schemars",

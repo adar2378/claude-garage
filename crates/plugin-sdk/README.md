@@ -70,7 +70,7 @@ Enable the `testing` feature in `[dev-dependencies]`:
 
 ```toml
 [dev-dependencies]
-garage-plugin-sdk = { version = "0.6", features = ["testing"] }
+garage-plugin-sdk = { version = "1", features = ["testing"] }
 ```
 
 ```ignore
