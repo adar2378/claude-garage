@@ -198,6 +198,26 @@ impl TileClient {
         })
     }
 
+    /// A client that only holds a screen: no PTY, no child, no tmux. Marked
+    /// detached so dropping it never shells out. For the dev-only frame
+    /// renderer (`runtime/tests/render_frames.rs`).
+    #[cfg(test)]
+    pub(crate) fn screen_only(session: &str, parser: vt100::Parser) -> TileClient {
+        let (rows, cols) = parser.screen().size();
+        TileClient {
+            session: session.to_owned(),
+            target: Target::tmux_default(),
+            parser: Arc::new(Mutex::new(parser)),
+            master: None,
+            writer: None,
+            child: None,
+            host: None,
+            child_pid: None,
+            pty_size: (cols, rows),
+            detached: true,
+        }
+    }
+
     pub fn session(&self) -> &str {
         &self.session
     }
