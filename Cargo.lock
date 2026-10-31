@@ -666,6 +666,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "garage-host"
+version = "0.6.2"
+dependencies = [
+ "getrandom 0.3.4",
+ "portable-pty",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "vt100",
+]
+
+[[package]]
 name = "garage-protocol"
 version = "0.6.2"
 dependencies = [
