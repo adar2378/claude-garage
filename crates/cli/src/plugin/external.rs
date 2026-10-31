@@ -30,6 +30,15 @@ pub struct Route {
     pub needs_daemon: bool,
 }
 
+/// The `claude-garage` settings a CLI plugin's own `claude-garage` child needs.
+const CONFIG_ENV: &[&str] = &[
+    "GARAGE_PORT",
+    "GARAGE_DIR",
+    "GARAGE_TMUX_SOCKET",
+    "GARAGE_TMUX_CONTROL",
+    "GARAGE_BACKEND",
+];
+
 /// Who handles `argv` (the words after `claude-garage`)?
 pub fn route(all: &[Loaded], argv: &[String]) -> Option<Route> {
     let first = argv.first()?;
@@ -100,7 +109,16 @@ pub fn prepare(
     };
     let mut full = argv::substitute(&route.command, &vars);
     full.extend(route.args.iter().cloned());
-    let mut env = base_env(parent_env);
+    let parent: Vec<(String, String)> = parent_env.collect();
+    let mut env = base_env(parent.iter().cloned());
+    // A CLI plugin may start `claude-garage` itself (`GARAGE_BIN`): it must
+    // find the same daemon and state this command found. These are
+    // settings, not secrets.
+    env.extend(
+        parent
+            .into_iter()
+            .filter(|(k, _)| CONFIG_ENV.contains(&k.as_str())),
+    );
     let mut set = |k: &str, v: String| env.push((k.to_owned(), v));
     set("GARAGE_API", format!("http://127.0.0.1:{port}"));
     set("GARAGE_API_VERSION", "1".into());
@@ -243,7 +261,11 @@ mod tests {
 
         let r = route(&all, &argv(&["~/dev/app", "--no-open"])).unwrap();
         assert!((r.plugin_id.as_str(), r.fallback) == ("cli-extras", true));
-        assert_eq!(r.args, argv(&["~/dev/app", "--no-open"]), "the word is included");
+        assert_eq!(
+            r.args,
+            argv(&["~/dev/app", "--no-open"]),
+            "the word is included"
+        );
         assert!(r.command.ends_with(&argv(&["open"])));
         assert!(r.needs_daemon, "the folder command needs the daemon up");
 
@@ -334,6 +356,8 @@ mod tests {
             ("PATH", "/bin"),
             ("HOME", "/h"),
             ("AWS_SECRET", "no"),
+            ("GARAGE_PORT", "5151"),
+            ("GARAGE_DIR", "/custom/garage"),
             ("GARAGE_TOKEN", "no"),
         ]
         .map(|(k, v)| (k.to_owned(), v.to_owned()));
@@ -354,6 +378,11 @@ mod tests {
         let get = |k: &str| env.iter().find(|(n, _)| n == k).map(|(_, v)| v.clone());
         assert_eq!(get("PATH").as_deref(), Some("/bin"));
         assert_eq!(get("AWS_SECRET"), None);
+        assert_eq!(
+            (get("GARAGE_PORT").as_deref(), get("GARAGE_DIR").as_deref()),
+            (Some("5151"), Some("/custom/garage")),
+            "a plugin's own claude-garage child finds the same daemon"
+        );
         assert_eq!(get("GARAGE_TOKEN"), None);
         assert_eq!(get("GARAGE_API").as_deref(), Some("http://127.0.0.1:4747"));
         assert_eq!(get("GARAGE_TRIGGER").as_deref(), Some("cli"));
