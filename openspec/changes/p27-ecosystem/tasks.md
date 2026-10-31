@@ -26,6 +26,13 @@ Rough; refined when the phase starts.
 - [ ] 4.1 `claude-garage plugin search` over the `claude-garage-plugin` topic
 - [ ] 4.2 Docs: concepts, manifest reference, slots and actions, permissions, examples
 
+## 4b. Example plugin: OpenSpec progress
+
+- [ ] 4b.1 `openspec-progress` plugin, built only with the public SDK and `plugin new` (proves the authoring path end to end)
+- [ ] 4b.2 Reads `openspec/changes/*/tasks.md` in the focused workspace's folder and counts `- [x]` vs `- [ ]` per change; watches the files and updates live
+- [ ] 4b.3 Shows a small per-workspace progress widget (rail header slot) and an overlay listing each active change with its done/total and percentage
+- [ ] 4b.4 Published as a separate repo with the discovery topic, as the reference plugin in the docs
+
 ## 5. Verification
 
 - [ ] 5.1 A plugin created with `plugin new`, developed with `plugin dev`, published with the topic, found with `plugin search`, installed on a second machine
