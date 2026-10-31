@@ -385,8 +385,9 @@ fn update_one(cx: &mut Cx, id: &str, src: &GithubSource, git_ref: Option<&str>, 
     let old_surface = old.as_ref().map(|o| Surface::of(o, Some(&src.repo)));
     let needs = old_surface.as_ref().is_none_or(|o| o.needs_consent(&new_surface));
     let from = old.as_ref().map(|o| o.version.clone()).unwrap_or_else(|| "?".into());
+    // Even a code-only update must not take a command name another plugin holds.
+    refuse_cli_conflict(&cx.paths, &m)?;
     if needs {
-        refuse_cli_conflict(&cx.paths, &m)?;
         let diff = old_surface.as_ref().map(|o| Diff::between(o, &new_surface));
         let plan = release_plan(&m, Some(&src.repo))?;
         let text = render(&PreviewInput {
@@ -707,6 +708,28 @@ mod tests {
         assert_eq!(std::fs::read_to_string(r.paths().installed("upd").join("go.sh")).unwrap(), "v2");
         assert_eq!(std::fs::read_to_string(r.paths().data("upd").join("state.json")).unwrap(), "keep");
         r.no_leftovers();
+    }
+
+    #[test]
+    fn a_no_prompt_update_still_refuses_a_cli_name_another_plugin_now_holds() {
+        let r = Rig::new();
+        let with_cli = |v: &str| toml("upd", &format!("[[cli]]\nname = \"go\"\ncommand = [\"x\"]\n")).replace("1.0.0", v);
+        let dir = repo::make(r.remote.path(), "o/up", &[("garage-plugin.toml", &with_cli("1.0.0"))]);
+        // The rival is registered first (linked, approved), as if added while upd was unchanged.
+        let rival = r.garage.path().join("rival-src");
+        std::fs::create_dir_all(&rival).unwrap();
+        std::fs::write(rival.join("garage-plugin.toml"), toml("rival", "[[cli]]\nname = \"go\"\ncommand = [\"y\"]\n")).unwrap();
+        r.install(&mut FakeUi::new(true, &[true]), "o/up", Opts::default()).unwrap();
+        DirectAdmin { paths: r.paths() }
+            .register(&Registration { id: "rival".into(), source: Source::Link { path: rival.to_string_lossy().into_owned() }, granted_permissions: vec![], manifest_sha256: None, installed_at: None })
+            .unwrap();
+        repo::write(&dir, &[("garage-plugin.toml", &with_cli("1.1.0"))]);
+        repo::commit(&dir, "v2");
+        let mut ui = FakeUi::new(false, &[]);
+        let out = r.run(&mut ui, |cx| update(cx, Some("upd"), &Opts::default())).unwrap();
+        assert!(matches!(&out[0], Outcome::Failed { error, .. } if error.contains("\"go\"")), "{out:?}");
+        assert!(ui.asked.is_empty());
+        assert!(matches!(&r.entry("upd").unwrap().source, Source::Github { commit: Some(_), .. }));
     }
 
     #[test]

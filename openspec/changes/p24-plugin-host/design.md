@@ -169,7 +169,7 @@ checksums = "SHA256SUMS"             # asset holding "<sha256>  <asset>" lines; 
 # commands reference it as {bin}
 ```
 
-Argv substitution (done on array elements, never through a shell): `{plugin_dir}`, `{bin}`, `{state_dir}`, `{platform}` (`macos-aarch64`). Anything else with braces is left alone. A command whose first element is relative and has no slash is looked up on `PATH`; one starting with `./` or `{plugin_dir}` is looked up in the plugin directory. Plugins that want a shell write `["sh", "-c", "..."]` and own the risk (the install preview prints such commands in full).
+Argv substitution (done on array elements, never through a shell): `{plugin_dir}`, `{bin}`, `{state_dir}`, `{platform}` (`macos-aarch64`). Anything else with braces is left alone. A command whose first element is relative and has no slash is looked up on `PATH`; one starting with `./` or `{plugin_dir}` is looked up in the plugin directory. Plugins that want a shell write `["sh", "-c", "..."]` and own the risk (the install preview prints such commands in full). In `[[build]]` commands (run at install and update, with the same cleared environment as plugin commands) `{plugin_dir}` is the staging folder, which is moved to its final place afterwards: a build must not record that path in its output; use paths relative to the plugin folder.
 
 Validation (all done before anything runs, errors name the field path, for example `actions[1].command: missing`):
 - types and unknown keys via serde `deny_unknown_fields`;

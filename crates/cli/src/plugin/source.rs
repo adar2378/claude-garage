@@ -101,6 +101,10 @@ fn git_command(args: &[&str], cwd: Option<&Path>) -> Command {
     for c in HARDENING {
         cmd.args(["-c", c]);
     }
+    // Tests clone from local fixture repositories; the shipped binary never does.
+    if cfg!(test) {
+        cmd.args(["-c", "protocol.file.allow=always"]);
+    }
     cmd.args(args)
         .env("GIT_TERMINAL_PROMPT", "0")
         .env("GIT_LFS_SKIP_SMUDGE", "1")

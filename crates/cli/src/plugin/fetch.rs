@@ -90,16 +90,23 @@ pub fn release_plan(m: &Manifest, install_repo: Option<&str>) -> Result<Option<R
 }
 
 /// Every release URL the manifest could ever download (all platforms), for
-/// the "did the URLs change" comparison.
+/// the "did the URLs change" comparison. The tag stays a template (`v{version}`)
+/// so that a plain version bump is not a URL change; the repo, the template
+/// and the asset names are.
 pub fn all_release_urls(m: &Manifest, install_repo: Option<&str>) -> Vec<String> {
     let Some(rel) = &m.release else { return vec![] };
+    let tag = rel.tag.as_deref().unwrap_or("v{version}");
     let mut urls = Vec::new();
-    for platform in rel.assets.keys() {
-        if let Ok(Some(p)) = release_plan_for(m, install_repo, platform) {
-            urls.push(p.asset_url);
-            urls.push(p.checksums_url);
-        } else {
-            urls.push(format!("invalid release for {platform}"));
+    for (platform, asset) in &rel.assets {
+        let repo = rel.repo.as_deref().or(install_repo);
+        let ok = repo.is_some_and(repo_ok) && asset_ok(&tag.replace("{version}", "0")) && asset_ok(asset) && asset_ok(&rel.checksums);
+        match repo {
+            Some(repo) if ok => {
+                let base = format!("{}/{repo}/releases/download/{tag}", super::source::GITHUB);
+                urls.push(format!("{base}/{asset}"));
+                urls.push(format!("{base}/{}", rel.checksums));
+            }
+            _ => urls.push(format!("invalid release for {platform}")),
         }
     }
     urls.sort();
@@ -272,6 +279,10 @@ mod tests {
         assert!(release_plan_for(&other, None, "macos-aarch64").is_ok(), "own repo declared");
         assert!(release_plan_for(&manifest("[release]\nchecksums = \"S\"\n[release.assets]\nmacos-aarch64 = \"a\"\n"), None, "macos-aarch64").is_err());
         assert_eq!(all_release_urls(&m, Some("o/r")).len(), 6, "five assets and one shared checksums file");
+        let mut bumped = m.clone();
+        bumped.version = "9.9.9".into();
+        assert_eq!(all_release_urls(&m, Some("o/r")), all_release_urls(&bumped, Some("o/r")), "the tag is a template; a version bump is not a URL change");
+        assert!(all_release_urls(&m, Some("o/r")).iter().any(|u| u == "https://github.com/o/r/releases/download/v{version}/demo-mac"));
     }
 
     #[test]
