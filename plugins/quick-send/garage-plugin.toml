@@ -32,7 +32,7 @@ default_key = "s"
 
 [[actions]]
 id          = "send-all"
-title       = "Send a line to every session of this project"
+title       = "Send a line to the whole project"
 contexts    = ["workspace"]
 pane        = "send-all"
 default_key = "S"
