@@ -135,10 +135,14 @@ pub fn prepare(
     if let Ok(t) = std::fs::read_to_string(paths.token(&route.plugin_id)) {
         set("GARAGE_PLUGIN_TOKEN", t.trim().to_owned());
     }
-    // Lets a CLI plugin hand over to the wall (`claude-garage` itself).
-    if let Ok(exe) = std::env::current_exe() {
-        set("GARAGE_BIN", exe.to_string_lossy().into_owned());
-    }
+    // How a CLI plugin asks for the wall: it writes `{"open_wall": true}`
+    // here and exits 0; the launcher then opens the wall in its own
+    // environment. The plugin never starts the wall and nothing of this run's
+    // environment (token, context) reaches it.
+    set(
+        "GARAGE_HANDOVER",
+        handover_path(&state_dir).to_string_lossy().into_owned(),
+    );
     set("GARAGE_TRIGGER", "cli".into());
     set(
         "GARAGE_CONTEXT",
@@ -147,11 +151,44 @@ pub fn prepare(
     (full, env)
 }
 
-/// Run the plugin with the terminal's stdio and return its exit code.
-pub fn run(paths: &Paths, port: u16, route: &Route, argv: &[String]) -> i32 {
+/// Where a run of this process leaves its hand-over request.
+fn handover_path(state_dir: &Path) -> PathBuf {
+    state_dir.join(format!("handover-{}.json", std::process::id()))
+}
+
+/// Did the plugin ask for the wall? Reads and removes the hand-over file; only
+/// `{"open_wall": true}` counts, anything else (or no file) is no.
+fn take_handover(path: &Path) -> bool {
+    let asked = std::fs::read_to_string(path)
+        .ok()
+        .and_then(|t| serde_json::from_str::<Value>(&t).ok())
+        .is_some_and(|v| v.get("open_wall") == Some(&Value::Bool(true)));
+    let _ = std::fs::remove_file(path);
+    asked
+}
+
+/// How a CLI plugin run ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Ran {
+    pub code: i32,
+    /// The plugin finished (exit 0) and asked for the wall.
+    pub open_wall: bool,
+}
+
+/// Run the plugin with the terminal's stdio.
+pub fn run(paths: &Paths, port: u16, route: &Route, argv: &[String]) -> Ran {
     let cwd = std::env::current_dir().unwrap_or_default();
     let (full, env) = prepare(paths, port, route, argv, &cwd, std::env::vars());
-    let _ = std::fs::create_dir_all(paths.data(&route.plugin_id));
+    let state_dir = paths.data(&route.plugin_id);
+    let _ = std::fs::create_dir_all(&state_dir);
+    let handover = handover_path(&state_dir);
+    let _ = std::fs::remove_file(&handover);
+    let code = run_command(route, &full, env, &cwd);
+    let open_wall = take_handover(&handover) && code == 0;
+    Ran { code, open_wall }
+}
+
+fn run_command(route: &Route, full: &[String], env: Vec<(String, String)>, cwd: &Path) -> i32 {
     let Some((program, args)) = full.split_first() else {
         eprintln!("plugin {}: empty command", route.plugin_id);
         return 2;
@@ -161,7 +198,7 @@ pub fn run(paths: &Paths, port: u16, route: &Route, argv: &[String]) -> i32 {
         .args(args)
         .env_clear()
         .envs(env)
-        .current_dir(&cwd)
+        .current_dir(cwd)
         .status();
     match status {
         Ok(s) => exit_code(s),
@@ -386,9 +423,15 @@ mod tests {
         assert_eq!(get("GARAGE_TOKEN"), None);
         assert_eq!(get("GARAGE_API").as_deref(), Some("http://127.0.0.1:4747"));
         assert_eq!(get("GARAGE_TRIGGER").as_deref(), Some("cli"));
+        assert_eq!(
+            get("GARAGE_BIN"),
+            None,
+            "a plugin never execs claude-garage"
+        );
         assert!(
-            get("GARAGE_BIN").is_some_and(|b| std::path::Path::new(&b).is_absolute()),
-            "a CLI plugin can hand over to claude-garage itself"
+            get("GARAGE_HANDOVER")
+                .is_some_and(|p| p.starts_with(&*paths.data("usage").to_string_lossy())),
+            "the hand-over file sits in the plugin's own state dir"
         );
         assert_eq!(get("GARAGE_PLUGIN_TOKEN").map(|t| t.len()), Some(64));
         assert!(
@@ -407,6 +450,69 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    fn a_plugin_asks_for_the_wall_through_the_hand_over_file_and_only_when_it_succeeded() {
+        let d = tempfile::tempdir().unwrap();
+        let paths = Paths::new(d.path());
+        // writes whatever $1 says into $GARAGE_HANDOVER, then exits with $2
+        let script = "\"sh\", \"-c\", \"printf '%s' \\\"$1\\\" > \\\"$GARAGE_HANDOVER\\\"; exit $2\", \"sh\"";
+        link_plugin(&paths, d.path(), "runner", &cli("go", script, false), true);
+        let all = load_all(&paths).unwrap();
+        let ran = |body: &str, code: &str| {
+            let a = argv(&["go", body, code]);
+            let r = route(&all, &a).unwrap();
+            run(&paths, 4747, &r, &a)
+        };
+        assert_eq!(
+            ran(r#"{"open_wall": true}"#, "0"),
+            Ran {
+                code: 0,
+                open_wall: true
+            }
+        );
+        assert_eq!(
+            ran(r#"{"open_wall": true}"#, "3"),
+            Ran {
+                code: 3,
+                open_wall: false
+            },
+            "a failed run never opens the wall"
+        );
+        for junk in [
+            r#"{"open_wall": "yes"}"#,
+            r#"{"open_wall": false}"#,
+            "true",
+            "not json",
+        ] {
+            assert!(!ran(junk, "0").open_wall, "{junk}");
+        }
+        let a = argv(&["go", "", "0"]);
+        let r = route(&all, &a).unwrap();
+        assert!(
+            !run(&paths, 4747, &r, &a).open_wall,
+            "an empty file asks for nothing"
+        );
+        // a request left behind by an earlier run does not count for this one
+        link_plugin(
+            &paths,
+            d.path(),
+            "quiet",
+            &cli("quiet", "\"true\"", false),
+            true,
+        );
+        let all = load_all(&paths).unwrap();
+        let a = argv(&["quiet"]);
+        let r = route(&all, &a).unwrap();
+        std::fs::create_dir_all(paths.data("quiet")).unwrap();
+        std::fs::write(
+            handover_path(&paths.data("quiet")),
+            r#"{"open_wall": true}"#,
+        )
+        .unwrap();
+        assert!(!run(&paths, 4747, &r, &a).open_wall);
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn a_real_run_passes_the_exit_code_through_and_reports_a_missing_program() {
         let d = tempfile::tempdir().unwrap();
         let paths = Paths::new(d.path());
@@ -418,7 +524,8 @@ mod tests {
         link_plugin(&paths, d.path(), "runner", &cli("go", &script, false), true);
         let all = load_all(&paths).unwrap();
         let r = route(&all, &argv(&["go", "word"])).unwrap();
-        assert_eq!(run(&paths, 4747, &r, &argv(&["go", "word"])), 7);
+        let ran = run(&paths, 4747, &r, &argv(&["go", "word"]));
+        assert_eq!((ran.code, ran.open_wall), (7, false));
         assert_eq!(std::fs::read_to_string(&out).unwrap().trim(), "runner:word");
         link_plugin(
             &paths,
@@ -428,6 +535,6 @@ mod tests {
             true,
         );
         let r = route(&load_all(&paths).unwrap(), &argv(&["lost"])).unwrap();
-        assert_eq!(run(&paths, 4747, &r, &argv(&["lost"])), 127);
+        assert_eq!(run(&paths, 4747, &r, &argv(&["lost"])).code, 127);
     }
 }

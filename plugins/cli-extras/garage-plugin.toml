@@ -9,8 +9,11 @@ permissions = ["workspaces.read", "workspaces.write", "sessions.read", "sessions
 
 # `claude-garage ~/dev/app` and `claude-garage open ~/dev/app`: register the
 # folder as a project, start a session if it has none, then open the wall.
-# The fallback receives any unknown first word; a word that is not a folder
-# gets the usual "unrecognized subcommand" error.
+# The fallback receives an unknown first word only when it is an existing
+# folder (~, ~user, relative and absolute spellings): checked before any daemon
+# is started, so a mistyped command gets the usual "unrecognized subcommand"
+# error and starts nothing. The plugin does not start the wall: it asks the
+# launcher to (GARAGE_HANDOVER), and the launcher opens it after this exits.
 [[cli]]
 name         = "open"
 description  = "Open a folder as a project and start a session"

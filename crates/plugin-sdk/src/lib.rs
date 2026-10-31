@@ -7,6 +7,7 @@
 //! `GARAGE_API`, `GARAGE_PLUGIN_ID`, `GARAGE_PLUGIN_TOKEN`, and the context as
 //! `GARAGE_CONTEXT` (or `GARAGE_CONTEXT_FILE` when it is large) and on stdin.
 
+pub mod folder;
 pub mod fuzzy;
 #[cfg(feature = "testing")]
 pub mod testing;
@@ -15,6 +16,7 @@ pub mod tui;
 
 use std::fmt;
 use std::io::Read;
+use std::path::Path;
 
 pub use garage_protocol::widgets::{Click, Segment, Style, WidgetItem, WidgetPut};
 pub use serde_json::{Value, json};
@@ -128,6 +130,24 @@ impl Context {
     pub fn cwd(&self) -> Option<&str> {
         self.text("/focus/dir")
     }
+}
+
+/// Ask the launcher to open the wall once this command has finished: writes
+/// `{"open_wall": true}` to the file named by `GARAGE_HANDOVER` (set for
+/// `[[cli]]` runs). The plugin then exits 0; the launcher starts the wall in
+/// its own environment. `Ok(false)` when there is no launcher to ask (the
+/// command was run by hand), so the caller can tell the user what to type.
+pub fn request_wall() -> Result<bool, Error> {
+    match std::env::var_os("GARAGE_HANDOVER") {
+        Some(path) => request_wall_at(Path::new(&path)).map(|()| true),
+        None => Ok(false),
+    }
+}
+
+/// [`request_wall`] with the hand-over file given.
+pub fn request_wall_at(path: &Path) -> Result<(), Error> {
+    std::fs::write(path, r#"{"open_wall": true}"#)
+        .map_err(|e| Error::Context(format!("{}: {e}", path.display())))
 }
 
 /// `workspace` of a session id `garage/<workspace>/<label>`.
@@ -306,6 +326,19 @@ pub fn text_widget(text: &str) -> WidgetPut {
 mod tests {
     use super::*;
     use std::io::{BufRead, BufReader, Write};
+
+    #[test]
+    fn asking_for_the_wall_writes_exactly_the_documented_request() {
+        let d = tempfile::tempdir().unwrap();
+        let f = d.path().join("handover.json");
+        request_wall_at(&f).unwrap();
+        let v: Value = serde_json::from_str(&std::fs::read_to_string(&f).unwrap()).unwrap();
+        assert_eq!(v, json!({"open_wall": true}));
+        assert!(
+            request_wall_at(&d.path().join("no/such/dir/h.json")).is_err(),
+            "a write that fails is reported, not swallowed"
+        );
+    }
     use std::net::TcpListener;
 
     /// Serve one canned response; returns the base URL and the request head+body.

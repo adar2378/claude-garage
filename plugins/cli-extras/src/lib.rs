@@ -4,6 +4,7 @@
 
 use std::path::{Path, PathBuf};
 
+use garage_plugin_sdk::folder::canonical_text;
 use garage_plugin_sdk::{Api, Error, Value, json, workspace_has_sessions, workspace_of};
 
 /// What `open` was asked for.
@@ -28,20 +29,6 @@ pub fn parse_open(argv: &[String]) -> Option<OpenRequest> {
         fallback,
         no_open,
     })
-}
-
-/// `~`, relative paths against `cwd`, canonicalised; `None` when it is not an
-/// existing directory.
-pub fn resolve_dir(word: &str, cwd: &Path, home: Option<&Path>) -> Option<PathBuf> {
-    let path = if word == "~" {
-        home?.to_path_buf()
-    } else if let Some(rest) = word.strip_prefix("~/") {
-        home?.join(rest)
-    } else {
-        cwd.join(word)
-    };
-    let path = std::fs::canonicalize(path).ok()?;
-    path.is_dir().then_some(path)
 }
 
 /// The directory's basename as a workspace name: lowercase, every run of
@@ -72,13 +59,14 @@ pub fn choose_workspace(workspaces: &Value, base: &str, dir: &str) -> (String, b
             .find(|w| w.get("name").and_then(Value::as_str) == Some(name))
             .map(|w| w.get("dir").and_then(Value::as_str).unwrap_or(""))
     };
-    // the same folder under any name wins
-    if let Some(w) = workspaces
-        .as_array()
-        .into_iter()
-        .flatten()
-        .find(|w| w.get("dir").and_then(Value::as_str).map(trim_slash) == Some(trim_slash(dir)))
-        && let Some(name) = w.get("name").and_then(Value::as_str)
+    // the same folder under any name wins; both sides are compared by their
+    // real paths, so a symlinked or differently spelled registration matches
+    let want = canonical_text(dir);
+    if let Some(w) = workspaces.as_array().into_iter().flatten().find(|w| {
+        w.get("dir")
+            .and_then(Value::as_str)
+            .is_some_and(|d| canonical_text(d) == want)
+    }) && let Some(name) = w.get("name").and_then(Value::as_str)
     {
         return (name.to_owned(), true);
     }
@@ -93,14 +81,6 @@ pub fn choose_workspace(workspaces: &Value, base: &str, dir: &str) -> (String, b
         }
     }
     unreachable!("an unbounded range finds a free name")
-}
-
-fn trim_slash(s: &str) -> &str {
-    if s.len() > 1 {
-        s.trim_end_matches('/')
-    } else {
-        s
-    }
 }
 
 /// First free `claude-N` in the workspace (the wall's default label family).
@@ -146,7 +126,17 @@ impl Opened {
 /// Register `dir` as a project (if it is not one) and start a session in it
 /// (if it has none).
 pub fn open_folder(api: &Api, dir: &Path) -> Result<Opened, Error> {
-    let dir_s = dir.to_string_lossy().into_owned();
+    // `resolve_folder` already refused a path that is not UTF-8; this guards
+    // a caller that did not use it
+    let dir_s = dir
+        .to_str()
+        .ok_or_else(|| {
+            Error::Context(format!(
+                "{}: the path is not valid UTF-8 and cannot be stored",
+                dir.display()
+            ))
+        })?
+        .to_owned();
     let base = workspace_name(dir).ok_or_else(|| {
         Error::Context(format!(
             "{dir_s}: the folder name has no letters or digits to make a project name from"
@@ -336,41 +326,6 @@ mod tests {
     }
 
     #[test]
-    fn folders_resolve_from_tilde_relative_and_absolute_and_non_folders_do_not() {
-        let home = tempfile::tempdir().unwrap();
-        std::fs::create_dir_all(home.path().join("dev/app")).unwrap();
-        std::fs::write(home.path().join("dev/file.txt"), "x").unwrap();
-        let canon = |p: PathBuf| std::fs::canonicalize(p).unwrap();
-        let cwd = home.path().join("dev");
-        let h = Some(home.path());
-        assert_eq!(
-            resolve_dir("~/dev/app", &cwd, h),
-            Some(canon(home.path().join("dev/app")))
-        );
-        assert_eq!(
-            resolve_dir("app", &cwd, h),
-            Some(canon(home.path().join("dev/app")))
-        );
-        assert_eq!(
-            resolve_dir("./app/", &cwd, h),
-            Some(canon(home.path().join("dev/app")))
-        );
-        assert_eq!(
-            resolve_dir("~", &cwd, h),
-            Some(canon(home.path().to_path_buf()))
-        );
-        let abs = home.path().join("dev/app").to_string_lossy().into_owned();
-        assert!(resolve_dir(&abs, Path::new("/"), None).is_some());
-        assert_eq!(
-            resolve_dir("file.txt", &cwd, h),
-            None,
-            "a file is not a folder"
-        );
-        assert_eq!(resolve_dir("typo", &cwd, h), None);
-        assert_eq!(resolve_dir("~/dev", &cwd, None), None, "no HOME, no tilde");
-    }
-
-    #[test]
     fn names_are_lowercase_dashed_and_never_empty() {
         for (dir, want) in [
             ("/dev/MyApp", Some("myapp")),
@@ -402,6 +357,38 @@ mod tests {
             ("app-3".into(), false)
         );
         assert_eq!(choose_workspace(&json!([]), "x", "/x"), ("x".into(), false));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_same_folder_under_a_symlink_or_trailing_slash_is_the_same_project() {
+        let root = tempfile::tempdir().unwrap();
+        let real = root.path().join("real");
+        std::fs::create_dir(&real).unwrap();
+        let link = root.path().join("link");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+        let (real_s, link_s) = (
+            real.to_string_lossy().into_owned(),
+            link.to_string_lossy().into_owned(),
+        );
+        // registered through the link ...
+        let ws = json!([{"name": "app", "dir": link_s}]);
+        // ... opened by its real path, with or without a slash
+        assert_eq!(choose_workspace(&ws, "real", &real_s), ("app".into(), true));
+        assert_eq!(
+            choose_workspace(&ws, "real", &format!("{real_s}/")),
+            ("app".into(), true)
+        );
+        // and the other way round
+        let ws = json!([{"name": "app", "dir": format!("{real_s}/")}]);
+        assert_eq!(choose_workspace(&ws, "link", &link_s), ("app".into(), true));
+        // a folder that is somewhere else is not matched
+        let other = root.path().join("other");
+        std::fs::create_dir(&other).unwrap();
+        assert_eq!(
+            choose_workspace(&ws, "other", &other.to_string_lossy()),
+            ("other".into(), false)
+        );
     }
 
     #[test]

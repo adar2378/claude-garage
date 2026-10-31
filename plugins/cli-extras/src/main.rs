@@ -130,17 +130,24 @@ fn open() -> i32 {
         .or_else(|| std::env::current_dir().ok())
         .unwrap_or_default();
     let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
-    let Some(dir) = lib::resolve_dir(&req.word, &cwd, home.as_deref()) else {
-        if req.fallback {
-            // A fallback swallows every typo: give the usual clap error.
-            eprintln!(
-                "error: unrecognized subcommand '{}'\n\nUsage: claude-garage [COMMAND]\n\nFor more information, try '--help'.",
-                req.word
-            );
-            return 2;
+    let dir = match garage_plugin_sdk::folder::resolve_folder(&req.word, &cwd, home.as_deref()) {
+        Ok(d) => d,
+        Err(garage_plugin_sdk::folder::FolderError::NotADirectory) => {
+            if req.fallback {
+                // A fallback swallows every typo: give the usual clap error.
+                eprintln!(
+                    "error: unrecognized subcommand '{}'\n\nUsage: claude-garage [COMMAND]\n\nFor more information, try '--help'.",
+                    req.word
+                );
+                return 2;
+            }
+            eprintln!("not a directory: {}", req.word);
+            return 1;
         }
-        eprintln!("not a directory: {}", req.word);
-        return 1;
+        Err(e) => {
+            eprintln!("{}: {e}", req.word);
+            return 1;
+        }
     };
     let api = match api() {
         Ok(a) => a,
@@ -160,17 +167,17 @@ fn open() -> i32 {
     if req.no_open {
         return 0;
     }
-    match std::env::var_os("GARAGE_BIN") {
-        Some(bin) => std::process::Command::new(bin)
-            .status()
-            .map(|s| s.code().unwrap_or(1))
-            .unwrap_or_else(|e| {
-                eprintln!("cli-extras: cannot start claude-garage: {e}");
-                1
-            }),
-        None => {
+    // The launcher opens the wall once this command has exited: this plugin
+    // starts nothing itself.
+    match garage_plugin_sdk::request_wall() {
+        Ok(true) => 0,
+        Ok(false) => {
             println!("run `claude-garage` to open the wall");
             0
+        }
+        Err(e) => {
+            eprintln!("cli-extras: {e}");
+            1
         }
     }
 }

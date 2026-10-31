@@ -403,6 +403,7 @@ dependencies = [
  "garage-daemon",
  "garage-host",
  "garage-plugin",
+ "garage-plugin-sdk",
  "garage-protocol",
  "libc",
  "serde_json",
@@ -1022,7 +1023,9 @@ dependencies = [
  "crossterm",
  "garage-protocol",
  "serde_json",
+ "tempfile",
  "ureq",
+ "uzers",
 ]
 
 [[package]]
@@ -2915,6 +2918,16 @@ checksum = "23b082222b4f6619906941c17eb2297fff4c2fb96cb60164170522942a200bd8"
 dependencies = [
  "outref",
  "vsimd",
+]
+
+[[package]]
+name = "uzers"
+version = "0.12.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0b8275fb1afee25b4111d2dc8b5c505dbbc4afd0b990cb96deb2d88bff8be18d"
+dependencies = [
+ "libc",
+ "log",
 ]
 
 [[package]]
