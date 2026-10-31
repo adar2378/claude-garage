@@ -62,10 +62,11 @@ impl Picker {
         }
         let ctrl = k.modifiers.contains(KeyModifiers::CONTROL);
         match k.code {
-            KeyCode::Enter => match self.shown.get(self.sel) {
-                Some(&i) => return Outcome::Done(i),
-                None => {}
-            },
+            KeyCode::Enter => {
+                if let Some(&i) = self.shown.get(self.sel) {
+                    return Outcome::Done(i);
+                }
+            }
             KeyCode::Down | KeyCode::Tab => self.step(1),
             KeyCode::Up | KeyCode::BackTab => self.step(-1),
             KeyCode::Char('n') if ctrl => self.step(1),
@@ -111,7 +112,10 @@ impl Picker {
     /// scrolled to keep the selection visible. The first selected row starts
     /// with `> `.
     pub fn lines(&self, cols: usize, rows: usize) -> Vec<String> {
-        let mut out = vec![clip(&self.title, cols), clip(&format!("> {}", self.query), cols)];
+        let mut out = vec![
+            clip(&self.title, cols),
+            clip(&format!("> {}", self.query), cols),
+        ];
         let room = rows.saturating_sub(out.len()).max(1);
         if self.shown.is_empty() {
             out.push("  no matches".to_owned());
@@ -198,15 +202,20 @@ impl Prompt {
     /// line is one line).
     pub fn paste(&mut self, s: &str) {
         if self.stage == Stage::Typing {
-            self.text
-                .extend(s.chars().map(|c| if c == '\n' || c == '\r' { ' ' } else { c }));
+            self.text.extend(
+                s.chars()
+                    .map(|c| if c == '\n' || c == '\r' { ' ' } else { c }),
+            );
         }
     }
 
     pub fn lines(&self, cols: usize) -> Vec<String> {
         let status = match self.stage {
             Stage::Typing => "Enter to review, Esc to cancel".to_owned(),
-            Stage::Confirm => format!("{} - Enter again to confirm, Esc to cancel", self.confirm_text),
+            Stage::Confirm => format!(
+                "{} - Enter again to confirm, Esc to cancel",
+                self.confirm_text
+            ),
         };
         vec![
             clip(&self.title, cols),
@@ -338,9 +347,13 @@ mod tests {
     }
 
     fn items() -> Vec<String> {
-        ["garage/main  idle", "garage/fix-auth  working", "docs/main  idle"]
-            .map(String::from)
-            .to_vec()
+        [
+            "garage/main  idle",
+            "garage/fix-auth  working",
+            "docs/main  idle",
+        ]
+        .map(String::from)
+        .to_vec()
     }
 
     #[test]
@@ -420,7 +433,11 @@ mod tests {
         p.on_key(key(KeyCode::Enter));
         p.on_key(key(KeyCode::Backspace));
         assert!(!p.in_confirm());
-        assert_eq!(p.on_key(key(KeyCode::Enter)), Outcome::Continue, "needs review again");
+        assert_eq!(
+            p.on_key(key(KeyCode::Enter)),
+            Outcome::Continue,
+            "needs review again"
+        );
         assert_eq!(p.on_key(key(KeyCode::Enter)), Outcome::Done("r".into()));
     }
 

@@ -1,0 +1,51 @@
+#:schema https://raw.githubusercontent.com/adar2378/claude-garage/main/schemas/garage-plugin.schema.json
+id          = "closed-chats"
+name        = "Closed chats"
+version     = "0.1.0"
+api_version = 1
+platforms   = ["macos", "linux"]
+description = "Closed chats stay in the rail as grey rows; H lists the recent ones"
+permissions = ["ui.widgets", "ui.panes", "sessions.read", "workspaces.read", "core.actions"]
+
+# `sync` rebuilds the grey rows from the daemon's closed-session records. The
+# widgets live in memory, so it also runs when the daemon starts.
+[[events]]
+on      = "session.closed"
+command = ["{plugin_dir}/bin/closed-chats", "sync"]
+
+[[events]]
+on      = "session.created"
+command = ["{plugin_dir}/bin/closed-chats", "sync"]
+
+[[events]]
+on      = "session.forgotten"
+command = ["{plugin_dir}/bin/closed-chats", "sync"]
+
+[[events]]
+on      = "workspace.added"
+command = ["{plugin_dir}/bin/closed-chats", "sync"]
+
+[[events]]
+on      = "workspace.removed"
+command = ["{plugin_dir}/bin/closed-chats", "sync"]
+
+[[events]]
+on      = "daemon.started"
+command = ["{plugin_dir}/bin/closed-chats", "sync"]
+
+[[widgets]]
+id   = "rows"
+slot = "rail.extra_rows"
+
+[[panes]]
+id        = "recent"
+title     = "Recent chats"
+placement = "overlay"
+command   = ["{plugin_dir}/bin/closed-chats", "recent"]
+
+[[actions]]
+id          = "recent"
+title       = "Recent closed chats"
+contexts    = ["global"]
+pane        = "recent"
+default_key = "H"

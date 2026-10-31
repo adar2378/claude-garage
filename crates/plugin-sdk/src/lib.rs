@@ -16,7 +16,7 @@ pub mod tui;
 use std::fmt;
 use std::io::Read;
 
-pub use garage_protocol::widgets::{Segment, Style, WidgetItem, WidgetPut};
+pub use garage_protocol::widgets::{Click, Segment, Style, WidgetItem, WidgetPut};
 pub use serde_json::{Value, json};
 
 #[derive(Debug)]

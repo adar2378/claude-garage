@@ -1,0 +1,20 @@
+[package]
+name = "garage-plugin-closed-chats"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "claude-garage bundled plugin: closed chats stay in the rail, H lists recent ones"
+publish = false
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "closed-chats"
+path = "src/main.rs"
+
+[dependencies]
+garage-plugin-sdk = { path = "../../crates/plugin-sdk", features = ["tui"] }
+
+[dev-dependencies]
+garage-plugin-sdk = { path = "../../crates/plugin-sdk", features = ["tui", "testing"] }

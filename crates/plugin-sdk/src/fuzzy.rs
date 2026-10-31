@@ -76,7 +76,10 @@ mod tests {
             ["main-app", "garage/main", "domain-x"]
         );
         // shorter text wins when the match is otherwise equal
-        assert_eq!(order("app", &["app-long-name", "app"]), ["app", "app-long-name"]);
+        assert_eq!(
+            order("app", &["app-long-name", "app"]),
+            ["app", "app-long-name"]
+        );
     }
 
     #[test]
