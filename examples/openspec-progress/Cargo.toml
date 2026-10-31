@@ -1,0 +1,27 @@
+[package]
+name = "garage-plugin-openspec-progress"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+description = "claude-garage example plugin: OpenSpec task progress per workspace"
+publish = false
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "openspec-progress"
+path = "src/main.rs"
+
+# Inside the claude-garage repository the SDK is a path dependency. In your own
+# repository use the tagged release instead (the SDK is not on crates.io):
+#   garage-plugin-sdk = { git = "https://github.com/adar2378/claude-garage", tag = "v0.6.2", features = ["tui"] }
+[dependencies]
+garage-plugin-sdk = { path = "../../crates/plugin-sdk", features = ["tui"] }
+
+[dev-dependencies]
+garage-plugin-sdk = { path = "../../crates/plugin-sdk", features = ["tui", "testing"] }
+tempfile = "3"
+
+# Not part of the garage workspace: this folder builds on its own.
+[workspace]
