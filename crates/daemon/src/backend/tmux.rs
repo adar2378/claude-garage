@@ -168,6 +168,14 @@ impl TmuxBackend {
     }
 }
 
+/// tmux's message for "there is no server (so no sessions)", across versions:
+/// `no server running on <socket>`, `error connecting to <socket> (No such
+/// file or directory)`, and `no sessions`.
+fn is_no_server(message: &str) -> bool {
+    let m = message.to_ascii_lowercase();
+    m.contains("no server running") || m.contains("no sessions") || (m.contains("error connecting to") && m.contains("no such file"))
+}
+
 /// The JS `/xterm\*?[^\n]*extkeys/` test, line by line.
 fn has_extkeys_feature(shown: &str) -> bool {
     shown.lines().any(|l| l.find("xterm").is_some_and(|i| l[i + 5..].contains("extkeys")))
@@ -182,7 +190,9 @@ impl SessionBackend for TmuxBackend {
 
     async fn list(&self) -> Result<Vec<BackendSession>> {
         // tmux exits non-zero when no server runs: that means "no sessions".
-        let Ok(out) = self
+        // Any other failure (timeout, cannot run tmux, an unexpected error) is
+        // an `Err`: the poller must not read it as every session closing.
+        let out = match self
             .run_args(&[
                 "ls",
                 "-F",
@@ -190,8 +200,10 @@ impl SessionBackend for TmuxBackend {
                 "#{session_name}\t#{session_path}\t#{session_attached}\t#{session_created}",
             ])
             .await
-        else {
-            return Ok(Vec::new());
+        {
+            Ok(out) => out,
+            Err(e) if is_no_server(&e.to_string()) => return Ok(Vec::new()),
+            Err(e) => return Err(e),
         };
         Ok(out
             .lines()
@@ -418,6 +430,20 @@ mod tests {
         assert_eq!(session_id("ws", "one"), "garage/ws/one");
         assert_eq!(split_session_id("garage/ws/one"), ("ws".into(), "one".into()));
         assert!(is_valid_name("a-b-1") && !is_valid_name("A") && !is_valid_name("a b") && !is_valid_name(""));
+    }
+
+    #[test]
+    fn only_tmux_saying_there_is_no_server_counts_as_no_sessions() {
+        for gone in [
+            "tmux ls: no server running on /tmp/tmux-501/default",
+            "tmux ls: error connecting to /tmp/tmux-501/garage (No such file or directory)",
+            "tmux ls: no sessions",
+        ] {
+            assert!(is_no_server(gone), "{gone}");
+        }
+        for failed in ["tmux timed out after 5s", "cannot run tmux: No such file or directory", "tmux ls: protocol version mismatch", "tmux ls: error connecting to /s (Permission denied)"] {
+            assert!(!is_no_server(failed), "{failed}");
+        }
     }
 
     #[test]

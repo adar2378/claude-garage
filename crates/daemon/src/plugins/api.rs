@@ -2,6 +2,11 @@
 //! require the plugin's bearer token and check its declared permissions
 //! (soft: a mistake catcher, not a boundary). `POST /api/sessions/input`
 //! additionally REQUIRES a token, since it types into sessions.
+//!
+//! Routes only the TUI (or CLI) may call need the per-install UI token
+//! (`<GARAGE_DIR>/ui-token`, `Authorization: Bearer ...`): `plugins/reload`,
+//! `plugins/ui/slots`, and running another plugin's action. A plugin's own
+//! token may run that plugin's own actions and nothing else here.
 
 use std::time::Instant;
 
@@ -13,7 +18,7 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post, put};
 use axum::{Json, Router};
 use garage_plugin::manifest::Permission;
-use garage_protocol::widgets::{check_body_len, click_actions, validate_put, WidgetPut};
+use garage_protocol::widgets::{check_body_len, click_actions, limits, validate_put, validate_slot_geometry, WidgetPut};
 use serde_json::{json, Value};
 
 use super::{PluginState, RunError};
@@ -34,7 +39,8 @@ pub fn routes() -> Router<AppState> {
 }
 
 fn bearer(headers: &HeaderMap) -> Option<&str> {
-    headers.get(AUTHORIZATION)?.to_str().ok()?.strip_prefix("Bearer ").map(str::trim)
+    // An empty bearer is no credential at all.
+    headers.get(AUTHORIZATION)?.to_str().ok()?.strip_prefix("Bearer ").map(str::trim).filter(|t| !t.is_empty())
 }
 
 /// A request's plugin, checked for the permission. 401 for a missing or
@@ -65,11 +71,25 @@ fn authed_for(st: &AppState, headers: &HeaderMap, id: &str, perm: Permission) ->
     Ok(plugin)
 }
 
+/// The caller must present the UI token.
+fn require_ui(st: &AppState, headers: &HeaderMap) -> Result<(), Box<Response>> {
+    match bearer(headers) {
+        None => Err(Box::new(error_response(StatusCode::UNAUTHORIZED, "missing UI token (Authorization: Bearer <contents of GARAGE_DIR/ui-token>)"))),
+        Some(t) if st.plugins.is_ui_token(t) => Ok(()),
+        Some(_) => Err(Box::new(error_response(StatusCode::FORBIDDEN, "this route needs the UI token; a plugin token is not enough"))),
+    }
+}
+
 async fn features() -> Json<Value> {
     Json(garage_plugin::features::features_response(env!("CARGO_PKG_VERSION")))
 }
 
-async fn reload(State(st): State<AppState>) -> Response {
+async fn reload(State(st): State<AppState>, headers: HeaderMap) -> Response {
+    // Reload resets event-hook auto-disable, so a plugin must not be able to
+    // call it for itself.
+    if let Err(r) = require_ui(&st, &headers) {
+        return *r;
+    }
     match st.plugins.reload() {
         Ok(()) => Json(json!({"ok": true})).into_response(),
         Err(e) => error_response(StatusCode::CONFLICT, e),
@@ -79,15 +99,28 @@ async fn reload(State(st): State<AppState>) -> Response {
 /// The TUI reports the geometry of the slots plugins draw into (strip width
 /// and filler range, max item columns, rail width), so run contexts can
 /// carry it.
-async fn put_ui_slots(State(st): State<AppState>, body: Bytes) -> Response {
-    match parse_body(&body) {
-        Ok(v) if v.is_object() => {
-            st.plugins.set_ui_slots(v);
-            Json(json!({"ok": true})).into_response()
-        }
-        Ok(_) => error_response(StatusCode::BAD_REQUEST, "body must be an object of slot geometry"),
-        Err(r) => *r,
+async fn put_ui_slots(State(st): State<AppState>, headers: HeaderMap, body: Bytes) -> Response {
+    if let Err(r) = require_ui(&st, &headers) {
+        return *r;
     }
+    if let Err(wait) = st.plugins.acquire_slots(Instant::now()) {
+        let secs = wait.as_secs_f64().ceil().max(1.0) as u64;
+        let mut res = error_response(StatusCode::TOO_MANY_REQUESTS, "slot geometry updates are limited to 10 per second (burst 20)");
+        res.headers_mut().insert(RETRY_AFTER, secs.to_string().parse().expect("digits"));
+        return res;
+    }
+    if body.len() > limits::SLOTS_BODY_BYTES {
+        return error_response(StatusCode::PAYLOAD_TOO_LARGE, format!("body is {} bytes; limit is {}", body.len(), limits::SLOTS_BODY_BYTES));
+    }
+    let v = match parse_body(&body) {
+        Ok(v) => v,
+        Err(r) => return *r,
+    };
+    if let Err(e) = validate_slot_geometry(&v) {
+        return error_response(StatusCode::from_u16(e.status).unwrap_or(StatusCode::UNPROCESSABLE_ENTITY), e.message);
+    }
+    st.plugins.set_ui_slots(v);
+    Json(json!({"ok": true})).into_response()
 }
 
 async fn put_widget(
@@ -165,8 +198,25 @@ async fn delete_widget(State(st): State<AppState>, Path((id, widget)): Path<(Str
     Json(json!({"ok": true, "cleared": cleared, "rev": st.plugins.widgets().rev(&id)})).into_response()
 }
 
-/// Called by the TUI (not a plugin), so no token.
-async fn run_action(State(st): State<AppState>, Path((id, action)): Path<(String, String)>, body: Bytes) -> Response {
+/// Called by the TUI with the UI token, or by a plugin with its own token for
+/// its own actions only.
+async fn run_action(State(st): State<AppState>, Path((id, action)): Path<(String, String)>, headers: HeaderMap, body: Bytes) -> Response {
+    let Some(token) = bearer(&headers) else {
+        return error_response(StatusCode::UNAUTHORIZED, "missing token (the UI token, or this plugin's own token)");
+    };
+    if !st.plugins.is_ui_token(token) {
+        match st.plugins.authenticate(token) {
+            None => return error_response(StatusCode::UNAUTHORIZED, "invalid token"),
+            Some(p) if p.entry.id != id => {
+                return error_response(
+                    StatusCode::FORBIDDEN,
+                    format!("this token belongs to plugin {}; running {id}'s actions needs the UI token", p.entry.id),
+                );
+            }
+            Some(p) if !p.active() => return error_response(StatusCode::FORBIDDEN, format!("plugin {id} is disabled")),
+            Some(_) => {}
+        }
+    }
     let body = match parse_body(&body) {
         Ok(b) => b,
         Err(r) => return *r,

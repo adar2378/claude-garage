@@ -34,9 +34,9 @@ use tokio::task::JoinHandle;
 use crate::bus::{DaemonEvent, EventBus};
 use crate::config::Config;
 use context::{CtxRequest, PluginFacts, SessionInfo, SessionLookup};
-use layout::{ensure_token, Entry, Paths, PluginsFile, Source, MANIFEST_FILE};
+use layout::{create_private_dir, ensure_token, ensure_ui_token, write_private, Entry, Paths, PluginsFile, Source, MANIFEST_FILE};
 use runner::{PluginLog, ProcessRunner, RunOutcome, RunSpec, Runner, Running};
-use widgets::WidgetStore;
+use widgets::{Bucket, WidgetStore};
 
 pub use garage_plugin::argv::resolve_program;
 
@@ -49,6 +49,9 @@ pub const FAIL_LIMIT: u32 = 5;
 /// Above this the context goes to a file instead of the environment.
 pub const CONTEXT_ENV_MAX: usize = 32 * 1024;
 pub const LINK_POLL: Duration = Duration::from_secs(2);
+/// Event dispatches (context building plus queueing) running at once; past
+/// this an event is dropped with a log line rather than stalling the bus.
+pub const DISPATCH_INFLIGHT: usize = 256;
 
 /// One registry entry plus what loading it produced.
 #[derive(Clone)]
@@ -73,8 +76,11 @@ pub struct Good {
 }
 
 impl PluginState {
+    /// Enabled, approved, loaded and not refused. Approval is the recorded
+    /// `granted_permissions`: bundled plugins get it automatically at first
+    /// load, anything else only when `plugin link`/`install` writes it.
     pub fn active(&self) -> bool {
-        self.entry.enabled && self.good.is_some() && self.refused.is_none()
+        self.entry.enabled && self.entry.granted_permissions.is_some() && self.good.is_some() && self.refused.is_none()
     }
 
     pub fn manifest(&self) -> Option<&Arc<Manifest>> {
@@ -159,6 +165,12 @@ pub struct Inner {
     timers: Mutex<HashMap<String, Vec<JoinHandle<()>>>>,
     logs: Mutex<HashMap<String, Arc<PluginLog>>>,
     ui_slots: Mutex<Value>,
+    /// Rate limit of `PUT /api/plugins/ui/slots`.
+    slots_bucket: Mutex<Bucket>,
+    /// The per-install credential of the TUI and CLI; empty when it could not
+    /// be created (then nothing matches).
+    ui_token: String,
+    dispatch_permits: Arc<tokio::sync::Semaphore>,
     link_poller: Mutex<Option<JoinHandle<()>>>,
     run_seq: AtomicU64,
     timer_unit: Duration,
@@ -175,6 +187,10 @@ impl PluginHost {
     }
 
     pub fn with_runner(config: &Config, bus: EventBus, lookup: Arc<dyn SessionLookup>, runner: Arc<dyn Runner>) -> Self {
+        let ui_token = ensure_ui_token(&config.garage_dir).unwrap_or_else(|e| {
+            eprintln!("plugins: cannot create the UI token under {}: {e}; UI-only plugin routes are closed", config.garage_dir.display());
+            String::new()
+        });
         Self(Arc::new(Inner {
             paths: Paths::new(&config.garage_dir),
             port: config.port,
@@ -188,6 +204,9 @@ impl PluginHost {
             timers: Mutex::default(),
             logs: Mutex::default(),
             ui_slots: Mutex::new(json!({})),
+            slots_bucket: Mutex::new(Bucket::new(std::time::Instant::now())),
+            ui_token,
+            dispatch_permits: Arc::new(tokio::sync::Semaphore::new(DISPATCH_INFLIGHT)),
             link_poller: Mutex::new(None),
             run_seq: AtomicU64::new(1),
             timer_unit: Duration::from_secs(1),
@@ -230,19 +249,44 @@ impl PluginHost {
             loop {
                 let ev = match rx.recv().await {
                     Ok(ev) => ev,
-                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(missed)) => {
+                        host.note_lagged(missed);
+                        continue;
+                    }
                     Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
                 };
                 let Some((name, data)) = ev.plugin_event() else { continue };
+                // Context building looks sessions up (backend, git); that
+                // must not hold up the next bus event.
+                let Ok(permit) = host.0.dispatch_permits.clone().try_acquire_owned() else {
+                    eprintln!("plugins: {DISPATCH_INFLIGHT} event dispatches in flight; dropped {name}");
+                    continue;
+                };
                 let session = data.get("id").and_then(Value::as_str).map(str::to_owned);
                 let fallback = SessionInfo {
                     dir: data.get("dir").and_then(Value::as_str).map(str::to_owned),
                     status: data.get("last_status").and_then(Value::as_str).map(str::to_owned),
                     ..Default::default()
                 };
-                host.dispatch_event(name, data, session, fallback).await;
+                let host = host.clone();
+                tokio::spawn(async move {
+                    host.dispatch_event(name, data, session, fallback).await;
+                    drop(permit);
+                });
             }
         })
+    }
+
+    /// The host fell behind the bus and `missed` events are gone for good
+    /// (hooks cannot be replayed). Say so where an author will look: stderr
+    /// and every active plugin's log.
+    fn note_lagged(&self, missed: u64) {
+        eprintln!("plugins: event hooks fell behind the bus and missed {missed} events");
+        let ids: Vec<String> = self.0.state.lock().unwrap().plugins.iter().filter(|p| p.active()).map(|p| p.entry.id.clone()).collect();
+        for id in ids {
+            let log = self.0.log_for(&id);
+            tokio::spawn(async move { log.append("host", &format!("missed {missed} bus events (the host fell behind); hooks were not run for them")).await });
+        }
     }
 
     // ------------------------------------------------------------------
@@ -295,24 +339,42 @@ impl PluginHost {
 
     /// The plugin owning `token`, compared in constant time.
     pub fn authenticate(&self, token: &str) -> Option<PluginState> {
+        // A plugin that has no token (never loaded) has an empty one: an
+        // empty bearer must not match it.
+        if token.is_empty() {
+            return None;
+        }
         let state = self.0.state.lock().unwrap();
         let mut found = None;
         for p in &state.plugins {
-            if crate::security::token_matches(Some(token), &p.token) {
+            if !p.token.is_empty() && crate::security::token_matches(Some(token), &p.token) {
                 found = Some(p.clone());
             }
         }
         found
     }
 
+    /// Whether `token` is the per-install UI token (constant time).
+    pub fn is_ui_token(&self, token: &str) -> bool {
+        !self.0.ui_token.is_empty() && crate::security::token_matches(Some(token), &self.0.ui_token)
+    }
+
     /// Enable or disable via the registry file, then reload (the teardown
     /// sequence runs when a plugin stops being active).
     pub fn set_enabled(&self, id: &str, enabled: bool) -> Result<(), String> {
-        let mut file = PluginsFile::read(&self.0.paths)?;
-        let entry = file.plugins.iter_mut().find(|e| e.id == id).ok_or_else(|| format!("no plugin {id:?}"))?;
-        entry.enabled = enabled;
-        file.write(&self.0.paths).map_err(|e| e.to_string())?;
+        PluginsFile::update(&self.0.paths, |file| match file.plugins.iter_mut().find(|e| e.id == id) {
+            Some(entry) => {
+                entry.enabled = enabled;
+                (true, Ok(()))
+            }
+            None => (false, Err(format!("no plugin {id:?}"))),
+        })??;
         self.0.reload(false)
+    }
+
+    /// Rate limit one `PUT /api/plugins/ui/slots`.
+    pub fn acquire_slots(&self, now: std::time::Instant) -> Result<(), Duration> {
+        self.0.slots_bucket.lock().unwrap().take(now)
     }
 
     pub fn set_ui_slots(&self, slots: Value) {
@@ -446,7 +508,7 @@ impl Inner {
     // ---- loading ----
 
     fn reload(self: &Arc<Self>, explicit: bool) -> Result<(), String> {
-        let mut file = match PluginsFile::read(&self.paths) {
+        let file = match PluginsFile::read(&self.paths) {
             Ok(f) => f,
             Err(e) => {
                 self.state.lock().unwrap().load_error = Some(e.clone());
@@ -457,30 +519,73 @@ impl Inner {
             self.state.lock().unwrap().plugins.drain(..).map(|p| (p.entry.id.clone(), p)).collect();
         let mut notices: Vec<(String, String)> = Vec::new();
         let mut next: Vec<PluginState> = Vec::new();
-        let mut file_dirty = false;
-        for entry in file.plugins.iter_mut() {
+        // (id, granted permissions, manifest sha) to record under the lock.
+        let mut records: Vec<(String, Option<Vec<String>>, Option<String>)> = Vec::new();
+        for mut entry in file.plugins {
             let old = prev.get(&entry.id);
-            let (state, notice) = self.load_one(entry, old);
-            // Remember what was approved the first time a manifest loads.
+            let (mut state, notice) = self.load_one(&entry, old);
+            let (mut grant, mut sha) = (None, None);
             if let Some(good) = &state.good {
-                if entry.granted_permissions.is_none() {
-                    entry.granted_permissions = Some(good.manifest.permission_names());
-                    file_dirty = true;
+                // Approval is never automatic for code the user pointed us at:
+                // only first-party (bundled) plugins are granted at first
+                // load. A linked or GitHub plugin waits for `plugin link` or
+                // `plugin install`, which write the grant.
+                if entry.granted_permissions.is_none() && entry.is_first_party() {
+                    let names = good.manifest.permission_names();
+                    entry.granted_permissions = Some(names.clone());
+                    grant = Some(names);
                 }
-                if entry.manifest_sha256.as_deref() != Some(good.sha.as_str()) && state.problems.is_empty() {
+                if entry.granted_permissions.is_some()
+                    && entry.manifest_sha256.as_deref() != Some(good.sha.as_str())
+                    && state.problems.is_empty()
+                {
                     entry.manifest_sha256 = Some(good.sha.clone());
-                    file_dirty = true;
+                    sha = Some(good.sha.clone());
                 }
+                if entry.granted_permissions.is_none() {
+                    state.problems.push(format!(
+                        "plugin {} is not approved yet - run `claude-garage plugin link` (or install) to review and approve its permissions",
+                        entry.id
+                    ));
+                }
+            }
+            if grant.is_some() || sha.is_some() {
+                records.push((entry.id.clone(), grant.clone(), sha));
             }
             if let Some(n) = notice {
                 notices.push((entry.id.clone(), n));
             }
-            let mut state = state;
-            state.entry = entry.clone();
+            if grant.is_some() && state.token.is_empty() {
+                // Approved just now: the token the load step skipped.
+                match ensure_token(&self.paths, &entry.id) {
+                    Ok(t) => state.token = t,
+                    Err(e) => state.problems.push(format!("cannot create the plugin token: {e}")),
+                }
+            }
+            state.entry = entry;
             next.push(state);
         }
-        if file_dirty {
-            if let Err(e) = file.write(&self.paths) {
+        if !records.is_empty() {
+            // Re-read under the registry lock: a CLI may have written since
+            // our read, and its edit must survive.
+            let saved = PluginsFile::update(&self.paths, |f| {
+                let mut dirty = false;
+                for e in f.plugins.iter_mut() {
+                    let Some((_, grant, sha)) = records.iter().find(|(id, _, _)| *id == e.id) else { continue };
+                    if let (Some(g), None) = (grant, &e.granted_permissions) {
+                        e.granted_permissions = Some(g.clone());
+                        dirty = true;
+                    }
+                    if let Some(sha) = sha {
+                        if e.manifest_sha256.as_ref() != Some(sha) {
+                            e.manifest_sha256 = Some(sha.clone());
+                            dirty = true;
+                        }
+                    }
+                }
+                (dirty, ())
+            });
+            if let Err(e) = saved {
                 eprintln!("plugins: cannot record approved permissions: {e}");
             }
         }
@@ -488,7 +593,7 @@ impl Inner {
         let conflicts = {
             let candidates: Vec<(&Manifest, bool)> = next
                 .iter()
-                .filter(|p| p.entry.enabled)
+                .filter(|p| p.entry.enabled && p.entry.granted_permissions.is_some())
                 .filter_map(|p| p.manifest().map(|m| (m.as_ref(), p.entry.is_first_party())))
                 .collect();
             check_cli_conflicts(&candidates)
@@ -623,7 +728,9 @@ impl Inner {
     }
 
     fn finish_load(&self, mut state: PluginState, old: Option<&PluginState>) -> (PluginState, Option<String>) {
-        if state.good.is_some() {
+        // No token until the plugin is approved: an unapproved plugin cannot
+        // call the API at all.
+        if state.good.is_some() && state.entry.granted_permissions.is_some() {
             match ensure_token(&self.paths, &state.entry.id) {
                 Ok(t) => state.token = t,
                 Err(e) => state.problems.push(format!("cannot create the plugin token: {e}")),
@@ -842,7 +949,8 @@ impl Inner {
         } else {
             let dir = self.paths.tmp();
             let path = dir.join(format!("{plugin}-{}.json", job.run_id));
-            match std::fs::create_dir_all(&dir).and_then(|_| std::fs::write(&path, &ctx)) {
+            // The context names sessions and directories: owner-only.
+            match create_private_dir(&dir).and_then(|_| write_private(&path, &ctx)) {
                 Ok(()) => {
                     env.push(("GARAGE_CONTEXT_FILE".into(), path.to_string_lossy().into_owned()));
                     ctx_file = Some(path);

@@ -21,7 +21,7 @@ use crate::backend::tmux::{is_valid_name, normalize_title, session_id, split_ses
 use crate::backend::{BackendSession, PaneInfo, SessionBackend};
 use crate::error::error_response;
 use crate::git::resolve_branch;
-use crate::state::registry::MetaUpdate;
+use crate::state::registry::{MetaUpdate, SessionMeta};
 use crate::state::AppState;
 use crate::git::{create_worktree, current_branch, remove_worktree};
 
@@ -397,22 +397,38 @@ pub async fn restore(State(st): State<AppState>, body: Bytes) -> Response {
     }
 
     let metas = st.registry.list_session_metas().await;
-    let targets: Vec<_> = if all {
+    // (id, metadata, the dir a closed record remembers). Restore-all covers
+    // metadata only: a deliberately closed session is restored by naming it.
+    let targets: Vec<(String, SessionMeta, Option<String>)> = if all {
         let live: std::collections::HashSet<String> =
             st.backend.list().await.unwrap_or_default().into_iter().map(|s| s.id).collect();
-        metas.into_iter().filter(|(mid, _)| !live.contains(mid)).collect()
+        metas.into_iter().filter(|(mid, _)| !live.contains(mid)).map(|(i, m)| (i, m, None)).collect()
     } else {
         let id = id.unwrap_or_default();
         match metas.into_iter().find(|(mid, _)| mid == id) {
-            Some(m) => vec![m],
-            None => return error_response(StatusCode::NOT_FOUND, format!("no resume metadata for: {id}")),
+            Some((i, m)) => vec![(i, m, None)],
+            None => match st.registry.get_closed(id).await {
+                // No metadata (a deliberate close removed it) but a closed
+                // record: restore from the record.
+                Some(rec) => {
+                    let (workspace, label) = split_session_id(&rec.id);
+                    let meta = SessionMeta {
+                        claude_session_id: rec.claude_session_id.clone(),
+                        workspace: Some(workspace),
+                        label: Some(label),
+                        worktree: None,
+                    };
+                    vec![(rec.id.clone(), meta, Some(rec.dir.clone()))]
+                }
+                None => return error_response(StatusCode::NOT_FOUND, format!("no resume metadata for: {id}")),
+            },
         }
     };
 
     // Independent targets restore concurrently, so the died-on-resume
     // confirmation waits do not serialise restore-all.
     let spawner = BackendSpawn { backend: st.backend.as_ref(), kind: Kind::Create };
-    let results = join_all(targets.into_iter().map(|(mid, meta)| {
+    let results = join_all(targets.into_iter().map(|(mid, meta, closed_dir)| {
         let st = &st;
         let spawner = &spawner;
         async move {
@@ -425,12 +441,15 @@ pub async fn restore(State(st): State<AppState>, body: Bytes) -> Response {
 
             // A worktree session restores INTO its worktree. Metadata is kept
             // on every failure so a retry (or a manual finish) can recover.
-            let spawn_dir = meta
-                .worktree
-                .as_ref()
-                .map(|w| w.path.clone())
-                .or_else(|| registered.dir.clone())
-                .unwrap_or_default();
+            let mut spawn_dir = meta.worktree.as_ref().map(|w| w.path.clone());
+            if spawn_dir.is_none() {
+                if let Some(d) = closed_dir.as_deref() {
+                    if is_dir(d).await {
+                        spawn_dir = Some(d.to_owned());
+                    }
+                }
+            }
+            let spawn_dir = spawn_dir.or_else(|| registered.dir.clone()).unwrap_or_default();
             if !is_dir(&spawn_dir).await {
                 return failed(if meta.worktree.is_some() { "worktree missing" } else { "registered dir no longer exists" });
             }
@@ -439,6 +458,22 @@ pub async fn restore(State(st): State<AppState>, body: Bytes) -> Response {
             }
             let resumed =
                 spawn_claude_resumed(spawner, &st.claude, &mid, Path::new(&spawn_dir), meta.claude_session_id.as_deref()).await?;
+            if closed_dir.is_some() {
+                // Restored from a record: the session has metadata again, so
+                // a later restart or restore can resume it.
+                let _ = st
+                    .registry
+                    .upsert_session_meta(
+                        &mid,
+                        MetaUpdate {
+                            claude_session_id: Some(meta.claude_session_id.clone()),
+                            workspace: meta.workspace.clone(),
+                            label: meta.label.clone(),
+                            ..Default::default()
+                        },
+                    )
+                    .await;
+            }
             anyhow::Ok(Outcome::Done(json!({
                 "id": mid,
                 "workspace": meta.workspace,
@@ -527,7 +562,6 @@ pub async fn restart(State(st): State<AppState>, body: Bytes) -> Response {
     for t in &targets {
         st.closing.mark(t, crate::closing::CloseReason::DaemonRestart);
     }
-    let marked = targets.clone();
     let results = join_all(targets.into_iter().map(|target| {
         let st = &st;
         let spawner = &spawner;
@@ -566,14 +600,20 @@ pub async fn restart(State(st): State<AppState>, body: Bytes) -> Response {
     }))
     .await;
 
-    for t in &marked {
-        st.closing.clear(t);
-    }
+    // Markers of restarted sessions stay: the poller reads them when it sees
+    // the old process vanish (up to one tick after join_all returns) and the
+    // marker TTL forgets any that never get used. Only a target whose restart
+    // failed outright has nothing to explain, so its marker goes.
     let (mut restarted, mut failed) = (Vec::new(), Vec::new());
     for r in results {
         match r {
             Ok(v) => restarted.push(v),
-            Err(v) => failed.push(v),
+            Err(v) => {
+                if let Some(id) = v.get("id").and_then(Value::as_str) {
+                    st.closing.clear(id);
+                }
+                failed.push(v);
+            }
         }
     }
     // respawn-pane never changes the session-id set the poller diffs on, so
@@ -624,12 +664,36 @@ pub async fn remove(
     // Capture the meta BEFORE removing it: the worktree record rides the
     // response so the caller can drive worktrees/finish afterwards.
     let meta = st.registry.get_session_meta(&id).await;
+    // Where the session was, for the closed record; asked before the kill.
+    let live_dir = match st.backend.panes().await.ok().and_then(|p| p.get(&id).map(|p| p.cwd.clone())) {
+        Some(d) => Some(d),
+        None => st.backend.list().await.ok().and_then(|l| l.into_iter().find(|s| s.id == id).map(|s| s.dir)),
+    };
+    let last_status = status_name(st.status.get(&id));
     st.closing.mark(&id, crate::closing::CloseReason::User);
     if let Err(e) = st.backend.kill(&id).await {
         st.closing.clear(&id);
         return server_error(e);
     }
-    // A deliberate kill: nothing to offer restoring later.
+    // Keep the record BEFORE the metadata goes: the metadata is where the
+    // Claude session id lives, and the record is what lets a plugin offer
+    // (and restore) this session afterwards.
+    if let Some(dir) = live_dir {
+        let (workspace, _) = split_session_id(&id);
+        let rec = crate::state::registry::ClosedRecord {
+            id: id.clone(),
+            workspace,
+            branch: crate::git::resolve_branch(&dir).await,
+            dir,
+            closed_at: crate::state::status::now_ms(),
+            reason: crate::closing::CloseReason::User.as_str().to_owned(),
+            last_status: Some(last_status),
+            claude_session_id: meta.as_ref().and_then(|m| m.claude_session_id.clone()),
+        };
+        let _ = st.registry.record_closed(rec).await;
+    }
+    // A deliberate kill: no resume metadata (restore-all skips it); the
+    // closed record above is the way back.
     let _ = st.registry.remove_session_meta(&id).await;
     st.telemetry.context.drop_session(&id);
     st.telemetry.transcripts.clear_cache(&id);
@@ -1176,6 +1240,56 @@ mod tests {
         assert_eq!(c, StatusCode::NOT_FOUND);
     }
 
+    #[tokio::test]
+    async fn a_deliberate_close_keeps_a_record_with_the_claude_session_id_and_restore_works_from_it() {
+        let mut h = harness();
+        h.script("claude.sh", RESUMABLE);
+        let dir = h.workspace("ws").await;
+        h.live("garage/ws/a", &dir).await;
+        h.st.registry.upsert_session_meta("garage/ws/a", meta(Some("conv-42"), "ws", "a")).await.unwrap();
+        h.st.status.set("garage/ws/a", SessionStatus::Idle, None);
+
+        let (c, _) = h.call("DELETE", "/api/sessions/garage%2Fws%2Fa", None).await;
+        assert_eq!(c, StatusCode::OK);
+        assert!(h.st.registry.get_session_meta("garage/ws/a").await.is_none(), "the metadata is gone");
+        let rec = h.st.registry.get_closed("garage/ws/a").await.expect("the record was written before the metadata went");
+        assert_eq!(rec.claude_session_id.as_deref(), Some("conv-42"));
+        assert_eq!((rec.reason.as_str(), rec.dir.as_str(), rec.last_status.as_deref()), ("user", dir.as_str(), Some("idle")));
+
+        // the poller's close event (a tick later) must not wipe the id
+        let recorder = crate::closed::spawn(&h.st.bus, h.st.registry.clone(), h.st.backend.clone());
+        h.st.bus.publish(DaemonEvent::SessionClosed {
+            id: "garage/ws/a".into(),
+            dir: dir.clone(),
+            workspace: "ws".into(),
+            reason: crate::closing::CloseReason::User,
+            last_status: Some("idle".into()),
+        });
+        let first = rec.closed_at;
+        h.tmux
+            .wait_for_async(|| async { h.st.registry.get_closed("garage/ws/a").await.is_some_and(|r| r.closed_at > first) })
+            .await;
+        recorder.abort();
+        assert_eq!(h.st.registry.get_closed("garage/ws/a").await.unwrap().claude_session_id.as_deref(), Some("conv-42"));
+
+        // restore-all skips it (deliberately closed), naming it restores and resumes it
+        let (c, b) = h.call("POST", "/api/sessions/restore", Some(r#"{"all":true}"#)).await;
+        assert_eq!((c, b["restored"].as_array().unwrap().len()), (StatusCode::CONFLICT, 0));
+        let (c, b) = h.call("POST", "/api/sessions/restore", Some(r#"{"id":"garage/ws/a"}"#)).await;
+        assert_eq!(c, StatusCode::CREATED, "{b}");
+        assert_eq!(b["restored"][0]["resumed"], true);
+        assert_eq!(read_in(&dir, "args.txt", &h.tmux).await.trim(), "--resume conv-42");
+        assert!(h.st.registry.get_closed("garage/ws/a").await.is_none(), "a restored session drops its record");
+        assert_eq!(
+            h.st.registry.get_session_meta("garage/ws/a").await.and_then(|m| m.claude_session_id).as_deref(),
+            Some("conv-42"),
+            "and has resume metadata again"
+        );
+        // neither metadata nor record: still a 404
+        let (c, _) = h.call("POST", "/api/sessions/restore", Some(r#"{"id":"garage/ws/zzz"}"#)).await;
+        assert_eq!(c, StatusCode::NOT_FOUND);
+    }
+
     // --- POST /api/sessions/restore ---
 
     const RESUMABLE: &str = "echo \"$@\" > args.txt; exec sleep 60";
@@ -1318,6 +1432,13 @@ mod tests {
         assert!(!h.st.status.has("garage/ws/a"));
         assert!(h.st.telemetry.context.statusline_context("garage/ws/a").is_none());
         assert_eq!(events.try_recv().unwrap(), DaemonEvent::SessionsChanged);
+        // The old process vanishes under the poller a tick later: the marker
+        // must still be there to name the reason.
+        assert_eq!(
+            h.st.closing.take("garage/ws/a"),
+            Some(crate::closing::Intent::Reason(crate::closing::CloseReason::DaemonRestart)),
+            "the restart marker outlives the request"
+        );
     }
 
     #[tokio::test]

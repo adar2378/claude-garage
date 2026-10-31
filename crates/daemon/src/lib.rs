@@ -75,7 +75,7 @@ pub async fn run(config: Config) -> Result<()> {
     let poller = state.poller(agents).start();
     let notifier = os::notify::spawn(&state.bus, state.os.clone(), state.visibility.clone());
     let plugin_host = state.plugins.start();
-    let closed = closed::spawn(&state.bus, state.registry.clone());
+    let closed = closed::spawn(&state.bus, state.registry.clone(), state.backend.clone());
     let (poller_stop, notifier_stop) = (poller.abort_handle(), notifier.abort_handle());
     let lifecycle = state.lifecycle.shutdown.clone();
     let (begin_tx, begin_rx) = tokio::sync::oneshot::channel::<()>();

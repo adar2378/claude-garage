@@ -2,8 +2,11 @@
 //! declared widgets. In memory only. Replace-only (a PUT is the whole content),
 //! equal pushes are no-ops, changes are coalesced into at most one
 //! `WidgetsChanged` per plugin per 200 ms, and a `ttl_secs` widget expires.
+//! Expiry is one sweeper task per store, sleeping until the earliest
+//! deadline, so pushes (heartbeats included) never add tasks.
 
 use std::collections::{BTreeMap, HashMap};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -66,22 +69,38 @@ pub enum PutOutcome {
     Unchanged { rev: u64 },
 }
 
+#[derive(Default)]
+struct Sweeper {
+    /// Only read or written while holding the store's map lock, so "the
+    /// sweeper is exiting" and "a deadline was just added" cannot interleave.
+    running: AtomicBool,
+    wake: tokio::sync::Notify,
+    started: AtomicUsize,
+}
+
 #[derive(Clone)]
 pub struct WidgetStore {
     inner: Arc<Mutex<HashMap<String, PluginWidgets>>>,
     bus: EventBus,
     coalesce: Duration,
+    sweeper: Arc<Sweeper>,
 }
 
 impl WidgetStore {
     pub fn new(bus: EventBus) -> Self {
-        Self { inner: Arc::default(), bus, coalesce: COALESCE }
+        Self { inner: Arc::default(), bus, coalesce: COALESCE, sweeper: Arc::default() }
     }
 
     #[cfg(test)]
     pub fn with_coalesce(mut self, d: Duration) -> Self {
         self.coalesce = d;
         self
+    }
+
+    /// Sweeper tasks started so far (tests: pushes must not add tasks).
+    #[cfg(test)]
+    pub fn sweepers_started(&self) -> usize {
+        self.sweeper.started.load(Ordering::SeqCst)
     }
 
     /// Rate limit one PUT attempt of `plugin`.
@@ -109,22 +128,17 @@ impl WidgetStore {
             // A heartbeat re-push renews the ttl without an event.
             if let (Some(w), Some(d)) = (p.widgets.get_mut(widget), deadline) {
                 w.deadline = Some(d);
+                self.ensure_sweeper();
             }
-            let rev = p.rev;
-            drop(map);
-            if let (Some(deadline), true) = (deadline, ttl.is_some()) {
-                self.arm_expiry(plugin, widget, deadline);
-            }
-            return PutOutcome::Unchanged { rev };
+            return PutOutcome::Unchanged { rev: p.rev };
         }
         p.widgets.insert(widget.to_owned(), StoredWidget { slot, scopes: put.scopes, deadline });
         p.rev += 1;
         let rev = p.rev;
-        self.announce(&mut map, plugin);
-        drop(map);
-        if let Some(deadline) = deadline {
-            self.arm_expiry(plugin, widget, deadline);
+        if deadline.is_some() {
+            self.ensure_sweeper();
         }
+        self.announce(&mut map, plugin);
         PutOutcome::Changed { rev }
     }
 
@@ -197,21 +211,54 @@ impl WidgetStore {
         }
     }
 
-    fn arm_expiry(&self, plugin: &str, widget: &str, deadline: Instant) {
-        let (this, plugin, widget) = (self.clone(), plugin.to_owned(), widget.to_owned());
-        tokio::spawn(async move {
-            tokio::time::sleep_until(tokio::time::Instant::from_std(deadline)).await;
-            let mut map = this.inner.lock().unwrap();
-            let Some(p) = map.get_mut(&plugin) else { return };
-            // Only the push that armed this timer may expire it; a renewed or
-            // replaced widget has a later deadline.
-            if p.widgets.get(&widget).and_then(|w| w.deadline) != Some(deadline) {
-                return;
+    /// Make sure the sweeper runs and knows about a new or earlier deadline.
+    /// Called with the map lock held.
+    fn ensure_sweeper(&self) {
+        self.sweeper.wake.notify_one();
+        if self.sweeper.running.swap(true, Ordering::SeqCst) {
+            return;
+        }
+        let Ok(rt) = tokio::runtime::Handle::try_current() else {
+            self.sweeper.running.store(false, Ordering::SeqCst);
+            return;
+        };
+        self.sweeper.started.fetch_add(1, Ordering::SeqCst);
+        let this = self.clone();
+        rt.spawn(async move { this.sweep().await });
+    }
+
+    /// Sleep to the earliest deadline, expire what is due, repeat; exit when
+    /// no widget has a deadline (the next ttl push starts it again).
+    async fn sweep(self) {
+        loop {
+            let next = {
+                let map = self.inner.lock().unwrap();
+                let earliest = map.values().flat_map(|p| p.widgets.values()).filter_map(|w| w.deadline).min();
+                if earliest.is_none() {
+                    self.sweeper.running.store(false, Ordering::SeqCst);
+                }
+                earliest
+            };
+            let Some(next) = next else { return };
+            tokio::select! {
+                () = tokio::time::sleep_until(tokio::time::Instant::from_std(next)) => {}
+                () = self.sweeper.wake.notified() => continue,
             }
-            p.widgets.remove(&widget);
-            p.rev += 1;
-            this.announce(&mut map, &plugin);
-        });
+            let mut map = self.inner.lock().unwrap();
+            let now = Instant::now();
+            let mut touched = Vec::new();
+            for (plugin, p) in map.iter_mut() {
+                let before = p.widgets.len();
+                p.widgets.retain(|_, w| w.deadline.is_none_or(|d| d > now));
+                if p.widgets.len() != before {
+                    p.rev += 1;
+                    touched.push(plugin.clone());
+                }
+            }
+            for plugin in touched {
+                self.announce(&mut map, &plugin);
+            }
+        }
     }
 }
 
@@ -319,6 +366,44 @@ mod tests {
         assert_eq!(s.rev("p"), 2, "expiry is a change");
         let frames = drain(&mut rx);
         assert_eq!(frames.last(), Some(&("p".to_string(), 2)), "{frames:?}");
+    }
+
+    #[tokio::test]
+    async fn pushes_never_add_expiry_tasks_and_each_widget_still_expires_on_its_own_deadline() {
+        let (s, _rx) = store();
+        let s = s.with_coalesce(Duration::from_millis(10));
+        // 300 widgets pushed, then heartbeated several times each
+        for _round in 0..4 {
+            for i in 0..300 {
+                s.put(&format!("p{}", i % 5), &format!("w{i}"), WidgetSlot::StripRight, put("x", Some(if i == 0 { 1 } else { 3600 })));
+            }
+        }
+        assert_eq!(s.sweepers_started(), 1, "one sweeper, however many pushes");
+        let alive: usize = (0..5).map(|i| s.widgets(&format!("p{i}")).len()).sum();
+        assert_eq!(alive, 300);
+        let rt = tokio::runtime::Handle::current().metrics();
+        assert!(rt.num_alive_tasks() < 20, "tasks stay bounded: {}", rt.num_alive_tasks());
+        // the short-lived one goes at its own deadline, the rest stay
+        tokio::time::sleep(Duration::from_millis(1400)).await;
+        assert!(!s.widgets("p0").contains_key("w0"));
+        let alive: usize = (0..5).map(|i| s.widgets(&format!("p{i}")).len()).sum();
+        assert_eq!(alive, 299);
+        assert_eq!(s.sweepers_started(), 1);
+    }
+
+    #[tokio::test]
+    async fn the_sweeper_stops_when_nothing_has_a_deadline_and_restarts_for_the_next_ttl_push() {
+        let (s, _rx) = store();
+        s.put("p", "a", WidgetSlot::StripRight, put("x", Some(1)));
+        assert_eq!(s.sweepers_started(), 1);
+        tokio::time::sleep(Duration::from_millis(1300)).await;
+        assert!(s.widgets("p").is_empty());
+        s.put("p", "a", WidgetSlot::StripRight, put("y", Some(1)));
+        assert_eq!(s.sweepers_started(), 2);
+        // replacing with a no-ttl push cancels the deadline
+        s.put("p", "a", WidgetSlot::StripRight, put("z", None));
+        tokio::time::sleep(Duration::from_millis(1300)).await;
+        assert!(s.widgets("p").contains_key("a"));
     }
 
     #[tokio::test]

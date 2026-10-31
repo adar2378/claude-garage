@@ -35,9 +35,9 @@ fn created(id: &str) -> DaemonEvent {
 // ---------------------------------------------------------------------
 
 #[tokio::test]
-async fn loading_records_the_approval_makes_a_private_token_and_announces_once() {
+async fn a_first_party_plugin_is_approved_at_first_load_gets_a_private_token_and_announces_once() {
     let mut r = Rig::new();
-    r.install("usage-bar", &manifest("usage-bar", &["ui.widgets"], WIDGETS));
+    r.install_bundled("usage-bar", &manifest("usage-bar", &["ui.widgets"], WIDGETS));
     assert_eq!(
         r.st.plugins.infos(),
         [PluginInfo {
@@ -57,11 +57,85 @@ async fn loading_records_the_approval_makes_a_private_token_and_announces_once()
         assert_eq!(mode, 0o600);
     }
     let file = PluginsFile::read(&r.paths()).unwrap();
-    assert_eq!(file.plugins[0].granted_permissions.as_deref(), Some(&["ui.widgets".to_string()][..]));
+    assert_eq!(file.plugins[0].granted_permissions.as_deref(), Some(&["ui.widgets".to_string()][..]), "bundled code is approved by shipping");
     assert_eq!(file.plugins[0].manifest_sha256.as_ref().map(String::len), Some(64));
     assert_eq!(r.events().iter().filter(|e| **e == DaemonEvent::PluginsChanged).count(), 1);
     r.st.plugins.reload().unwrap();
     assert!(!r.events().contains(&DaemonEvent::PluginsChanged), "an unchanged reload is silent");
+}
+
+#[tokio::test]
+async fn a_linked_plugin_nobody_approved_stays_off_until_the_grant_is_written() {
+    let mut r = Rig::new();
+    let extra = format!("{WIDGETS}{}{}", action("go", "\"./x\""), hook("session.created"));
+    r.install_unapproved("dev", &manifest("dev", &["ui.widgets", "sessions.input"], &extra));
+    let before = std::fs::read_to_string(r.paths().registry_file()).unwrap();
+
+    let info = r.st.plugins.infos().remove(0);
+    assert!(!info.active && info.enabled, "{info:?}");
+    assert!(info.problems.iter().any(|p| p.contains("not approved") && p.contains("plugin link")), "{:?}", info.problems);
+    assert!(r.st.plugins.active("dev").is_none());
+    assert!(!r.paths().token("dev").exists(), "no token before approval");
+    let file = PluginsFile::read(&r.paths()).unwrap();
+    assert_eq!(file.plugins[0].granted_permissions, None, "loading never grants");
+    assert_eq!(file.plugins[0].manifest_sha256, None);
+    // however often it reloads, and even when the manifest is rewritten
+    r.st.plugins.reload().unwrap();
+    r.set_manifest("dev", &manifest("dev", &[], ""));
+    r.st.plugins.reload().unwrap();
+    assert_eq!(std::fs::read_to_string(r.paths().registry_file()).unwrap(), before, "the registry is untouched");
+    assert!(r.st.plugins.active("dev").is_none());
+
+    // nothing it declares does anything: no run, no hook
+    r.set_manifest("dev", &manifest("dev", &["ui.widgets"], &extra));
+    r.st.plugins.reload().unwrap();
+    let _loop = r.st.plugins.start();
+    r.events();
+    let (s, _, _) = r.call_ui("POST", "/api/plugins/dev/actions/go/run", None).await;
+    assert_eq!(s, StatusCode::CONFLICT);
+    r.st.bus.publish(created("garage/w/a"));
+    tokio::time::sleep(Duration::from_millis(150)).await;
+    assert_eq!(r.runner.count(), 0);
+    assert!(r.st.plugins.authenticate("").is_none(), "an empty bearer must not match a plugin without a token");
+
+    // `plugin link` records the user's approval; the plugin then loads
+    let paths = r.paths();
+    PluginsFile::update(&paths, |f| {
+        f.plugins[0].granted_permissions = Some(vec!["ui.widgets".into()]);
+        (true, ())
+    })
+    .unwrap();
+    r.st.plugins.reload().unwrap();
+    let info = r.st.plugins.infos().remove(0);
+    assert!(info.active && info.problems.is_empty(), "{info:?}");
+    assert_eq!(r.token("dev").len(), 64);
+    assert!(r.events().contains(&DaemonEvent::PluginsChanged));
+    assert_eq!(r.call_ui("POST", "/api/plugins/dev/actions/go/run", None).await.0, StatusCode::ACCEPTED);
+}
+
+#[tokio::test]
+async fn a_github_plugin_without_a_grant_is_just_as_inactive_and_bundled_ones_are_the_only_auto_approved() {
+    let r = Rig::new();
+    let paths = r.paths();
+    let dir = paths.installed("fromgh");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("garage-plugin.toml"), manifest("fromgh", &[], "")).unwrap();
+    PluginsFile::update(&paths, |f| {
+        f.plugins.push(super::layout::Entry::new(
+            "fromgh",
+            super::layout::Source::Github { repo: "o/r".into(), subdir: None, git_ref: None, commit: None },
+        ));
+        (true, ())
+    })
+    .unwrap();
+    r.bundle("shipped", &manifest("shipped", &["core.actions"], ""));
+    r.link_unapproved("devdir", &manifest("devdir", &[], ""));
+    r.st.plugins.reload().unwrap();
+    let active: HashMap<String, bool> = r.st.plugins.infos().into_iter().map(|i| (i.id, i.active)).collect();
+    assert_eq!(active, HashMap::from([("fromgh".to_string(), false), ("shipped".to_string(), true), ("devdir".to_string(), false)]));
+    let file = PluginsFile::read(&paths).unwrap();
+    let granted: HashMap<_, _> = file.plugins.iter().map(|e| (e.id.clone(), e.granted_permissions.is_some())).collect();
+    assert_eq!(granted, HashMap::from([("fromgh".to_string(), false), ("shipped".to_string(), true), ("devdir".to_string(), false)]));
 }
 
 #[tokio::test]
@@ -82,7 +156,7 @@ async fn a_corrupt_registry_is_an_error_that_keeps_what_was_loaded_and_is_never_
     assert_eq!(r.st.plugins.load_error().as_deref(), Some(err.as_str()));
     assert!(r.st.plugins.active("pp").is_some(), "the loaded set survives");
     assert_eq!(std::fs::read_to_string(r.paths().registry_file()).unwrap(), "{broken");
-    let (s, _, body) = r.call("POST", "/api/plugins/reload", None, None).await;
+    let (s, _, body) = r.call_ui("POST", "/api/plugins/reload", None).await;
     assert_eq!(s, StatusCode::CONFLICT);
     assert!(body["error"].as_str().unwrap().contains("corrupt"));
 }
@@ -174,14 +248,14 @@ async fn an_action_run_gets_substituted_argv_the_env_table_and_the_context() {
             &format!("{}timeout_secs = 7\n", action("refresh", "\"{plugin_dir}/bin/usage\", \"refresh\", \"{state_dir}\", \"$(x)\"")),
         ),
     );
-    let (s, _, _) = r.call("PUT", "/api/plugins/ui/slots", None, Some(r#"{"strip.right":{"width":38}}"#)).await;
+    let (s, _, _) = r.call_ui("PUT", "/api/plugins/ui/slots", Some(r#"{"strip.right":{"width":38}}"#)).await;
     assert_eq!(s, StatusCode::OK);
     let body = json!({
         "trigger": {"kind": "key", "key": "u", "args": {"window": "5h"}},
         "focus": {"workspace": "garage", "session": {"id": "garage/main", "dir": "/spoofed"}},
         "selection": {"session": "garage/main"}
     });
-    let (s, _, res) = r.call("POST", "/api/plugins/usage-bar/actions/refresh/run", None, Some(&body.to_string())).await;
+    let (s, _, res) = r.call_ui("POST", "/api/plugins/usage-bar/actions/refresh/run", Some(&body.to_string())).await;
     assert_eq!(s, StatusCode::ACCEPTED);
     assert!(res["run_id"].as_str().is_some_and(|id| id.parse::<u64>().is_ok()));
     wait_for(|| r.runner.count() == 1).await;
@@ -223,7 +297,7 @@ async fn a_context_over_32_kib_travels_in_a_file_that_is_removed_afterwards() {
     let r = Rig::new();
     r.install("big", &manifest("big", &[], &action("go", "\"./x\"")));
     let body = json!({"selection": {"view": "v".repeat(40_000)}});
-    r.call("POST", "/api/plugins/big/actions/go/run", None, Some(&body.to_string())).await;
+    r.call_ui("POST", "/api/plugins/big/actions/go/run", Some(&body.to_string())).await;
     wait_for(|| r.runner.count() == 1).await;
     let call = r.runner.call(0);
     assert!(call.env("GARAGE_CONTEXT").is_none(), "the env var is unset when the file is used");
@@ -231,6 +305,8 @@ async fn a_context_over_32_kib_travels_in_a_file_that_is_removed_afterwards() {
     let from_file: Value = serde_json::from_str(call.ctx_file.as_deref().expect("file existed during the run")).unwrap();
     assert_eq!(from_file, call.ctx());
     assert_eq!(from_file["selection"]["view"].as_str().unwrap().len(), 40_000);
+    #[cfg(unix)]
+    assert_eq!(call.ctx_file_mode, Some(0o600), "the context names sessions and paths: owner only");
     wait_for(|| !std::path::Path::new(&path).exists()).await;
 }
 
@@ -241,7 +317,7 @@ async fn failures_and_timeouts_publish_run_failed_and_unusable_targets_are_refus
     r.install("pl", &manifest("pl", &["ui.panes"], &extra));
     r.runner.outcomes.lock().unwrap().extend([RunOutcome::Failed(Some(3)), RunOutcome::TimedOut(Duration::from_secs(30))]);
     for _ in 0..2 {
-        assert_eq!(r.call("POST", "/api/plugins/pl/actions/go/run", None, None).await.0, StatusCode::ACCEPTED);
+        assert_eq!(r.call_ui("POST", "/api/plugins/pl/actions/go/run", None).await.0, StatusCode::ACCEPTED);
     }
     let mut reasons = vec![];
     for _ in 0..2 {
@@ -254,11 +330,11 @@ async fn failures_and_timeouts_publish_run_failed_and_unusable_targets_are_refus
     reasons.sort();
     assert_eq!(reasons, ["exited with code 3", "timed out after 30s"]);
 
-    assert_eq!(r.call("POST", "/api/plugins/pl/actions/nope/run", None, None).await.0, StatusCode::NOT_FOUND);
-    assert_eq!(r.call("POST", "/api/plugins/zz/actions/go/run", None, None).await.0, StatusCode::NOT_FOUND);
-    assert_eq!(r.call("POST", "/api/plugins/pl/actions/open/run", None, None).await.0, StatusCode::NOT_IMPLEMENTED);
+    assert_eq!(r.call_ui("POST", "/api/plugins/pl/actions/nope/run", None).await.0, StatusCode::NOT_FOUND);
+    assert_eq!(r.call_ui("POST", "/api/plugins/zz/actions/go/run", None).await.0, StatusCode::NOT_FOUND);
+    assert_eq!(r.call_ui("POST", "/api/plugins/pl/actions/open/run", None).await.0, StatusCode::NOT_IMPLEMENTED);
     r.st.plugins.set_enabled("pl", false).unwrap();
-    let (s, _, body) = r.call("POST", "/api/plugins/pl/actions/go/run", None, None).await;
+    let (s, _, body) = r.call_ui("POST", "/api/plugins/pl/actions/go/run", None).await;
     assert_eq!((s, body["error"].as_str().unwrap()), (StatusCode::CONFLICT, "plugin pl is disabled"));
 }
 
@@ -397,8 +473,19 @@ async fn the_stop_hook_becomes_a_session_turn_with_the_transcript_offset() {
     r.backend.set("garage/ws/a", "/proj", Some(1), "");
     r.install("turns", &manifest("turns", &[], &hook("session.turn")));
     let _loop = r.st.plugins.start();
-    let transcript = r.src.path().join("t.jsonl");
+    let transcript = r.st.telemetry.claude_home.join("projects").join("t.jsonl");
+    std::fs::create_dir_all(transcript.parent().unwrap()).unwrap();
     std::fs::write(&transcript, vec![b'x'; 123]).unwrap();
+    // a file outside Claude's home must never be stat'ed, nor reached through `..` or a symlink
+    let outside = r.src.path().join("secret.txt");
+    std::fs::write(&outside, vec![b'y'; 77]).unwrap();
+    let dotdot = r.st.telemetry.claude_home.join("projects").join("..").join("..").join(r.src.path().file_name().unwrap()).join("secret.txt");
+    #[cfg(unix)]
+    let link = {
+        let l = r.st.telemetry.claude_home.join("projects").join("link.jsonl");
+        std::os::unix::fs::symlink(&outside, &l).unwrap();
+        l
+    };
     let token = r.st.registry.get_hook_token().await.unwrap();
     let url = format!("/api/hooks/claude?token={token}");
 
@@ -416,10 +503,21 @@ async fn the_stop_hook_becomes_a_session_turn_with_the_transcript_offset() {
     wait_for(|| r.runner.count() == 2).await;
     assert_eq!(r.runner.call(1).ctx()["event"]["data"]["transcript_offset"], Value::Null);
 
+    let mut outside_paths = vec![outside.to_string_lossy().into_owned(), dotdot.to_string_lossy().into_owned(), "/etc/hosts".to_owned()];
+    #[cfg(unix)]
+    outside_paths.push(link.to_string_lossy().into_owned());
+    for (i, p) in outside_paths.iter().enumerate() {
+        let stop = json!({"hook_event_name": "Stop", "cwd": "/proj", "transcript_path": p});
+        r.call("POST", &url, None, Some(&stop.to_string())).await;
+        wait_for(|| r.runner.count() == 3 + i).await;
+        assert_eq!(r.runner.call(2 + i).ctx()["event"]["data"]["transcript_offset"], Value::Null, "{p} is outside Claude's home");
+    }
+    let total = 2 + outside_paths.len();
+
     let note = json!({"hook_event_name": "Notification", "cwd": "/proj", "message": "needs you"});
     r.call("POST", &url, None, Some(&note.to_string())).await;
     tokio::time::sleep(Duration::from_millis(150)).await;
-    assert_eq!(r.runner.count(), 2, "only Stop ends a turn");
+    assert_eq!(r.runner.count(), total, "only Stop ends a turn");
 }
 
 #[tokio::test]
@@ -478,7 +576,7 @@ async fn a_real_script_runs_through_the_route_with_context_env_and_token() {
     );
     r.st.plugins.reload().unwrap();
     let body = json!({"trigger": {"kind": "palette"}, "focus": {"workspace": "w"}});
-    assert_eq!(r.call("POST", "/api/plugins/real/actions/go/run", None, Some(&body.to_string())).await.0, StatusCode::ACCEPTED);
+    assert_eq!(r.call_ui("POST", "/api/plugins/real/actions/go/run", Some(&body.to_string())).await.0, StatusCode::ACCEPTED);
     let data = r.paths().data("real");
     wait_for(|| data.join("env.txt").exists()).await;
     assert_eq!(std::fs::read_to_string(data.join("env.txt")).unwrap(), "real|palette|http://127.0.0.1:4747|arg one");
@@ -500,7 +598,7 @@ async fn disabling_kills_running_trees_clears_widgets_and_refuses_new_triggers()
     r.st.plugins.widgets().put("sleepy", "bar", WidgetSlot::StripRight, put);
     r.events();
 
-    r.call("POST", "/api/plugins/sleepy/actions/long/run", None, None).await;
+    r.call_ui("POST", "/api/plugins/sleepy/actions/long/run", None).await;
     let pidfile = r.paths().data("sleepy").join("child.pid");
     wait_for(|| r.st.plugins.running_count("sleepy") == 1 && pidfile.exists()).await;
     let child: i32 = std::fs::read_to_string(&pidfile).unwrap().trim().parse().unwrap();
@@ -515,7 +613,7 @@ async fn disabling_kills_running_trees_clears_widgets_and_refuses_new_triggers()
     if !seen.iter().any(|e| matches!(e, DaemonEvent::WidgetsChanged { plugin, .. } if plugin == "sleepy")) {
         r.next_event(|e| matches!(e, DaemonEvent::WidgetsChanged { plugin, .. } if plugin == "sleepy")).await;
     }
-    assert_eq!(r.call("POST", "/api/plugins/sleepy/actions/long/run", None, None).await.0, StatusCode::CONFLICT);
+    assert_eq!(r.call_ui("POST", "/api/plugins/sleepy/actions/long/run", None).await.0, StatusCode::CONFLICT);
     assert!(!PluginsFile::read(&r.paths()).unwrap().plugins[0].enabled, "persisted");
 
     r.st.plugins.set_enabled("sleepy", true).unwrap();
@@ -691,7 +789,7 @@ async fn session_input_needs_a_token_the_permission_and_a_live_garage_session() 
 #[tokio::test]
 async fn closed_sessions_are_listed_per_workspace_until_restored_or_forgotten() {
     let r = Rig::new();
-    let _recorder = crate::closed::spawn(&r.st.bus, r.st.registry.clone());
+    let _recorder = crate::closed::spawn(&r.st.bus, r.st.registry.clone(), r.st.backend.clone());
     r.st.registry.upsert_workspace("ws", "/proj").await.unwrap();
     r.install("reader", &manifest("reader", &["sessions.read"], ""));
     r.install("other", &manifest("other", &[], ""));
@@ -762,7 +860,267 @@ async fn a_removed_plugin_loses_its_widgets_and_tokens_stop_working() {
     let mut file = PluginsFile::read(&paths).unwrap();
     file.plugins.clear();
     file.write(&paths).unwrap();
-    r.call("POST", "/api/plugins/reload", None, None).await;
+    r.call_ui("POST", "/api/plugins/reload", None).await;
     assert!(r.st.plugins.widgets().widgets("gone").is_empty());
     assert_eq!(r.call("PUT", "/api/plugins/gone/widgets/bar", Some(&t), Some(&put_body("a"))).await.0, StatusCode::UNAUTHORIZED);
+}
+
+// ---------------------------------------------------------------------
+// Credentials: who may trigger what (security review)
+// ---------------------------------------------------------------------
+
+const GO: &str = "[[actions]]\nid = \"go\"\ntitle = \"go\"\ncommand = [\"./x\"]\n";
+
+#[tokio::test]
+async fn running_an_action_needs_the_ui_token_or_the_plugins_own_token_for_its_own_actions() {
+    let r = Rig::new();
+    r.install("one", &manifest("one", &[], GO));
+    r.install("two", &manifest("two", &[], GO));
+    let (t1, t2, ui) = (r.token("one"), r.token("two"), r.ui_token());
+    let run = |plugin: &'static str, tok: Option<String>| {
+        let r = &r;
+        async move { r.call("POST", &format!("/api/plugins/{plugin}/actions/go/run"), tok.as_deref(), None).await }
+    };
+    // who is nobody
+    assert_eq!(run("one", None).await.0, StatusCode::UNAUTHORIZED);
+    assert_eq!(run("one", Some("garbage".into())).await.0, StatusCode::UNAUTHORIZED);
+    assert_eq!(run("one", Some(String::new())).await.0, StatusCode::UNAUTHORIZED, "an empty bearer is no credential");
+    assert_eq!(r.runner.count(), 0);
+    // a plugin runs its own action, not another's
+    assert_eq!(run("one", Some(t1.clone())).await.0, StatusCode::ACCEPTED);
+    let (s, _, b) = run("two", Some(t1.clone())).await;
+    assert_eq!(s, StatusCode::FORBIDDEN);
+    assert!(b["error"].as_str().unwrap().contains("needs the UI token"), "{b}");
+    // the TUI runs anyone's
+    assert_eq!(run("two", Some(ui.clone())).await.0, StatusCode::ACCEPTED);
+    assert_eq!(run("one", Some(ui)).await.0, StatusCode::ACCEPTED);
+    wait_for(|| r.runner.count() == 3).await;
+    // a disabled plugin's own token is dead
+    r.st.plugins.set_enabled("two", false).unwrap();
+    assert_eq!(run("two", Some(t2)).await.0, StatusCode::FORBIDDEN);
+    assert_eq!(r.runner.count(), 3);
+}
+
+#[tokio::test]
+async fn reload_and_ui_slots_are_closed_to_plugins_and_to_anonymous_callers() {
+    let mut r = Rig::new();
+    r.install("hooked", &manifest("hooked", &["ui.widgets"], &format!("{WIDGETS}{}", hook("session.created"))));
+    let tok = r.token("hooked");
+    let _loop = r.st.plugins.start();
+    // wear the hooks out: five failures switch them off
+    r.runner.outcomes.lock().unwrap().extend(std::iter::repeat_n(RunOutcome::Failed(Some(1)), 5));
+    for i in 0..5 {
+        r.st.bus.publish(created(&format!("garage/w/s{i}")));
+    }
+    r.next_event(|e| matches!(e, DaemonEvent::PluginNotice { .. })).await;
+    assert!(r.st.plugins.events_disabled("hooked"));
+    r.events();
+
+    let geo = r#"{"strip.right":{"width":38}}"#;
+    for (m, u, body) in [("POST", "/api/plugins/reload", None), ("PUT", "/api/plugins/ui/slots", Some(geo))] {
+        assert_eq!(r.call(m, u, None, body).await.0, StatusCode::UNAUTHORIZED, "{u} anonymous");
+        assert_eq!(r.call(m, u, Some(""), body).await.0, StatusCode::UNAUTHORIZED, "{u} empty bearer");
+        assert_eq!(r.call(m, u, Some("nope"), body).await.0, StatusCode::FORBIDDEN, "{u} unknown token");
+        assert_eq!(r.call(m, u, Some(&tok), body).await.0, StatusCode::FORBIDDEN, "{u} a plugin's own token");
+    }
+    assert!(r.st.plugins.events_disabled("hooked"), "a plugin cannot reset its own auto-disable");
+    assert_eq!(r.st.plugins.ui_slots(), json!({}), "and cannot write geometry");
+    assert!(r.events().is_empty());
+
+    assert_eq!(r.call_ui("POST", "/api/plugins/reload", None).await.0, StatusCode::OK);
+    assert!(!r.st.plugins.events_disabled("hooked"), "the UI token can");
+    assert_eq!(r.call_ui("PUT", "/api/plugins/ui/slots", Some(geo)).await.0, StatusCode::OK);
+}
+
+#[tokio::test]
+async fn the_ui_token_is_a_private_per_install_file_distinct_from_plugin_tokens() {
+    let r = Rig::new();
+    r.install("pp", &manifest("pp", &[], ""));
+    let ui = r.ui_token();
+    assert_eq!(ui.len(), 64);
+    assert_ne!(ui, r.token("pp"));
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = std::fs::metadata(super::layout::ui_token_path(r.garage.path())).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600);
+    }
+    // stable across daemon restarts (a new host over the same directory)
+    let again = crate::AppState::new(
+        crate::Config { port: 1, garage_dir: r.garage.path().to_path_buf(), tmux_socket: None, ui_origins: vec![] },
+        r.backend.clone(),
+        std::sync::Arc::new(crate::os::UnsupportedOs),
+    );
+    assert!(again.plugins.is_ui_token(&ui));
+    assert!(!again.plugins.is_ui_token(""));
+    assert!(!again.plugins.is_ui_token(&r.token("pp")));
+}
+
+// ---------------------------------------------------------------------
+// ui/slots: shape, size, rate, change detection
+// ---------------------------------------------------------------------
+
+#[tokio::test]
+async fn ui_slots_are_validated_size_capped_rate_limited_and_announced_only_when_they_change() {
+    let r = Rig::new();
+    let mut rx = r.st.bus.subscribe();
+    let put = |body: String| {
+        let r = &r;
+        async move { r.call_ui("PUT", "/api/plugins/ui/slots", Some(&body)).await }
+    };
+    let mut changed = |_: &Rig| {
+        let mut n = 0;
+        while let Ok(e) = rx.try_recv() {
+            n += usize::from(e == DaemonEvent::PluginsChanged);
+        }
+        n
+    };
+
+    // shape: unknown slot, unknown key, wrong type, inverted range
+    for bad in [
+        json!({"nope": {"width": 1}}),
+        json!({"strip.right": {"junk": 1}}),
+        json!({"strip.right": {"width": "wide"}}),
+        json!({"strip.right": {"filler": {"x0": 9, "x1": 2}}}),
+        json!([1, 2]),
+    ] {
+        assert_eq!(put(bad.to_string()).await.0, StatusCode::UNPROCESSABLE_ENTITY, "{bad}");
+    }
+    // size: an object that is well-formed but huge
+    let big = json!({"strip.right": {"junk": "x".repeat(20_000)}}).to_string();
+    assert_eq!(put(big).await.0, StatusCode::PAYLOAD_TOO_LARGE);
+    assert_eq!(r.st.plugins.ui_slots(), json!({}), "nothing stored");
+    assert_eq!(changed(&r), 0);
+
+    // a good value is stored and announced once; the same value again is silent
+    let good = json!({"strip.right": {"width": 38, "filler": {"x0": 4, "x1": 30}}, "rail.row": {"width": 24}}).to_string();
+    assert_eq!(put(good.clone()).await.0, StatusCode::OK);
+    assert_eq!(changed(&r), 1);
+    assert_eq!(put(good).await.0, StatusCode::OK);
+    assert_eq!(changed(&r), 0, "an unchanged value publishes nothing");
+    assert_eq!(r.st.plugins.ui_slots()["strip.right"]["width"], 38);
+    assert_eq!(put(json!({"strip.right": {"width": 40}}).to_string()).await.0, StatusCode::OK);
+    assert_eq!(changed(&r), 1);
+
+    // rate: the 20-call burst is spent (9 calls above), then 429 with Retry-After
+    let mut limited = None;
+    for i in 0..30 {
+        let (s, h, _) = put(json!({"strip.right": {"width": 100 + i}}).to_string()).await;
+        if s == StatusCode::TOO_MANY_REQUESTS {
+            limited = Some(h);
+            break;
+        }
+    }
+    let h = limited.expect("a resize storm is limited");
+    assert!(h.get("retry-after").is_some());
+}
+
+// ---------------------------------------------------------------------
+// Widget ttl cap
+// ---------------------------------------------------------------------
+
+#[tokio::test]
+async fn a_widget_push_cannot_ask_for_more_than_an_hour_of_ttl() {
+    let r = Rig::new();
+    r.install("ttl", &manifest("ttl", &["ui.widgets"], WIDGETS));
+    let tok = r.token("ttl");
+    let body = |t: u32| json!({"scopes": {"*": [{"segments": [{"text": "x"}]}]}, "ttl_secs": t}).to_string();
+    assert_eq!(pw(&r, "ttl", Some(&tok), &body(3600)).await.0, StatusCode::OK);
+    let (s, _, b) = pw(&r, "ttl", Some(&tok), &body(3601)).await;
+    assert_eq!(s, StatusCode::UNPROCESSABLE_ENTITY);
+    assert!(b["error"].as_str().unwrap().contains("3600"), "{b}");
+    assert_eq!(r.st.plugins.widgets().widgets("ttl")["bar"].scopes["*"].len(), 1, "the earlier push stands");
+    assert_eq!(r.st.plugins.widgets().sweepers_started(), 1);
+}
+
+// ---------------------------------------------------------------------
+// Hooks stay off the bus loop; a lagged host says so
+// ---------------------------------------------------------------------
+
+struct BlockingLookup {
+    entered: std::sync::atomic::AtomicUsize,
+    gate: tokio::sync::Semaphore,
+}
+
+#[async_trait::async_trait]
+impl super::context::SessionLookup for BlockingLookup {
+    async fn session(&self, _id: &str) -> Option<super::context::SessionInfo> {
+        self.entered.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        self.gate.acquire().await.unwrap().forget();
+        None
+    }
+}
+
+#[tokio::test]
+async fn slow_context_building_never_stalls_the_bus_loop() {
+    let r = Rig::new();
+    let lookup = std::sync::Arc::new(BlockingLookup { entered: Default::default(), gate: tokio::sync::Semaphore::new(0) });
+    let host = super::PluginHost::with_runner(&r.st.config, r.st.bus.clone(), lookup.clone(), r.runner.clone());
+    r.link("slow", &manifest("slow", &[], &hook("session.closed")));
+    let _loop = host.start();
+    for i in 0..3 {
+        r.st.bus.publish(DaemonEvent::SessionClosed {
+            id: format!("garage/w/s{i}"),
+            dir: "/d".into(),
+            workspace: "w".into(),
+            reason: CloseReason::Crash,
+            last_status: None,
+        });
+    }
+    // all three lookups are in flight at once although none has finished: the
+    // loop moved on to the next event instead of waiting for the first
+    wait_for(|| lookup.entered.load(std::sync::atomic::Ordering::SeqCst) == 3).await;
+    assert_eq!(r.runner.count(), 0);
+    lookup.gate.add_permits(3);
+    wait_for(|| r.runner.count() == 3).await;
+}
+
+#[tokio::test]
+async fn a_host_that_falls_behind_the_bus_logs_the_gap_for_every_active_plugin() {
+    let r = Rig::new();
+    let bus = crate::bus::EventBus::new(2);
+    let lookup = std::sync::Arc::new(super::context::StateLookup {
+        backend: r.st.backend.clone(),
+        status: r.st.status.clone(),
+        registry: r.st.registry.clone(),
+    });
+    let host = super::PluginHost::with_runner(&r.st.config, bus.clone(), lookup, r.runner.clone());
+    r.link("watcher", &manifest("watcher", &[], &hook("session.created")));
+    let _loop = host.start();
+    // the loop has not run yet: ten events into a two-slot channel
+    for i in 0..10 {
+        bus.publish(created(&format!("garage/w/s{i}")));
+    }
+    let log = r.paths().log("watcher");
+    wait_for(|| std::fs::read_to_string(&log).is_ok_and(|t| t.contains("missed") && t.contains("bus events"))).await;
+}
+
+// ---------------------------------------------------------------------
+// The registry has one writer at a time
+// ---------------------------------------------------------------------
+
+#[tokio::test]
+async fn the_hosts_registry_edits_survive_a_cli_writing_at_the_same_time() {
+    let r = Rig::new();
+    r.install("keep", &manifest("keep", &[], ""));
+    let paths = r.paths();
+    let cli = {
+        let paths = paths.clone();
+        std::thread::spawn(move || {
+            for i in 0..25 {
+                PluginsFile::update(&paths, |f| {
+                    f.plugins.push(super::layout::Entry::new(&format!("cli{i}"), super::layout::Source::Link { path: "/x".into() }));
+                    (true, ())
+                })
+                .unwrap();
+            }
+        })
+    };
+    for i in 0..25 {
+        r.st.plugins.set_enabled("keep", i % 2 == 0).unwrap();
+    }
+    cli.join().unwrap();
+    let file = PluginsFile::read(&paths).unwrap();
+    assert_eq!(file.plugins.len(), 26, "no CLI edit was lost to a host write");
+    assert!(file.plugins[0].enabled, "and the host's last edit is the last word");
 }

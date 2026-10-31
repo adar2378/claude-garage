@@ -120,7 +120,8 @@ pub struct RunSpec {
     /// Substituted argv; the first element is the program.
     pub argv: Vec<String>,
     pub cwd: PathBuf,
-    /// Added to the daemon's own environment.
+    /// The plugin's own variables, added to the allowlisted part of the
+    /// daemon's environment (see [`base_env`]); nothing else is inherited.
     pub env: Vec<(String, String)>,
     pub stdin: Vec<u8>,
     /// `None` runs until it exits.
@@ -163,6 +164,23 @@ pub trait Runner: Send + Sync {
 
 pub struct ProcessRunner;
 
+/// The part of the daemon's environment a plugin inherits: enough for a
+/// script to find programs and a home, nothing that carries credentials
+/// (tokens, cloud keys, `GARAGE_*` of other components). Names are matched
+/// case-insensitively on Windows, where they are case-insensitive.
+pub fn base_env(parent: impl Iterator<Item = (String, String)>) -> Vec<(String, String)> {
+    const KEEP: &[&str] = &["PATH", "HOME", "USER", "LANG", "TERM", "TMPDIR", "SHELL"];
+    const KEEP_WINDOWS: &[&str] = &["SYSTEMROOT", "USERPROFILE", "APPDATA"];
+    parent
+        .filter(|(k, _)| {
+            let name = if cfg!(windows) { k.to_ascii_uppercase() } else { k.clone() };
+            KEEP.contains(&name.as_str())
+                || name.starts_with("LC_")
+                || (cfg!(windows) && (KEEP_WINDOWS.contains(&name.as_str()) || name == "TEMP" || name == "TMP"))
+        })
+        .collect()
+}
+
 #[async_trait]
 impl Runner for ProcessRunner {
     async fn run(&self, spec: RunSpec) -> RunOutcome {
@@ -173,6 +191,8 @@ impl Runner for ProcessRunner {
         let mut cmd = Command::new(crate::plugins::resolve_program(program, &spec.cwd));
         cmd.args(args)
             .current_dir(&spec.cwd)
+            .env_clear()
+            .envs(base_env(std::env::vars()))
             .envs(spec.env.iter().map(|(k, v)| (k, v)))
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -224,9 +244,14 @@ impl Runner for ProcessRunner {
                 RunOutcome::TimedOut(limit)
             }
         };
-        for r in readers {
-            if tokio::time::timeout(DRAIN_GRACE, r).await.is_err() {
-                // A grandchild still holds the pipe; the reader is dropped.
+        // The run is over, so is everything it left behind: a background
+        // child must not outlive its run (or keep the output pipes open).
+        // Killing the group first lets the readers see EOF at once.
+        signal_group(pid, true);
+        for mut r in readers {
+            if tokio::time::timeout(DRAIN_GRACE, &mut r).await.is_err() {
+                // Something outside the group still holds the pipe.
+                r.abort();
             }
         }
         spec.running.remove(&spec.plugin, spec.run_id);
@@ -304,6 +329,50 @@ mod tests {
         assert!(text.contains("[7 action:t] id=p cwd="), "{text}");
         assert!(text.contains("[7 action:t] oops"), "stderr is captured too: {text}");
         assert_eq!(running.count("p"), 0, "finished runs are unregistered");
+    }
+
+    #[test]
+    fn only_the_allowlisted_variables_are_inherited() {
+        let parent = [
+            "PATH", "HOME", "USER", "LANG", "LC_ALL", "LC_CTYPE", "TERM", "TMPDIR", "SHELL", "ANTHROPIC_API_KEY", "AWS_SECRET_ACCESS_KEY",
+            "GITHUB_TOKEN", "GARAGE_PORT", "SSH_AUTH_SOCK", "LCX", "PATHEXT_NOT",
+        ]
+        .map(|k| (k.to_owned(), "v".to_owned()));
+        let kept: Vec<String> = base_env(parent.into_iter()).into_iter().map(|(k, _)| k).collect();
+        assert_eq!(kept, ["PATH", "HOME", "USER", "LANG", "LC_ALL", "LC_CTYPE", "TERM", "TMPDIR", "SHELL"]);
+    }
+
+    #[tokio::test]
+    async fn a_real_run_does_not_see_the_daemons_other_variables() {
+        let d = tempfile::tempdir().unwrap();
+        // cargo sets these for the test process; a plugin must not inherit them
+        assert!(std::env::var("CARGO_MANIFEST_DIR").is_ok());
+        let sh = script(d.path(), "env.sh", "env > seen.env");
+        let (s, _log, _r) = spec(d.path(), vec!["/bin/sh".into(), sh], None);
+        assert_eq!(ProcessRunner.run(s).await, RunOutcome::Success);
+        let seen = std::fs::read_to_string(d.path().join("seen.env")).unwrap();
+        assert!(seen.contains("GARAGE_PLUGIN_ID=p"), "the plugin's own variables arrive: {seen}");
+        assert!(seen.lines().any(|l| l.starts_with("PATH=")), "PATH is inherited");
+        assert!(!seen.contains("CARGO"), "{seen}");
+    }
+
+    #[tokio::test]
+    async fn a_background_child_does_not_outlive_a_normal_exit_or_hold_the_run_open() {
+        let d = tempfile::tempdir().unwrap();
+        let pidfile = d.path().join("bg.pid");
+        // exits 0 at once, leaving a sleeper that still holds stdout open
+        let sh = script(d.path(), "bg.sh", &format!("sleep 30 &\necho $! > {}\nexit 0", pidfile.display()));
+        let (s, _log, running) = spec(d.path(), vec!["/bin/sh".into(), sh], Some(Duration::from_secs(10)));
+        let started = std::time::Instant::now();
+        assert_eq!(ProcessRunner.run(s).await, RunOutcome::Success);
+        assert!(started.elapsed() < Duration::from_millis(400), "no wait for the pipe holder: {:?}", started.elapsed());
+        let pid: i32 = std::fs::read_to_string(&pidfile).unwrap().trim().parse().unwrap();
+        let end = std::time::Instant::now() + Duration::from_secs(5);
+        while unsafe { libc::kill(pid, 0) } == 0 {
+            assert!(std::time::Instant::now() < end, "background child {pid} survived its run");
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+        assert_eq!(running.count("p"), 0);
     }
 
     #[tokio::test]

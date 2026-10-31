@@ -226,7 +226,11 @@ impl Poller {
 
     /// One poll. Never fails: a tick error is swallowed like the JS `pollOnce`.
     pub async fn poll_once(&self) {
-        let sessions = self.backend.list().await.unwrap_or_default();
+        // A failed listing says nothing about the sessions (tmux hiccup, slow
+        // socket). Treating it as "no sessions" would close everything, fire
+        // hooks and write crash records for sessions that are fine: skip the
+        // tick and keep what we knew.
+        let Ok(sessions) = self.backend.list().await else { return };
 
         if sessions.is_empty() {
             let mut membership = Membership::default();
@@ -362,11 +366,13 @@ pub(crate) mod fakes {
     pub struct FakeBackend {
         pub sessions: Mutex<Vec<BackendSession>>,
         pub panes: Mutex<HashMap<String, PaneInfo>>,
+        /// While set, `list` fails like a backend that cannot be reached.
+        pub fail_list: std::sync::atomic::AtomicBool,
     }
 
     impl FakeBackend {
         pub fn new() -> Self {
-            Self { sessions: Mutex::new(vec![]), panes: Mutex::new(HashMap::new()) }
+            Self { sessions: Mutex::new(vec![]), panes: Mutex::new(HashMap::new()), fail_list: Default::default() }
         }
         pub fn set(&self, id: &str, dir: &str, pid: Option<u32>, title: &str) {
             let mut s = self.sessions.lock().unwrap();
@@ -386,6 +392,9 @@ pub(crate) mod fakes {
             Ok(())
         }
         async fn list(&self) -> anyhow::Result<Vec<BackendSession>> {
+            if self.fail_list.load(std::sync::atomic::Ordering::SeqCst) {
+                anyhow::bail!("tmux unreachable");
+            }
             Ok(self.sessions.lock().unwrap().clone())
         }
         async fn panes(&self) -> anyhow::Result<HashMap<String, PaneInfo>> {
@@ -720,6 +729,31 @@ mod tests {
             ],
             "the renamed session emits neither close nor create"
         );
+    }
+
+    #[tokio::test]
+    async fn a_failing_backend_listing_closes_nothing_and_remembers_what_it_knew() {
+        use std::sync::atomic::Ordering;
+        let mut r = rig();
+        r.backend.set("garage/ws/a", "/a", Some(1), "");
+        r.backend.set("garage/ws/b", "/b", Some(2), "");
+        r.poller.poll_once().await;
+        drain_all(&mut r.rx);
+        r.backend.fail_list.store(true, Ordering::SeqCst);
+        for _ in 0..3 {
+            r.poller.poll_once().await;
+        }
+        assert!(typed(drain_all(&mut r.rx)).is_empty(), "no close, no create, no sessions-changed");
+        assert!(r.sink.dropped.lock().unwrap().is_empty(), "statuses are not dropped");
+        // tmux comes back with the same sessions: nothing changed
+        r.backend.fail_list.store(false, Ordering::SeqCst);
+        r.poller.poll_once().await;
+        assert!(typed(drain_all(&mut r.rx)).is_empty(), "the memory survived the outage");
+        // and a real vanish afterwards is still seen, exactly once
+        r.backend.remove("garage/ws/b");
+        r.poller.poll_once().await;
+        let closed: Vec<_> = typed(drain_all(&mut r.rx)).into_iter().filter(|e| matches!(e, DaemonEvent::SessionClosed { .. })).collect();
+        assert_eq!(closed.len(), 1);
     }
 
     #[tokio::test]

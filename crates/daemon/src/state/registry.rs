@@ -55,6 +55,9 @@ pub struct ClosedRecord {
     /// `user` | `crash` | `daemon-restart`.
     pub reason: String,
     pub last_status: Option<String>,
+    /// The Claude conversation to `--resume` when the record is restored.
+    #[serde(default)]
+    pub claude_session_id: Option<String>,
 }
 
 /// Field-level patch for `upsert_session_meta`. Outer `None` is JS
@@ -108,7 +111,8 @@ impl Registry {
             SEQ.fetch_add(1, Ordering::Relaxed)
         ));
         let body = serde_json::to_string_pretty(state).map_err(std::io::Error::other)?;
-        let res = std::fs::write(&tmp, body).and_then(|_| std::fs::rename(&tmp, &*self.path));
+        // state.json holds the hook token: owner-only, however it was created.
+        let res = crate::plugins::layout::write_private(&tmp, &body).and_then(|_| std::fs::rename(&tmp, &*self.path));
         if res.is_err() {
             let _ = std::fs::remove_file(&tmp);
         }
@@ -289,6 +293,20 @@ impl Registry {
             .rev()
             .filter_map(|r| serde_json::from_value(r.clone()).ok())
             .collect()
+    }
+
+    /// One closed record by session id.
+    pub async fn get_closed(&self, id: &str) -> Option<ClosedRecord> {
+        let _g = self.lock.lock().await;
+        let state = self.read();
+        let (workspace, _) = crate::backend::tmux::split_session_id(id);
+        state
+            .get("closed")
+            .and_then(|c| c.get(&workspace))
+            .and_then(Value::as_array)?
+            .iter()
+            .find(|r| r.get("id").and_then(Value::as_str) == Some(id))
+            .and_then(|r| serde_json::from_value(r.clone()).ok())
     }
 
     /// Forget one closed record (restored or deleted). `true` when it existed.
@@ -610,7 +628,37 @@ mod tests {
             closed_at: at,
             reason: "crash".into(),
             last_status: Some("idle".into()),
+            claude_session_id: Some("c1".into()),
         }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn state_json_is_owner_only_even_when_it_was_created_loose() {
+        use std::os::unix::fs::PermissionsExt;
+        let s = Scratch::new();
+        let r = s.reg();
+        r.get_hook_token().await.unwrap();
+        let p = s.0.join("state.json");
+        assert_eq!(std::fs::metadata(&p).unwrap().permissions().mode() & 0o777, 0o600);
+        std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o644)).unwrap();
+        r.upsert_workspace("w", "/w").await.unwrap();
+        assert_eq!(std::fs::metadata(&p).unwrap().permissions().mode() & 0o777, 0o600, "tightened on the next write");
+    }
+
+    #[tokio::test]
+    async fn a_closed_record_keeps_its_claude_session_id_and_reads_old_files_without_one() {
+        let s = Scratch::new();
+        let r = s.reg();
+        r.record_closed(closed("garage/w/a", 1)).await.unwrap();
+        assert_eq!(r.get_closed("garage/w/a").await.unwrap().claude_session_id.as_deref(), Some("c1"));
+        assert_eq!(s.raw()["closed"]["w"][0]["claudeSessionId"], "c1");
+        assert!(r.get_closed("garage/w/zzz").await.is_none());
+        let mut raw = s.raw();
+        raw["closed"]["w"][0].as_object_mut().unwrap().remove("claudeSessionId");
+        std::fs::write(s.0.join("state.json"), raw.to_string()).unwrap();
+        assert_eq!(r.get_closed("garage/w/a").await.unwrap().claude_session_id, None);
+        assert_eq!(r.list_closed("w").await.len(), 1, "a record from before the field still lists");
     }
 
     #[tokio::test]

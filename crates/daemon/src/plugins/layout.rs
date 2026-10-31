@@ -9,6 +9,15 @@
 //! logs/<id>.log       stdout+stderr of every run (1 MiB, 2 files)
 //! tokens/<id>         per-plugin API token, mode 0600
 //! ```
+//!
+//! # Who writes `plugins.json`
+//!
+//! The daemon owns it. Every change goes through [`PluginsFile::update`],
+//! which holds an in-process mutex and (on unix) an exclusive `flock` on
+//! `.plugins.lock` for the whole read-modify-write, so two writers never lose
+//! each other's edit. A CLI that changes the registry must either call the
+//! daemon's routes while the daemon is up, or use `PluginsFile::update`
+//! itself when it is not; it must never read, edit and `write` by hand.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -36,6 +45,11 @@ impl Paths {
 
     pub fn registry_file(&self) -> PathBuf {
         self.root.join("plugins.json")
+    }
+
+    /// Advisory lock file that serialises read-modify-write of the registry.
+    pub fn registry_lock(&self) -> PathBuf {
+        self.root.join(".plugins.lock")
     }
 
     pub fn installed(&self, id: &str) -> PathBuf {
@@ -161,8 +175,22 @@ impl PluginsFile {
         Ok(file)
     }
 
+    /// Read, change and write back under the registry lock. `change` returns
+    /// whether it modified anything; an unmodified file is not rewritten.
+    /// This is the only supported way to edit the registry.
+    pub fn update<T>(paths: &Paths, change: impl FnOnce(&mut Self) -> (bool, T)) -> Result<T, String> {
+        let _guard = RegistryLock::acquire(paths).map_err(|e| format!("cannot lock {}: {e}", paths.registry_lock().display()))?;
+        let mut file = Self::read(paths)?;
+        let (dirty, out) = change(&mut file);
+        if dirty {
+            file.write(paths).map_err(|e| format!("cannot write {}: {e}", paths.registry_file().display()))?;
+        }
+        Ok(out)
+    }
+
     /// Temp file next to the target, then rename: a crash leaves the old or
-    /// the new complete file.
+    /// the new complete file. Callers that read first must use
+    /// [`PluginsFile::update`] so the pair is atomic.
     pub fn write(&self, paths: &Paths) -> std::io::Result<()> {
         static SEQ: AtomicU64 = AtomicU64::new(0);
         let path = paths.registry_file();
@@ -177,33 +205,129 @@ impl PluginsFile {
     }
 }
 
-/// The token for `id`, created (random 32 bytes, hex, mode 0600) when absent.
-pub fn ensure_token(paths: &Paths, id: &str) -> std::io::Result<String> {
-    let path = paths.token(id);
-    if let Ok(t) = std::fs::read_to_string(&path) {
-        let t = t.trim();
-        if t.len() >= 32 {
-            return Ok(t.to_owned());
+/// Holds the registry lock until dropped.
+struct RegistryLock {
+    #[allow(dead_code)] // held for its Drop
+    process: std::sync::MutexGuard<'static, ()>,
+    #[cfg(unix)]
+    file: std::fs::File,
+}
+
+static REGISTRY_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+impl RegistryLock {
+    fn acquire(paths: &Paths) -> std::io::Result<Self> {
+        // A panic inside a previous critical section must not wedge the registry.
+        let process = REGISTRY_MUTEX.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        std::fs::create_dir_all(paths.root())?;
+        #[cfg(unix)]
+        {
+            use std::os::fd::AsRawFd;
+            let file = std::fs::OpenOptions::new().read(true).write(true).create(true).truncate(false).open(paths.registry_lock())?;
+            // SAFETY: flock(2) on a descriptor this function owns.
+            if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX) } != 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            Ok(Self { process, file })
+        }
+        #[cfg(not(unix))]
+        {
+            // Other platforms: the in-process mutex only. Other processes
+            // must go through the daemon's routes (see the module docs).
+            Ok(Self { process })
         }
     }
-    let mut bytes = [0u8; 32];
-    getrandom::fill(&mut bytes).map_err(|e| std::io::Error::other(e.to_string()))?;
-    let token: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
-    std::fs::create_dir_all(path.parent().expect("token has a parent"))?;
-    write_private(&path, &token)?;
-    Ok(token)
 }
 
 #[cfg(unix)]
-fn write_private(path: &Path, body: &str) -> std::io::Result<()> {
+impl Drop for RegistryLock {
+    fn drop(&mut self) {
+        use std::os::fd::AsRawFd;
+        // SAFETY: releasing the lock taken in `acquire`; closing the file would too.
+        unsafe { libc::flock(self.file.as_raw_fd(), libc::LOCK_UN) };
+    }
+}
+
+/// A random 32-byte hex token.
+pub fn random_token() -> std::io::Result<String> {
+    let mut bytes = [0u8; 32];
+    getrandom::fill(&mut bytes).map_err(|e| std::io::Error::other(e.to_string()))?;
+    Ok(bytes.iter().map(|b| format!("{b:02x}")).collect())
+}
+
+/// The token in `path`, created (random 32 bytes, hex, mode 0600) when absent
+/// or too short. An existing file with looser permissions is tightened.
+pub fn ensure_secret_file(path: &Path) -> std::io::Result<String> {
+    if let Ok(t) = std::fs::read_to_string(path) {
+        let t = t.trim();
+        if t.len() >= 32 {
+            restrict(path)?;
+            return Ok(t.to_owned());
+        }
+    }
+    let token = random_token()?;
+    create_private_dir(path.parent().expect("secret file has a parent"))?;
+    write_private(path, &token)?;
+    Ok(token)
+}
+
+/// The token for `id`, created (random 32 bytes, hex, mode 0600) when absent.
+pub fn ensure_token(paths: &Paths, id: &str) -> std::io::Result<String> {
+    ensure_secret_file(&paths.token(id))
+}
+
+/// `<GARAGE_DIR>/ui-token`: the per-install credential only the TUI (and the
+/// CLI) reads. It authorises triggering any plugin's actions, reloading the
+/// registry and reporting slot geometry.
+pub fn ui_token_path(garage_dir: &Path) -> PathBuf {
+    garage_dir.join("ui-token")
+}
+
+pub fn ensure_ui_token(garage_dir: &Path) -> std::io::Result<String> {
+    ensure_secret_file(&ui_token_path(garage_dir))
+}
+
+/// Create `dir` (and parents) with mode 0700 where the OS has modes.
+pub fn create_private_dir(dir: &Path) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        std::fs::DirBuilder::new().recursive(true).mode(0o700).create(dir)
+    }
+    #[cfg(not(unix))]
+    {
+        std::fs::create_dir_all(dir)
+    }
+}
+
+/// Force mode 0600 on an existing file.
+#[cfg(unix)]
+pub fn restrict(path: &Path) -> std::io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    if std::fs::metadata(path)?.permissions().mode() & 0o777 != 0o600 {
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
+    }
+    Ok(())
+}
+
+#[cfg(not(unix))]
+pub fn restrict(_path: &Path) -> std::io::Result<()> {
+    Ok(())
+}
+
+/// Write `body` to `path` readable by the owner only, whether or not the file
+/// existed (an existing file is tightened, not just truncated).
+#[cfg(unix)]
+pub fn write_private(path: &Path, body: &str) -> std::io::Result<()> {
     use std::io::Write;
     use std::os::unix::fs::OpenOptionsExt;
     let mut f = std::fs::OpenOptions::new().write(true).create(true).truncate(true).mode(0o600).open(path)?;
+    restrict(path)?;
     f.write_all(body.as_bytes())
 }
 
 #[cfg(not(unix))]
-fn write_private(path: &Path, body: &str) -> std::io::Result<()> {
+pub fn write_private(path: &Path, body: &str) -> std::io::Result<()> {
     std::fs::write(path, body)
 }
 
@@ -265,6 +389,62 @@ mod tests {
         assert!(e.contains("plugins.json") && e.contains("corrupt"), "{e}");
         std::fs::write(p.registry_file(), r#"{"version": 9, "plugins": []}"#).unwrap();
         assert!(PluginsFile::read(&p).unwrap_err().contains("newer"));
+    }
+
+    #[test]
+    fn concurrent_updates_never_lose_an_edit() {
+        let (_d, p) = paths();
+        let handles: Vec<_> = (0..8)
+            .map(|t| {
+                let p = p.clone();
+                std::thread::spawn(move || {
+                    for i in 0..10 {
+                        let id = format!("p{t}-{i}");
+                        PluginsFile::update(&p, |f| {
+                            f.plugins.push(Entry::new(&id, Source::Link { path: "/x".into() }));
+                            (true, ())
+                        })
+                        .unwrap();
+                    }
+                })
+            })
+            .collect();
+        handles.into_iter().for_each(|h| h.join().unwrap());
+        assert_eq!(PluginsFile::read(&p).unwrap().plugins.len(), 80);
+    }
+
+    #[test]
+    fn an_update_that_changes_nothing_writes_nothing_and_a_corrupt_file_is_never_replaced() {
+        let (_d, p) = paths();
+        PluginsFile::update(&p, |_| (false, ())).unwrap();
+        assert!(!p.registry_file().exists());
+        std::fs::write(p.registry_file(), "{broken").unwrap();
+        let e = PluginsFile::update(&p, |f| {
+            f.plugins.clear();
+            (true, ())
+        })
+        .unwrap_err();
+        assert!(e.contains("corrupt"), "{e}");
+        assert_eq!(std::fs::read_to_string(p.registry_file()).unwrap(), "{broken");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn existing_secret_files_with_loose_modes_are_tightened_and_new_ones_are_private() {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = |p: &Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
+        let (d, p) = paths();
+        let tok = ensure_token(&p, "loose").unwrap();
+        std::fs::set_permissions(p.token("loose"), std::fs::Permissions::from_mode(0o644)).unwrap();
+        assert_eq!(ensure_token(&p, "loose").unwrap(), tok, "the token itself is kept");
+        assert_eq!(mode(&p.token("loose")), 0o600);
+        assert_eq!(mode(p.token("loose").parent().unwrap()), 0o700, "the tokens dir is private");
+        let ui = ensure_ui_token(d.path()).unwrap();
+        assert_eq!(ui.len(), 64);
+        assert_eq!(mode(&ui_token_path(d.path())), 0o600);
+        assert_ne!(ui, tok);
+        write_private(&ui_token_path(d.path()), "x").unwrap();
+        assert_eq!(mode(&ui_token_path(d.path())), 0o600);
     }
 
     #[cfg(unix)]

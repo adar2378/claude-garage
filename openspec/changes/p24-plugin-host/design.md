@@ -215,7 +215,7 @@ Extra utilities: `plugin enable|disable <id>`, `plugin logs <id> [-f]`, `plugin 
 
 New module `crates/daemon/src/plugins/` (`registry.rs`, `runner.rs`, `events.rs`, `widgets.rs`, `panes.rs`, `api.rs`), owned by `AppState.plugins`.
 
-**Spawning.** `tokio::process::Command` with the argv array, cwd = the plugin directory, stdin = the context JSON (closed after writing), stdout and stderr piped into `logs/<id>.log` with a `[run-id action]` prefix per line. Each run starts in its own process group/session (`setsid` on unix via an OS seam in `os/`) so a timeout or uninstall can kill the whole tree. Never through a shell. The environment is the daemon's environment plus:
+**Spawning.** `tokio::process::Command` with the argv array, cwd = the plugin directory, stdin = the context JSON (closed after writing), stdout and stderr piped into `logs/<id>.log` with a `[run-id action]` prefix per line. Each run starts in its own process group/session (`setsid` on unix via an OS seam in `os/`) so a timeout or uninstall can kill the whole tree. Never through a shell. The environment is NOT the daemon's: it starts empty (`env_clear`) and gets only an allowlist copied from the daemon (`PATH`, `HOME`, `USER`, `LANG`, `LC_*`, `TERM`, `TMPDIR`, `SHELL`; on Windows `SYSTEMROOT`, `USERPROFILE`, `APPDATA`, `TEMP`, `TMP`), so credentials in the daemon's environment never reach a plugin. On top of that come:
 
 | Variable | Value |
 |---|---|
@@ -382,6 +382,29 @@ Plugin-facing HTTP surface (all under `127.0.0.1`, plugin routes require the bea
 | existing `GET /api/sessions`, `GET /api/workspaces`, `GET /api/events` | read state, subscribe | `sessions.read` / `workspaces.read` (soft, see section 11) |
 | existing workspace and session write routes | create, remove | `workspaces.write`, `sessions.manage` |
 
+**Who may call what.** There are two credentials, both bearer tokens in files only the owner can read:
+
+| Credential | File | May |
+|---|---|---|
+| plugin token | `plugins/tokens/<id>` (0600) | the plugin routes above (with the declared permissions), and `POST /api/plugins/<its own id>/actions/{action}/run` |
+| UI token | `<GARAGE_DIR>/ui-token` (0600) | `POST /api/plugins/{any id}/actions/{action}/run`, `POST /api/plugins/reload`, `PUT /api/plugins/ui/slots` |
+
+A plugin token on another plugin's action, on `reload` or on `ui/slots` is 403; no token or an empty one is 401. `reload` is UI-token only on purpose: it resets the auto-disable of failing event hooks, which a plugin must not be able to do for itself. `PUT /api/plugins/ui/slots` is limited to 16 KiB and 10 per second (burst 20), the body must match the slot geometry schema (an object keyed by slot name; each value has only `width`, `max_cols` as whole column counts up to 1000, and `filler: {x0, x1}` with `x0 <= x1`; anything else is 422), and `PluginsChanged` is published only when the stored value actually changed. `ttl_secs` on a widget push is at most 3600 (422 above that); a widget that must live longer re-pushes. Expiry is one sweeper task for the whole widget store, not a task per push.
+
+**Client helper for the TUI lane (and the CLI).** The wall must send the UI token on those three routes:
+
+```rust
+// once at startup; re-read if a call answers 401 (the daemon recreates it only if the file is gone)
+let token = std::fs::read_to_string(garage_dir.join("ui-token"))?.trim().to_owned();
+let req = client.post(url).bearer_auth(&token).json(&body);
+```
+
+`garage_dir` is `GARAGE_DIR`, default `~/.garage`. The wall never forwards this token to plugins or into a run context.
+
+**`plugins.json` has one writer at a time.** The daemon owns the file. Every change, from the daemon or from the CLI, goes through `PluginsFile::update(paths, |file| ...)` (in `crates/daemon/src/plugins/layout.rs`): it takes an in-process mutex and, on unix, an exclusive `flock` on `plugins/.plugins.lock`, re-reads the file, applies the closure, writes it atomically and releases. Rule for the CLI lane: while the daemon is up, `plugin link`, `install`, `enable`, `disable` and `remove` should call the daemon (add `POST /api/plugins/...` routes behind the UI token when those commands are written); when it is not up, they use `PluginsFile::update`. Never read, edit and `write()` by hand: the daemon's own write (recording a first-party grant, the manifest hash) would otherwise overwrite that edit. On Windows the cross-process lock is not implemented, so there the CLI must go through the daemon while it runs.
+
+**Approval.** A plugin runs only if `grantedPermissions` is recorded in its entry. The daemon records it on its own only for `bundled` (first-party) entries. A `link` or `github` entry without a grant loads its manifest but stays inactive, has no token and shows "not approved yet" in `plugin list`, until `plugin link` / `plugin install` writes the grant after the user's confirmation (via `PluginsFile::update`).
+
 A plugin that wants live events without the hook mechanism can also open `GET /api/events` itself (the `event: status` / `event: sessions` frames, plus the new typed frames).
 
 ### 9. API versioning and feature checks
@@ -447,7 +470,7 @@ Plugins are not sandboxed and cannot be: they are arbitrary executables running 
 3. **No shell, argv only,** so a crafted session name or path in the context cannot become code through our own spawning. Context is passed as JSON on stdin/env, not interpolated into argv.
 4. **Release downloads are verified.** Only from `github.com` releases of the declared repo, with a required checksums asset; a mismatch aborts the install. (The checksum file comes from the same release, so this guards corruption and CDN tampering, not a malicious author.)
 5. **Permissions are declared and soft-enforced at our API.** `POST /api/sessions/input` additionally requires a valid plugin token, since it types into sessions. Token-authenticated plugin routes refuse a call outside the declared permissions (403 naming the permission). This catches mistakes and keeps manifests honest, and it makes `plugin list` meaningful. It is not a security boundary: a hostile plugin can ignore its token and call the unauthenticated core routes on `127.0.0.1`, run `tmux`, or read `~`. The docs and the preview say so.
-6. **Limits protect the UI, not the user:** widget size and rate caps, process timeouts, process-group kill, run concurrency and queue caps, auto-disable of a hook that fails repeatedly. A plugin cannot make the TUI hang by sending huge content, and a runaway child dies on uninstall.
+6. **Limits protect the UI, not the user:** (also: the plugin environment is an allowlist, context files and tokens are 0600, text is stripped of control, bidi and zero-width characters, a finished run's whole process group is killed so no background child outlives it, and `transcript_path` from a hook is only stat'ed under the Claude home) widget size and rate caps, process timeouts, process-group kill, run concurrency and queue caps, auto-disable of a hook that fails repeatedly. A plugin cannot make the TUI hang by sending huge content, and a runaway child dies on uninstall.
 7. **Dangerous core actions need a human.** Plugins can only arm dangerous actions; a human key or mouse event must confirm (section 7). Plugins cannot invoke restart/remove/delete actions without the confirm step, and cannot invoke quit or overlay-internal actions at all (section 7, Gap E).
 8. **Sensitive core features are not plugin territory** (p25: draft and screenshot recovery stay in the core).
 

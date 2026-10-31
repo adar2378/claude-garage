@@ -38,6 +38,8 @@ pub struct Call {
     pub spec: RunSpec,
     /// Content of the file `GARAGE_CONTEXT_FILE` named, read during the run.
     pub ctx_file: Option<String>,
+    /// Unix mode bits of that file while the run was going.
+    pub ctx_file_mode: Option<u32>,
 }
 
 impl Call {
@@ -71,7 +73,16 @@ impl FakeRunner {
 impl Runner for FakeRunner {
     async fn run(&self, spec: RunSpec) -> RunOutcome {
         let ctx_file = spec.env.iter().find(|(k, _)| k == "GARAGE_CONTEXT_FILE").and_then(|(_, p)| std::fs::read_to_string(p).ok());
-        self.calls.lock().unwrap().push(Call { spec, ctx_file });
+        #[cfg(unix)]
+        let ctx_file_mode = spec
+            .env
+            .iter()
+            .find(|(k, _)| k == "GARAGE_CONTEXT_FILE")
+            .and_then(|(_, p)| std::fs::metadata(p).ok())
+            .map(|m| std::os::unix::fs::PermissionsExt::mode(&m.permissions()) & 0o777);
+        #[cfg(not(unix))]
+        let ctx_file_mode = None;
+        self.calls.lock().unwrap().push(Call { spec, ctx_file, ctx_file_mode });
         let now = self.active.fetch_add(1, Ordering::SeqCst) + 1;
         self.max_active.fetch_max(now, Ordering::SeqCst);
         let gate = self.gate.lock().unwrap().clone();
@@ -128,21 +139,57 @@ impl Rig {
         Paths::new(self.garage.path())
     }
 
-    /// Register a linked plugin whose manifest is `toml`; returns its dir.
+    /// Register a linked plugin whose manifest is `toml` and approve its
+    /// permissions, as `plugin link` does after the user says yes; returns its
+    /// dir.
     pub fn link(&self, id: &str, toml: &str) -> PathBuf {
+        let granted = garage_plugin::parse(toml).map(|m| m.permission_names()).unwrap_or_default();
+        self.register(id, toml, Source::Link { path: self.src.path().join(id).to_string_lossy().into_owned() }, Some(granted))
+    }
+
+    /// Register a linked plugin nobody has approved (what a hand-edited
+    /// registry, or a CLI that skipped the prompt, leaves behind).
+    pub fn link_unapproved(&self, id: &str, toml: &str) -> PathBuf {
+        self.register(id, toml, Source::Link { path: self.src.path().join(id).to_string_lossy().into_owned() }, None)
+    }
+
+    /// Register a first-party plugin shipped with garage (no approval needed).
+    pub fn bundle(&self, id: &str, toml: &str) -> PathBuf {
+        self.register(id, toml, Source::Bundled { path: self.src.path().join(id).to_string_lossy().into_owned() }, None)
+    }
+
+    fn register(&self, id: &str, toml: &str, source: Source, granted: Option<Vec<String>>) -> PathBuf {
         let dir = self.src.path().join(id);
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("garage-plugin.toml"), toml).unwrap();
         let paths = self.paths();
-        let mut file = PluginsFile::read(&paths).unwrap();
-        file.plugins.retain(|e| e.id != id);
-        file.plugins.push(Entry::new(id, Source::Link { path: dir.to_string_lossy().into_owned() }));
-        file.write(&paths).unwrap();
+        PluginsFile::update(&paths, |file| {
+            file.plugins.retain(|e| e.id != id);
+            let mut entry = Entry::new(id, source);
+            entry.granted_permissions = granted;
+            file.plugins.push(entry);
+            (true, ())
+        })
+        .unwrap();
         dir
     }
 
     pub fn set_manifest(&self, id: &str, toml: &str) {
         std::fs::write(self.src.path().join(id).join("garage-plugin.toml"), toml).unwrap();
+    }
+
+    /// Register a first-party plugin and load it.
+    pub fn install_bundled(&self, id: &str, toml: &str) -> PathBuf {
+        let dir = self.bundle(id, toml);
+        self.st.plugins.reload().unwrap();
+        dir
+    }
+
+    /// Register an unapproved linked plugin and load it.
+    pub fn install_unapproved(&self, id: &str, toml: &str) -> PathBuf {
+        let dir = self.link_unapproved(id, toml);
+        self.st.plugins.reload().unwrap();
+        dir
     }
 
     /// Link and load a plugin in one go.
@@ -162,6 +209,17 @@ impl Rig {
             out.push(e);
         }
         out
+    }
+
+    /// The per-install UI token, as the TUI reads it from disk.
+    pub fn ui_token(&self) -> String {
+        std::fs::read_to_string(super::layout::ui_token_path(self.garage.path())).unwrap().trim().to_owned()
+    }
+
+    /// A call the TUI would make: the UI token as bearer, no plugin token.
+    pub async fn call_ui(&self, method: &str, uri: &str, body: Option<&str>) -> (StatusCode, axum::http::HeaderMap, Value) {
+        let t = self.ui_token();
+        self.call(method, uri, Some(&t), body).await
     }
 
     pub async fn call(&self, method: &str, uri: &str, token: Option<&str>, body: Option<&str>) -> (StatusCode, axum::http::HeaderMap, Value) {
