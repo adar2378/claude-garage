@@ -12,6 +12,9 @@ use crate::bus::EventBus;
 use crate::config::Config;
 use crate::os::Os;
 
+pub use registry::Registry;
+pub use status::StatusStore;
+
 /// Shared handler state. Cheap to clone (everything is behind an `Arc` or is
 /// itself a handle). Port lanes add their stores here as fields.
 #[derive(Clone)]
@@ -20,11 +23,16 @@ pub struct AppState {
     pub bus: EventBus,
     pub backend: Arc<dyn SessionBackend>,
     pub os: Arc<dyn Os>,
-    // Later: registry / status / context stores.
+    pub registry: Registry,
+    pub status: StatusStore,
+    // Later: context store.
 }
 
 impl AppState {
     pub fn new(config: Config, backend: Arc<dyn SessionBackend>, os: Arc<dyn Os>) -> Self {
-        Self { config: Arc::new(config), bus: EventBus::default(), backend, os }
+        let bus = EventBus::default();
+        let registry = Registry::new(&config.garage_dir);
+        let status = StatusStore::new(bus.clone());
+        Self { config: Arc::new(config), bus, backend, os, registry, status }
     }
 }
