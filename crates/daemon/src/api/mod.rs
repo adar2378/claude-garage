@@ -1,6 +1,7 @@
 //! HTTP routes. Every route in the `daemon-api` spec is registered; all but
 //! `/api/health` answer 501 until their module is ported.
 
+pub mod attach;
 pub mod daemon_restart;
 pub mod editor;
 pub mod events;
@@ -39,6 +40,7 @@ pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/api/health", get(health))
         .route("/api/events", get(events::stream))
+        .route("/api/attach", get(attach::get))
         .route("/api/sessions", get(sessions::list).post(sessions::create))
         .route("/api/sessions/restore", post(sessions::restore))
         .route("/api/sessions/restart", post(sessions::restart))

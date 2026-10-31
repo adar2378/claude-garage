@@ -64,12 +64,42 @@ pub fn read_all(hosts_dir: &Path) -> Vec<Entry> {
     out
 }
 
+/// Create the hosts directory. Records hold each host's token, so on Unix the
+/// directory is private to the user (0700), including when it already exists.
+///
+/// On Windows the directory sits under the per-user profile (`%USERPROFILE%\.garage`),
+/// which is readable by that user (and administrators) only by default; this
+/// code relies on that and sets no ACL of its own.
+pub fn ensure_dir(hosts_dir: &Path) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
+        std::fs::DirBuilder::new().recursive(true).mode(0o700).create(hosts_dir)?;
+        std::fs::set_permissions(hosts_dir, std::fs::Permissions::from_mode(0o700))
+    }
+    #[cfg(not(unix))]
+    std::fs::create_dir_all(hosts_dir)
+}
+
 /// Atomic write (temp file, then rename), so a reader never sees half a file.
+/// On Unix both files are created 0600, so the token is never readable by
+/// another user, not even briefly.
 pub fn write(hosts_dir: &Path, entry: &Entry) -> std::io::Result<()> {
-    std::fs::create_dir_all(hosts_dir)?;
+    use std::io::Write;
+    ensure_dir(hosts_dir)?;
     let path = path_for(hosts_dir, &entry.id);
     let tmp = path.with_extension("json.tmp");
-    std::fs::write(&tmp, serde_json::to_string(entry).map_err(std::io::Error::other)?)?;
+    let _ = std::fs::remove_file(&tmp); // a leftover from a crash would block create_new
+    let mut opts = std::fs::OpenOptions::new();
+    opts.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        opts.mode(0o600);
+    }
+    let mut f = opts.open(&tmp)?;
+    f.write_all(serde_json::to_string(entry).map_err(std::io::Error::other)?.as_bytes())?;
+    drop(f);
     std::fs::rename(&tmp, &path)
 }
 
@@ -96,6 +126,27 @@ mod tests {
         assert_eq!(e.addr(), "127.0.0.1:4000");
         remove(d.path(), "garage/ws/a");
         assert_eq!(read(d.path(), "garage/ws/a"), None);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_directory_is_0700_and_records_are_0600_even_when_the_directory_pre_exists() {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = |p: &Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
+        let d = tempfile::tempdir().unwrap();
+
+        let fresh = d.path().join("a/hosts");
+        write(&fresh, &entry("garage/ws/a")).unwrap();
+        assert_eq!(mode(&fresh), 0o700);
+        assert_eq!(mode(&path_for(&fresh, "garage/ws/a")), 0o600);
+
+        let loose = d.path().join("loose");
+        std::fs::create_dir(&loose).unwrap();
+        std::fs::set_permissions(&loose, std::fs::Permissions::from_mode(0o755)).unwrap();
+        write(&loose, &entry("garage/ws/b")).unwrap();
+        write(&loose, &entry("garage/ws/b")).unwrap(); // rewrite keeps 0600
+        assert_eq!(mode(&loose), 0o700, "an existing directory is tightened");
+        assert_eq!(mode(&path_for(&loose, "garage/ws/b")), 0o600);
     }
 
     #[test]

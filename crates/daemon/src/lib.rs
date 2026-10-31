@@ -28,7 +28,6 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use axum::middleware;
-use backend::SessionBackend;
 
 pub use config::Config;
 pub use state::AppState;
@@ -65,8 +64,10 @@ pub async fn run(config: Config) -> Result<()> {
         api::daemon_restart::wait_for_predecessor_real(config.port, pid).await.map_err(anyhow::Error::msg)?;
     }
     let listener = bind(&config).await?;
-    let backend = Arc::new(backend::tmux::TmuxBackend::new(config.tmux_socket.clone()));
-    backend.init().await.context("initialising the tmux server")?;
+    // Chosen once, here: nothing else branches on the backend.
+    let kind = backend::Kind::from_env_value(std::env::var("GARAGE_BACKEND").ok().as_deref())?;
+    let backend = backend::select(kind, &config)?;
+    backend.init().await.context("initialising the session backend")?;
     let agents: Arc<dyn poller::AgentSource> = Arc::new(poller::CommandAgents::default());
     let state = AppState::with_agents(config, backend, os::platform(), agents.clone(), install::claude_home_from_env());
     let poller = state.poller(agents).start();

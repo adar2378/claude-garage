@@ -1,6 +1,7 @@
-//! Session backends. tmux is the only one today; the trait is the seam a
-//! Windows host-process backend plugs into later (p26).
+//! Session backends behind one trait: tmux (macOS, Linux) and per-session
+//! host processes (Windows; `GARAGE_BACKEND=host` forces it anywhere).
 
+pub mod host;
 pub mod tmux;
 
 use std::time::Duration;
@@ -49,4 +50,58 @@ pub trait SessionBackend: Send + Sync {
     async fn rename(&self, from: &str, to: &str) -> Result<()>;
     async fn capture(&self, id: &str, lines: usize) -> Result<String>;
     fn attach_spec(&self, id: &str) -> AttachSpec; // how the TUI attaches a PTY
+}
+
+/// Which backend a daemon runs, chosen once at start.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Kind {
+    Tmux,
+    Host,
+}
+
+impl Kind {
+    /// The OS default: tmux on macOS and Linux, host processes on Windows.
+    pub fn os_default() -> Kind {
+        if cfg!(windows) { Kind::Host } else { Kind::Tmux }
+    }
+
+    /// `GARAGE_BACKEND` (`tmux` or `host`; unset or empty is the OS default).
+    pub fn from_env_value(value: Option<&str>) -> Result<Kind> {
+        match value.map(str::trim).filter(|v| !v.is_empty()) {
+            None => Ok(Kind::os_default()),
+            Some("tmux") => Ok(Kind::Tmux),
+            Some("host") => Ok(Kind::Host),
+            Some(other) => anyhow::bail!("GARAGE_BACKEND must be \"tmux\" or \"host\", got {other:?}"),
+        }
+    }
+}
+
+/// Build the backend for `kind`. The host backend starts hosts by running
+/// this same executable as `claude-garage host`.
+pub fn select(kind: Kind, config: &crate::Config) -> Result<std::sync::Arc<dyn SessionBackend>> {
+    Ok(match kind {
+        Kind::Tmux => std::sync::Arc::new(tmux::TmuxBackend::new(config.tmux_socket.clone())),
+        Kind::Host => {
+            let exe = std::env::current_exe().map_err(|e| anyhow::anyhow!("cannot locate claude-garage: {e}"))?;
+            std::sync::Arc::new(host::HostBackend::new(
+                config.garage_dir.join("hosts"),
+                vec![exe.to_string_lossy().into_owned(), "host".into()],
+            ))
+        }
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn garage_backend_selects_the_kind_and_rejects_typos() {
+        assert_eq!(Kind::from_env_value(Some("host")).unwrap(), Kind::Host);
+        assert_eq!(Kind::from_env_value(Some(" tmux ")).unwrap(), Kind::Tmux);
+        assert_eq!(Kind::from_env_value(None).unwrap(), Kind::os_default());
+        assert_eq!(Kind::from_env_value(Some("")).unwrap(), Kind::os_default());
+        let e = Kind::from_env_value(Some("screen")).unwrap_err().to_string();
+        assert!(e.contains("GARAGE_BACKEND") && e.contains("screen"), "{e}");
+    }
 }

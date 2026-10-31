@@ -410,7 +410,7 @@ fn now_ms() -> u64 {
 /// Run one host to completion; returns the command's exit code. Blocks until
 /// the command exits. Safe to call on a thread (tests do).
 pub fn run(opts: Options) -> std::io::Result<i32> {
-    std::fs::create_dir_all(&opts.hosts_dir)?;
+    registry::ensure_dir(&opts.hosts_dir)?;
     let pair = native_pty_system()
         .openpty(PtySize { rows: opts.rows, cols: opts.cols, pixel_width: 0, pixel_height: 0 })
         .map_err(io_err)?;
