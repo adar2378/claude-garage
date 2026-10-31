@@ -12,6 +12,7 @@ use crate::bus::EventBus;
 use crate::config::Config;
 use crate::os::Os;
 
+pub use context::Telemetry;
 pub use registry::Registry;
 pub use status::StatusStore;
 
@@ -25,7 +26,8 @@ pub struct AppState {
     pub os: Arc<dyn Os>,
     pub registry: Registry,
     pub status: StatusStore,
-    // Later: context store.
+    /// Lane C: statusline context / rate limits, transcript cache, hook deps.
+    pub telemetry: Telemetry,
 }
 
 impl AppState {
@@ -33,6 +35,7 @@ impl AppState {
         let bus = EventBus::default();
         let registry = Registry::new(&config.garage_dir);
         let status = StatusStore::new(bus.clone());
-        Self { config: Arc::new(config), bus, backend, os, registry, status }
+        let telemetry = Telemetry::new(crate::install::claude_home_from_env(), Arc::new(context::UnwiredDeps));
+        Self { config: Arc::new(config), bus, backend, os, registry, status, telemetry }
     }
 }

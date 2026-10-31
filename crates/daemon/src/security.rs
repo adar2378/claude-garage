@@ -32,3 +32,29 @@ pub async fn origin_guard(
     }
     next.run(req).await
 }
+
+/// Port of `daemon/src/token-auth.js`: constant-time check of a URL query
+/// token against the per-install hook token, so response timing cannot leak
+/// the expected token a byte at a time. A missing token never matches.
+pub fn token_matches(given: Option<&str>, expected: &str) -> bool {
+    let Some(given) = given else { return false };
+    let (a, b) = (given.as_bytes(), expected.as_bytes());
+    if a.len() != b.len() {
+        return false;
+    }
+    a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
+}
+
+#[cfg(test)]
+mod token_tests {
+    use super::token_matches;
+
+    #[test]
+    fn matches_only_the_exact_token() {
+        assert!(token_matches(Some("abc"), "abc"));
+        assert!(!token_matches(Some("abd"), "abc"));
+        assert!(!token_matches(Some("ab"), "abc"));
+        assert!(!token_matches(Some(""), "abc"));
+        assert!(!token_matches(None, "abc"));
+    }
+}
