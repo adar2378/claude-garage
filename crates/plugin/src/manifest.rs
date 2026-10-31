@@ -41,12 +41,6 @@ pub enum Permission {
     SessionsRead,
     #[serde(rename = "sessions.input")]
     SessionsInput,
-    #[serde(rename = "sessions.manage")]
-    SessionsManage,
-    #[serde(rename = "workspaces.read")]
-    WorkspacesRead,
-    #[serde(rename = "workspaces.write")]
-    WorkspacesWrite,
     #[serde(rename = "ui.widgets")]
     UiWidgets,
     #[serde(rename = "ui.panes")]
@@ -61,8 +55,6 @@ pub enum Permission {
     // Show a short notice (toast) in the TUI.
     #[serde(rename = "ui.notice")]
     UiNotice,
-    #[serde(rename = "network")]
-    Network,
 }
 
 impl Permission {
@@ -70,16 +62,12 @@ impl Permission {
         match self {
             Permission::SessionsRead => "sessions.read",
             Permission::SessionsInput => "sessions.input",
-            Permission::SessionsManage => "sessions.manage",
-            Permission::WorkspacesRead => "workspaces.read",
-            Permission::WorkspacesWrite => "workspaces.write",
             Permission::UiWidgets => "ui.widgets",
             Permission::UiPanes => "ui.panes",
             Permission::UiInvoke => "ui.invoke",
             Permission::CoreActions => "core.actions",
             Permission::UiNavigate => "ui.navigate",
             Permission::UiNotice => "ui.notice",
-            Permission::Network => "network",
         }
     }
 
@@ -190,7 +178,7 @@ pub struct Manifest {
     #[serde(default)]
     /// A URL shown in the install preview.
     pub homepage: Option<String>,
-    /// Feature names from `/api/plugin/features` the plugin needs.
+    /// Feature names from `/api/plugins/features` the plugin needs.
     #[serde(default)]
     pub requires: Vec<String>,
     #[serde(default)]

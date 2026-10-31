@@ -838,7 +838,10 @@ mod tests {
             "o/d",
             &[(
                 "garage-plugin.toml",
-                &toml("typist", "permissions = [\"sessions.input\", \"network\"]"),
+                &toml(
+                    "typist",
+                    "permissions = [\"sessions.input\", \"ui.notice\"]",
+                ),
             )],
         );
         let mut ui = FakeUi::new(false, &[]);
@@ -860,7 +863,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             r.entry("typist").unwrap().granted_permissions.unwrap(),
-            ["sessions.input", "network"]
+            ["sessions.input", "ui.notice"]
         );
         assert!(ui.asked.is_empty(), "--yes asks nothing");
         // interactively the question itself carries the warning
@@ -1415,7 +1418,7 @@ mod tests {
         // the manifest grows a permission; the daemon would keep the old one and ask for this command
         std::fs::write(
             folder.join("garage-plugin.toml"),
-            toml("mine-p", "permissions = [\"ui.widgets\", \"network\"]"),
+            toml("mine-p", "permissions = [\"ui.widgets\", \"ui.notice\"]"),
         )
         .unwrap();
         let mut ui = FakeUi::new(true, &[true]);
@@ -1423,20 +1426,20 @@ mod tests {
             .unwrap();
         assert!(
             ui.out
-                .contains("Changes since the approved version:\n  + permission network"),
+                .contains("Changes since the approved version:\n  + permission ui.notice"),
             "{}",
             ui.out
         );
         assert_eq!(
             r.entry("mine-p").unwrap().granted_permissions.unwrap(),
-            ["ui.widgets", "network"]
+            ["ui.widgets", "ui.notice"]
         );
         // declining the growth leaves the old grant
         std::fs::write(
             folder.join("garage-plugin.toml"),
             toml(
                 "mine-p",
-                "permissions = [\"ui.widgets\", \"network\", \"sessions.read\"]",
+                "permissions = [\"ui.widgets\", \"ui.notice\", \"sessions.read\"]",
             ),
         )
         .unwrap();
@@ -1447,7 +1450,7 @@ mod tests {
         );
         assert_eq!(
             r.entry("mine-p").unwrap().granted_permissions.unwrap(),
-            ["ui.widgets", "network"]
+            ["ui.widgets", "ui.notice"]
         );
         assert!(
             r.run(&mut ui, |cx| link(

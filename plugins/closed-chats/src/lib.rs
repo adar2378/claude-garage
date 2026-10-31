@@ -72,17 +72,11 @@ fn truncate(s: &str, cols: usize) -> String {
 }
 
 fn dim() -> Option<Style> {
-    Some(Style {
-        fg: Some("dim".into()),
-        ..Default::default()
-    })
+    Some(Style::new().fg("dim"))
 }
 
 fn click(action: &str) -> Option<garage_plugin_sdk::Click> {
-    Some(garage_plugin_sdk::Click {
-        action: action.to_owned(),
-        args: None,
-    })
+    Some(garage_plugin_sdk::Click::new(action))
 }
 
 /// One grey rail row for a closed chat: the name restores it (the row is
@@ -90,22 +84,15 @@ fn click(action: &str) -> Option<garage_plugin_sdk::Click> {
 /// trailing `x` forgets it (a dangerous action: the wall asks twice).
 pub fn row(rec: &Closed) -> WidgetItem {
     let name = truncate(rec.label(), LABEL_COLS);
-    WidgetItem {
-        segments: Some(vec![
-            Segment {
-                text: format!("  o {name} - {}", reason_hint(&rec.reason)),
-                style: dim(),
-                click: click("session.restore"),
-            },
-            Segment {
-                text: " x ".to_owned(),
-                style: dim(),
-                click: click("session.delete"),
-            },
-        ]),
-        session: Some(rec.id.clone()),
-        ..Default::default()
-    }
+    let mut restore = Segment::new(format!("  o {name} - {}", reason_hint(&rec.reason)));
+    restore.style = dim();
+    restore.click = click("session.restore");
+    let mut forget = Segment::new(" x ");
+    forget.style = dim();
+    forget.click = click("session.delete");
+    WidgetItem::new()
+        .segments(vec![restore, forget])
+        .session(rec.id.clone())
 }
 
 /// The widget content: per workspace its newest records, newest first.
@@ -122,10 +109,7 @@ pub fn put(records: &BTreeMap<String, Vec<Closed>>) -> WidgetPut {
             )
         })
         .collect();
-    WidgetPut {
-        scopes,
-        ttl_secs: None,
-    }
+    WidgetPut::new().scopes(scopes)
 }
 
 /// Every workspace's closed records.

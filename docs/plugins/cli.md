@@ -16,7 +16,7 @@ The name matches `^[a-z][a-z0-9-]{0,31}$`. It cannot be a core command (`start`,
 
 ## The run
 
-- The environment is the usual [plugin environment](api.md#environment), with `GARAGE_TRIGGER=cli`. The run context has `trigger.kind = "cli"` and `trigger.args.argv` with the words. `focus.dir` is the caller's working directory. There is no focused session.
+- The environment is the usual [plugin environment](api.md#environment), The run context has `trigger.kind = "cli"` and `trigger.args.argv` with the words. `focus.dir` is the caller's working directory. There is no focused session.
 - Standard input, output and error go to the terminal, so the program can print and ask questions.
 - `GARAGE_PORT`, `GARAGE_DIR`, `GARAGE_TMUX_SOCKET`, `GARAGE_TMUX_CONTROL` and `GARAGE_BACKEND` are passed through, so a `claude-garage` child process finds the same daemon. Other variables are cleared.
 - `needs_daemon = true` makes `claude-garage` start a current daemon first. Set it if your command calls the API.

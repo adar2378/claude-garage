@@ -1,5 +1,5 @@
 {
-  "_note": "Plugin API v1, frozen. Hand-edited on purpose. Adding a line is fine (additive). Removing or renaming one needs api_version 2. Tests: garage-plugin (frozen_api), garage-daemon (plugins::tests frozen_api_*), garage-protocol (api_schema).",
+  "_note": "Plugin API v1, frozen. Hand-edited on purpose. Adding a line is fine (additive). Removing or renaming one needs api_version 2, except what docs/plugins/versioning.md names as a security change. Tests: garage-plugin (frozen_api), garage-daemon (plugins::tests frozen_api_*), garage-protocol (api_schema).",
   "api_versions": [
     1
   ],
@@ -82,16 +82,12 @@
   "permissions": [
     "sessions.read",
     "sessions.input",
-    "sessions.manage",
-    "workspaces.read",
-    "workspaces.write",
     "ui.widgets",
     "ui.panes",
     "ui.invoke",
     "core.actions",
     "ui.navigate",
-    "ui.notice",
-    "network"
+    "ui.notice"
   ],
   "dangerous_permissions": [
     "sessions.input",
@@ -126,9 +122,7 @@
       "id",
       "workspace",
       "at",
-      "transcript_offset",
-      "row",
-      "history_limit"
+      "anchor"
     ],
     "session.forgotten": [
       "id",
@@ -136,6 +130,8 @@
     ],
     "session.status_changed": [
       "id",
+      "dir",
+      "workspace",
       "from",
       "to",
       "since"
@@ -155,6 +151,13 @@
     ],
     "daemon.started": [],
     "timer": []
+  },
+  "event_payload_nested": {
+    "session.turn.anchor": [
+      "transcript_offset",
+      "row",
+      "history_limit"
+    ]
   },
   "slots": {
     "tile.title.right": "session",
@@ -176,7 +179,7 @@
     "ok",
     "warn",
     "error",
-    "needs-input"
+    "needs_input"
   ],
   "widget_item_fields": [
     "priority",
@@ -203,16 +206,6 @@
     "italic",
     "underline",
     "dim"
-  ],
-  "limit_keys": [
-    "widget_items",
-    "widget_segments",
-    "widget_cols",
-    "widget_body_bytes",
-    "widget_puts_per_sec",
-    "widget_ttl_secs",
-    "widget_frames",
-    "notice_chars"
   ],
   "features": [
     "api.v1.frozen",
@@ -243,31 +236,36 @@
     {
       "method": "GET",
       "path": "/api/events",
-      "needs": "none"
+      "needs": "none",
+      "tokenless": "deprecated"
     },
     {
       "method": "GET",
       "path": "/api/sessions",
-      "needs": "none"
+      "needs": "none",
+      "tokenless": "deprecated"
     },
     {
       "method": "GET",
       "path": "/api/workspaces",
-      "needs": "none"
+      "needs": "none",
+      "tokenless": "deprecated"
     },
     {
       "method": "GET",
       "path": "/api/usage",
-      "needs": "none"
+      "needs": "none",
+      "tokenless": "deprecated"
     },
     {
       "method": "GET",
       "path": "/api/workspaces/{name}/closed",
-      "needs": "sessions.read"
+      "needs": "sessions.read",
+      "tokenless": "deprecated"
     },
     {
       "method": "GET",
-      "path": "/api/plugin/features",
+      "path": "/api/plugins/features",
       "needs": "none"
     },
     {
@@ -278,7 +276,8 @@
     {
       "method": "GET",
       "path": "/api/plugins/widgets",
-      "needs": "none"
+      "needs": "none",
+      "tokenless": "deprecated"
     },
     {
       "method": "GET",
@@ -325,7 +324,6 @@
     "session.close",
     "session.delete",
     "session.focus",
-    "session.engage",
     "session.maximize",
     "session.spawn",
     "session.spawn.worktree",
@@ -342,11 +340,13 @@
     "jump.blocked",
     "view.cycle",
     "view.focus",
-    "hooks.install"
-  ],
-  "core_actions_invocable_prefixes": [
-    "focus.cycle.",
-    "overlay.open."
+    "hooks.install",
+    "focus.cycle.prev",
+    "focus.cycle.next",
+    "overlay.open.queue",
+    "overlay.open.help",
+    "overlay.open.view_picker",
+    "overlay.open.workspace_add"
   ],
   "context": {
     "": [
@@ -373,7 +373,8 @@
     ],
     "focus": [
       "workspace",
-      "session"
+      "session",
+      "dir"
     ],
     "focus.session": [
       "id",
@@ -399,10 +400,67 @@
     "GARAGE_PLUGIN_DIR",
     "GARAGE_PLUGIN_STATE_DIR",
     "GARAGE_PLUGIN_TOKEN",
-    "GARAGE_TRIGGER",
-    "GARAGE_CONTEXT"
+    "GARAGE_CONTEXT",
+    "GARAGE_CONTEXT_FILE"
   ],
   "env_cli": [
     "GARAGE_HANDOVER"
+  ],
+  "limit_sizes": [
+    "widget_items",
+    "widget_segments",
+    "widget_cols",
+    "widget_body_bytes",
+    "widget_ttl_secs",
+    "widget_frames",
+    "notice_chars"
+  ],
+  "limit_rates": [
+    "widget_puts_per_sec"
+  ],
+  "error_body": [
+    "error",
+    "code",
+    "permission"
+  ],
+  "error_codes": [
+    "bad_request",
+    "unauthorized",
+    "forbidden",
+    "not_found",
+    "conflict",
+    "payload_too_large",
+    "invalid_request",
+    "rate_limited",
+    "internal_error",
+    "not_implemented",
+    "unavailable",
+    "unspecified",
+    "invalid_json",
+    "missing_token",
+    "invalid_token",
+    "wrong_plugin",
+    "ui_token_required",
+    "plugin_disabled",
+    "permission_denied",
+    "unknown_plugin",
+    "unknown_widget",
+    "invalid_widget",
+    "unknown_action",
+    "action_not_allowed",
+    "invalid_action",
+    "invalid_target",
+    "invalid_text",
+    "unknown_pane",
+    "too_many_panes",
+    "pane_failed",
+    "unknown_session",
+    "session_not_allowed",
+    "invalid_if_status",
+    "status_blocked",
+    "send_failed",
+    "unknown_workspace",
+    "host_not_allowed",
+    "origin_not_allowed"
   ]
 }

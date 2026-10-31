@@ -141,8 +141,8 @@ pub struct ContextFocus {
     pub workspace: Option<String>,
     #[schemars(required, schema_with = "nullable::<ContextSession>")]
     pub session: Option<ContextSession>,
-    /// CLI runs only: the caller's working directory.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// CLI runs: the caller's working directory. `null` for every other run.
+    #[schemars(required, schema_with = "nullable::<String>")]
     pub dir: Option<String>,
 }
 
@@ -244,11 +244,22 @@ pub struct SessionTurn {
     pub workspace: String,
     /// Unix milliseconds.
     pub at: i64,
+    /// Where the turn ended. Left out when nothing could be measured.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub anchor: Option<TurnAnchor>,
+}
+
+/// The `anchor` of a `session.turn` event. Each value is `null` when it could
+/// not be measured.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct TurnAnchor {
+    /// The transcript's byte length when the turn ended.
     #[schemars(required, schema_with = "nullable::<u64>")]
     pub transcript_offset: Option<u64>,
     /// Absolute scrollback row where the turn ended (0 is the oldest kept line).
     #[schemars(required, schema_with = "nullable::<u64>")]
     pub row: Option<u64>,
+    /// How many history lines the backend keeps.
     #[schemars(required, schema_with = "nullable::<u64>")]
     pub history_limit: Option<u64>,
 }
@@ -262,6 +273,8 @@ pub struct SessionForgotten {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct SessionStatusChanged {
     pub id: String,
+    pub dir: String,
+    pub workspace: String,
     pub from: crate::SessionStatus,
     pub to: crate::SessionStatus,
     #[schemars(required, schema_with = "nullable::<i64>")]
@@ -313,6 +326,10 @@ pub struct RouteInfo {
     pub path: String,
     /// `none` or a permission name.
     pub needs: String,
+    /// `deprecated` when the route answers without a plugin token today but
+    /// takes one; plugins always send theirs. Absent otherwise.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tokenless: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -361,7 +378,7 @@ pub struct Features {
     pub limits: FeatureLimits,
 }
 
-/// `GET /api/plugin/features`.
+/// `GET /api/plugins/features`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct FeaturesResponse {
     pub api_versions: Vec<u32>,

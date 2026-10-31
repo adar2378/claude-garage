@@ -66,6 +66,11 @@ pub const RESERVED_IDS: &[&str] = &[
     "pane",
     "core",
     "ui",
+    // first path segments under /api/plugins/
+    "features",
+    "widgets",
+    "panes",
+    "reload",
 ];
 
 /// `claude-garage` subcommands a `[[cli]]` entry may not shadow. `install`
@@ -144,6 +149,15 @@ fn deserialize_problem(src: &str, e: &serde_path_to_error::Error<toml::de::Error
     }
     if path == "." {
         path = "manifest".into();
+    }
+    if path.starts_with("permissions[")
+        && let Some(name) = crate::features::WITHDRAWN_PERMISSIONS
+            .iter()
+            .find(|n| message.starts_with(&format!("unknown variant `{n}`")))
+    {
+        message = format!(
+            "{name:?} is not a permission of plugin API v1: no route checks it, so it was withdrawn. Remove it from `permissions`"
+        );
     }
     toml_problem(src, path, message, inner)
 }
@@ -934,6 +948,29 @@ checksums = "SHA256SUMS"
         );
     }
 
+    /// Names that drafts reserved but nothing checked are refused with a
+    /// reason, not a bare "unknown variant".
+    #[test]
+    fn a_withdrawn_permission_is_refused_with_a_clear_message() {
+        for name in crate::features::WITHDRAWN_PERMISSIONS {
+            let src = GOOD.replace(
+                "\"sessions.read\"]",
+                &format!("\"sessions.read\", \"{name}\"]"),
+            );
+            let errs = parse(&src).unwrap_err();
+            assert_eq!(errs.len(), 1, "{errs:?}");
+            assert_eq!(errs[0].path, "permissions[4]", "{name}");
+            assert!(
+                errs[0].message.contains(name) && errs[0].message.contains("withdrawn"),
+                "{name}: {}",
+                errs[0].message
+            );
+        }
+        // a made-up name keeps the generic message
+        let src = GOOD.replace("\"sessions.read\"]", "\"sessions.read\", \"x.y\"]");
+        assert!(!parse(&src).unwrap_err()[0].message.contains("withdrawn"));
+    }
+
     /// One failing manifest per rule: (what to break, with what, expected
     /// path prefix, expected message fragment).
     #[test]
@@ -942,6 +979,7 @@ checksums = "SHA256SUMS"
             ("id = \"usage-bar\"", "id = \"Usage_Bar\"", "id", "^[a-z]"),
             ("id = \"usage-bar\"", "id = \"a\"", "id", "^[a-z]"),
             ("id = \"usage-bar\"", "id = \"daemon\"", "id", "reserved"),
+            ("id = \"usage-bar\"", "id = \"features\"", "id", "reserved"),
             (
                 "version = \"0.1.0\"",
                 "version = \"one\"",

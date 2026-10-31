@@ -14,6 +14,7 @@ use crate::Api;
 
 /// One request the fake saw.
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub struct Req {
     /// HTTP method.
     pub method: String,

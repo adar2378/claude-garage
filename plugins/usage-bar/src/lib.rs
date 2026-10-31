@@ -97,22 +97,10 @@ impl Usage {
     /// The widget content: one dim flow item, or `None` to clear the widget.
     pub fn widget(&self) -> Option<WidgetPut> {
         let chip = self.chip()?;
-        let item = WidgetItem {
-            priority: PRIORITY,
-            segments: Some(vec![Segment {
-                text: format!(" {chip} "),
-                style: Some(Style {
-                    fg: Some("dim".into()),
-                    ..Style::default()
-                }),
-                click: None,
-            }]),
-            ..WidgetItem::default()
-        };
-        Some(WidgetPut {
-            scopes: [("*".to_owned(), vec![item])].into(),
-            ttl_secs: None,
-        })
+        let item = WidgetItem::new().priority(PRIORITY).segments(vec![
+            Segment::new(format!(" {chip} ")).style(Style::new().fg("dim")),
+        ]);
+        Some(WidgetPut::new().scope("*", vec![item]))
     }
 }
 

@@ -4,6 +4,7 @@
 //! Replaces `statusEvents` and `pollerEvents` in the JS daemon.
 
 use garage_protocol::SessionStatus;
+use garage_protocol::api::TurnAnchor;
 use tokio::sync::broadcast;
 
 use crate::closing::CloseReason;
@@ -47,18 +48,14 @@ pub enum DaemonEvent {
         reason: CloseReason,
         last_status: Option<String>,
     },
-    /// One Claude turn ended (the Stop hook). `transcript_offset` is the
-    /// transcript's byte length at that moment when the hook named one. `row`
-    /// is where the session's cursor was in the scrollback (absolute, 0 is
-    /// the oldest retained line) and `history_limit` how many history lines
-    /// the backend keeps; both are `None` when the backend cannot say.
+    /// One Claude turn ended (the Stop hook). `anchor` says where: the
+    /// transcript's byte length, the cursor's scrollback row and the backend's
+    /// history size. `None` when none of them could be measured.
     SessionTurn {
         id: String,
         workspace: String,
         at: i64,
-        transcript_offset: Option<u64>,
-        row: Option<u64>,
-        history_limit: Option<u64>,
+        anchor: Option<TurnAnchor>,
     },
     WorktreeCreated {
         workspace: String,
@@ -132,7 +129,9 @@ impl DaemonEvent {
                 since,
             } => (
                 "session.status_changed",
-                json!({"id": id, "from": from, "to": to, "since": since}),
+                // `dir` is filled in by the plugin host, which can look the
+                // session up; the bus cannot (the status store is sync).
+                json!({"id": id, "dir": "", "workspace": crate::backend::tmux::split_session_id(id).0, "from": from, "to": to, "since": since}),
             ),
             DaemonEvent::SessionCreated { id, dir, workspace } => (
                 "session.created",
@@ -152,12 +151,15 @@ impl DaemonEvent {
                 id,
                 workspace,
                 at,
-                transcript_offset,
-                row,
-                history_limit,
+                anchor,
             } => (
                 "session.turn",
-                json!({"id": id, "workspace": workspace, "at": at, "transcript_offset": transcript_offset, "row": row, "history_limit": history_limit}),
+                match anchor {
+                    Some(a) => {
+                        json!({"id": id, "workspace": workspace, "at": at, "anchor": a})
+                    }
+                    None => json!({"id": id, "workspace": workspace, "at": at}),
+                },
             ),
             DaemonEvent::SessionForgotten { id, workspace } => (
                 "session.forgotten",

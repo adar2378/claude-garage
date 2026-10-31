@@ -129,6 +129,8 @@ fn the_docs_mention_every_name_the_freeze_promises() {
         "env",
         "env_cli",
         "pane_placements",
+        "error_codes",
+        "error_body",
     ] {
         for n in golden[key].as_array().unwrap() {
             want(key, n.as_str().unwrap());
@@ -157,7 +159,7 @@ fn the_docs_mention_every_name_the_freeze_promises() {
     }
     for id in golden["core_actions_invocable"].as_array().unwrap() {
         // the ids a user is most likely to meet are spelled out; the rest are
-        // published by /api/plugin/features. Dangerous ones must be named.
+        // published by /api/plugins/features. Dangerous ones must be named.
         let id = id.as_str().unwrap();
         if garage_plugin::core_actions::lookup(id).is_some_and(|a| a.dangerous) {
             want("dangerous core action", id);

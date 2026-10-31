@@ -159,27 +159,25 @@ async fn a_stop_hook_publishes_the_turn_with_the_scrollback_row_of_the_cursor() 
     );
     let turn = loop {
         match events.try_recv().unwrap() {
-            DaemonEvent::SessionTurn {
-                id,
-                row,
-                history_limit,
-                ..
-            } => break (id, row, history_limit),
+            DaemonEvent::SessionTurn { id, anchor, .. } => break (id, anchor),
             _ => continue,
         }
     };
     assert_eq!(turn.0, "garage/ws/a");
-    assert_eq!(turn.1, Some(expected.row()), "history size plus cursor row");
-    assert_eq!(turn.2, expected.history_limit);
+    let anchor = turn.1.expect("the pane could be measured");
+    assert_eq!(
+        anchor.row,
+        Some(expected.row()),
+        "history size plus cursor row"
+    );
+    assert_eq!(anchor.history_limit, expected.history_limit);
     let (_, payload) = DaemonEvent::SessionTurn {
         id: turn.0,
         workspace: "ws".into(),
         at: 1,
-        transcript_offset: None,
-        row: turn.1,
-        history_limit: turn.2,
+        anchor: Some(anchor),
     }
     .plugin_event()
     .unwrap();
-    assert_eq!(payload["row"], expected.row());
+    assert_eq!(payload["anchor"]["row"], expected.row());
 }

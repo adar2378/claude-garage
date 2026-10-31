@@ -224,12 +224,14 @@ mod tests {
                     id: "garage/w/a".into(),
                     workspace: "w".into(),
                     at: 5,
-                    transcript_offset: None,
-                    row: Some(42),
-                    history_limit: Some(2000),
+                    anchor: Some(garage_protocol::api::TurnAnchor {
+                        transcript_offset: None,
+                        row: Some(42),
+                        history_limit: Some(2000),
+                    }),
                 },
                 "session.turn",
-                json!({"id": "garage/w/a", "workspace": "w", "at": 5, "transcript_offset": null, "row": 42, "history_limit": 2000}),
+                json!({"id": "garage/w/a", "workspace": "w", "at": 5, "anchor": {"transcript_offset": null, "row": 42, "history_limit": 2000}}),
             ),
             (
                 DaemonEvent::SessionForgotten {

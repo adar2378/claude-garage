@@ -51,7 +51,7 @@ command = ["{plugin_dir}/bin/usage", "cli"]
 - **`id`** matches `^[a-z][a-z0-9-]{1,30}$`, is unique, and is not a reserved word (`session`, `workspace`, `focus`, `jump`, `overlay`, `view`, `hooks`, `app`, `pet`, `daemon`, `chord`, `plugin`, `pane`, `core`).
 - **Local ids** (action, pane, widget) match `^[a-z][a-z0-9_-]{0,31}$`. No dots or colons. The full id of an action is `<plugin>:<id>`.
 - **`api_version`** must be one garage supports. See [versioning](versioning.md).
-- **`requires`** lists feature names from `GET /api/plugin/features`. If one is missing garage refuses to load the plugin and says which. Use `name` for a flag, or `name:value` for a list, for example `events:session.turn` or `slots:tile.gutter`.
+- **`requires`** lists feature names from `GET /api/plugins/features`. If one is missing garage refuses to load the plugin and says which. Use `name` for a flag, or `name:value` for a list, for example `events:session.turn` or `slots:tile.gutter`.
 - **Permissions** must be honest: a manifest with `[[widgets]]` must declare `ui.widgets`, with `[[panes]]` must declare `ui.panes`, and with a button that runs a core action must declare `ui.navigate` (navigation only) or `core.actions`.
 - **Actions**: exactly one of `command` and `pane`.
 - **Events**: `timer` needs `every_secs` of at least 5. Other events must not have it.
@@ -96,8 +96,8 @@ These keys sit at the top of the file.
 | `platforms` | list of one of `macos`, `linux`, `windows` | yes |  | Systems the plugin runs on. |
 | `description` | string | no |  | One line for the install preview and `plugin list`. |
 | `homepage` | string | no |  | A URL shown in the install preview. |
-| `requires` | list of string | no | `[]` | Feature names from `/api/plugin/features` the plugin needs. |
-| `permissions` | list of one of `sessions.read`, `sessions.input`, `sessions.manage`, `workspaces.read`, `workspaces.write`, `ui.widgets`, `ui.panes`, `ui.invoke`, `core.actions`, `ui.navigate`, `ui.notice`, `network` | no | `[]` | What the plugin uses. Shown at install; the daemon checks it on API calls. |
+| `requires` | list of string | no | `[]` | Feature names from `/api/plugins/features` the plugin needs. |
+| `permissions` | list of one of `sessions.read`, `sessions.input`, `ui.widgets`, `ui.panes`, `ui.invoke`, `core.actions`, `ui.navigate`, `ui.notice` | no | `[]` | What the plugin uses. Shown at install; the daemon checks it on API calls. |
 
 ### `[[actions]]`
 

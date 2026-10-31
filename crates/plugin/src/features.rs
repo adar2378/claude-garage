@@ -1,6 +1,6 @@
 //! The one place that says what this garage supports: API versions, events,
 //! slots and optional capabilities. Validation, plugin load and
-//! `GET /api/plugin/features` all read it (design section 9).
+//! `GET /api/plugins/features` all read it (design section 9).
 
 use garage_protocol::widgets::{WidgetSlot, limits};
 use serde_json::{Value, json};
@@ -24,30 +24,42 @@ pub const EVENTS: &[&str] = &[
 
 pub const PANE_PLACEMENTS: &[&str] = &["tile", "overlay", "popup"];
 
-/// Permissions a manifest may declare.
-pub const PERMISSIONS: &[&str] = &[
-    "sessions.read",
-    "sessions.input",
+/// Names that were reserved in drafts of the API but no route ever checked.
+/// A manifest naming one is refused with an explanation; a name returns to
+/// [`PERMISSIONS`] when a route starts checking it.
+pub const WITHDRAWN_PERMISSIONS: &[&str] = &[
     "sessions.manage",
     "workspaces.read",
     "workspaces.write",
+    "network",
+];
+
+/// Permissions a manifest may declare. Every one is checked by a route or by
+/// the wall; none is reserved.
+pub const PERMISSIONS: &[&str] = &[
+    "sessions.read",
+    "sessions.input",
     "ui.widgets",
     "ui.panes",
     "ui.invoke",
     "core.actions",
     "ui.navigate",
     "ui.notice",
-    "network",
 ];
 
 /// One HTTP route of plugin API v1: method, path (with `{param}` holes) and
 /// what it needs. `needs` is `none`, a permission name, `ui-token` or
 /// `permission-or-ui-token`.
+///
+/// `tokenless_deprecated`: the route answers a request without a plugin token
+/// today, but accepts one. Plugins and SDKs always send theirs; a later garage
+/// may require it (see the security carve-out in docs/plugins/versioning.md).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Route {
     pub method: &'static str,
     pub path: &'static str,
     pub needs: &'static str,
+    pub tokenless_deprecated: bool,
 }
 
 const fn route(method: &'static str, path: &'static str, needs: &'static str) -> Route {
@@ -55,21 +67,39 @@ const fn route(method: &'static str, path: &'static str, needs: &'static str) ->
         method,
         path,
         needs,
+        tokenless_deprecated: false,
     }
+}
+
+/// A route that works without a token today but takes one.
+const fn route_token_soon(method: &'static str, path: &'static str, needs: &'static str) -> Route {
+    Route {
+        tokenless_deprecated: true,
+        ..route(method, path, needs)
+    }
+}
+
+/// The `features.routes` entry of one route.
+pub fn route_json(r: &Route) -> Value {
+    let mut v = json!({"method": r.method, "path": r.path, "needs": r.needs});
+    if r.tokenless_deprecated {
+        v["tokenless"] = json!("deprecated");
+    }
+    v
 }
 
 /// The HTTP routes a plugin may rely on in API v1 (frozen: see
 /// `api-v1.golden.json`). The daemon has more routes; those are not promised.
 pub const ROUTES_V1: &[Route] = &[
     route("GET", "/api/health", "none"),
-    route("GET", "/api/events", "none"),
-    route("GET", "/api/sessions", "none"),
-    route("GET", "/api/workspaces", "none"),
-    route("GET", "/api/usage", "none"),
-    route("GET", "/api/workspaces/{name}/closed", "sessions.read"),
-    route("GET", "/api/plugin/features", "none"),
+    route_token_soon("GET", "/api/events", "none"),
+    route_token_soon("GET", "/api/sessions", "none"),
+    route_token_soon("GET", "/api/workspaces", "none"),
+    route_token_soon("GET", "/api/usage", "none"),
+    route_token_soon("GET", "/api/workspaces/{name}/closed", "sessions.read"),
+    route("GET", "/api/plugins/features", "none"),
     route("GET", "/api/plugins", "none"),
-    route("GET", "/api/plugins/widgets", "none"),
+    route_token_soon("GET", "/api/plugins/widgets", "none"),
     route("GET", "/api/plugins/panes", "none"),
     route("PUT", "/api/plugins/{id}/widgets/{widget}", "ui.widgets"),
     route("DELETE", "/api/plugins/{id}/widgets/{widget}", "ui.widgets"),
@@ -87,7 +117,7 @@ pub fn is_dangerous(permission: &str) -> bool {
     DANGEROUS_PERMISSIONS.contains(&permission)
 }
 
-/// The `features` object of `/api/plugin/features`.
+/// The `features` object of `/api/plugins/features`.
 pub fn features() -> Value {
     json!({
         "api.v1.frozen": true,
@@ -95,10 +125,7 @@ pub fn features() -> Value {
         "permissions": PERMISSIONS,
         "dangerous_permissions": DANGEROUS_PERMISSIONS,
         "theme_tokens": garage_protocol::widgets::THEME_TOKENS,
-        "routes": ROUTES_V1
-            .iter()
-            .map(|r| json!({"method": r.method, "path": r.path, "needs": r.needs}))
-            .collect::<Vec<_>>(),
+        "routes": ROUTES_V1.iter().map(route_json).collect::<Vec<_>>(),
         "slots": WidgetSlot::ALL.iter().map(|s| s.as_str()).collect::<Vec<_>>(),
         "widgets.click_args": true,
         "widgets.filler": true,
@@ -123,7 +150,7 @@ pub fn features() -> Value {
     })
 }
 
-/// The full `/api/plugin/features` body.
+/// The full `/api/plugins/features` body.
 pub fn features_response(garage_version: &str) -> Value {
     json!({"api_versions": API_VERSIONS, "garage": garage_version, "features": features()})
 }

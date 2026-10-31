@@ -328,16 +328,32 @@ impl PluginHost {
                     continue;
                 };
                 let session = data.get("id").and_then(Value::as_str).map(str::to_owned);
-                let fallback = SessionInfo {
-                    dir: data.get("dir").and_then(Value::as_str).map(str::to_owned),
-                    status: data
-                        .get("last_status")
-                        .and_then(Value::as_str)
-                        .map(str::to_owned),
-                    ..Default::default()
-                };
                 let host = host.clone();
                 tokio::spawn(async move {
+                    let mut data = data;
+                    // A status change is published by the (sync) status store,
+                    // which does not know the directory: look it up here.
+                    if name == "session.status_changed"
+                        && let Some(info) = match session.as_deref() {
+                            Some(id) => host.0.lookup.session(id).await,
+                            None => None,
+                        }
+                        && let Some(dir) = info.dir
+                    {
+                        data["dir"] = Value::String(dir);
+                    }
+                    let fallback = SessionInfo {
+                        dir: data
+                            .get("dir")
+                            .and_then(Value::as_str)
+                            .filter(|d| !d.is_empty())
+                            .map(str::to_owned),
+                        status: data
+                            .get("last_status")
+                            .and_then(Value::as_str)
+                            .map(str::to_owned),
+                        ..Default::default()
+                    };
                     host.dispatch_event(name, data, session, fallback).await;
                     drop(permit);
                 });

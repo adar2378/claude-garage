@@ -15,6 +15,7 @@ use crate::fuzzy;
 
 /// What a key did to a widget.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum Outcome<T> {
     /// Keep going; nothing was decided.
     Continue,

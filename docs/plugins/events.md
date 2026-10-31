@@ -23,9 +23,9 @@ The command gets the [run context](api.md#the-run-context). `trigger.kind` is `e
 |---|---|---|
 | `session.created` | A session appeared. | `id`, `dir`, `workspace` |
 | `session.closed` | A session left the backend and its closed record is written. | `id`, `dir`, `workspace`, `reason` (`user`, `crash`, `daemon_restart`), `last_status` |
-| `session.turn` | One Claude turn ended. | `id`, `workspace`, `at`, `transcript_offset`, `row`, `history_limit` |
+| `session.turn` | One Claude turn ended. | `id`, `workspace`, `at`, `anchor` (optional) |
 | `session.forgotten` | A closed chat was deleted for good. | `id`, `workspace` |
-| `session.status_changed` | A real status change. | `id`, `from`, `to`, `since` |
+| `session.status_changed` | A real status change. | `id`, `dir`, `workspace`, `from`, `to`, `since` |
 | `worktree.created` | garage made a git worktree for a session. | `workspace`, `session`, `path`, `branch`, `repo_dir` |
 | `workspace.added` | A workspace was registered. | `name` |
 | `workspace.removed` | A workspace was removed. | `name` |
@@ -35,7 +35,8 @@ The command gets the [run context](api.md#the-run-context). `trigger.kind` is `e
 Notes:
 
 - Statuses are `idle`, `working`, `needs-input`, `done` and `restorable`.
-- `row` of `session.turn` is the absolute scrollback row where the turn ended (0 is the oldest kept line). `transcript_offset`, `row` and `history_limit` can be `null` when the backend cannot say. Once a pane's history is full, old lines are trimmed and rows drift. The [turn-markers](../../plugins/turn-markers) plugin shows how to cope.
+- `anchor` of `session.turn` says where the turn ended: `{"transcript_offset", "row", "history_limit"}`. `row` is the absolute scrollback row (0 is the oldest kept line), `transcript_offset` the transcript's byte length, `history_limit` how many history lines the backend keeps. The whole `anchor` is left out when nothing could be measured, and each value inside it is `null` when the backend cannot say. Once a pane's history is full, old lines are trimmed and rows drift.
+- `dir` of `session.status_changed` is the session's directory when the daemon sent the event, or an empty string if the session was already gone. The [turn-markers](../../plugins/turn-markers) plugin shows how to cope.
 - `session.closed` comes after the closed record is written, so you can read it at once.
 - Timestamps are Unix milliseconds.
 - Ignore payload keys you do not know. New keys may be added in v1.
@@ -49,4 +50,4 @@ Notes:
 - If the daemon is busy with more than 256 event dispatches at once, new events are dropped with a log line instead of slowing everything.
 - Events are not queued for a plugin while it is disabled.
 
-To check what a plugin can use, read `features.events` from `GET /api/plugin/features`. In a manifest, `requires = ["events:session.turn"]` refuses to load on a garage that lacks it.
+To check what a plugin can use, read `features.events` from `GET /api/plugins/features`. In a manifest, `requires = ["events:session.turn"]` refuses to load on a garage that lacks it.

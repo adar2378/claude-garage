@@ -27,12 +27,13 @@ use super::panes::PaneError;
 use super::{PluginState, RunError};
 use crate::api::hooks::parse_body;
 use crate::backend::tmux::GARAGE_PREFIX;
-use crate::error::error_response;
+use crate::error::{coded, error_response, permission_denied};
 use crate::state::AppState;
+use garage_protocol::ErrorCode;
 
 pub fn routes() -> Router<AppState> {
     Router::new()
-        .route("/api/plugin/features", get(features))
+        .route("/api/plugins/features", get(features))
         .route("/api/plugins", get(list))
         .route("/api/plugins/widgets", get(widgets_snapshot))
         .route("/api/plugins/ui/action", post(ui_action))
@@ -79,27 +80,30 @@ fn authed(
     perm: Permission,
 ) -> Result<PluginState, Box<Response>> {
     let Some(token) = bearer(headers) else {
-        return Err(Box::new(error_response(
+        return Err(Box::new(coded(
             StatusCode::UNAUTHORIZED,
+            ErrorCode::MissingToken,
             "missing plugin token (Authorization: Bearer $GARAGE_PLUGIN_TOKEN)",
         )));
     };
     let Some(plugin) = st.plugins.authenticate(token) else {
-        return Err(Box::new(error_response(
+        return Err(Box::new(coded(
             StatusCode::UNAUTHORIZED,
+            ErrorCode::InvalidToken,
             "invalid plugin token",
         )));
     };
     let id = &plugin.entry.id;
     if !plugin.active() {
-        return Err(Box::new(error_response(
+        return Err(Box::new(coded(
             StatusCode::FORBIDDEN,
+            ErrorCode::PluginDisabled,
             format!("plugin {id} is disabled"),
         )));
     }
     if !plugin.manifest().is_some_and(|m| m.has_permission(perm)) {
-        return Err(Box::new(error_response(
-            StatusCode::FORBIDDEN,
+        return Err(Box::new(permission_denied(
+            perm.as_str(),
             format!("plugin {id} lacks permission {}", perm.as_str()),
         )));
     }
@@ -115,8 +119,9 @@ fn authed_for(
 ) -> Result<PluginState, Box<Response>> {
     let plugin = authed(st, headers, perm)?;
     if plugin.entry.id != id {
-        return Err(Box::new(error_response(
+        return Err(Box::new(coded(
             StatusCode::FORBIDDEN,
+            ErrorCode::WrongPlugin,
             format!("this token belongs to plugin {}, not {id}", plugin.entry.id),
         )));
     }
@@ -126,13 +131,15 @@ fn authed_for(
 /// The caller must present the UI token.
 fn require_ui(st: &AppState, headers: &HeaderMap) -> Result<(), Box<Response>> {
     match bearer(headers) {
-        None => Err(Box::new(error_response(
+        None => Err(Box::new(coded(
             StatusCode::UNAUTHORIZED,
+            ErrorCode::MissingToken,
             "missing UI token (Authorization: Bearer <contents of GARAGE_DIR/ui-token>)",
         ))),
         Some(t) if st.plugins.is_ui_token(t) => Ok(()),
-        Some(_) => Err(Box::new(error_response(
+        Some(_) => Err(Box::new(coded(
             StatusCode::FORBIDDEN,
+            ErrorCode::UiTokenRequired,
             "this route needs the UI token; a plugin token is not enough",
         ))),
     }
@@ -151,15 +158,17 @@ async fn ui_challenge(State(st): State<AppState>, body: Bytes) -> Response {
         .and_then(Value::as_str)
         .filter(|n| garage_protocol::auth::nonce_ok(n))
     else {
-        return error_response(
+        return coded(
             StatusCode::UNPROCESSABLE_ENTITY,
+            ErrorCode::InvalidNonce,
             "nonce must be 16 to 128 lowercase hex digits",
         );
     };
     match st.plugins.ui_proof(st.config.port, nonce) {
         Some(proof) => Json(json!({"proof": proof})).into_response(),
-        None => error_response(
+        None => coded(
             StatusCode::SERVICE_UNAVAILABLE,
+            ErrorCode::NoUiToken,
             "this daemon has no UI token",
         ),
     }
@@ -173,20 +182,20 @@ async fn ui_challenge(State(st): State<AppState>, body: Bytes) -> Response {
 // active.
 
 fn admin_error(e: String) -> Response {
-    let status = if e.starts_with("no plugin") {
-        StatusCode::NOT_FOUND
+    let (status, code) = if e.starts_with("no plugin") {
+        (StatusCode::NOT_FOUND, ErrorCode::UnknownPlugin)
     } else if e.contains("bundled") {
-        StatusCode::CONFLICT
+        (StatusCode::CONFLICT, ErrorCode::BundledPlugin)
     } else {
-        StatusCode::UNPROCESSABLE_ENTITY
+        (StatusCode::UNPROCESSABLE_ENTITY, ErrorCode::InvalidRequest)
     };
-    error_response(status, e)
+    coded(status, code, e)
 }
 
 fn reloaded(st: &AppState) -> Response {
     match st.plugins.reload() {
         Ok(()) => Json(json!({"ok": true})).into_response(),
-        Err(e) => error_response(StatusCode::CONFLICT, e),
+        Err(e) => coded(StatusCode::CONFLICT, ErrorCode::ReloadFailed, e),
     }
 }
 
@@ -234,8 +243,9 @@ async fn register_plugin(
         .iter()
         .find(|p| !garage_plugin::features::PERMISSIONS.contains(&p.as_str()))
     {
-        return error_response(
+        return coded(
             StatusCode::UNPROCESSABLE_ENTITY,
+            ErrorCode::UnknownPermission,
             format!("unknown permission {bad:?}"),
         );
     }
@@ -351,7 +361,7 @@ async fn reload(State(st): State<AppState>, headers: HeaderMap) -> Response {
     }
     match st.plugins.reload() {
         Ok(()) => Json(json!({"ok": true})).into_response(),
-        Err(e) => error_response(StatusCode::CONFLICT, e),
+        Err(e) => coded(StatusCode::CONFLICT, ErrorCode::ReloadFailed, e),
     }
 }
 
@@ -411,8 +421,9 @@ async fn put_widget(
         .expect("active plugin has a manifest")
         .clone();
     let Some(decl) = manifest.widget(&widget) else {
-        return error_response(
+        return coded(
             StatusCode::NOT_FOUND,
+            ErrorCode::UnknownWidget,
             format!("plugin {id} declares no widget {widget:?}"),
         );
     };
@@ -432,8 +443,9 @@ async fn put_widget(
     let put: WidgetPut = match serde_json::from_slice(&body) {
         Ok(p) => p,
         Err(e) => {
-            return error_response(
+            return coded(
                 StatusCode::UNPROCESSABLE_ENTITY,
+                ErrorCode::InvalidWidget,
                 format!("invalid widget body: {e}"),
             );
         }
@@ -443,7 +455,7 @@ async fn put_widget(
         Ok(p) => p,
         Err(e) => {
             let status = StatusCode::from_u16(e.status).unwrap_or(StatusCode::UNPROCESSABLE_ENTITY);
-            return error_response(status, e.message);
+            return coded(status, ErrorCode::InvalidWidget, e.message);
         }
     };
     for click in click_actions(&put) {
@@ -468,7 +480,9 @@ fn check_action(
     id: &str,
     a: &str,
 ) -> Result<(), Box<Response>> {
-    let refuse = |status, msg: String| Err(Box::new(error_response(status, msg)));
+    let refuse = |code: ErrorCode, msg: String| {
+        Err(Box::new(coded(StatusCode::UNPROCESSABLE_ENTITY, code, msg)))
+    };
     if garage_protocol::widgets::is_core_action_id(a) {
         // Navigation (focus, view) is covered by the narrow ui.navigate;
         // everything else a plugin may trigger needs core.actions.
@@ -476,26 +490,26 @@ fn check_action(
         if !manifest.has_permission(Permission::CoreActions)
             && !(navigation && manifest.has_permission(Permission::UiNavigate))
         {
-            let need = if navigation {
-                "ui.navigate (or core.actions)"
+            let (need, shown) = if navigation {
+                ("ui.navigate", "ui.navigate (or core.actions)")
             } else {
-                "core.actions"
+                ("core.actions", "core.actions")
             };
-            return refuse(
-                StatusCode::FORBIDDEN,
+            return Err(Box::new(permission_denied(
+                need,
                 format!(
-                    "plugin {id} lacks permission {need} (click.action {a:?} is a core action)"
+                    "plugin {id} lacks permission {shown} (click.action {a:?} is a core action)"
                 ),
-            );
+            )));
         }
         return match garage_plugin::core_actions::lookup(a) {
             Some(c) if c.plugin_invocable => Ok(()),
             Some(_) => refuse(
-                StatusCode::UNPROCESSABLE_ENTITY,
+                ErrorCode::ActionNotAllowed,
                 format!("click.action {a:?} cannot be triggered by plugins"),
             ),
             None => refuse(
-                StatusCode::UNPROCESSABLE_ENTITY,
+                ErrorCode::ActionNotAllowed,
                 format!("click.action {a:?} is not a core action"),
             ),
         };
@@ -503,7 +517,7 @@ fn check_action(
     let (owner, local) = a.split_once(':').unwrap_or((id, a));
     if owner != id {
         return refuse(
-            StatusCode::UNPROCESSABLE_ENTITY,
+            ErrorCode::ActionNotAllowed,
             format!(
                 "click.action {a:?}: plugin {id} may only target its own actions or a core id, not plugin {owner}'s"
             ),
@@ -511,7 +525,7 @@ fn check_action(
     }
     if manifest.action(local).is_none() {
         return refuse(
-            StatusCode::UNPROCESSABLE_ENTITY,
+            ErrorCode::UnknownAction,
             format!("click.action {a:?}: plugin {id} has no action {local:?}"),
         );
     }
@@ -527,8 +541,9 @@ async fn check_target(
     target: &garage_protocol::plugins::UiTarget,
 ) -> Result<(), Box<Response>> {
     let refuse = |msg: String| {
-        Err(Box::new(error_response(
+        Err(Box::new(coded(
             StatusCode::UNPROCESSABLE_ENTITY,
+            ErrorCode::InvalidTarget,
             msg,
         )))
     };
@@ -581,10 +596,6 @@ async fn widgets_snapshot(
     Json(st.plugins.widget_snapshot(q.plugin.as_deref()))
 }
 
-/// Core ids a plugin's `ui/action` request may never name, though a widget
-/// click (a human) may: they switch the engaged, typing target.
-const UI_ACTION_REFUSED: &[&str] = &["session.engage"];
-
 /// `POST /api/plugins/ui/action`: a plugin asks the TUI to run an action. The
 /// daemon checks the token, `ui.invoke` and the action allowlist, then
 /// forwards the request as an SSE `ui_action` frame; the TUI treats it as a
@@ -607,7 +618,11 @@ async fn ui_action(State(st): State<AppState>, headers: HeaderMap, body: Bytes) 
     let Some(action) = body.get("action").and_then(Value::as_str).filter(|a| {
         !a.is_empty() && a.len() <= limits::ACTION_LEN && !a.chars().any(char::is_control)
     }) else {
-        return error_response(StatusCode::BAD_REQUEST, "action must be a non-empty string");
+        return coded(
+            StatusCode::BAD_REQUEST,
+            ErrorCode::InvalidAction,
+            "action must be a non-empty string",
+        );
     };
     let args = body.get("args").filter(|a| !a.is_null()).cloned();
     if args
@@ -630,16 +645,6 @@ async fn ui_action(State(st): State<AppState>, headers: HeaderMap, body: Bytes) 
     };
     if let Err(r) = check_action(&manifest, &id, action) {
         return *r;
-    }
-    // Where the user types is the user's to change: a plugin may not start
-    // typing into a session on their behalf (a widget click, a human act, may).
-    if UI_ACTION_REFUSED.contains(&action) {
-        return error_response(
-            StatusCode::FORBIDDEN,
-            format!(
-                "action {action:?} cannot be requested by a plugin (it moves where the user types)"
-            ),
-        );
     }
     if let Err(r) = check_target(&st, &target).await {
         return *r;
@@ -696,7 +701,11 @@ async fn notice(
             .take(limits::NOTICE_LEN)
             .collect();
     if text.is_empty() {
-        return error_response(StatusCode::BAD_REQUEST, "text must be a non-empty string");
+        return coded(
+            StatusCode::BAD_REQUEST,
+            ErrorCode::InvalidText,
+            "text must be a non-empty string",
+        );
     }
     let ttl_ms = body.get("ttl_ms").and_then(Value::as_u64).map(|t| {
         t.clamp(
@@ -734,21 +743,25 @@ fn authed_pane_caller(st: &AppState, headers: &HeaderMap, id: &str) -> Result<()
     match bearer(headers) {
         Some(t) if st.plugins.is_ui_token(t) => Ok(()),
         Some(_) => authed_for(st, headers, id, Permission::UiPanes).map(|_| ()),
-        None => Err(Box::new(error_response(
+        None => Err(Box::new(coded(
             StatusCode::UNAUTHORIZED,
+            ErrorCode::MissingToken,
             "missing token (the UI token, or this plugin's own token)",
         ))),
     }
 }
 
 fn pane_error(id: &str, pane: &str, e: PaneError) -> Response {
-    let status = match e {
-        PaneError::UnknownPlugin | PaneError::UnknownPane => StatusCode::NOT_FOUND,
-        PaneError::Disabled => StatusCode::CONFLICT,
-        PaneError::TooMany => StatusCode::TOO_MANY_REQUESTS,
-        PaneError::NoBackend | PaneError::Backend(_) => StatusCode::INTERNAL_SERVER_ERROR,
+    let (status, code) = match e {
+        PaneError::UnknownPlugin => (StatusCode::NOT_FOUND, ErrorCode::UnknownPlugin),
+        PaneError::UnknownPane => (StatusCode::NOT_FOUND, ErrorCode::UnknownPane),
+        PaneError::Disabled => (StatusCode::CONFLICT, ErrorCode::PluginDisabled),
+        PaneError::TooMany => (StatusCode::TOO_MANY_REQUESTS, ErrorCode::TooManyPanes),
+        PaneError::NoBackend | PaneError::Backend(_) => {
+            (StatusCode::INTERNAL_SERVER_ERROR, ErrorCode::PaneFailed)
+        }
     };
-    error_response(status, format!("pane {id}:{pane}: {e}"))
+    coded(status, code, format!("pane {id}:{pane}: {e}"))
 }
 
 async fn open_pane(
@@ -803,8 +816,9 @@ async fn delete_widget(
         .manifest()
         .is_some_and(|m| m.widget(&widget).is_none())
     {
-        return error_response(
+        return coded(
             StatusCode::NOT_FOUND,
+            ErrorCode::UnknownWidget,
             format!("plugin {id} declares no widget {widget:?}"),
         );
     }
@@ -822,17 +836,25 @@ async fn run_action(
     body: Bytes,
 ) -> Response {
     let Some(token) = bearer(&headers) else {
-        return error_response(
+        return coded(
             StatusCode::UNAUTHORIZED,
+            ErrorCode::MissingToken,
             "missing token (the UI token, or this plugin's own token)",
         );
     };
     if !st.plugins.is_ui_token(token) {
         match st.plugins.authenticate(token) {
-            None => return error_response(StatusCode::UNAUTHORIZED, "invalid token"),
+            None => {
+                return coded(
+                    StatusCode::UNAUTHORIZED,
+                    ErrorCode::InvalidToken,
+                    "invalid token",
+                );
+            }
             Some(p) if p.entry.id != id => {
-                return error_response(
+                return coded(
                     StatusCode::FORBIDDEN,
+                    ErrorCode::WrongPlugin,
                     format!(
                         "this token belongs to plugin {}; running {id}'s actions needs the UI token",
                         p.entry.id
@@ -840,7 +862,11 @@ async fn run_action(
                 );
             }
             Some(p) if !p.active() => {
-                return error_response(StatusCode::FORBIDDEN, format!("plugin {id} is disabled"));
+                return coded(
+                    StatusCode::FORBIDDEN,
+                    ErrorCode::PluginDisabled,
+                    format!("plugin {id} is disabled"),
+                );
             }
             Some(_) => {}
         }
@@ -871,16 +897,21 @@ async fn run_action(
             Json(json!({"run_id": run_id.to_string()})),
         )
             .into_response(),
-        Err(RunError::UnknownPlugin) => {
-            error_response(StatusCode::NOT_FOUND, format!("no plugin {id}"))
-        }
-        Err(RunError::UnknownAction) => error_response(
+        Err(RunError::UnknownPlugin) => coded(
             StatusCode::NOT_FOUND,
+            ErrorCode::UnknownPlugin,
+            format!("no plugin {id}"),
+        ),
+        Err(RunError::UnknownAction) => coded(
+            StatusCode::NOT_FOUND,
+            ErrorCode::UnknownAction,
             format!("plugin {id} has no action {action:?}"),
         ),
-        Err(RunError::Disabled) => {
-            error_response(StatusCode::CONFLICT, format!("plugin {id} is disabled"))
-        }
+        Err(RunError::Disabled) => coded(
+            StatusCode::CONFLICT,
+            ErrorCode::PluginDisabled,
+            format!("plugin {id} is disabled"),
+        ),
         Err(RunError::PaneAction) => error_response(
             StatusCode::NOT_IMPLEMENTED,
             format!("action {action:?} opens a pane; panes are not available yet"),
@@ -907,11 +938,16 @@ async fn session_input(State(st): State<AppState>, headers: HeaderMap, body: Byt
     };
     let id = body.get("id").and_then(Value::as_str).unwrap_or("");
     let Some(text) = body.get("text").and_then(Value::as_str) else {
-        return error_response(StatusCode::BAD_REQUEST, "text must be a string");
+        return coded(
+            StatusCode::BAD_REQUEST,
+            ErrorCode::InvalidText,
+            "text must be a string",
+        );
     };
     if !id.starts_with(GARAGE_PREFIX) {
-        return error_response(
+        return coded(
             StatusCode::FORBIDDEN,
+            ErrorCode::SessionNotAllowed,
             "refusing to touch non-garage sessions",
         );
     }
@@ -923,21 +959,27 @@ async fn session_input(State(st): State<AppState>, headers: HeaderMap, body: Byt
                 .filter_map(|v| v.as_str().map(str::to_owned))
                 .collect(),
             _ => {
-                return error_response(
+                return coded(
                     StatusCode::BAD_REQUEST,
+                    ErrorCode::InvalidIfStatus,
                     "if_status.not must be an array of status names",
                 );
             }
         },
         Some(_) => {
-            return error_response(
+            return coded(
                 StatusCode::BAD_REQUEST,
+                ErrorCode::InvalidIfStatus,
                 "if_status must be an object like {\"not\": [\"needs-input\"]}",
             );
         }
     };
     if !st.backend.has(id).await.unwrap_or(false) {
-        return error_response(StatusCode::NOT_FOUND, format!("no such session: {id}"));
+        return coded(
+            StatusCode::NOT_FOUND,
+            ErrorCode::UnknownSession,
+            format!("no such session: {id}"),
+        );
     }
     if !refused.is_empty() {
         let now = serde_json::to_value(st.status.get(id))
@@ -947,7 +989,11 @@ async fn session_input(State(st): State<AppState>, headers: HeaderMap, body: Byt
         if refused.contains(&now) {
             return (
                 StatusCode::CONFLICT,
-                Json(json!({"error": format!("{id} is {now}; nothing was typed"), "status": now})),
+                Json(json!({
+                    "error": format!("{id} is {now}; nothing was typed"),
+                    "code": ErrorCode::StatusBlocked.as_str(),
+                    "status": now,
+                })),
             )
                 .into_response();
         }
@@ -962,7 +1008,11 @@ async fn session_input(State(st): State<AppState>, headers: HeaderMap, body: Byt
             .await;
             Json(json!({"ok": true})).into_response()
         }
-        Err(e) => error_response(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
+        Err(e) => coded(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            ErrorCode::SendFailed,
+            e.to_string(),
+        ),
     }
 }
 
@@ -979,7 +1029,11 @@ async fn closed(
         return *r;
     }
     if st.registry.get_workspace(&name).await.is_none() {
-        return error_response(StatusCode::NOT_FOUND, format!("unknown workspace: {name}"));
+        return coded(
+            StatusCode::NOT_FOUND,
+            ErrorCode::UnknownWorkspace,
+            format!("unknown workspace: {name}"),
+        );
     }
     Json(st.registry.list_closed(&name).await).into_response()
 }

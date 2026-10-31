@@ -133,7 +133,7 @@ impl Admin for DaemonAdmin {
 /// Is a garage daemon answering on `port`? The answer must be a JSON object
 /// with an `api_versions` key, not merely text containing the word.
 pub fn daemon_up(port: u16) -> bool {
-    ureq::get(&format!("http://127.0.0.1:{port}/api/plugin/features"))
+    ureq::get(&format!("http://127.0.0.1:{port}/api/plugins/features"))
         .config()
         .timeout_global(Some(Duration::from_millis(700)))
         .build()
@@ -293,7 +293,7 @@ mod tests {
         let bound2 = bound.clone();
         let (port, h) = serve_fn(n, move |req| {
             let real = bound2.load(std::sync::atomic::Ordering::SeqCst);
-            if req.starts_with("GET /api/plugin/features") {
+            if req.starts_with("GET /api/plugins/features") {
                 return r#"{"api_versions":[1]}"#.into();
             }
             assert!(req.starts_with("POST /api/plugins/ui/challenge "), "{req}");
@@ -333,7 +333,7 @@ mod tests {
         let seen2 = seen.clone();
         let (port, h) = serve_fn(2, move |req| {
             seen2.lock().unwrap().push_str(req);
-            if req.starts_with("GET /api/plugin/features") {
+            if req.starts_with("GET /api/plugins/features") {
                 r#"{"api_versions":[1]}"#.into()
             } else {
                 r#"{"proof":"00"}"#.into()

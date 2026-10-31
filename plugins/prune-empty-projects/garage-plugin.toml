@@ -5,7 +5,7 @@ version     = "0.1.0"
 api_version = 1
 platforms   = ["macos", "linux"]
 description = "Closing a project's last chat removes the project from the rail"
-permissions = ["sessions.read", "workspaces.write"]
+permissions = ["sessions.read"]
 
 # Only a close the user asked for counts; a crash or a daemon restart never
 # removes anything. Removing a project also drops its closed-chat records.

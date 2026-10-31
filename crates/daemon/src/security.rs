@@ -10,7 +10,6 @@ use axum::http::Method;
 use axum::middleware::Next;
 use axum::response::Response;
 
-use crate::error::error_response;
 use crate::state::AppState;
 
 /// DNS-rebinding guard: a page on `evil.example` that resolves to 127.0.0.1
@@ -43,7 +42,11 @@ pub async fn host_guard(State(state): State<AppState>, req: Request, next: Next)
             .to_str()
             .is_ok_and(|h| host_allowed(h, state.config.port));
         if !ok {
-            return error_response(axum::http::StatusCode::FORBIDDEN, "host not allowed");
+            return crate::error::coded(
+                axum::http::StatusCode::FORBIDDEN,
+                garage_protocol::ErrorCode::HostNotAllowed,
+                "host not allowed",
+            );
         }
     }
     next.run(req).await
@@ -60,7 +63,11 @@ pub async fn origin_guard(State(state): State<AppState>, req: Request, next: Nex
             .map(|o| state.config.ui_origins.iter().any(|a| a == o))
             .unwrap_or(false);
         if !ok {
-            return error_response(axum::http::StatusCode::FORBIDDEN, "origin not allowed");
+            return crate::error::coded(
+                axum::http::StatusCode::FORBIDDEN,
+                garage_protocol::ErrorCode::OriginNotAllowed,
+                "origin not allowed",
+            );
         }
     }
     next.run(req).await

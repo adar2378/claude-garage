@@ -76,10 +76,10 @@ Three parts:
 2. **A manifest `confirm = true` adds a prompt.** On an action it makes plugin-origin triggers (a click, `ui/action`) ask first. On a button it adds a prompt on top of what a dangerous action already has. It can never remove a prompt.
 3. **A key press is the user.** The user pressed the key, so an action with `confirm = true` still runs at once from its key. If your action does something the user should confirm, ask in your own pane or popup.
 
-Some core ids cannot be triggered by plugins at all (`app.quit`, `overlay.close`, the rail toggles, and similar). And `session.engage` (move the keyboard into a session) is refused for `ui/action`: where the user types is the user's to change.
+Some core ids cannot be triggered by plugins at all (`app.quit`, `overlay.close`, the rail toggles, and similar). And `session.engage` (move the keyboard into a session) is refused everywhere a plugin names an action (`ui/action`, buttons, widget clicks): where the user types is the user's to change.
 
 ## Core ids a plugin may run
 
-`GET /api/plugin/features` lists them in `actions.core_invocable`, plus the families `focus.cycle.*` and `overlay.open.*`. Navigation ids (no permission beyond `ui.navigate`): `jump.blocked`, `session.focus`, `workspace.focus`, `view.cycle`, `view.focus`.
+`GET /api/plugins/features` lists them in `actions.core_invocable`, which includes `focus.cycle.prev`, `focus.cycle.next`, `overlay.open.queue`, `overlay.open.help`, `overlay.open.view_picker` and `overlay.open.workspace_add`. The list is exact ids, never a prefix: a core id added later is not open to plugins until it is added here on purpose. Navigation ids (no permission beyond `ui.navigate`): `jump.blocked`, `session.focus`, `workspace.focus`, `view.cycle`, `view.focus`.
 
 Core ids contain a dot and no colon. Your own ids have no dot, so there is never a clash.

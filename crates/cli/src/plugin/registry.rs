@@ -187,7 +187,13 @@ mod tests {
         let d = tempfile::tempdir().unwrap();
         let paths = Paths::new(d.path());
         link(&paths, d.path(), "fine", "", &[]);
-        link(&paths, d.path(), "grew", "permissions = [\"network\"]", &[]);
+        link(
+            &paths,
+            d.path(),
+            "grew",
+            "permissions = [\"ui.notice\"]",
+            &[],
+        );
         link(&paths, d.path(), "off", "", &[]);
         garage_daemon::plugins::admin::set_enabled(&paths, "off", false).unwrap();
         link(&paths, d.path(), "broken", "", &[]);

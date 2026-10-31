@@ -5,7 +5,7 @@ version     = "0.1.0"
 api_version = 1
 platforms   = ["macos", "linux"]
 description = "claude-garage <folder> opens a folder as a project, plus install and prune"
-permissions = ["workspaces.read", "workspaces.write", "sessions.read", "sessions.manage"]
+permissions = ["sessions.read"]
 
 # `claude-garage ~/dev/app` and `claude-garage open ~/dev/app`: register the
 # folder as a project, start a session if it has none, then open the wall.

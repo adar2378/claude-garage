@@ -5,7 +5,7 @@ version     = "0.1.0"
 api_version = 1
 platforms   = ["macos", "linux"]
 description = "/ opens a fuzzy list of sessions and projects; choosing one focuses it"
-permissions = ["sessions.read", "workspaces.read", "ui.panes", "ui.invoke", "core.actions"]
+permissions = ["sessions.read", "ui.panes", "ui.invoke", "core.actions"]
 
 [[panes]]
 id        = "palette"

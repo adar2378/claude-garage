@@ -104,7 +104,7 @@ async fn put_workspace_validates_name_and_dir_then_registers() {
             (s, b),
             (
                 StatusCode::BAD_REQUEST,
-                json!({"error": "name must match [a-z0-9-]+"})
+                crate::error::expected(StatusCode::BAD_REQUEST, "name must match [a-z0-9-]+")
             )
         );
     }
@@ -114,7 +114,7 @@ async fn put_workspace_validates_name_and_dir_then_registers() {
         (s, b),
         (
             StatusCode::BAD_REQUEST,
-            json!({"error": "dir is not a directory: undefined"})
+            crate::error::expected(StatusCode::BAD_REQUEST, "dir is not a directory: undefined")
         )
     );
     let (s, b) = call(
@@ -202,7 +202,7 @@ async fn patch_workspace_errors_unknown_bad_name_and_conflict() {
         (s, b),
         (
             StatusCode::NOT_FOUND,
-            json!({"error": "unknown workspace: nope"})
+            crate::error::expected(StatusCode::NOT_FOUND, "unknown workspace: nope")
         )
     );
     let (s, b) = call(
@@ -216,7 +216,7 @@ async fn patch_workspace_errors_unknown_bad_name_and_conflict() {
         (s, b),
         (
             StatusCode::BAD_REQUEST,
-            json!({"error": "name must match [a-z0-9-]+"})
+            crate::error::expected(StatusCode::BAD_REQUEST, "name must match [a-z0-9-]+")
         )
     );
     let (s, b) = call(
@@ -230,7 +230,7 @@ async fn patch_workspace_errors_unknown_bad_name_and_conflict() {
         (s, b),
         (
             StatusCode::CONFLICT,
-            json!({"error": "workspace already registered: two"})
+            crate::error::expected(StatusCode::CONFLICT, "workspace already registered: two")
         )
     );
     // Unknown wins over a bad name (check order).
@@ -628,7 +628,7 @@ async fn finish_validates_record_then_fields_then_action_then_branch() {
             (s, b),
             (
                 StatusCode::BAD_REQUEST,
-                json!({"error": "worktree record required"})
+                crate::error::expected(StatusCode::BAD_REQUEST, "worktree record required")
             )
         );
     }
@@ -640,7 +640,10 @@ async fn finish_validates_record_then_fields_then_action_then_branch() {
             (s, b),
             (
                 StatusCode::BAD_REQUEST,
-                json!({"error": "worktree record requires path, branch, and repoDir"})
+                crate::error::expected(
+                    StatusCode::BAD_REQUEST,
+                    "worktree record requires path, branch, and repoDir"
+                )
             )
         );
     }
@@ -655,7 +658,10 @@ async fn finish_validates_record_then_fields_then_action_then_branch() {
         (s, b),
         (
             StatusCode::BAD_REQUEST,
-            json!({"error": "action must be one of merge, discard, keep"})
+            crate::error::expected(
+                StatusCode::BAD_REQUEST,
+                "action must be one of merge, discard, keep"
+            )
         )
     );
     // Action is checked before the branch guard.
@@ -674,7 +680,10 @@ async fn finish_refuses_non_garage_branches_but_keep_is_a_pure_echo() {
             (s, b),
             (
                 StatusCode::BAD_REQUEST,
-                json!({"error": "refusing to touch non-garage branch: main"})
+                crate::error::expected(
+                    StatusCode::BAD_REQUEST,
+                    "refusing to touch non-garage branch: main"
+                )
             )
         );
     }
@@ -800,7 +809,7 @@ async fn open_editor_unknown_workspace_is_404_and_starts_nothing() {
         (s, b),
         (
             StatusCode::NOT_FOUND,
-            json!({"error": "unknown workspace: nope"})
+            crate::error::expected(StatusCode::NOT_FOUND, "unknown workspace: nope")
         )
     );
     let (_, b) = call(&st, "POST", "/api/open-editor", Some(json!({}))).await;
@@ -829,7 +838,7 @@ async fn open_editor_path_escape_is_400_and_no_editor_starts() {
             (s, b),
             (
                 StatusCode::BAD_REQUEST,
-                json!({"error": "file escapes workspace directory"})
+                crate::error::expected(StatusCode::BAD_REQUEST, "file escapes workspace directory")
             ),
             "{file}"
         );
@@ -845,7 +854,7 @@ async fn open_editor_path_escape_is_400_and_no_editor_starts() {
         (s, b),
         (
             StatusCode::BAD_REQUEST,
-            json!({"error": "file must be a string"})
+            crate::error::expected(StatusCode::BAD_REQUEST, "file must be a string")
         )
     );
     assert!(os.opened().is_empty());
@@ -924,7 +933,10 @@ async fn open_editor_missing_cli_is_501_naming_it_and_other_failures_500() {
         (s, b),
         (
             StatusCode::NOT_IMPLEMENTED,
-            json!({"error": format!("editor CLI not found ({})", editor_cmd())})
+            crate::error::expected(
+                StatusCode::NOT_IMPLEMENTED,
+                format!("editor CLI not found ({})", editor_cmd())
+            )
         )
     );
     *os.mode.lock().unwrap() = Mode::Failed;
@@ -964,7 +976,10 @@ async fn pick_directory_strips_the_trailing_slash_and_maps_cancel_unsupported_fa
         pick().await,
         (
             StatusCode::NOT_IMPLEMENTED,
-            json!({"error": "no folder picker on this system (macOS, Windows, or Linux with zenity or kdialog)"})
+            crate::error::expected(
+                StatusCode::NOT_IMPLEMENTED,
+                "no folder picker on this system (macOS, Windows, or Linux with zenity or kdialog)"
+            )
         )
     );
     *os.mode.lock().unwrap() = Mode::Failed;
@@ -972,7 +987,7 @@ async fn pick_directory_strips_the_trailing_slash_and_maps_cancel_unsupported_fa
         pick().await,
         (
             StatusCode::INTERNAL_SERVER_ERROR,
-            json!({"error": "fake failure"})
+            crate::error::expected(StatusCode::INTERNAL_SERVER_ERROR, "fake failure")
         )
     );
 }
@@ -996,7 +1011,10 @@ async fn visibility_requires_client_id_and_boolean_and_feeds_the_notification_ru
             (s, b),
             (
                 StatusCode::BAD_REQUEST,
-                json!({"error": "clientId (string) and visible (boolean) are required"})
+                crate::error::expected(
+                    StatusCode::BAD_REQUEST,
+                    "clientId (string) and visible (boolean) are required"
+                )
             ),
             "{body}"
         );

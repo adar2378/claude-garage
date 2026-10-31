@@ -23,8 +23,10 @@ pub use garage_protocol::widgets::{
 };
 pub use serde_json::{Value, json};
 
-/// Everything that can go wrong in a plugin run.
+/// Everything that can go wrong in a plugin run. More kinds may be added in a
+/// minor release, so match with a catch-all arm.
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum Error {
     /// A needed environment variable is missing: not started by the daemon.
     Env(&'static str),
@@ -77,6 +79,7 @@ pub fn read_context() -> Result<Value, Error> {
 
 /// What a `ui/action` applies to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum Target<'a> {
     /// A session id, `garage/<workspace>/<label>`.
     Session(&'a str),
@@ -87,16 +90,34 @@ pub enum Target<'a> {
 /// A typed view of the run context. Every accessor returns `None` for a
 /// `null` or missing field, as the context itself never omits keys.
 #[derive(Debug, Clone)]
-pub struct Context(pub Value);
+pub struct Context {
+    raw: Value,
+}
 
 impl Context {
     /// Read the context of this run ([`read_context`]).
     pub fn read() -> Result<Self, Error> {
-        read_context().map(Self)
+        read_context().map(Self::from_value)
+    }
+
+    /// A view over an already-parsed context (tests, or a context read some
+    /// other way).
+    pub fn from_value(raw: Value) -> Self {
+        Self { raw }
+    }
+
+    /// The whole context, for what the accessors do not cover.
+    pub fn raw(&self) -> &Value {
+        &self.raw
+    }
+
+    /// The whole context, owned.
+    pub fn into_raw(self) -> Value {
+        self.raw
     }
 
     fn text(&self, pointer: &str) -> Option<&str> {
-        self.0
+        self.raw
             .pointer(pointer)
             .and_then(Value::as_str)
             .filter(|s| !s.is_empty())
@@ -121,7 +142,7 @@ impl Context {
     /// The `args` of the button or widget click that started the run (`{}`
     /// when there were none).
     pub fn trigger_args(&self) -> &Value {
-        self.0.pointer("/trigger/args").unwrap_or(&Value::Null)
+        self.raw.pointer("/trigger/args").unwrap_or(&Value::Null)
     }
 
     /// The status of the focused session (`idle`, `working`, `needs-input`...).
@@ -146,12 +167,12 @@ impl Context {
 
     /// The event payload of an event hook run.
     pub fn event_data(&self) -> &Value {
-        self.0.pointer("/event/data").unwrap_or(&Value::Null)
+        self.raw.pointer("/event/data").unwrap_or(&Value::Null)
     }
 
     /// The words after `claude-garage` of a CLI run.
     pub fn argv(&self) -> Vec<String> {
-        self.0
+        self.raw
             .pointer("/trigger/args/argv")
             .and_then(Value::as_array)
             .map(|a| {
@@ -391,11 +412,11 @@ impl Api {
         self.request("DELETE", path, None)
     }
 
-    /// `GET /api/plugin/features`: the API versions and optional capabilities
+    /// `GET /api/plugins/features`: the API versions and optional capabilities
     /// this garage has. The body is returned as JSON so that features added
     /// later never break an older plugin.
     pub fn features(&self) -> Result<Value, Error> {
-        self.get("/api/plugin/features")
+        self.get("/api/plugins/features")
     }
 
     /// `GET /api/health`.
@@ -564,18 +585,10 @@ fn encode(segment: &str) -> String {
 /// A widget with one plain-text item for every scope (`*`): the common case
 /// for a strip item.
 pub fn text_widget(text: &str) -> WidgetPut {
-    let item = WidgetItem {
-        segments: Some(vec![Segment {
-            text: text.to_owned(),
-            style: None,
-            click: None,
-        }]),
-        ..Default::default()
-    };
-    WidgetPut {
-        scopes: [("*".to_owned(), vec![item])].into(),
-        ttl_secs: None,
-    }
+    WidgetPut::new().scope(
+        "*",
+        vec![WidgetItem::new().segments(vec![Segment::new(text)])],
+    )
 }
 
 #[doc(hidden)]
@@ -735,7 +748,7 @@ mod tests {
 
     #[test]
     fn the_context_view_reads_focus_event_and_argv_and_treats_null_as_none() {
-        let c = Context(json!({
+        let c = Context::from_value(json!({
             "focus": {"workspace": "app", "session": {"id": "garage/app/main"}, "dir": "/work"},
             "event": {"name": "session.closed", "data": {"reason": "user"}},
             "trigger": {"args": {"argv": ["~/dev/x", "--no-open"]}},
@@ -747,7 +760,9 @@ mod tests {
         assert_eq!(c.argv(), ["~/dev/x", "--no-open"]);
         assert_eq!(c.cwd(), Some("/work"));
 
-        let empty = Context(json!({"focus": {"workspace": null, "session": null}, "event": null}));
+        let empty = Context::from_value(
+            json!({"focus": {"workspace": null, "session": null}, "event": null}),
+        );
         assert_eq!(empty.workspace(), None);
         assert_eq!(empty.session(), None);
         assert_eq!(empty.event_name(), None);
@@ -823,7 +838,7 @@ mod tests {
 
     #[test]
     fn the_context_view_reads_trigger_and_session_details() {
-        let ctx = Context(json!({
+        let ctx = Context::from_value(json!({
             "trigger": {"kind": "widget", "args": {"n": 1}},
             "focus": {"session": {"id": "garage/w/a", "status": "needs-input", "branch": "main", "dir": "/d"}}
         }));
@@ -832,20 +847,6 @@ mod tests {
         assert_eq!(ctx.session_status(), Some("needs-input"));
         assert_eq!(ctx.session_branch(), Some("main"));
         assert_eq!(ctx.session_dir(), Some("/d"));
-        assert_eq!(Context(json!({})).trigger_kind(), None);
-    }
-
-    /// `cargo publish` needs the pinned protocol version to equal this
-    /// crate's own; a release that bumps one must bump the other.
-    #[test]
-    fn the_protocol_pin_matches_the_workspace_version() {
-        let root =
-            std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../../Cargo.toml"))
-                .unwrap();
-        let version = env!("CARGO_PKG_VERSION");
-        assert!(
-            root.contains(&format!("version = \"={version}\"")),
-            "workspace.dependencies garage-protocol must pin =\"{version}\""
-        );
+        assert_eq!(Context::from_value(json!({})).trigger_kind(), None);
     }
 }

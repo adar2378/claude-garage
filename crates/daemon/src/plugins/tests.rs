@@ -848,7 +848,7 @@ async fn the_stop_hook_becomes_a_session_turn_with_the_transcript_offset() {
         (
             d["id"].as_str(),
             d["workspace"].as_str(),
-            d["transcript_offset"].as_u64()
+            d["anchor"]["transcript_offset"].as_u64()
         ),
         (Some("garage/ws/a"), Some("ws"), Some(123))
     );
@@ -857,9 +857,11 @@ async fn the_stop_hook_becomes_a_session_turn_with_the_transcript_offset() {
     let bare = json!({"hook_event_name": "Stop", "cwd": "/proj"});
     r.call("POST", &url, None, Some(&bare.to_string())).await;
     wait_for(|| r.runner.count() == 2).await;
-    assert_eq!(
-        r.runner.call(1).ctx()["event"]["data"]["transcript_offset"],
-        Value::Null
+    // nothing measurable: the anchor is left out, not an object of nulls
+    assert!(
+        r.runner.call(1).ctx()["event"]["data"]
+            .get("anchor")
+            .is_none()
     );
 
     #[cfg_attr(not(unix), allow(unused_mut))]
@@ -874,9 +876,10 @@ async fn the_stop_hook_becomes_a_session_turn_with_the_transcript_offset() {
         let stop = json!({"hook_event_name": "Stop", "cwd": "/proj", "transcript_path": p});
         r.call("POST", &url, None, Some(&stop.to_string())).await;
         wait_for(|| r.runner.count() == 3 + i).await;
-        assert_eq!(
-            r.runner.call(2 + i).ctx()["event"]["data"]["transcript_offset"],
-            Value::Null,
+        assert!(
+            r.runner.call(2 + i).ctx()["event"]["data"]
+                .get("anchor")
+                .is_none(),
             "{p} is outside Claude's home"
         );
     }
@@ -927,9 +930,10 @@ async fn a_status_hook_gets_the_workspace_derived_from_the_session_id() {
     assert_eq!(
         (
             ctx["focus"]["workspace"].as_str(),
+            ctx["event"]["data"]["workspace"].as_str(),
             ctx["event"]["data"]["to"].as_str()
         ),
-        (Some("ws"), Some("working"))
+        (Some("ws"), Some("ws"), Some("working"))
     );
 }
 
@@ -1005,14 +1009,8 @@ async fn disabling_kills_running_trees_clears_widgets_and_refuses_new_triggers()
         "sleep 60 &\necho $! > \"$GARAGE_PLUGIN_STATE_DIR/child.pid\"\nwait",
     );
     r.st.plugins.reload().unwrap();
-    let item = garage_protocol::widgets::WidgetItem {
-        segments: Some(vec![]),
-        ..Default::default()
-    };
-    let put = WidgetPut {
-        scopes: [("*".to_owned(), vec![item])].into(),
-        ttl_secs: None,
-    };
+    let item = garage_protocol::widgets::WidgetItem::new().segments(vec![]);
+    let put = WidgetPut::new().scope("*", vec![item]);
     r.st.plugins
         .widgets()
         .put("sleepy", "bar", WidgetSlot::StripRight, put);
@@ -1066,7 +1064,7 @@ async fn disabling_kills_running_trees_clears_widgets_and_refuses_new_triggers()
 #[tokio::test]
 async fn features_are_public_and_match_the_single_feature_table() {
     let r = Rig::new();
-    let (s, _, body) = r.call("GET", "/api/plugin/features", None, None).await;
+    let (s, _, body) = r.call("GET", "/api/plugins/features", None, None).await;
     assert_eq!(s, StatusCode::OK);
     assert_eq!(
         body,
@@ -3150,7 +3148,8 @@ async fn a_plugin_cannot_ask_the_wall_to_engage_a_session_and_ui_actions_are_lim
         json!({"action": "session.engage", "target": {"session": "garage/w/live"}}),
     )
     .await;
-    assert_eq!(s, StatusCode::FORBIDDEN, "{b}");
+    assert_eq!(s, StatusCode::UNPROCESSABLE_ENTITY, "{b}");
+    assert_eq!(b["code"], "action_not_allowed", "{b}");
     assert!(r.events().is_empty(), "nothing reached the wall");
     // Other focus moves are fine, but only five a second.
     let mut statuses = Vec::new();
@@ -3351,6 +3350,14 @@ async fn frozen_api_the_run_context_and_environment_keep_their_names() {
     assert_valid("RunContext", &ctx);
     assert_valid("RunContext", &ctx2);
     for name in golden_names(&g["env"]) {
+        // a run gets the context inline, or (when large) as a file: one of the two
+        if name == "GARAGE_CONTEXT" || name == "GARAGE_CONTEXT_FILE" {
+            assert!(
+                call.env("GARAGE_CONTEXT").is_some() ^ call.env("GARAGE_CONTEXT_FILE").is_some(),
+                "a run gets GARAGE_CONTEXT or GARAGE_CONTEXT_FILE, never both or neither"
+            );
+            continue;
+        }
         assert!(call.env(&name).is_some(), "environment lost {name}");
     }
 }
@@ -3374,16 +3381,18 @@ fn frozen_api_every_event_keeps_its_payload_keys() {
             id: "i".into(),
             workspace: "w".into(),
             at: 1,
-            transcript_offset: None,
-            row: None,
-            history_limit: None,
+            anchor: Some(garage_protocol::api::TurnAnchor {
+                transcript_offset: None,
+                row: Some(3),
+                history_limit: Some(2000),
+            }),
         },
         DaemonEvent::SessionForgotten {
             id: "i".into(),
             workspace: "w".into(),
         },
         DaemonEvent::StatusTransition {
-            id: "i".into(),
+            id: "garage/w/i".into(),
             from: garage_protocol::SessionStatus::Idle,
             to: garage_protocol::SessionStatus::Working,
             since: None,
@@ -3419,6 +3428,15 @@ fn frozen_api_every_event_keeps_its_payload_keys() {
                 "event {name} lost the payload key {key:?}"
             );
         }
+    }
+    // the nested anchor keeps its keys too
+    let turn = ev
+        .iter()
+        .find_map(|e| e.plugin_event().filter(|(n, _)| *n == "session.turn"))
+        .unwrap()
+        .1;
+    for key in golden_names(&g["event_payload_nested"]["session.turn.anchor"]) {
+        assert!(turn["anchor"].get(&key).is_some(), "anchor lost {key:?}");
     }
     // daemon.started has no bus variant (dispatched at start) and timer is a
     // schedule: both carry no payload keys by contract.

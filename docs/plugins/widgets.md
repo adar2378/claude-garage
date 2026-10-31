@@ -75,11 +75,11 @@ Each widget belongs to the slot you gave it in the manifest. A push is checked a
 | `ok` | good |
 | `warn` | caution (not amber) |
 | `error` | bad |
-| `needs-input` | amber, but only while some session needs input. At other times it reads as plain text. |
+| `needs_input` | amber, but only while some session needs input. At other times it reads as plain text. |
 
-### The needs-input token
+### The needs_input token
 
-Amber is the colour that means "a session is waiting for you". Plugins cannot paint it at will. If you want an alert that lights up only when something needs attention, use `needs-input`. The wall decides when it is lit.
+Amber is the colour that means "a session is waiting for you". Plugins cannot paint it at will. If you want an alert that lights up only when something needs attention, use `needs_input`. The wall decides when it is lit.
 
 ### Click
 
@@ -162,7 +162,7 @@ When `session` is set and the click is a core action such as `session.restore`, 
 
 ## Limits
 
-Limits are published as `features.limits` in `GET /api/plugin/features`. A push over a limit gets `413` (too big) or `422` (wrong shape), and the message names the limit.
+Limits are published as `features.limits` in `GET /api/plugins/features`. A push over a limit gets `413` (too big) or `422` (wrong shape), and the message names the limit.
 
 | Limit | Value |
 |---|---|

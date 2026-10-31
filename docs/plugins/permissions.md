@@ -16,18 +16,14 @@ Permissions are not a sandbox. A program you install can still read your files a
 |---|---|---|
 | `sessions.read` | no | Read closed chats of a workspace (`GET /api/workspaces/{name}/closed`). Declare it if you read session data. |
 | `sessions.input` | **yes** | Type text into a session (`POST /api/sessions/input`). |
-| `sessions.manage` | no | Reserved. No v1 route checks it yet. |
-| `workspaces.read` | no | Reserved. No v1 route checks it yet. |
-| `workspaces.write` | no | Reserved. No v1 route checks it yet. |
 | `ui.widgets` | no | Put and clear [widgets](widgets.md). Needed for any `[[widgets]]`. |
 | `ui.panes` | no | Open and close [panes](panes.md). Needed for any `[[panes]]`. |
 | `ui.invoke` | no | Ask the wall to run an action (`POST /api/plugins/ui/action`). |
 | `ui.navigate` | no | Run only the navigation core actions: `jump.blocked`, `session.focus`, `workspace.focus`, `view.cycle`, `view.focus`. |
 | `core.actions` | **yes** | Run any core action that plugins may run, in a button, a widget click or `ui/action`. |
 | `ui.notice` | no | Show a short toast (`POST /api/plugins/{id}/notice`). |
-| `network` | no | Reserved. Shown in the preview so users know the plugin talks to the network. |
 
-"Reserved" means the word is valid and shown, but garage does not check it on a route. In v1 a later release may start checking a reserved permission only where doing so does not break a plugin that declared it.
+Every permission in the list is checked by a route or by the wall. There are no reserved words: a name returns to the list when something checks it. A manifest that names a withdrawn one (`sessions.manage`, `workspaces.read`, `workspaces.write`, `network`) is refused with a message saying so.
 
 ## Dangerous permissions
 
@@ -47,7 +43,7 @@ Some core actions are dangerous: `session.close`, `session.delete`, `session.res
 
 A plugin can never confirm one. When a plugin triggers a dangerous action (a widget click, a button, `ui/action`), the wall only **arms** it. The user sees a prompt and must press a key or click a second time. The plugin cannot send "confirmed". The field does not exist in the API, and the daemon ignores it if sent.
 
-A plugin also cannot move where the user types: `session.engage` is refused for `ui/action`, and the wall shows a notice if any plugin action ends up in a session.
+A plugin also cannot move where the user types: `session.engage` is not a core action plugins may name (in `ui/action`, a button or a widget click), and the wall shows a notice if any plugin action ends up in a session.
 
 More in [actions](actions.md).
 

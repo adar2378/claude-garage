@@ -11,6 +11,7 @@ use std::path::{Path, PathBuf};
 
 /// Why a typed word is not a usable folder.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum FolderError {
     /// Not an existing directory (a typo, a file, a dangling link).
     NotADirectory,
@@ -46,6 +47,7 @@ pub fn user_home(name: &str) -> Option<PathBuf> {
     uzers::get_user_by_name(name).map(|u| u.home_dir().to_path_buf())
 }
 
+/// The home directory of a named user. Always `None` off Unix.
 #[cfg(not(unix))]
 pub fn user_home(_name: &str) -> Option<PathBuf> {
     None

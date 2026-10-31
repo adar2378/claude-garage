@@ -31,7 +31,7 @@ fn distance(a: (u8, u8, u8), b: (u8, u8, u8)) -> i32 {
     d(a.0, b.0) + d(a.1, b.1) + d(a.2, b.2)
 }
 
-/// What `needs-input` builds to: a stand-in colour no real palette entry
+/// What the `needs_input` token builds to: a stand-in colour no real palette entry
 /// uses. The slot provider swaps it for amber while a session needs input and
 /// for plain text otherwise (see [`resolve_needs_input`]), so a plugin can
 /// alert in the signal colour without owning it, and the colour is never lit
@@ -76,7 +76,7 @@ pub fn color(spec: &str) -> Option<Color> {
         // amber is reserved for needs-input.
         "warn" => Some(colors::WARN),
         "error" => Some(colors::ERROR),
-        "needs-input" => Some(NEEDS_INPUT_MARK),
+        "needs_input" => Some(NEEDS_INPUT_MARK),
         hex if hex.len() == 7 && hex.starts_with('#') => {
             let n = u32::from_str_radix(&hex[1..], 16).ok()?;
             let rgb = ((n >> 16) as u8, (n >> 8) as u8, n as u8);
@@ -145,10 +145,12 @@ fn priority(p: i32) -> i16 {
 fn placement(p: &WirePlacement) -> Placement {
     match p {
         WirePlacement::Flow => Placement::Flow,
-        WirePlacement::Filler { x, caption } => Placement::Filler {
+        WirePlacement::Filler { x, caption, .. } => Placement::Filler {
             x: *x,
             caption: caption.as_ref().map(|c| sanitise(c)),
         },
+        // A placement a later v1 release adds: draw it in the flow.
+        _ => Placement::Flow,
     }
 }
 
@@ -237,10 +239,8 @@ pub fn items(plugin: &str, slot: SlotId, item: &WidgetItem) -> Vec<SlotItem> {
 
 /// A manifest button as a static flow item.
 pub fn button(plugin: &str, b: &ButtonSummary) -> Option<SlotItem> {
-    let click = Click {
-        action: b.on_click.clone(),
-        args: b.args.clone(),
-    };
+    let mut click = Click::new(b.on_click.clone());
+    click.args = b.args.clone();
     let mut item = SlotItem::new(vec![Span::raw(sanitise(&b.label))], priority(b.priority));
     item.on_click = Some(resolve_click(plugin, &click)?);
     Some(item)
@@ -286,6 +286,9 @@ mod tests {
             "warn is too close to amber"
         );
         assert_eq!(color("puce"), None);
+        // snake_case names only: the kebab spelling of the drafts is gone
+        assert_eq!(color("needs_input"), Some(NEEDS_INPUT_MARK));
+        assert_eq!(color("needs-input"), None);
     }
 
     #[test]
@@ -302,15 +305,7 @@ mod tests {
     #[test]
     fn a_click_resolves_only_to_a_declared_or_core_id_and_never_interns() {
         declared();
-        let c = |a: &str| {
-            resolve_click(
-                "bt",
-                &Click {
-                    action: a.into(),
-                    args: Some(json!({"k": 1})),
-                },
-            )
-        };
+        let c = |a: &str| resolve_click("bt", &Click::new(a).args(json!({"k": 1})));
         let t = c("bt:go").unwrap();
         assert_eq!(
             (t.action.as_str(), t.plugin.as_deref()),

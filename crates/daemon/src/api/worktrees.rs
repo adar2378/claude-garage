@@ -53,15 +53,14 @@ pub async fn finish(State(state): State<AppState>, body: Bytes) -> Response {
     match finish_worktree(&state.config.garage_dir, repo_dir, path, branch, action).await {
         Ok(result) => Json(result).into_response(),
         Err(e) => {
-            let mut out = json!({"error": e.message});
+            let status =
+                StatusCode::from_u16(e.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+            let mut out =
+                json!({"error": e.message, "code": crate::error::default_code(status).as_str()});
             if let Some(stderr) = e.stderr.filter(|s| !s.is_empty()) {
                 out["stderr"] = json!(stderr);
             }
-            (
-                StatusCode::from_u16(e.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
-                Json(out),
-            )
-                .into_response()
+            (status, Json(out)).into_response()
         }
     }
 }

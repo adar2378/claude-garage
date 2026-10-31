@@ -45,7 +45,7 @@
       "default": null
     },
     "requires": {
-      "description": "Feature names from `/api/plugin/features` the plugin needs.",
+      "description": "Feature names from `/api/plugins/features` the plugin needs.",
       "type": "array",
       "items": {
         "type": "string"
@@ -151,16 +151,12 @@
       "enum": [
         "sessions.read",
         "sessions.input",
-        "sessions.manage",
-        "workspaces.read",
-        "workspaces.write",
         "ui.widgets",
         "ui.panes",
         "ui.invoke",
         "core.actions",
         "ui.navigate",
-        "ui.notice",
-        "network"
+        "ui.notice"
       ]
     },
     "Action": {

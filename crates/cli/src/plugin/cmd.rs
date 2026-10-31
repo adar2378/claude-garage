@@ -621,7 +621,7 @@ mod tests {
             &paths,
             d.path(),
             "typist",
-            "permissions = [\"sessions.input\", \"network\"]",
+            "permissions = [\"sessions.input\", \"ui.notice\"]",
             true,
         );
         link_plugin(&paths, d.path(), "fresh", "", false);
@@ -638,7 +638,7 @@ mod tests {
                 && lines[1].trim_end().ends_with('-'),
             "{text}"
         );
-        assert!(lines[2].contains("sessions.input! network"), "{text}");
+        assert!(lines[2].contains("sessions.input! ui.notice"), "{text}");
         assert!(text.contains("! = dangerous permission"));
         assert!(
             lines
