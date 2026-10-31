@@ -37,7 +37,13 @@ impl PollerSink for StoreSink {
         self.transcripts.clear_cache(id);
     }
 
-    async fn upsert_session_meta(&self, id: &str, claude_session_id: &str, workspace: &str, label: &str) {
+    async fn upsert_session_meta(
+        &self,
+        id: &str,
+        claude_session_id: &str,
+        workspace: &str,
+        label: &str,
+    ) {
         let upd = MetaUpdate {
             claude_session_id: Some(Some(claude_session_id.to_owned())),
             workspace: Some(workspace.to_owned()),
@@ -61,7 +67,10 @@ pub struct StoreDeps {
 #[async_trait]
 impl TelemetryDeps for StoreDeps {
     async fn hook_token(&self) -> Result<String> {
-        self.registry.get_hook_token().await.context("reading the hook token")
+        self.registry
+            .get_hook_token()
+            .await
+            .context("reading the hook token")
     }
 
     fn set_status(&self, id: &str, state: SessionStatus, message: Option<Option<String>>) {
@@ -70,7 +79,11 @@ impl TelemetryDeps for StoreDeps {
         self.status.set(id, state, message.flatten().as_deref());
     }
 
-    async fn resolve_session_ids(&self, session_id: Option<&str>, cwd: Option<&str>) -> Vec<String> {
+    async fn resolve_session_ids(
+        &self,
+        session_id: Option<&str>,
+        cwd: Option<&str>,
+    ) -> Vec<String> {
         resolve_session_ids(self.backend.as_ref(), self.agents.as_ref(), session_id, cwd).await
     }
 }

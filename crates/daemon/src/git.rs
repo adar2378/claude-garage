@@ -9,10 +9,20 @@ use tokio::process::Command;
 
 async fn git(dir: &str, args: &[&str]) -> Option<String> {
     let mut cmd = Command::new("git");
-    cmd.arg("-C").arg(dir).args(args).stdin(Stdio::null()).stderr(Stdio::null()).kill_on_drop(true);
+    cmd.arg("-C")
+        .arg(dir)
+        .args(args)
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .kill_on_drop(true);
     // Timeout drops the future, which kills the child (kill_on_drop).
-    let out = tokio::time::timeout(crate::backend::COMMAND_TIMEOUT, cmd.output()).await.ok()?.ok()?;
-    out.status.success().then(|| String::from_utf8_lossy(&out.stdout).trim().to_string())
+    let out = tokio::time::timeout(crate::backend::COMMAND_TIMEOUT, cmd.output())
+        .await
+        .ok()?
+        .ok()?;
+    out.status
+        .success()
+        .then(|| String::from_utf8_lossy(&out.stdout).trim().to_string())
 }
 
 /// What HEAD is at in `dir`: the branch name, `@<short-sha>` for a detached
@@ -43,7 +53,11 @@ pub struct GitFailure {
 
 impl GitFailure {
     fn new(status: u16, message: impl Into<String>) -> Self {
-        Self { status, message: message.into(), stderr: None }
+        Self {
+            status,
+            message: message.into(),
+            stderr: None,
+        }
     }
 }
 
@@ -52,11 +66,17 @@ impl GitFailure {
 /// open an editor or prompt.
 async fn git_checked(dir: &str, args: &[&str]) -> Result<String, GitFailure> {
     let mut cmd = Command::new("git");
-    cmd.arg("-C").arg(dir).args(args).stdin(Stdio::null()).kill_on_drop(true);
-    let out = cmd
-        .output()
-        .await
-        .map_err(|e| GitFailure::new(500, format!("Command failed: git -C {dir} {}: {e}", args.join(" "))))?;
+    cmd.arg("-C")
+        .arg(dir)
+        .args(args)
+        .stdin(Stdio::null())
+        .kill_on_drop(true);
+    let out = cmd.output().await.map_err(|e| {
+        GitFailure::new(
+            500,
+            format!("Command failed: git -C {dir} {}: {e}", args.join(" ")),
+        )
+    })?;
     if out.status.success() {
         return Ok(String::from_utf8_lossy(&out.stdout).into_owned());
     }
@@ -65,19 +85,38 @@ async fn git_checked(dir: &str, args: &[&str]) -> Result<String, GitFailure> {
         "" => format!("Command failed: git -C {dir} {}", args.join(" ")),
         t => t.to_owned(),
     };
-    Err(GitFailure { status: 500, message, stderr: Some(stderr) })
+    Err(GitFailure {
+        status: 500,
+        message,
+        stderr: Some(stderr),
+    })
 }
 
 /// Namespace for every branch garage creates; discard/merge refuse the rest.
 pub const GARAGE_BRANCH_PREFIX: &str = "garage/";
 
 async fn branch_exists(repo_dir: &str, branch: &str) -> bool {
-    git_checked(repo_dir, &["rev-parse", "--verify", "--quiet", &format!("refs/heads/{branch}")]).await.is_ok()
+    git_checked(
+        repo_dir,
+        &[
+            "rev-parse",
+            "--verify",
+            "--quiet",
+            &format!("refs/heads/{branch}"),
+        ],
+    )
+    .await
+    .is_ok()
 }
 
 /// Directory and branch share one candidate label, suffixed together (`-2`,
 /// `-3`, ...) until both are free (JS `pickCandidate`).
-async fn pick_candidate(garage_dir: &Path, repo_dir: &str, workspace: &str, label: &str) -> (PathBuf, String) {
+async fn pick_candidate(
+    garage_dir: &Path,
+    repo_dir: &str,
+    workspace: &str,
+    label: &str,
+) -> (PathBuf, String) {
     let base = garage_dir.join("worktrees").join(workspace);
     let mut suffix = 1;
     let mut candidate = label.to_owned();
@@ -105,13 +144,21 @@ pub async fn create_worktree(
     workspace: &str,
     label: &str,
 ) -> Result<WorktreeRef, GitFailure> {
-    if git_checked(repo_dir, &["rev-parse", "--is-inside-work-tree"]).await.is_err() {
-        return Err(GitFailure::new(400, format!("not a git repository: {repo_dir}")));
+    if git_checked(repo_dir, &["rev-parse", "--is-inside-work-tree"])
+        .await
+        .is_err()
+    {
+        return Err(GitFailure::new(
+            400,
+            format!("not a git repository: {repo_dir}"),
+        ));
     }
     let (dir_path, branch) = pick_candidate(garage_dir, repo_dir, workspace, label).await;
     let path = dir_path.to_string_lossy().into_owned();
     if let Some(parent) = dir_path.parent() {
-        tokio::fs::create_dir_all(parent).await.map_err(|e| GitFailure::new(500, e.to_string()))?;
+        tokio::fs::create_dir_all(parent)
+            .await
+            .map_err(|e| GitFailure::new(500, e.to_string()))?;
     }
     git_checked(repo_dir, &["worktree", "add", "-b", &branch, &path])
         .await
@@ -122,7 +169,9 @@ pub async fn create_worktree(
 /// The branch checked out in `repo_dir` (what a merge would land on), or
 /// `None` when unreadable. Informational only.
 pub async fn current_branch(repo_dir: &str) -> Option<String> {
-    let out = git_checked(repo_dir, &["rev-parse", "--abbrev-ref", "HEAD"]).await.ok()?;
+    let out = git_checked(repo_dir, &["rev-parse", "--abbrev-ref", "HEAD"])
+        .await
+        .ok()?;
     let t = out.trim();
     (!t.is_empty()).then(|| t.to_owned())
 }
@@ -139,9 +188,20 @@ pub async fn remove_worktree(repo_dir: &str, path: &str, branch: &str) {
 /// `path` must resolve to somewhere under `<garage_dir>/worktrees/` and have
 /// `branch` checked out. The record comes from the client, so a forged path
 /// must never reach `worktree remove --force`.
-async fn assert_garage_worktree(garage_dir: &Path, path: &str, branch: &str) -> Result<(), GitFailure> {
-    let refuse = || GitFailure::new(400, format!("refusing to touch a path that is not a garage worktree: {path}"));
-    let root = tokio::fs::canonicalize(garage_dir.join("worktrees")).await.map_err(|_| refuse())?;
+async fn assert_garage_worktree(
+    garage_dir: &Path,
+    path: &str,
+    branch: &str,
+) -> Result<(), GitFailure> {
+    let refuse = || {
+        GitFailure::new(
+            400,
+            format!("refusing to touch a path that is not a garage worktree: {path}"),
+        )
+    };
+    let root = tokio::fs::canonicalize(garage_dir.join("worktrees"))
+        .await
+        .map_err(|_| refuse())?;
     let real = match tokio::fs::canonicalize(path).await {
         Ok(real) => real,
         // The directory is already gone (deleted by hand, or a crash): there
@@ -151,10 +211,19 @@ async fn assert_garage_worktree(garage_dir: &Path, path: &str, branch: &str) -> 
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
             let p = Path::new(path);
             let clean = p.is_absolute()
-                && p.components().all(|c| !matches!(c, std::path::Component::ParentDir | std::path::Component::CurDir));
+                && p.components().all(|c| {
+                    !matches!(
+                        c,
+                        std::path::Component::ParentDir | std::path::Component::CurDir
+                    )
+                });
             let under = |root: &Path| p != root && p.starts_with(root);
             let raw_root = garage_dir.join("worktrees");
-            return if clean && (under(&root) || under(&raw_root)) { Ok(()) } else { Err(refuse()) };
+            return if clean && (under(&root) || under(&raw_root)) {
+                Ok(())
+            } else {
+                Err(refuse())
+            };
         }
         Err(_) => return Err(refuse()),
     };
@@ -171,7 +240,10 @@ fn assert_garage_branch(branch: &str) -> Result<(), GitFailure> {
     if branch.starts_with(GARAGE_BRANCH_PREFIX) {
         Ok(())
     } else {
-        Err(GitFailure::new(400, format!("refusing to touch non-garage branch: {branch}")))
+        Err(GitFailure::new(
+            400,
+            format!("refusing to touch non-garage branch: {branch}"),
+        ))
     }
 }
 
@@ -281,7 +353,10 @@ mod tests {
     #[tokio::test]
     async fn branch_name_is_returned() {
         let t = repo("branch");
-        assert_eq!(resolve_branch(t.0.to_str().unwrap()).await.as_deref(), Some("feat-x"));
+        assert_eq!(
+            resolve_branch(t.0.to_str().unwrap()).await.as_deref(),
+            Some("feat-x")
+        );
     }
 
     #[tokio::test]
@@ -320,7 +395,11 @@ mod tests {
             .env("GIT_CONFIG_SYSTEM", "/dev/null")
             .output()
             .unwrap();
-        assert!(out.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&out.stderr));
+        assert!(
+            out.status.success(),
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
         String::from_utf8_lossy(&out.stdout).into_owned()
     }
 
@@ -352,14 +431,33 @@ mod tests {
         std::fs::create_dir_all(wt.parent().unwrap()).unwrap();
         g(&repo, &["init", "-q", "-b", "main"]);
         // No user/system config (GIT_CONFIG_*=/dev/null in `g`) and no hooks.
-        for (k, v) in
-            [("user.email", "t@example.com"), ("user.name", "t"), ("commit.gpgsign", "false"), ("core.hooksPath", "/dev/null")]
-        {
+        for (k, v) in [
+            ("user.email", "t@example.com"),
+            ("user.name", "t"),
+            ("commit.gpgsign", "false"),
+            ("core.hooksPath", "/dev/null"),
+        ] {
             g(&repo, &["config", k, v]);
         }
         commit_file(&repo, "f.txt", "base\n", "base");
-        g(&repo, &["worktree", "add", "-q", "-b", "garage/x", wt.to_str().unwrap()]);
-        Fixture { _root: root, scratch, repo, garage, wt }
+        g(
+            &repo,
+            &[
+                "worktree",
+                "add",
+                "-q",
+                "-b",
+                "garage/x",
+                wt.to_str().unwrap(),
+            ],
+        );
+        Fixture {
+            _root: root,
+            scratch,
+            repo,
+            garage,
+            wt,
+        }
     }
 
     fn s(p: &Path) -> &str {
@@ -377,7 +475,15 @@ mod tests {
     async fn dirty_worktree_refuses_merge_with_409() {
         let f = fixture();
         std::fs::write(f.wt.join("untracked.txt"), "x\n").unwrap();
-        let e = finish_worktree(&f.garage, s(&f.repo), s(&f.wt), "garage/x", FinishAction::Merge).await.unwrap_err();
+        let e = finish_worktree(
+            &f.garage,
+            s(&f.repo),
+            s(&f.wt),
+            "garage/x",
+            FinishAction::Merge,
+        )
+        .await
+        .unwrap_err();
         assert_eq!(e.status, 409);
         assert!(e.message.contains("uncommitted"), "{}", e.message);
         assert!(!f.repo.join(".git/MERGE_HEAD").exists());
@@ -388,10 +494,21 @@ mod tests {
         let f = fixture();
         commit_file(&f.wt, "f.txt", "from branch\n", "branch change");
         commit_file(&f.repo, "f.txt", "from main\n", "main change");
-        let e = finish_worktree(&f.garage, s(&f.repo), s(&f.wt), "garage/x", FinishAction::Merge).await.unwrap_err();
+        let e = finish_worktree(
+            &f.garage,
+            s(&f.repo),
+            s(&f.wt),
+            "garage/x",
+            FinishAction::Merge,
+        )
+        .await
+        .unwrap_err();
         assert_eq!(e.status, 409);
         assert!(e.stderr.is_some(), "stderr is surfaced as a string");
-        assert!(!f.repo.join(".git/MERGE_HEAD").exists(), "no merge in progress");
+        assert!(
+            !f.repo.join(".git/MERGE_HEAD").exists(),
+            "no merge in progress"
+        );
         assert_eq!(g(&f.repo, &["status", "--porcelain"]).trim(), "");
         assert!(f.wt.exists());
         assert!(g(&f.repo, &["branch", "--list", "garage/x"]).contains("garage/x"));
@@ -401,10 +518,23 @@ mod tests {
     async fn clean_merge_lands_a_merge_commit_and_removes_worktree_and_branch() {
         let f = fixture();
         commit_file(&f.wt, "new.txt", "hello\n", "add new");
-        let r = finish_worktree(&f.garage, s(&f.repo), s(&f.wt), "garage/x", FinishAction::Merge).await.unwrap();
+        let r = finish_worktree(
+            &f.garage,
+            s(&f.repo),
+            s(&f.wt),
+            "garage/x",
+            FinishAction::Merge,
+        )
+        .await
+        .unwrap();
         assert_eq!((r.merged, r.discarded), (Some(true), None));
         assert!(f.repo.join("new.txt").exists(), "merged into main");
-        assert!(g(&f.repo, &["log", "-1", "--format=%p"]).trim().contains(' '), "--no-ff: a two-parent commit");
+        assert!(
+            g(&f.repo, &["log", "-1", "--format=%p"])
+                .trim()
+                .contains(' '),
+            "--no-ff: a two-parent commit"
+        );
         assert!(!f.wt.exists());
         assert_eq!(g(&f.repo, &["branch", "--list", "garage/x"]).trim(), "");
     }
@@ -414,7 +544,15 @@ mod tests {
         let f = fixture();
         commit_file(&f.wt, "unmerged.txt", "x\n", "unmerged work");
         std::fs::write(f.wt.join("dirty.txt"), "x\n").unwrap();
-        let r = finish_worktree(&f.garage, s(&f.repo), s(&f.wt), "garage/x", FinishAction::Discard).await.unwrap();
+        let r = finish_worktree(
+            &f.garage,
+            s(&f.repo),
+            s(&f.wt),
+            "garage/x",
+            FinishAction::Discard,
+        )
+        .await
+        .unwrap();
         assert_eq!((r.merged, r.discarded), (None, Some(true)));
         assert!(!f.wt.exists());
         assert_eq!(g(&f.repo, &["branch", "--list", "garage/x"]).trim(), "");
@@ -423,8 +561,13 @@ mod tests {
     #[tokio::test]
     async fn keep_changes_nothing_and_is_not_branch_checked() {
         let f = fixture();
-        let r = finish_worktree(&f.garage, s(&f.repo), s(&f.wt), "main", FinishAction::Keep).await.unwrap();
-        assert_eq!((r.action, r.merged, r.discarded), (FinishAction::Keep, None, None));
+        let r = finish_worktree(&f.garage, s(&f.repo), s(&f.wt), "main", FinishAction::Keep)
+            .await
+            .unwrap();
+        assert_eq!(
+            (r.action, r.merged, r.discarded),
+            (FinishAction::Keep, None, None)
+        );
         assert!(f.wt.exists());
     }
 
@@ -432,7 +575,9 @@ mod tests {
     async fn merge_and_discard_refuse_a_non_garage_branch_with_400_and_touch_nothing() {
         let f = fixture();
         for action in [FinishAction::Merge, FinishAction::Discard] {
-            let e = finish_worktree(&f.garage, s(&f.repo), s(&f.wt), "main", action).await.unwrap_err();
+            let e = finish_worktree(&f.garage, s(&f.repo), s(&f.wt), "main", action)
+                .await
+                .unwrap_err();
             assert_eq!(e.status, 400);
             assert_eq!(e.message, "refusing to touch non-garage branch: main");
         }
@@ -448,8 +593,14 @@ mod tests {
         // A garage worktree whose HEAD is not the claimed branch.
         g(&f.wt, &["checkout", "-q", "-b", "garage/other"]);
         for action in [FinishAction::Discard, FinishAction::Merge] {
-            for (path, branch) in [(s(&f.repo), "garage/x"), (s(&f.wt), "garage/x"), ("/nonexistent/garage/wt", "garage/x")] {
-                let e = finish_worktree(&f.garage, s(&f.repo), path, branch, action).await.unwrap_err();
+            for (path, branch) in [
+                (s(&f.repo), "garage/x"),
+                (s(&f.wt), "garage/x"),
+                ("/nonexistent/garage/wt", "garage/x"),
+            ] {
+                let e = finish_worktree(&f.garage, s(&f.repo), path, branch, action)
+                    .await
+                    .unwrap_err();
                 assert_eq!(e.status, 400, "{action:?} {path}");
             }
         }
@@ -466,9 +617,25 @@ mod tests {
         let wt_branch = "garage/x".to_owned();
         // a `..` escape out of the worktrees root is still refused
         let escape = format!("{}/../../etc/nothing", s(&f.garage.join("worktrees")));
-        let e = finish_worktree(&f.garage, s(&f.repo), &escape, &wt_branch, FinishAction::Discard).await.unwrap_err();
+        let e = finish_worktree(
+            &f.garage,
+            s(&f.repo),
+            &escape,
+            &wt_branch,
+            FinishAction::Discard,
+        )
+        .await
+        .unwrap_err();
         assert_eq!(e.status, 400);
-        finish_worktree(&f.garage, s(&f.repo), &wt, &wt_branch, FinishAction::Discard).await.unwrap();
+        finish_worktree(
+            &f.garage,
+            s(&f.repo),
+            &wt,
+            &wt_branch,
+            FinishAction::Discard,
+        )
+        .await
+        .unwrap();
         assert_eq!(g(&f.repo, &["branch", "--list", &wt_branch]).trim(), "");
     }
 
@@ -476,7 +643,9 @@ mod tests {
     async fn remove_worktree_undoes_a_created_worktree_and_branch() {
         let f = fixture();
         let garage = f.scratch.join("g2");
-        let w = create_worktree(&garage, s(&f.repo), "ws", "undo").await.unwrap();
+        let w = create_worktree(&garage, s(&f.repo), "ws", "undo")
+            .await
+            .unwrap();
         remove_worktree(s(&f.repo), &w.path, &w.branch).await;
         assert!(!Path::new(&w.path).exists());
         assert_eq!(g(&f.repo, &["branch", "--list", "garage/undo"]).trim(), "");
@@ -486,16 +655,25 @@ mod tests {
     async fn create_worktree_suffixes_dir_and_branch_together_on_collision() {
         let f = fixture();
         let garage = f.scratch.join("garage");
-        let a = create_worktree(&garage, s(&f.repo), "ws", "feat").await.unwrap();
+        let a = create_worktree(&garage, s(&f.repo), "ws", "feat")
+            .await
+            .unwrap();
         assert_eq!(a.branch, "garage/feat");
         assert_eq!(a.path, garage.join("worktrees/ws/feat").to_string_lossy());
-        assert_eq!(current_branch(&a.path).await.as_deref(), Some("garage/feat"));
-        let b = create_worktree(&garage, s(&f.repo), "ws", "feat").await.unwrap();
+        assert_eq!(
+            current_branch(&a.path).await.as_deref(),
+            Some("garage/feat")
+        );
+        let b = create_worktree(&garage, s(&f.repo), "ws", "feat")
+            .await
+            .unwrap();
         assert_eq!(b.branch, "garage/feat-2");
         assert!(b.path.ends_with("worktrees/ws/feat-2"));
         // A leftover branch alone also forces the next suffix.
         g(&f.repo, &["branch", "garage/other"]);
-        let c = create_worktree(&garage, s(&f.repo), "ws", "other").await.unwrap();
+        let c = create_worktree(&garage, s(&f.repo), "ws", "other")
+            .await
+            .unwrap();
         assert_eq!(c.branch, "garage/other-2");
     }
 
@@ -503,9 +681,14 @@ mod tests {
     async fn create_worktree_in_a_non_repo_is_400_and_creates_nothing() {
         let f = fixture();
         let garage = f.scratch.join("fresh-garage");
-        let e = create_worktree(&garage, s(&f.scratch), "ws", "feat").await.unwrap_err();
+        let e = create_worktree(&garage, s(&f.scratch), "ws", "feat")
+            .await
+            .unwrap_err();
         assert_eq!(e.status, 400);
-        assert_eq!(e.message, format!("not a git repository: {}", s(&f.scratch)));
+        assert_eq!(
+            e.message,
+            format!("not a git repository: {}", s(&f.scratch))
+        );
         assert!(!garage.exists());
     }
 }

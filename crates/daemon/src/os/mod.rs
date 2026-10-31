@@ -159,7 +159,10 @@ pub mod fake {
     #[async_trait]
     impl Os for FakeOs {
         async fn notify(&self, title: &str, body: &str) -> Result<(), OsError> {
-            self.notified.lock().unwrap().push((title.into(), body.into()));
+            self.notified
+                .lock()
+                .unwrap()
+                .push((title.into(), body.into()));
             self.check()
         }
         async fn pick_directory(&self) -> Result<Option<PathBuf>, OsError> {
@@ -190,7 +193,9 @@ mod tests {
 
     #[tokio::test]
     async fn spawn_detached_reports_a_missing_program_as_not_found() {
-        let e = spawn_detached(&["/nonexistent/garage-editor-for-tests".into()]).await.unwrap_err();
+        let e = spawn_detached(&["/nonexistent/garage-editor-for-tests".into()])
+            .await
+            .unwrap_err();
         assert!(matches!(e, OsError::NotFound), "{e:?}");
         assert!(matches!(spawn_detached(&[]).await, Err(OsError::Failed(_))));
     }

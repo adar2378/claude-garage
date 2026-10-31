@@ -65,7 +65,10 @@ pub async fn put(State(state): State<AppState>, body: Bytes) -> Response {
     }
     let dir = body.get("dir").and_then(Value::as_str);
     let is_dir = match dir {
-        Some(d) => tokio::fs::metadata(d).await.map(|m| m.is_dir()).unwrap_or(false),
+        Some(d) => tokio::fs::metadata(d)
+            .await
+            .map(|m| m.is_dir())
+            .unwrap_or(false),
         None => false,
     };
     if !is_dir {
@@ -91,14 +94,21 @@ pub(crate) fn js_display(v: Option<&Value>) -> String {
 }
 
 fn id_error(id: &str, err: &anyhow::Error) -> IdError {
-    IdError { id: id.to_owned(), error: err.to_string() }
+    IdError {
+        id: id.to_owned(),
+        error: err.to_string(),
+    }
 }
 
 /// `PATCH /api/workspaces/{name}`: renames the registry key, every live tmux
 /// session under it and their resume-metadata keys. Live sessions are renamed
 /// first, best-effort with no rollback, so a mid-flight failure leaves the
 /// registry consistent with whichever sessions did get renamed.
-pub async fn patch(State(state): State<AppState>, Path(old): Path<String>, body: Bytes) -> Response {
+pub async fn patch(
+    State(state): State<AppState>,
+    Path(old): Path<String>,
+    body: Bytes,
+) -> Response {
     let body = match parse_body(&body) {
         Ok(b) => b,
         Err(r) => return *r,
@@ -112,7 +122,10 @@ pub async fn patch(State(state): State<AppState>, Path(old): Path<String>, body:
     }
     // `new == old` is allowed (JS quirk): it still attempts the tmux renames.
     if new != old && state.registry.get_workspace(new).await.is_some() {
-        return error_response(StatusCode::CONFLICT, format!("workspace already registered: {new}"));
+        return error_response(
+            StatusCode::CONFLICT,
+            format!("workspace already registered: {new}"),
+        );
     }
 
     let old_prefix = format!("{GARAGE_PREFIX}{old}/");
@@ -123,14 +136,19 @@ pub async fn patch(State(state): State<AppState>, Path(old): Path<String>, body:
     for s in live.iter().filter(|s| s.id.starts_with(&old_prefix)) {
         let new_id = format!("{new_prefix}{}", &s.id[old_prefix.len()..]);
         match state.backend.rename(&s.id, &new_id).await {
-            Ok(()) => renamed.push(RenamedSession { from: s.id.clone(), to: new_id }),
+            Ok(()) => renamed.push(RenamedSession {
+                from: s.id.clone(),
+                to: new_id,
+            }),
             Err(e) => failed.push(id_error(&s.id, &e)),
         }
     }
 
     let workspace = match state.registry.rename_workspace(&old, new).await {
         Ok(Some(w)) => w,
-        Ok(None) => return error_response(StatusCode::NOT_FOUND, format!("unknown workspace: {old}")),
+        Ok(None) => {
+            return error_response(StatusCode::NOT_FOUND, format!("unknown workspace: {old}"))
+        }
         Err(e) => return internal(e.into()),
     };
     let mut out = Map::new();

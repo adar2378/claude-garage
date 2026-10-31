@@ -26,7 +26,9 @@ pub struct EventBus {
 
 impl EventBus {
     pub fn new(capacity: usize) -> Self {
-        Self { tx: broadcast::channel(capacity).0 }
+        Self {
+            tx: broadcast::channel(capacity).0,
+        }
     }
 
     /// Publish to all current subscribers; having none is not an error.

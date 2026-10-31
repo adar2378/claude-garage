@@ -38,7 +38,10 @@ pub struct InstallError {
 
 impl InstallError {
     fn new(status: u16, message: impl Into<String>) -> Self {
-        Self { status, message: message.into() }
+        Self {
+            status,
+            message: message.into(),
+        }
     }
     fn io(err: std::io::Error) -> Self {
         Self::new(500, err.to_string())
@@ -97,24 +100,39 @@ pub async fn write_settings_atomic(
     };
     let path = resolved.as_path();
     if let Some(dir) = path.parent() {
-        tokio::fs::create_dir_all(dir).await.map_err(InstallError::io)?;
+        tokio::fs::create_dir_all(dir)
+            .await
+            .map_err(InstallError::io)?;
     }
     let mut backup = None;
     if raw.is_some() {
-        let b = suffixed(path, &format!(".garage-backup-{}", iso_stamp(SystemTime::now())));
+        let b = suffixed(
+            path,
+            &format!(".garage-backup-{}", iso_stamp(SystemTime::now())),
+        );
         tokio::fs::copy(path, &b).await.map_err(InstallError::io)?;
         backup = Some(b);
     }
     let tmp = suffixed(path, &format!(".garage-tmp-{}", std::process::id()));
-    let mut text = serde_json::to_string_pretty(merged).map_err(|e| InstallError::new(500, e.to_string()))?;
+    let mut text =
+        serde_json::to_string_pretty(merged).map_err(|e| InstallError::new(500, e.to_string()))?;
     text.push('\n');
-    tokio::fs::write(&tmp, text).await.map_err(InstallError::io)?;
+    tokio::fs::write(&tmp, text)
+        .await
+        .map_err(InstallError::io)?;
     if raw.is_some() {
         // Keep the original mode (a private 0600 settings.json must not widen).
-        let perms = tokio::fs::metadata(path).await.map_err(InstallError::io)?.permissions();
-        tokio::fs::set_permissions(&tmp, perms).await.map_err(InstallError::io)?;
+        let perms = tokio::fs::metadata(path)
+            .await
+            .map_err(InstallError::io)?
+            .permissions();
+        tokio::fs::set_permissions(&tmp, perms)
+            .await
+            .map_err(InstallError::io)?;
     }
-    tokio::fs::rename(&tmp, path).await.map_err(InstallError::io)?;
+    tokio::fs::rename(&tmp, path)
+        .await
+        .map_err(InstallError::io)?;
     Ok(backup)
 }
 
@@ -126,7 +144,10 @@ fn suffixed(path: &Path, suffix: &str) -> PathBuf {
 
 /// `new Date().toISOString().replace(/[:.]/g, "-")`, e.g. `2026-10-31T12-00-00-123Z`.
 fn iso_stamp(t: SystemTime) -> String {
-    let ms = t.duration_since(UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0);
+    let ms = t
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0);
     let (secs, milli) = (ms.div_euclid(1000), ms.rem_euclid(1000));
     let (days, tod) = (secs.div_euclid(86_400), secs.rem_euclid(86_400));
     // Civil-from-days (Howard Hinnant).
@@ -155,7 +176,10 @@ mod tests {
     fn claude_home_prefers_the_override() {
         assert_eq!(claude_home(Some("/x"), Some("/h")), PathBuf::from("/x"));
         assert_eq!(claude_home(None, Some("/h")), PathBuf::from("/h/.claude"));
-        assert_eq!(claude_home(Some(""), Some("/h")), PathBuf::from("/h/.claude"));
+        assert_eq!(
+            claude_home(Some(""), Some("/h")),
+            PathBuf::from("/h/.claude")
+        );
     }
 
     #[test]
@@ -199,7 +223,10 @@ mod tests {
 
         let raw = std::fs::read_to_string(&p).unwrap();
         m.insert("b".into(), Value::from(2));
-        let backup = write_settings_atomic(&p, Some(&raw), &m).await.unwrap().unwrap();
+        let backup = write_settings_atomic(&p, Some(&raw), &m)
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(std::fs::read_to_string(backup).unwrap(), raw);
         assert!(std::fs::read_to_string(&p).unwrap().contains("\"b\": 2"));
     }
@@ -216,11 +243,18 @@ mod tests {
 
         let mut m = Map::new();
         m.insert("a".into(), Value::from(1));
-        write_settings_atomic(&link, Some("{}\n"), &m).await.unwrap();
+        write_settings_atomic(&link, Some("{}\n"), &m)
+            .await
+            .unwrap();
 
-        assert!(std::fs::symlink_metadata(&link).unwrap().file_type().is_symlink());
+        assert!(std::fs::symlink_metadata(&link)
+            .unwrap()
+            .file_type()
+            .is_symlink());
         assert_eq!(std::fs::read_link(&link).unwrap(), target);
-        assert!(std::fs::read_to_string(&target).unwrap().contains("\"a\": 1"));
+        assert!(std::fs::read_to_string(&target)
+            .unwrap()
+            .contains("\"a\": 1"));
     }
 
     #[cfg(unix)]
@@ -236,6 +270,9 @@ mod tests {
         m.insert("a".into(), Value::from(1));
         write_settings_atomic(&p, Some("{}\n"), &m).await.unwrap();
 
-        assert_eq!(std::fs::metadata(&p).unwrap().permissions().mode() & 0o777, 0o600);
+        assert_eq!(
+            std::fs::metadata(&p).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
     }
 }

@@ -16,6 +16,17 @@ pub struct Config {
     /// the user's tmux.conf (`-f /dev/null`); that is intended, for tests and
     /// isolation.
     pub tmux_socket: Option<String>,
+    /// `GARAGE_TMUX_CONTROL`: `0`, `false`, `off` or `no` (any case) disables
+    /// tmux control mode entirely; the poller then runs on its plain 2 s tick
+    /// and no `garage-control` session is ever created. Default on.
+    ///
+    /// Known caveats of control mode, the reasons for this switch: the
+    /// `garage-control` session is hidden from garage but not from tmux, so it
+    /// shows in `tmux ls` and choose-tree; a bare `tmux attach` in the instant
+    /// after daemon start can pick it (it is the most recently created
+    /// session); and session-saving plugins (tmux-resurrect and friends) may
+    /// save it.
+    pub tmux_control: bool,
     /// `GARAGE_UI_ORIGINS`: browser origins allowed past the origin guard.
     pub ui_origins: Vec<String>,
 }
@@ -42,12 +53,23 @@ impl Config {
             .join(".garage"),
         };
         let ui_origins = get("GARAGE_UI_ORIGINS")
-            .map(|s| s.split(',').map(|o| o.trim().to_owned()).filter(|o| !o.is_empty()).collect())
+            .map(|s| {
+                s.split(',')
+                    .map(|o| o.trim().to_owned())
+                    .filter(|o| !o.is_empty())
+                    .collect()
+            })
             .unwrap_or_default();
         Ok(Self {
             port,
             garage_dir,
             tmux_socket: get("GARAGE_TMUX_SOCKET").filter(|s| !s.is_empty()),
+            tmux_control: !matches!(
+                get("GARAGE_TMUX_CONTROL")
+                    .map(|v| v.trim().to_ascii_lowercase())
+                    .as_deref(),
+                Some("0" | "false" | "off" | "no")
+            ),
             ui_origins,
         })
     }
@@ -59,7 +81,10 @@ mod tests {
     use std::collections::HashMap;
 
     fn cfg(pairs: &[(&str, &str)]) -> anyhow::Result<Config> {
-        let m: HashMap<_, _> = pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
+        let m: HashMap<_, _> = pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect();
         Config::from_lookup(|k| m.get(k).cloned())
     }
 
@@ -69,6 +94,7 @@ mod tests {
         assert_eq!(c.port, 4747);
         assert_eq!(c.garage_dir, PathBuf::from("/home/u/.garage"));
         assert_eq!(c.tmux_socket, None);
+        assert!(c.tmux_control);
         assert!(c.ui_origins.is_empty());
     }
 
@@ -85,6 +111,26 @@ mod tests {
         assert_eq!(c.garage_dir, PathBuf::from("/tmp/g"));
         assert_eq!(c.tmux_socket.as_deref(), Some("t1"));
         assert_eq!(c.ui_origins, ["http://a.test", "http://b.test"]);
+    }
+
+    #[test]
+    fn tmux_control_off_switch() {
+        for off in ["0", "false", "OFF", "No", " off "] {
+            assert!(
+                !cfg(&[("HOME", "/h"), ("GARAGE_TMUX_CONTROL", off)])
+                    .unwrap()
+                    .tmux_control,
+                "{off:?}"
+            );
+        }
+        for on in ["1", "true", "on", "", "anything"] {
+            assert!(
+                cfg(&[("HOME", "/h"), ("GARAGE_TMUX_CONTROL", on)])
+                    .unwrap()
+                    .tmux_control,
+                "{on:?}"
+            );
+        }
     }
 
     #[test]

@@ -27,12 +27,15 @@ async fn notification_hook_flows_through_real_adapters() {
         .unwrap();
 
     // Stub `claude agents --json`: no agents, so resolution falls back to cwd.
-    let agents: Arc<dyn AgentSource> =
-        Arc::new(CommandAgents::new("sh", vec!["-c".into(), "echo '[]'".into()]));
+    let agents: Arc<dyn AgentSource> = Arc::new(CommandAgents::new(
+        "sh",
+        vec!["-c".into(), "echo '[]'".into()],
+    ));
     let config = Config {
         port: 0,
         garage_dir: garage.path().to_path_buf(),
         tmux_socket: Some(tmux.socket().to_owned()),
+        tmux_control: false,
         ui_origins: vec![],
     };
     let state = AppState::with_agents(
@@ -66,7 +69,10 @@ async fn notification_hook_flows_through_real_adapters() {
 
     let entry = state.status.entry("garage/ws/a");
     assert_eq!(entry.state, SessionStatus::NeedsInput);
-    assert_eq!(entry.message.as_deref(), Some("Claude needs your permission to use Bash"));
+    assert_eq!(
+        entry.message.as_deref(),
+        Some("Claude needs your permission to use Bash")
+    );
     match events.try_recv().unwrap() {
         DaemonEvent::StatusTransition { id, to, .. } => {
             assert_eq!(id, "garage/ws/a");

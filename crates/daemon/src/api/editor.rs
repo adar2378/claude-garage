@@ -78,10 +78,16 @@ pub async fn open(State(state): State<AppState>, body: Bytes) -> Response {
         None => None,
     };
     let Some(registered) = registered else {
-        return error_response(StatusCode::NOT_FOUND, format!("unknown workspace: {}", js_display(workspace)));
+        return error_response(
+            StatusCode::NOT_FOUND,
+            format!("unknown workspace: {}", js_display(workspace)),
+        );
     };
     let Some(dir) = registered.dir else {
-        return error_response(StatusCode::INTERNAL_SERVER_ERROR, "workspace has no directory");
+        return error_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "workspace has no directory",
+        );
     };
 
     let cmd = editor_cmd();
@@ -97,7 +103,10 @@ pub async fn open(State(state): State<AppState>, body: Bytes) -> Response {
             if abs != dir && !abs.starts_with(&format!("{dir}/")) {
                 return error_response(StatusCode::BAD_REQUEST, "file escapes workspace directory");
             }
-            vec!["--goto".into(), format!("{abs}:{}", line_text(body.get("line")))]
+            vec![
+                "--goto".into(),
+                format!("{abs}:{}", line_text(body.get("line"))),
+            ]
         }
         Some(_) => return error_response(StatusCode::BAD_REQUEST, "file must be a string"),
     };
@@ -106,9 +115,10 @@ pub async fn open(State(state): State<AppState>, body: Bytes) -> Response {
     full.extend(args);
     match state.os.open_window(&full).await {
         Ok(()) => Json(json!({"ok": true})).into_response(),
-        Err(OsError::NotFound | OsError::Unsupported) => {
-            error_response(StatusCode::NOT_IMPLEMENTED, format!("editor CLI not found ({cmd})"))
-        }
+        Err(OsError::NotFound | OsError::Unsupported) => error_response(
+            StatusCode::NOT_IMPLEMENTED,
+            format!("editor CLI not found ({cmd})"),
+        ),
         Err(OsError::Failed(m)) => error_response(StatusCode::INTERNAL_SERVER_ERROR, m),
     }
 }
