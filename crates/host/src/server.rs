@@ -10,9 +10,9 @@
 use std::io::{Read, Write};
 use std::net::{Shutdown, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use portable_pty::{native_pty_system, ChildKiller, CommandBuilder, MasterPty, PtySize};
 
@@ -20,6 +20,79 @@ use crate::proto::*;
 use crate::registry::{self, Entry};
 
 pub const SCROLLBACK: usize = 10_000;
+
+/// Whole budget for a connection to send its complete hello (not per read).
+const HELLO_DEADLINE: Duration = Duration::from_secs(5);
+/// Connections allowed to sit unauthenticated at once; more are closed at once.
+const MAX_PENDING: usize = 8;
+/// Largest terminal size a client may ask for.
+pub const MAX_COLS: u16 = 1000;
+pub const MAX_ROWS: u16 = 500;
+
+/// A size a client asked for, or `None` if it is zero in either dimension.
+/// Oversized values are clamped: a hostile client must not make the vt100
+/// screen allocate `65535 x 65535` cells.
+pub fn sane_size(cols: u16, rows: u16) -> Option<(u16, u16)> {
+    (cols > 0 && rows > 0).then(|| (cols.min(MAX_COLS), rows.min(MAX_ROWS)))
+}
+
+/// Constant-time equality for equal-length secrets (no early exit on a
+/// mismatching byte); different lengths are simply unequal.
+pub fn ct_eq(a: &[u8], b: &[u8]) -> bool {
+    a.len() == b.len() && a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
+}
+
+/// Counts connections that have not authenticated yet.
+#[derive(Default)]
+struct Pending(Arc<AtomicUsize>);
+
+/// One unauthenticated-connection slot; freed on drop (or earlier, once the
+/// connection has authenticated).
+struct Slot(Option<Arc<AtomicUsize>>);
+
+impl Pending {
+    fn try_acquire(&self, max: usize) -> Option<Slot> {
+        if self.0.fetch_add(1, Ordering::SeqCst) >= max {
+            self.0.fetch_sub(1, Ordering::SeqCst);
+            return None;
+        }
+        Some(Slot(Some(self.0.clone())))
+    }
+}
+
+impl Slot {
+    fn release(&mut self) {
+        if let Some(n) = self.0.take() {
+            n.fetch_sub(1, Ordering::SeqCst);
+        }
+    }
+}
+
+impl Drop for Slot {
+    fn drop(&mut self) {
+        self.release();
+    }
+}
+
+/// Read exactly `buf.len()` bytes before `deadline`, however the bytes are
+/// spread over reads: a client trickling one byte at a time gets no extra time.
+fn read_before(stream: &mut TcpStream, buf: &mut [u8], deadline: Instant) -> std::io::Result<()> {
+    let mut got = 0;
+    while got < buf.len() {
+        let left = deadline.saturating_duration_since(Instant::now());
+        if left.is_zero() {
+            return Err(std::io::Error::new(std::io::ErrorKind::TimedOut, "hello deadline"));
+        }
+        stream.set_read_timeout(Some(left))?;
+        match stream.read(&mut buf[got..]) {
+            Ok(0) => return Err(std::io::ErrorKind::UnexpectedEof.into()),
+            Ok(n) => got += n,
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+            Err(e) => return Err(e),
+        }
+    }
+    Ok(())
+}
 
 /// Parsed `host` arguments.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -55,7 +128,7 @@ pub fn parse_args(args: &[String]) -> Result<Options, String> {
         i += 2;
     }
     match (id, dir, hosts_dir) {
-        (Some(id), Some(dir), Some(hosts_dir)) if !command.is_empty() && cols > 0 && rows > 0 => {
+        (Some(id), Some(dir), Some(hosts_dir)) if !command.is_empty() && sane_size(cols, rows) == Some((cols, rows)) => {
             Ok(Options { id, dir, hosts_dir, cols, rows, command })
         }
         _ => Err("usage: host --id <id> --dir <dir> --hosts-dir <dir> [--cols N --rows N] -- <command...>".into()),
@@ -161,6 +234,10 @@ struct Ctx {
     hosts_dir: PathBuf,
     title: Arc<Mutex<String>>,
     stop: AtomicBool,
+    /// Set once the command has exited, so its pid (possibly reused by then)
+    /// is never signalled.
+    exited: AtomicBool,
+    pending: Pending,
 }
 
 impl Ctx {
@@ -171,14 +248,15 @@ impl Ctx {
     }
 
     fn resize(&self, cols: u16, rows: u16) {
-        if cols == 0 || rows == 0 {
-            return;
-        }
+        let Some((cols, rows)) = sane_size(cols, rows) else { return };
         let _ = self.master.lock().unwrap().resize(PtySize { rows, cols, pixel_width: 0, pixel_height: 0 });
         self.core.lock().unwrap().parser.screen_mut().set_size(rows, cols);
     }
 
     fn kill_command(&self) {
+        if self.exited.load(Ordering::SeqCst) {
+            return;
+        }
         let child_pid = self.meta.lock().unwrap().child_pid;
         kill_tree(child_pid);
         let _ = self.killer.lock().unwrap().kill();
@@ -199,14 +277,12 @@ impl Ctx {
     }
 }
 
-fn random_token() -> String {
+/// The session token. The OS random source failing is fatal: a guessable
+/// token would be an open door, so the host refuses to start instead.
+fn random_token() -> std::io::Result<String> {
     let mut bytes = [0u8; TOKEN_LEN / 2];
-    if getrandom::fill(&mut bytes).is_err() {
-        // Extremely unlikely; fall back to time+pid so the host still starts.
-        let t = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
-        bytes.copy_from_slice(&(t ^ u128::from(std::process::id())).to_le_bytes());
-    }
-    bytes.iter().map(|b| format!("{b:02x}")).collect()
+    getrandom::fill(&mut bytes).map_err(|e| io_err(format!("no secure randomness for the session token: {e}")))?;
+    Ok(bytes.iter().map(|b| format!("{b:02x}")).collect())
 }
 
 /// Candidate `.exe` paths named in an npm `.cmd` shim (`"%dp0%\...\claude.exe"`),
@@ -299,16 +375,16 @@ fn answer_queries(ctx: &Ctx, chunk: &[u8]) {
     let _ = w.flush();
 }
 
-fn handle_conn(ctx: Arc<Ctx>, mut stream: TcpStream) -> std::io::Result<()> {
-    stream.set_read_timeout(Some(Duration::from_secs(5)))?;
+fn handle_conn(ctx: Arc<Ctx>, mut stream: TcpStream, mut slot: Slot) -> std::io::Result<()> {
     let mut hello = [0u8; 3 + TOKEN_LEN + 1 + 4];
-    stream.read_exact(&mut hello)?;
+    read_before(&mut stream, &mut hello, Instant::now() + HELLO_DEADLINE)?;
     if &hello[..3] != MAGIC {
         return Err(io_err("bad magic"));
     }
-    if hello[3..3 + TOKEN_LEN] != *ctx.meta.lock().unwrap().token.as_bytes() {
+    if !ct_eq(&hello[3..3 + TOKEN_LEN], ctx.meta.lock().unwrap().token.as_bytes()) {
         return Err(io_err("bad token"));
     }
+    slot.release();
     let mode = hello[3 + TOKEN_LEN];
     let cols = u16::from_le_bytes([hello[36], hello[37]]);
     let rows = u16::from_le_bytes([hello[38], hello[39]]);
@@ -363,7 +439,9 @@ fn handle_conn(ctx: Arc<Ctx>, mut stream: TcpStream) -> std::io::Result<()> {
             F_RENAME => {
                 let new_id = String::from_utf8_lossy(&payload).into_owned();
                 let old = std::mem::replace(&mut ctx.meta.lock().unwrap().id, new_id);
-                registry::remove(&ctx.hosts_dir, &old);
+                let mut gone = ctx.meta.lock().unwrap().clone();
+                gone.id = old;
+                let _ = registry::remove_if_same(&ctx.hosts_dir, &gone);
                 ctx.write_registry();
                 write_reply(&mut stream, &[1])?;
             }
@@ -433,6 +511,7 @@ pub fn run(opts: Options) -> std::io::Result<i32> {
     let listener = TcpListener::bind(("127.0.0.1", 0))?;
     let port = listener.local_addr()?.port();
     let title = Arc::new(Mutex::new(String::new()));
+    let token = random_token()?;
 
     let ctx = Arc::new(Ctx {
         core: Mutex::new(Core {
@@ -447,7 +526,7 @@ pub fn run(opts: Options) -> std::io::Result<i32> {
             pid: std::process::id(),
             child_pid,
             port,
-            token: random_token(),
+            token,
             dir: opts.dir.clone(),
             created_at: now_ms(),
             title: String::new(),
@@ -455,6 +534,8 @@ pub fn run(opts: Options) -> std::io::Result<i32> {
         hosts_dir: opts.hosts_dir.clone(),
         title,
         stop: AtomicBool::new(false),
+        exited: AtomicBool::new(false),
+        pending: Pending::default(),
     });
     ctx.write_registry();
 
@@ -467,9 +548,11 @@ pub fn run(opts: Options) -> std::io::Result<i32> {
                 match listener.accept() {
                     Ok((stream, _)) => {
                         let _ = stream.set_nonblocking(false);
+                        // Too many unauthenticated connections: drop this one now.
+                        let Some(slot) = ctx.pending.try_acquire(MAX_PENDING) else { continue };
                         let ctx = ctx.clone();
                         std::thread::spawn(move || {
-                            let _ = handle_conn(ctx, stream);
+                            let _ = handle_conn(ctx, stream, slot);
                         });
                     }
                     Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => std::thread::sleep(Duration::from_millis(20)),
@@ -513,10 +596,13 @@ pub fn run(opts: Options) -> std::io::Result<i32> {
             Err(_) => break 1,
         }
     };
+    ctx.exited.store(true, Ordering::SeqCst);
     // Let the pump flush the command's last output before clients are cut.
     std::thread::sleep(Duration::from_millis(200));
     ctx.stop.store(true, Ordering::SeqCst);
-    registry::remove(&ctx.hosts_dir, &ctx.meta.lock().unwrap().id);
+    // Our own record only: after a respawn the same id may belong to a new host.
+    let own = ctx.meta.lock().unwrap().clone();
+    let _ = registry::remove_if_same(&ctx.hosts_dir, &own);
     for c in ctx.core.lock().unwrap().clients.drain(..) {
         let _ = c.shutdown(Shutdown::Both);
     }
@@ -558,6 +644,83 @@ mod tests {
         let got = exe_candidates_in_shim(shim, Path::new("C:\\npm"));
         assert_eq!(got, [PathBuf::from("C:\\npm\\node_modules\\@anthropic-ai\\claude-code\\bin\\claude.exe")]);
         assert!(exe_candidates_in_shim("@echo off\nnode x.js", Path::new("C:\\npm")).is_empty());
+    }
+
+    #[test]
+    fn sizes_are_clamped_and_zero_is_ignored() {
+        assert_eq!(sane_size(80, 24), Some((80, 24)));
+        assert_eq!(sane_size(65535, 65535), Some((MAX_COLS, MAX_ROWS)));
+        assert_eq!(sane_size(0, 24), None);
+        assert_eq!(sane_size(80, 0), None);
+        assert!(parse_args(&s(&["--id", "i", "--dir", "d", "--hosts-dir", "h", "--cols", "5000", "--", "x"])).is_err());
+    }
+
+    #[test]
+    fn token_compare_is_exact() {
+        assert!(ct_eq(b"abc", b"abc"));
+        assert!(!ct_eq(b"abc", b"abd"));
+        assert!(!ct_eq(b"abc", b"abcd"));
+        assert!(!ct_eq(b"", b"a"));
+        assert!(ct_eq(b"", b""));
+    }
+
+    #[test]
+    fn unauthenticated_slots_are_capped_and_freed() {
+        let p = Pending::default();
+        let mut held: Vec<Slot> = (0..3).map(|_| p.try_acquire(3).expect("under the cap")).collect();
+        assert!(p.try_acquire(3).is_none(), "the 4th is refused");
+        assert_eq!(p.0.load(Ordering::SeqCst), 3, "a refusal does not leak a count");
+        held[0].release();
+        held[0].release(); // idempotent
+        assert_eq!(p.0.load(Ordering::SeqCst), 2);
+        let again = p.try_acquire(3);
+        assert!(again.is_some());
+        drop(again);
+        held.clear();
+        assert_eq!(p.0.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn a_hello_trickled_one_byte_at_a_time_hits_the_whole_deadline() {
+        use std::net::TcpListener;
+        let l = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let addr = l.local_addr().unwrap();
+        let writer = std::thread::spawn(move || {
+            let mut c = TcpStream::connect(addr).unwrap();
+            // Each byte arrives well inside a per-read timeout, never completing the hello.
+            for _ in 0..40 {
+                if c.write_all(b"x").is_err() {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+        });
+        let (mut srv, _) = l.accept().unwrap();
+        let started = Instant::now();
+        let mut buf = [0u8; 40];
+        let err = read_before(&mut srv, &mut buf, Instant::now() + Duration::from_millis(300)).unwrap_err();
+        assert!(matches!(err.kind(), std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock), "{err:?}");
+        assert!(started.elapsed() < Duration::from_millis(900), "gave up at the deadline, not per read");
+        drop(srv);
+        writer.join().unwrap();
+    }
+
+    #[test]
+    fn a_complete_hello_is_read_even_when_split() {
+        use std::net::TcpListener;
+        let l = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let addr = l.local_addr().unwrap();
+        let w = std::thread::spawn(move || {
+            let mut c = TcpStream::connect(addr).unwrap();
+            c.write_all(b"ab").unwrap();
+            std::thread::sleep(Duration::from_millis(50));
+            c.write_all(b"cd").unwrap();
+        });
+        let (mut srv, _) = l.accept().unwrap();
+        let mut buf = [0u8; 4];
+        read_before(&mut srv, &mut buf, Instant::now() + Duration::from_secs(2)).unwrap();
+        assert_eq!(&buf, b"abcd");
+        w.join().unwrap();
     }
 
     fn parser(rows: u16, cols: u16, sb: usize) -> vt100::Parser {
