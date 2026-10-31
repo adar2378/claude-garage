@@ -113,6 +113,7 @@ impl App {
                 .and_then(|pet| pet.strip_render(&self.router.notices, now_ms)),
         );
         self.badge_cols = strip_cols.badge;
+        self.strip_slots = strip_cols.slots;
         self.pet_cols = strip_cols.pet;
         self.last_strip_filler = strip_cols.filler_width;
 

@@ -117,6 +117,8 @@ pub struct ClickMap<'a> {
     /// The picker is in its "new group…" text-input sub-mode.
     pub view_picker_typing: bool,
     pub badge_cols: Option<&'a Range<u16>>,
+    /// Clickable `strip.right` slot items from the last frame.
+    pub strip_slots: &'a [(Range<u16>, ActionId)],
     pub pet_cols: Option<&'a Range<u16>>,
 }
 
@@ -227,8 +229,14 @@ pub fn action_at(
             RailTarget::Session(id) => Some((ids::SESSION_FOCUS, ctx().with_session(id))),
         };
     }
-    // Pet click first, so an alert pet sitting near the badge never gets
-    // swallowed by it; then the strip badge (the `A` binding).
+    // Slot items first, so a clickable item sitting near the badge never
+    // gets swallowed by it; then the pet; then the strip badge (the `A`
+    // binding).
+    if row >= layout.strip.y {
+        if let Some((_, id)) = map.strip_slots.iter().find(|(r, _)| r.contains(&col)) {
+            return Some((*id, ctx()));
+        }
+    }
     if row >= layout.strip.y && map.pet_cols.is_some_and(|r| r.contains(&col)) {
         return Some((ids::PET_PET, ctx()));
     }
@@ -491,6 +499,8 @@ mod tests {
             targets: Vec<(Range<u16>, String)>,
             badge: Range<u16>,
             pet: Range<u16>,
+            /// A clickable `strip.right` item, overlapping the badge's start.
+            slots: Vec<(Range<u16>, ActionId)>,
         }
 
         fn fixture(store: &WallStore) -> Fixture {
@@ -500,6 +510,7 @@ mod tests {
                 targets: Vec::new(),
                 badge: 80..95,
                 pet: 50..60,
+                slots: vec![(30..40, ids::OVERLAY_OPEN_HELP), (78..84, ids::OVERLAY_OPEN_HELP)],
             }
         }
 
@@ -513,6 +524,7 @@ mod tests {
                 view_picker_entries: 3,
                 view_picker_typing: false,
                 badge_cols: Some(&f.badge),
+                strip_slots: &f.slots,
                 pet_cols: Some(&f.pet),
             };
             action_at(&map, store.state(), col, row).map(|(id, ctx)| (id.as_str(), ctx))
@@ -584,6 +596,20 @@ mod tests {
             assert_eq!(click(&store, &f, 85, row).unwrap().0, key_id(Layer::Garage, "A"));
             assert_eq!(click(&store, &f, 55, row).unwrap().0, "pet.pet");
             assert!(click(&store, &f, 70, row).is_none());
+        }
+
+        #[test]
+        fn a_click_on_a_slot_item_runs_its_action_and_beats_the_badge() {
+            let store = store();
+            let f = fixture(&store);
+            let row = f.layout.strip.y;
+            let (id, ctx) = click(&store, &f, 35, row).unwrap();
+            assert_eq!(id, "overlay.open.help");
+            assert!(matches!(ctx.source, ActionSource::Mouse { col: 35, row: r } if r == row));
+            assert!(click(&store, &f, 45, row).is_none(), "between items is inert");
+            // 78..84 overlaps the badge (80..95): the slot item wins there.
+            assert_eq!(click(&store, &f, 81, row).unwrap().0, "overlay.open.help");
+            assert_eq!(click(&store, &f, 85, row).unwrap().0, "overlay.open.queue");
         }
 
         #[test]

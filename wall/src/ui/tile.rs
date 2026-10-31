@@ -172,10 +172,13 @@ pub fn title_line(v: &TileView, width: u16) -> Line<'static> {
         session: Some(s),
         ..SlotCtx::default()
     };
-    tail.extend(slots::layout(
-        SlotRegistry::core().items(SlotId::TileTitleRight, &slot_ctx),
-        None,
-    ));
+    tail.extend(
+        slots::layout(
+            SlotRegistry::core().items(SlotId::TileTitleRight, &slot_ctx),
+            None,
+        )
+        .spans,
+    );
 
     let glyph = format!(" {} ", glyph_for(&s.status));
     let fixed: usize =

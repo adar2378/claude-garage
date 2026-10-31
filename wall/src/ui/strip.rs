@@ -16,6 +16,7 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Paragraph, Widget};
 
+use crate::actions::ActionId;
 use crate::api::models::UsageInfo;
 use crate::slots::{self, SlotCtx, SlotId, SlotItem, SlotRegistry};
 use crate::state::wall_state::{KeyLayer, WallState};
@@ -99,6 +100,8 @@ pub struct StripCols {
     /// Absolute column range of the pet sprite (sprite + reserved bang
     /// column), when rendered this frame.
     pub pet: Option<Range<u16>>,
+    /// Absolute click ranges of the clickable `strip.right` slot items.
+    pub slots: Vec<(Range<u16>, ActionId)>,
     /// The filler's width this frame — the room available for the pet,
     /// independent of whether a pet is currently selected.
     pub filler_width: u16,
@@ -111,6 +114,8 @@ pub struct StripLine {
     /// Column range (strip-local) of the pet sprite (incl. its reserved bang
     /// column), when one was given and there was room for it.
     pub pet: Option<Range<u16>>,
+    /// Strip-local click ranges of the clickable `strip.right` slot items.
+    pub slots: Vec<(Range<u16>, ActionId)>,
     /// The filler's width this frame, regardless of whether a pet occupies
     /// any of it (spec tui-pit-pet: the tick pass needs this for the next
     /// step's `filler_width`).
@@ -151,10 +156,12 @@ pub fn strip_line(state: &WallState, notice: Option<&str>, width: u16, pet: Opti
         state: Some(state),
         ..SlotCtx::default()
     };
-    right.extend(slots::layout(
+    let notice_w: usize = right.iter().map(Span::width).sum();
+    let laid = slots::layout(
         SlotRegistry::core().items(SlotId::StripRight, &slot_ctx),
         None,
-    ));
+    );
+    right.extend(laid.spans.iter().cloned());
     if blocked > 0 {
         let text = format!(" ● {blocked} blocked ");
         let start: usize = right.iter().map(Span::width).sum();
@@ -254,6 +261,7 @@ pub fn strip_line(state: &WallState, notice: Option<&str>, width: u16, pet: Opti
             (left_w + r.start).min(usize::from(width)) as u16
                 ..(left_w + r.end).min(usize::from(width)) as u16
         }),
+        slots: laid.clicks(right_start + notice_w, usize::from(width)),
         filler_width: filler as u16,
     }
 }
@@ -275,6 +283,11 @@ pub fn render_strip(
     StripCols {
         badge: built.badge.map(|r| rect.x + r.start..rect.x + r.end),
         pet: built.pet.map(|r| rect.x + r.start..rect.x + r.end),
+        slots: built
+            .slots
+            .into_iter()
+            .map(|(r, id)| (rect.x + r.start..rect.x + r.end, id))
+            .collect(),
         filler_width: built.filler_width,
     }
 }
