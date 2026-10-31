@@ -97,7 +97,7 @@ fn problems_text(file: &str, ps: &[garage_plugin::Problem]) -> String {
 
 /// Read and validate the manifest in `dir` (parse, structure, host checks).
 /// Returns the manifest and its raw text.
-fn read_manifest(dir: &Path) -> Result<(Manifest, String), String> {
+pub(super) fn read_manifest(dir: &Path) -> Result<(Manifest, String), String> {
     let file = dir.join(MANIFEST_FILE);
     let raw = std::fs::read_to_string(&file)
         .map_err(|e| format!("cannot read {}: {e}", file.display()))?;

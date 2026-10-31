@@ -1,0 +1,19 @@
+[package]
+name = "garage-plugin-@@ID@@"
+version = "0.1.0"
+edition = "2024"
+description = "@@TITLE@@, a claude-garage plugin"
+publish = false
+
+[[bin]]
+name = "@@ID@@"
+path = "src/main.rs"
+
+[dependencies]
+garage-plugin-sdk = { @@SDK_SRC@@ }
+
+[dev-dependencies]
+garage-plugin-sdk = { @@SDK_SRC@@, features = ["testing"] }
+
+# This folder is its own project, even when it sits inside another workspace.
+[workspace]

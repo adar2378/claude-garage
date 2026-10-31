@@ -2,7 +2,7 @@
 //! flows in [`super::install`]: real terminal, real git, real `curl`, and the
 //! daemon-or-direct registry writer.
 
-use std::io::{BufRead, IsTerminal, Read, Seek, SeekFrom, Write};
+use std::io::{BufRead, IsTerminal, Write};
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -11,10 +11,13 @@ use garage_daemon::plugins::layout::{Paths, PluginsFile};
 use serde_json::{Value, json};
 
 use super::admin::{Admin, choose};
+use super::dev::{LogTail, Watcher};
 use super::external;
 use super::fetch::{CurlFetch, ProcessBuilder};
 use super::install::{self, Cx, Opts, Outcome, Ui};
 use super::registry::{Loaded, load_all};
+use super::scaffold::{self, Lang, NewPlugin, SdkSource};
+use super::search::{self, Sort};
 use super::source::{GITHUB, RealGit};
 
 #[derive(Subcommand, Debug, PartialEq, Eq)]
@@ -71,6 +74,37 @@ pub enum PluginCmd {
         key: Option<String>,
         #[arg(long)]
         clear: bool,
+    },
+    /// Create a working plugin in ./<name> (manifest, code, README, CLAUDE.md, a test).
+    New {
+        /// The plugin id, also the folder name: lowercase letters, digits and '-'.
+        name: String,
+        #[arg(long, value_enum, default_value_t = Lang::Rust)]
+        lang: Lang,
+        /// Use a local checkout of the Rust SDK instead of the tagged release.
+        #[arg(long, hide = true)]
+        sdk_path: Option<PathBuf>,
+    },
+    /// Link a plugin folder, rebuild and reload it when files change, and tail its log.
+    Dev {
+        /// The plugin folder (default: the current folder).
+        #[arg(default_value = ".")]
+        path: PathBuf,
+        #[arg(long)]
+        yes: bool,
+        #[arg(long)]
+        allow_dangerous: bool,
+    },
+    /// Find plugins: public GitHub repositories with the topic claude-garage-plugin (unreviewed).
+    Search {
+        /// Words to look for in names, descriptions and READMEs.
+        query: Vec<String>,
+        #[arg(long)]
+        json: bool,
+        #[arg(long, value_enum, default_value_t = Sort::Stars)]
+        sort: Sort,
+        #[arg(long, default_value_t = 20)]
+        limit: u32,
     },
     /// Print the JSON schema of garage-plugin.toml.
     Schema,
@@ -288,30 +322,56 @@ fn bind(
 }
 
 fn follow(path: &std::path::Path, lines: usize) -> Result<(), String> {
-    let text = std::fs::read_to_string(path).unwrap_or_default();
-    let tail = tail_lines(&text, lines);
-    if !tail.is_empty() {
-        println!("{tail}");
+    let (mut tail, recent) = LogTail::start(path, lines);
+    if !recent.is_empty() {
+        println!("{recent}");
     }
-    let mut pos = text.len() as u64;
     loop {
         std::thread::sleep(Duration::from_millis(400));
-        let Ok(mut f) = std::fs::File::open(path) else {
-            continue;
-        };
-        let len = f.metadata().map(|m| m.len()).unwrap_or(0);
-        if len < pos {
-            pos = 0; // rotated
-        }
-        if len > pos {
-            let _ = f.seek(SeekFrom::Start(pos));
-            let mut buf = String::new();
-            let _ = f.read_to_string(&mut buf);
-            print!("{buf}");
+        let more = tail.poll();
+        if !more.is_empty() {
+            print!("{more}");
             let _ = std::io::stdout().flush();
-            pos = len;
         }
     }
+}
+
+#[cfg(unix)]
+static INTERRUPTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+#[cfg(unix)]
+extern "C" fn on_sigint(_: libc::c_int) {
+    INTERRUPTED.store(true, std::sync::atomic::Ordering::SeqCst);
+}
+
+fn interrupted() -> bool {
+    #[cfg(unix)]
+    {
+        INTERRUPTED.load(std::sync::atomic::Ordering::SeqCst)
+    }
+    #[cfg(not(unix))]
+    {
+        false
+    }
+}
+
+/// `plugin dev`: run until Ctrl+C. On Windows the default Ctrl+C action ends the process.
+fn dev_loop(cx: &mut Cx, path: &std::path::Path, opts: Opts) -> Result<(), String> {
+    #[cfg(unix)]
+    unsafe {
+        libc::signal(libc::SIGINT, on_sigint as *const () as libc::sighandler_t);
+    }
+    let mut watcher = Watcher::start(cx, path, opts)?;
+    cx.ui
+        .say("Watching for changes. Press Ctrl+C to stop; the plugin stays linked.");
+    while !interrupted() {
+        std::thread::sleep(Duration::from_millis(400));
+        watcher.step(cx);
+    }
+    cx.ui.say(
+        "Stopped. The plugin is still linked (`claude-garage plugin remove <id>` unlinks it).",
+    );
+    Ok(())
 }
 
 /// Run one `plugin` subcommand; the value is the process exit code.
@@ -362,6 +422,57 @@ pub fn run(cmd: PluginCmd) -> Result<i32, String> {
                     });
                 }
                 Err(e) => return Err(format!("cannot read {}: {e}", path.display())),
+            }
+            Ok(0)
+        }
+        PluginCmd::New {
+            name,
+            lang,
+            sdk_path,
+        } => {
+            let sdk = match sdk_path {
+                Some(p) => SdkSource::Path(std::path::absolute(&p).map_err(|e| e.to_string())?),
+                None => SdkSource::Git,
+            };
+            let plugin = NewPlugin {
+                name: &name,
+                lang,
+                sdk,
+            };
+            let cwd = std::env::current_dir().map_err(|e| e.to_string())?;
+            let dir = scaffold::create(&cwd, &plugin)?;
+            println!("{}", scaffold::next_steps(&dir, &plugin));
+            Ok(0)
+        }
+        PluginCmd::Dev {
+            path,
+            yes,
+            allow_dangerous,
+        } => with_cx(&config, |cx| {
+            dev_loop(
+                cx,
+                &path,
+                Opts {
+                    yes,
+                    allow_dangerous,
+                },
+            )
+            .map(|_| 0)
+        }),
+        PluginCmd::Search {
+            query,
+            json,
+            sort,
+            limit,
+        } => {
+            let found = search::search(&CurlFetch, search::API, &query, sort, limit)?;
+            if json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&search::render_json(&found)).expect("json")
+                );
+            } else {
+                println!("{}", search::render_text(&found, &query, now_ms() / 1000));
             }
             Ok(0)
         }
@@ -609,6 +720,40 @@ mod tests {
             }
         );
         assert_eq!(parse(&["schema"]), PluginCmd::Schema);
+        assert_eq!(
+            parse(&["new", "my-plug", "--lang", "shell"]),
+            PluginCmd::New {
+                name: "my-plug".into(),
+                lang: Lang::Shell,
+                sdk_path: None
+            }
+        );
+        assert_eq!(
+            parse(&["new", "x1"]),
+            PluginCmd::New {
+                name: "x1".into(),
+                lang: Lang::Rust,
+                sdk_path: None
+            }
+        );
+        assert_eq!(
+            parse(&["dev"]),
+            PluginCmd::Dev {
+                path: ".".into(),
+                yes: false,
+                allow_dangerous: false
+            }
+        );
+        assert_eq!(
+            parse(&["search", "usage", "bar", "--json", "--sort", "updated"]),
+            PluginCmd::Search {
+                query: vec!["usage".into(), "bar".into()],
+                json: true,
+                sort: Sort::Updated,
+                limit: 20
+            }
+        );
+        assert!(W::try_parse_from(["plugin", "new", "x", "--lang", "cobol"]).is_err());
         assert!(W::try_parse_from(["plugin", "install"]).is_err());
     }
 
