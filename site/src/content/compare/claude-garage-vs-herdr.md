@@ -11,7 +11,7 @@ method: "Checked on 2026-11-01 against herdr 0.9.5 (stable, released 2026-10-14)
 checked: "2026-11-01"
 otherLabel: "herdr"
 shortAnswer: "Pick herdr if you run several kinds of agents, work across machines, or want a plugin marketplace. Pick claude-garage if you only run Claude Code and want tmux to own the sessions, one key to jump to the session waiting for you, and a merge, discard or keep choice when a worktree session ends."
-intro: "herdr and claude-garage solve the same core problem: several coding agents are running and you need to know which one is waiting for you, without losing them when a terminal closes. They differ in scope. herdr is a runtime for many agents. claude-garage is a wall for claude-garage runs Claude Code only."
+intro: "herdr and claude-garage solve the same core problem: several coding agents are running and you need to know which one is waiting for you, without losing them when a terminal closes. They differ in scope. herdr is a runtime for many agents. claude-garage is a wall for Claude Code only."
 who:
   - "You use Claude Code only, and you want the wall to know Claude Code specifically: its permission prompts, its conversation ids and its resume flow."
   - "You want your sessions to be plain tmux sessions, so you can attach to them by hand and keep them even if you remove the tool."
@@ -63,7 +63,7 @@ faq:
 
 These points come from herdr's own documentation.
 
-- **More than one agent.** herdr lists many supported agents and runs anything else as a plain terminal. claude-garage is for claude-garage runs Claude Code only.
+- **More than one agent.** herdr lists many supported agents and runs anything else as a plain terminal. claude-garage runs Claude Code only.
 - **Several machines in one window.** herdr can keep local work and saved SSH machines together, with a combined agent list. claude-garage has no multi-machine view.
 - **Agents can drive it.** herdr documents a CLI and a socket API, so a script or another agent can create panes, send messages and wait for a blocked agent.
 - **A plugin marketplace.** herdr indexes public GitHub repos that carry a plugin manifest.
