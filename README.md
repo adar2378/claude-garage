@@ -110,7 +110,8 @@ Press `q` to quit. Your sessions keep running in the background.
 |---|---|
 | `n` | new session |
 | `N` | new session in its own git worktree |
-| `x x` | close the focused session |
+| `x x` | kill the focused session, no history (like 0.6.x) |
+| `x X` | close the focused session and keep it in history (a grey row you can restore) |
 | `R` | bring back all stopped sessions in this project |
 | `d` | move the session into its own view (press again to move it back) |
 | `D` | move the session to another view |
@@ -118,7 +119,7 @@ Press `q` to quit. Your sessions keep running in the background.
 | `X X` | remove the project (sessions keep running) |
 | `X K` | remove the project and close its sessions |
 
-Closing a worktree session (`x x`) asks whether to merge, discard or keep
+Closing a worktree session (`x x` or `x X`) asks whether to merge, discard or keep
 its branch.
 
 **Restart and extras**

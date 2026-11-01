@@ -29,7 +29,7 @@ A reboot ends tmux and all its sessions. garage remembers each session id and fo
 
 garage starts Claude with `claude --resume`. The tile shows the earlier conversation again. If a project folder is gone, that session stays `⟳` and the strip tells you why. Its record is kept, so you can try again after you fix the folder.
 
-To forget a stopped session, press `x x` on it.
+To forget a stopped session, press `x x` on it. On a running session, `x x` kills it and keeps no history. Press `x X` instead to close it and keep it in the rail as a grey row.
 
 ## Update Claude Code without losing context
 

@@ -14,7 +14,7 @@ use crate::ui::theme::colors;
 /// The full binding legend (the Dart `_bindings` list, verbatim — the help
 /// overlay must list every p8.1–p8.4 key, plus the p16-restart `r` chords:
 /// spec restart "TUI chords" requires `?` to list all three).
-pub const BINDINGS: [(&str, &str); 25] = [
+pub const BINDINGS: [(&str, &str); 26] = [
     ("1-9", "focus workspace"),
     ("[ ]", "cycle focused tile"),
     ("Enter", "engage focused tile (restore it when restorable)"),
@@ -28,7 +28,8 @@ pub const BINDINGS: [(&str, &str); 25] = [
     ("n / N", "spawn session / worktree session"),
     ("R", "restore all restorable sessions in workspace"),
     ("I", "install hooks (instant status) + context meter feed"),
-    ("x x", "close focused session (press twice)"),
+    ("x x", "kill focused session (no history)"),
+    ("x X", "close focused session, keep it in closed chats"),
     (
         "r r",
         "restart focused session — resumes on the current claude binary",
@@ -145,8 +146,8 @@ mod tests {
     fn every_lifecycle_key_is_listed() {
         let keys: Vec<&str> = BINDINGS.iter().map(|(k, _)| *k).collect();
         for key in [
-            "1-9", "[ ]", "Enter", "Ctrl+G", "m", "t", "a", "A", "n / N", "R", "I", "x x", "r r",
-            "r a", "r d", "X X", "X K", "w", "d", "D", "Tab", "?", "q",
+            "1-9", "[ ]", "Enter", "Ctrl+G", "m", "t", "a", "A", "n / N", "R", "I", "x x", "x X",
+            "r r", "r a", "r d", "X X", "X K", "w", "d", "D", "Tab", "?", "q",
         ] {
             assert!(keys.contains(&key), "missing {key}");
         }

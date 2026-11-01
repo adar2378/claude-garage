@@ -175,6 +175,9 @@ pub struct GarageRouter {
     pub notices: Notices,
 }
 
+/// Common start of both `x` arm notices (live and closed sessions).
+const CLOSE_ARM_PREFIX: &str = "press x again to ";
+
 impl GarageRouter {
     /// Replace the declared plugin actions (a new listing arrived).
     pub fn set_plugin_actions(
@@ -287,6 +290,13 @@ impl GarageRouter {
         // WITH session kill — checked BEFORE the disarm pass (K would
         // otherwise disarm the very arm it confirms). Outside a live arm `K`
         // falls through as an ordinary unbound key (typing hint).
+        // `X` while an `x` close arm is live confirms close-with-history; it
+        // must not start a workspace-remove arm.
+        if action == Some(ids::WORKSPACE_REMOVE)
+            && self.close_keep_pressed(store, now_ms, &mut effects)
+        {
+            return KeyOutcome::effects(effects);
+        }
         if action == Some(ids::WORKSPACE_REMOVE_KILL) {
             if self.kill_remove_pressed(store, now_ms, &mut effects) {
                 return KeyOutcome::effects(effects);
@@ -535,8 +545,10 @@ impl GarageRouter {
     }
 
     /// `x`: armed double-press. First press arms (strip notice, 3s window);
-    /// the second press on the same session within the window closes it —
-    /// a live session via plain DELETE, a restorable one via `?meta=1`.
+    /// the second `x` on the same session within the window kills a live
+    /// session with no history (`Effect::Forget`, as in 0.6.x); `X` instead
+    /// closes it and keeps a restorable record. A closed session has no
+    /// process to kill, so either key just forgets its record.
     fn close_pressed(&mut self, store: &WallStore, now_ms: i64, effects: &mut Vec<Effect>) {
         let Some(session) = store
             .state()
@@ -546,16 +558,53 @@ impl GarageRouter {
         };
         let (id, label, live) = (session.id.clone(), session.label.clone(), session.live());
         if self.armed_close.press(&id, now_ms) {
-            self.notices.clear_prefix("press x again to close ");
-            effects.push(Effect::Close {
-                id,
-                label,
-                meta_only: !live,
-            });
+            self.notices.clear_prefix(CLOSE_ARM_PREFIX);
+            if live {
+                effects.push(Effect::Forget { id, label });
+            } else {
+                effects.push(Effect::Close {
+                    id,
+                    label,
+                    meta_only: true,
+                });
+            }
+        } else if live {
+            self.notices.show(
+                format!(
+                    "{CLOSE_ARM_PREFIX}kill {label} (no history), X to close and keep it in history"
+                ),
+                3000,
+                now_ms,
+            );
         } else {
             self.notices
-                .show(format!("press x again to close {label}"), 3000, now_ms);
+                .show(format!("{CLOSE_ARM_PREFIX}close {label}"), 3000, now_ms);
         }
+    }
+
+    /// `X` while the `x` close arm is live: confirm closing WITH history
+    /// (checked before the disarm pass, like `K` for the remove arm). Returns
+    /// false when no unexpired close is armed, so `X` keeps its workspace
+    /// removal meaning. A stale arm (the session vanished) is a consumed no-op.
+    fn close_keep_pressed(
+        &mut self,
+        store: &WallStore,
+        now_ms: i64,
+        effects: &mut Vec<Effect>,
+    ) -> bool {
+        let Some(id) = self.armed_close.armed_live(now_ms).map(str::to_owned) else {
+            return false;
+        };
+        self.armed_close.disarm();
+        self.notices.clear_prefix(CLOSE_ARM_PREFIX);
+        if let Some(session) = store.state().session_by_id(Some(&id)) {
+            effects.push(Effect::Close {
+                id,
+                label: session.label.clone(),
+                meta_only: !session.live(),
+            });
+        }
+        true
     }
 
     /// `d` (spec tui-views "Detach and rejoin"): dispatch the detach/rejoin
@@ -582,7 +631,7 @@ impl GarageRouter {
             return;
         }
         self.armed_close.disarm();
-        self.notices.clear_prefix("press x again to close ");
+        self.notices.clear_prefix(CLOSE_ARM_PREFIX);
     }
 
     /// `X`: armed double-press removal of the FOCUSED workspace (spec p8.3).

@@ -736,11 +736,11 @@ fn arming_leaves_the_focus_and_the_native_x_machine_alone() {
     assert!(key_at(&mut app.router, &mut app.store, "x", 1100).is_empty());
     assert_eq!(
         app.router.notices.current(1100),
-        Some("press x again to close one")
+        Some("press x again to kill one (no history), X to close and keep it in history")
     );
     let effects = key_at(&mut app.router, &mut app.store, "x", 1200);
     assert!(
-        matches!(effects.as_slice(), [Effect::Close { id, .. }] if id == ONE),
+        matches!(effects.as_slice(), [Effect::Forget { id, .. }] if id == ONE),
         "{effects:?}"
     );
 }

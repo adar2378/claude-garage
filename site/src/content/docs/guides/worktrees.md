@@ -22,7 +22,7 @@ If that name is taken, garage adds a number, for example `garage/feature-2`. If 
 
 ## Finish a worktree session
 
-1. Press `x` twice (`x x`) on the worktree session. The first press arms the close. The strip says "press x again". Any other key cancels it. The second press must come within 3 seconds.
+1. Press `x` twice (`x x`) on the worktree session, or `x` then `X` to keep it in history. The first press arms the close. The strip says "press x again". Any other key cancels it. The second press must come within 3 seconds.
 2. The session closes. A finish panel opens. It names the branch and the branch that is checked out in your repository (the merge target).
 3. Choose one:
 

@@ -5,27 +5,72 @@ use super::*;
 // ── armed x close (p8.1) ────────────────────────────────────────────
 
 #[test]
-fn x_arms_with_the_exact_strip_wording_then_a_second_x_closes() {
+fn x_arms_with_the_exact_strip_wording_then_a_second_x_kills_with_no_history() {
     let mut store = store_with(vec![ws("a")], vec![si("a", "ghost")]);
     let mut router = GarageRouter::default();
     assert_eq!(key_at(&mut router, &mut store, "x", 1000), vec![]);
     assert_eq!(
         router.notices.current(1001),
-        Some("press x again to close ghost"),
+        Some("press x again to kill ghost (no history), X to close and keep it in history"),
         "harness-grepped wording"
     );
     assert_eq!(
         key_at(&mut router, &mut store, "x", 2000),
-        vec![Effect::Close {
+        vec![Effect::Forget {
             id: id("a", "ghost"),
             label: "ghost".to_owned(),
-            meta_only: false,
         }]
     );
     assert_eq!(
         router.notices.current(2001),
         None,
         "confirming clears the arm notice"
+    );
+}
+
+#[test]
+fn shift_x_after_x_closes_a_live_session_keeping_history() {
+    let mut store = store_with(vec![ws("a")], vec![si("a", "ghost")]);
+    let mut router = GarageRouter::default();
+    key_at(&mut router, &mut store, "x", 1000);
+    assert_eq!(
+        key_at(&mut router, &mut store, "X", 1500),
+        vec![Effect::Close {
+            id: id("a", "ghost"),
+            label: "ghost".to_owned(),
+            meta_only: false,
+        }]
+    );
+    assert_eq!(router.notices.current(1501), None);
+    // No workspace-remove arm was left behind: the next X arms, not confirms.
+    assert_eq!(key_at(&mut router, &mut store, "X", 1600), vec![]);
+}
+
+#[test]
+fn shift_x_after_x_on_a_closed_session_forgets_the_record() {
+    let mut store = store_with(vec![ws("a")], vec![si_restorable("a", "dead")]);
+    let mut router = GarageRouter::default();
+    key_at(&mut router, &mut store, "x", 1000);
+    assert_eq!(
+        key_at(&mut router, &mut store, "X", 1500),
+        vec![Effect::Close {
+            id: id("a", "dead"),
+            label: "dead".to_owned(),
+            meta_only: true,
+        }]
+    );
+}
+
+#[test]
+fn a_bare_shift_x_still_arms_workspace_removal() {
+    let mut store = store_with(vec![ws("proj")], vec![si("proj", "a")]);
+    let mut router = GarageRouter::default();
+    assert_eq!(key_at(&mut router, &mut store, "X", 1000), vec![]);
+    assert!(
+        router
+            .notices
+            .current(1001)
+            .is_some_and(|n| n.starts_with("press X again to remove proj"))
     );
 }
 
@@ -56,7 +101,7 @@ fn any_other_key_disarms_the_pending_close_and_clears_its_notice() {
     assert_eq!(key_at(&mut router, &mut store, "x", 1200), vec![]);
     assert_eq!(
         router.notices.current(1201),
-        Some("press x again to close ghost")
+        Some("press x again to kill ghost (no history), X to close and keep it in history")
     );
 }
 
@@ -194,24 +239,26 @@ fn shift_x_on_an_unregistered_group_explains_instead_of_arming() {
 }
 
 #[test]
-fn x_and_shift_x_cross_disarm_each_other() {
+fn x_disarms_a_pending_remove_and_shift_x_then_confirms_the_close() {
     let mut store = store_with(vec![ws("proj")], vec![si("proj", "a")]);
     let mut router = GarageRouter::default();
-    key_at(&mut router, &mut store, "x", 1000); // close armed
-    key_at(&mut router, &mut store, "X", 1100); // arms removal, disarms close
-    assert!(
-        router
-            .notices
-            .current(1101)
-            .is_some_and(|n| n.starts_with("press X again to remove proj"))
-    );
-    // x now re-arms (the X disarmed it) AND disarms the removal.
-    assert_eq!(key_at(&mut router, &mut store, "x", 1200), vec![]);
+    key_at(&mut router, &mut store, "X", 1000); // removal armed
+    assert_eq!(key_at(&mut router, &mut store, "x", 1100), vec![]);
     assert_eq!(
-        router.notices.current(1201),
-        Some("press x again to close a")
+        router.notices.current(1101),
+        Some("press x again to kill a (no history), X to close and keep it in history")
     );
-    // The x disarmed the removal: this X re-arms instead of confirming.
+    // The x disarmed the removal and armed the close: this X closes the
+    // session with history instead of confirming (or re-arming) a removal.
+    assert_eq!(
+        key_at(&mut router, &mut store, "X", 1200),
+        vec![Effect::Close {
+            id: id("proj", "a"),
+            label: "a".to_owned(),
+            meta_only: false,
+        }]
+    );
+    // Nothing is armed any more: the next X arms the removal from scratch.
     assert_eq!(key_at(&mut router, &mut store, "X", 1300), vec![]);
     assert!(
         router
@@ -302,7 +349,7 @@ fn any_other_key_after_r_cancels_the_prefix_and_is_swallowed() {
     assert_eq!(key_at(&mut router, &mut store, "x", 1200), vec![]);
     assert_eq!(
         router.notices.current(1201),
-        Some("press x again to close one"),
+        Some("press x again to kill one (no history), X to close and keep it in history"),
         "the close arms from scratch"
     );
 }
