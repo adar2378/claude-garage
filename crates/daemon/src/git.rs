@@ -185,13 +185,16 @@ pub async fn remove_worktree(repo_dir: &str, path: &str, branch: &str) {
 }
 
 /// Refuses to delete or merge anything that is not a garage-made worktree:
-/// `path` must resolve to somewhere under `<garage_dir>/worktrees/` and have
-/// `branch` checked out. The record comes from the client, so a forged path
+/// `path` must resolve to somewhere under `<garage_dir>/worktrees/` and, when
+/// `require_head`, have `branch` checked out (merge only: discard must still
+/// work after the agent switched branches, detached, or is mid-rebase; the
+/// folder is ours either way). The record comes from the client, so a forged path
 /// must never reach `worktree remove --force`.
 async fn assert_garage_worktree(
     garage_dir: &Path,
     path: &str,
     branch: &str,
+    require_head: bool,
 ) -> Result<(), GitFailure> {
     let refuse = || {
         GitFailure::new(
@@ -229,6 +232,9 @@ async fn assert_garage_worktree(
     };
     if real == root || !real.starts_with(&root) {
         return Err(refuse());
+    }
+    if !require_head {
+        return Ok(());
     }
     match git_checked(path, &["rev-parse", "--abbrev-ref", "HEAD"]).await {
         Ok(head) if head.trim() == branch => Ok(()),
@@ -270,7 +276,7 @@ pub async fn finish_worktree(
         FinishAction::Keep => Ok(response(None, None)),
         FinishAction::Merge => {
             assert_garage_branch(branch)?;
-            assert_garage_worktree(garage_dir, path, branch).await?;
+            assert_garage_worktree(garage_dir, path, branch, true).await?;
             // The usual failure is an agent that edited but never committed:
             // nothing to merge, and `worktree remove` would refuse anyway. A
             // failing status call is swallowed (JS `.catch(() => null)`).
@@ -297,9 +303,17 @@ pub async fn finish_worktree(
         }
         FinishAction::Discard => {
             assert_garage_branch(branch)?;
-            assert_garage_worktree(garage_dir, path, branch).await?;
-            git_checked(repo_dir, &["worktree", "remove", "--force", path]).await?;
-            git_checked(repo_dir, &["branch", "-D", branch]).await?;
+            assert_garage_worktree(garage_dir, path, branch, false).await?;
+            if Path::new(path).exists() {
+                git_checked(repo_dir, &["worktree", "remove", "--force", path]).await?;
+            } else {
+                // Folder already gone: drop the stale registration so the
+                // branch is free to delete.
+                git_checked(repo_dir, &["worktree", "prune"]).await?;
+            }
+            if branch_exists(repo_dir, branch).await {
+                git_checked(repo_dir, &["branch", "-D", branch]).await?;
+            }
             Ok(response(None, Some(true)))
         }
     }
@@ -595,7 +609,6 @@ mod tests {
         for action in [FinishAction::Discard, FinishAction::Merge] {
             for (path, branch) in [
                 (s(&f.repo), "garage/x"),
-                (s(&f.wt), "garage/x"),
                 ("/nonexistent/garage/wt", "garage/x"),
             ] {
                 let e = finish_worktree(&f.garage, s(&f.repo), path, branch, action)
@@ -604,9 +617,100 @@ mod tests {
                 assert_eq!(e.status, 400, "{action:?} {path}");
             }
         }
+        // Merge also refuses the worktree whose HEAD is not the claimed branch.
+        let e = finish_worktree(
+            &f.garage,
+            s(&f.repo),
+            s(&f.wt),
+            "garage/x",
+            FinishAction::Merge,
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(e.status, 400);
         assert!(f.repo.join("precious.txt").exists());
         assert!(f.wt.exists());
         assert!(g(&f.repo, &["branch", "--list", "garage/x"]).contains("garage/x"));
+    }
+
+    #[tokio::test]
+    async fn discard_succeeds_after_the_agent_checked_out_another_branch() {
+        let f = fixture();
+        g(&f.wt, &["checkout", "-q", "-b", "garage/elsewhere"]);
+        let r = finish_worktree(
+            &f.garage,
+            s(&f.repo),
+            s(&f.wt),
+            "garage/x",
+            FinishAction::Discard,
+        )
+        .await
+        .unwrap();
+        assert_eq!(r.discarded, Some(true));
+        assert!(!f.wt.exists());
+        assert_eq!(g(&f.repo, &["branch", "--list", "garage/x"]).trim(), "");
+        // The agent's other branch is not ours to delete.
+        assert!(g(&f.repo, &["branch", "--list", "garage/elsewhere"]).contains("garage/elsewhere"));
+    }
+
+    #[tokio::test]
+    async fn discard_succeeds_on_a_detached_head() {
+        let f = fixture();
+        g(&f.wt, &["checkout", "-q", "--detach"]);
+        finish_worktree(
+            &f.garage,
+            s(&f.repo),
+            s(&f.wt),
+            "garage/x",
+            FinishAction::Discard,
+        )
+        .await
+        .unwrap();
+        assert!(!f.wt.exists());
+        assert_eq!(g(&f.repo, &["branch", "--list", "garage/x"]).trim(), "");
+    }
+
+    #[tokio::test]
+    async fn discard_with_the_folder_gone_and_the_branch_already_deleted_is_ok() {
+        let f = fixture();
+        std::fs::remove_dir_all(&f.wt).unwrap();
+        g(&f.repo, &["worktree", "prune"]);
+        g(&f.repo, &["branch", "-D", "garage/x"]);
+        finish_worktree(
+            &f.garage,
+            s(&f.repo),
+            s(&f.wt),
+            "garage/x",
+            FinishAction::Discard,
+        )
+        .await
+        .unwrap();
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_symlink_or_dotdot_escape_out_of_the_worktrees_folder_is_400_and_deletes_nothing() {
+        let f = fixture();
+        // A real worktree outside the garage folder, reached through a symlink
+        // that sits inside it, and through a `..` path.
+        let outside = f.scratch.join("outside");
+        g(
+            &f.repo,
+            &["worktree", "add", "-q", "-b", "garage/out", s(&outside)],
+        );
+        let link = f.garage.join("worktrees/ws/link");
+        std::os::unix::fs::symlink(&outside, &link).unwrap();
+        let dotdot = format!("{}/../../../../outside", s(&f.wt));
+        for action in [FinishAction::Discard, FinishAction::Merge] {
+            for path in [s(&link), dotdot.as_str()] {
+                let e = finish_worktree(&f.garage, s(&f.repo), path, "garage/out", action)
+                    .await
+                    .unwrap_err();
+                assert_eq!(e.status, 400, "{action:?} {path}");
+            }
+        }
+        assert!(outside.exists());
+        assert!(g(&f.repo, &["branch", "--list", "garage/out"]).contains("garage/out"));
     }
 
     #[tokio::test]
