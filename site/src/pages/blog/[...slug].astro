@@ -47,7 +47,7 @@ void remarkPluginFrontmatter;
   <p class="crumbs"><a href="/">Home</a> / <a href="/blog/">Blog</a></p>
   <h1>{d.title}</h1>
   <p class="meta">
-    By <a href="https://github.com/adar2378">{d.author}</a>, creator of claude-garage ·
+    By <a href="/about/">{d.author}</a>, creator of claude-garage ·
     <time datetime={dayOf(d.date)}>{longDate(d.date)}</time>
     {d.updated && <> · updated <time datetime={dayOf(d.updated)}>{longDate(d.updated)}</time></>}
     {d.draft && <> · DRAFT</>}

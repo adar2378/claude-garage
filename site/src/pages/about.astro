@@ -1,0 +1,68 @@
+---
+import Page from '../layouts/Page.astro';
+import { ID, PUBLISHER, SOFTWARE, WEBSITE, abs, appVersion, breadcrumbs, dayOf, longDate, personNode } from '../lib/site';
+import { fileDates } from '../lib/gitdates';
+
+const title = 'About claude-garage and its author, Saiful Islam Adar';
+const description =
+  'claude-garage is a simple terminal app for Claude Code sessions, built by Saiful Islam Adar, CTO and co-founder of Dev Monks. Why it exists and what it stands for.';
+const url = abs('/about/');
+const dates = fileDates('src/pages/about.astro');
+const modified = new Date(dates.modified);
+const version = appVersion();
+
+const jsonLd = {
+  '@context': 'https://schema.org',
+  '@graph': [
+    {
+      '@type': 'AboutPage',
+      name: title,
+      description,
+      '@id': `${url}#webpage`,
+      url,
+      datePublished: dates.published,
+      dateModified: dates.modified,
+      inLanguage: 'en',
+      isPartOf: WEBSITE,
+      about: SOFTWARE,
+      mainEntity: { '@id': ID.person },
+      publisher: PUBLISHER,
+    },
+    personNode(),
+    breadcrumbs([['Home', '/'], ['About', '/about/']]),
+  ],
+};
+---
+<Page title={title} description={description} jsonLd={jsonLd} active="about">
+  <p class="crumbs"><a href="/">Home</a> / About</p>
+  <h1>About claude-garage and the person who built it</h1>
+  <p class="meta">Last updated <time datetime={dayOf(modified)}>{longDate(modified)}</time></p>
+
+  <p class="lead">claude-garage is a free, open-source terminal app (MIT license) that shows all your Claude Code sessions on one wall, grouped by project. Sessions run in tmux, so they survive closing the terminal. The session waiting for your answer turns amber, and one key jumps to it.</p>
+  <p>It runs on macOS and Linux, with a Windows preview. The current release is {version}. Start with the <a href="/docs/guides/install/">install guide</a>, or <a href="/try/">try the wall in your browser</a> first.</p>
+
+  <h2>Who built claude-garage?</h2>
+  <p>I am Saiful Islam Adar, CTO and co-founder of <a href="https://devmonks.co" rel="noopener">Dev Monks</a>. I built claude-garage because I wanted a simple TUI to manage my Claude Code sessions across different projects.</p>
+  <p>I tried a few similar apps before, but they were quite complex and did too much. So I made claude-garage: very simple, close to how the Claude desktop app feels, but in the terminal, with a flexible plugin architecture so anyone can add what they need.</p>
+  <p>You can find me on <a href="https://github.com/adar2378" rel="me noopener">GitHub</a> and at <a href="https://devmonks.co" rel="me noopener">Dev Monks</a>.</p>
+
+  <h2>What are the principles behind claude-garage?</h2>
+  <ul>
+    <li><strong>Simple first.</strong> One wall, one amber signal and one key to answer. Fewer features, done plainly. The <a href="/docs/guides/first-wall/">first wall guide</a> takes a few minutes.</li>
+    <li><strong>tmux owns the sessions.</strong> The wall is only a viewer, so quitting it never ends a session. <a href="/blog/why-tmux-owns-your-sessions/">Why tmux owns your Claude Code sessions</a> explains the design and its costs.</li>
+    <li><strong>Plugins for everything else.</strong> Nine plugins ship inside the binary, and anyone can <a href="/docs/guides/first-plugin/">build another</a>. A plugin can ask for a dangerous action but only you can confirm it. See <a href="/blog/plugin-confirm-rule/">the plugin confirm rule</a>.</li>
+    <li><strong>Local only.</strong> The background service listens on <code>127.0.0.1</code>. There is no account and no telemetry. State lives in <code>~/.garage</code> on your machine.</li>
+  </ul>
+
+  <h2>Where can I follow the project or get involved?</h2>
+  <ul>
+    <li><a href="https://github.com/adar2378/claude-garage" rel="noopener">claude-garage on GitHub</a>: source, issues and releases.</li>
+    <li><a href="/docs/changelog/">Changelog</a>: what changed in every version.</li>
+    <li><a href="/docs/guides/contributing/">Contributing</a>: how to build it, test it and send a change.</li>
+    <li><a href="https://github.com/adar2378/claude-garage/security/advisories/new" rel="noopener">Report a security issue</a> privately on GitHub. The same contact is in <a href="/.well-known/security.txt">security.txt</a>.</li>
+    <li><a href="/compare/">Comparisons</a> with other ways to run many Claude Code sessions. I made claude-garage, and those pages say so.</li>
+  </ul>
+
+  <p class="cta"><a class="btn primary" href="/docs/guides/install/">Install claude-garage</a><a class="btn" href="/try/">Try it in your browser</a></p>
+  <p class="note">claude-garage is an independent project, not affiliated with Anthropic. "Claude" and "Claude Code" are Anthropic trademarks.</p>
+</Page>

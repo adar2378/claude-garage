@@ -6,6 +6,9 @@ import { resolve } from 'node:path';
 export const ORIGIN = (process.env.SITE_URL ?? 'https://claude-garage.xyz').replace(/\/$/, '');
 export const REPO = 'https://github.com/adar2378/claude-garage';
 export const AUTHOR_URL = 'https://github.com/adar2378';
+export const AUTHOR_NAME = 'Saiful Islam Adar';
+export const AUTHOR_PAGE = '/about/';
+export const DEVMONKS_URL = 'https://devmonks.co';
 export const NOINDEX = process.env.SITE_NOINDEX === '1';
 
 export const abs = (path: string) => `${ORIGIN}${path}`;
@@ -36,6 +39,19 @@ export function appVersion(): string {
 export const SOFTWARE_DESCRIPTION =
   'claude-garage is a terminal wall for Claude Code. See every session at once, jump to the one that needs your answer, and keep sessions alive in tmux. One binary for macOS and Linux, with a Windows preview.';
 
+/** The author. Rendered on the landing page and on /about/ (same node, same @id). */
+export function personNode() {
+  return {
+    '@type': 'Person',
+    '@id': ID.person,
+    name: AUTHOR_NAME,
+    jobTitle: 'CTO and co-founder',
+    worksFor: { '@type': 'Organization', name: 'Dev Monks', url: DEVMONKS_URL },
+    url: abs(AUTHOR_PAGE),
+    sameAs: [AUTHOR_URL, DEVMONKS_URL],
+  };
+}
+
 /** The full entity nodes. Rendered once, on the landing page. */
 export function entityGraph() {
   return [
@@ -48,13 +64,7 @@ export function entityGraph() {
       sameAs: [REPO],
       founder: ref(ID.person),
     },
-    {
-      '@type': 'Person',
-      '@id': ID.person,
-      name: 'Saiful Islam',
-      url: AUTHOR_URL,
-      sameAs: [AUTHOR_URL],
-    },
+    personNode(),
     {
       '@type': 'WebSite',
       '@id': ID.website,
