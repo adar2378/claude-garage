@@ -1,7 +1,8 @@
 ---
-title: Run many sessions at once
+title: "Run multiple Claude Code sessions at once"
 description: Run many Claude Code sessions at once in claude-garage. Group projects by folder, spot the amber session that waits for you, and jump to it with one key.
 sidebar:
+  label: Run many sessions
   order: 3
 ---
 
@@ -23,8 +24,7 @@ Amber means one thing: Claude waits for your answer. garage uses amber for nothi
 - The tile border and title turn amber.
 - The rail row turns amber and shows how long it has waited.
 - The project tab in the strip gets an amber dot.
-- garage rings the terminal bell once and puts the number of waiting sessions in the terminal title.
-- A desktop notification appears when the garage terminal is hidden.
+- The built-in `alerts` plugin plays a chime and, when no garage window is in view, shows a desktop banner. See [Know when Claude Code needs you](/docs/guides/alerts/).
 
 Waiting sessions are always sorted first in the rail.
 
@@ -69,4 +69,4 @@ Press `d` to move the focused session into its own view. Press `d` again to move
 
 [Sessions in git worktrees](/docs/guides/worktrees/)
 
-Related reading: [keep sessions alive after you close the terminal](/docs/guides/nothing-lost/), [why tmux owns your Claude Code sessions](/blog/why-tmux-owns-your-sessions/), and [claude-garage vs one session at a time](/compare/one-session-at-a-time/).
+Related reading: [alerts and banners](/docs/guides/alerts/), [keep sessions alive after you close the terminal](/docs/guides/nothing-lost/), [why tmux owns your Claude Code sessions](/blog/why-tmux-owns-your-sessions/), and [claude-garage vs one session at a time](/compare/one-session-at-a-time/).

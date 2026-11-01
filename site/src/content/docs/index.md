@@ -7,7 +7,8 @@ claude-garage is a terminal wall for [Claude Code](https://docs.claude.com/en/do
 
 - [Install](/docs/guides/install/) garage and its two requirements.
 - [First run](/docs/getting-started/first-run/): add a project, start a session, find out who needs you.
+- [Getting started](/docs/getting-started/): the shortest path from nothing to a working wall.
 - [Guides](/docs/guides/): step by step tutorials.
 - [Plugins](/docs/plugins/): add keys, widgets, panes and commands.
-- [Keys](/docs/reference/keys/) and [commands](/docs/reference/commands/).
+- [Reference](/docs/reference/): [keys](/docs/reference/keys/) and [commands](/docs/reference/commands/).
 - [Platforms](/docs/platforms/) and the [changelog](/docs/changelog/).

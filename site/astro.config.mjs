@@ -46,6 +46,7 @@ export default defineConfig({
         { label: 'Guides', items: [
           { slug: 'docs/guides/first-wall' },
           { slug: 'docs/guides/many-sessions' },
+          { slug: 'docs/guides/alerts' },
           { slug: 'docs/guides/worktrees' },
           { slug: 'docs/guides/nothing-lost' },
           { slug: 'docs/guides/plugins' },
@@ -59,7 +60,7 @@ export default defineConfig({
           { slug: 'docs/reference/keys' },
           { slug: 'docs/reference/commands' },
         ] },
-        { slug: 'docs/platforms' },
+        { slug: 'docs/platforms', label: 'Platforms' },
         { slug: 'docs/changelog' },
         { label: 'Blog', link: '/blog/' },
         { label: 'Compare', link: '/compare/' },
