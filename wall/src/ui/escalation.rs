@@ -25,6 +25,41 @@ pub const BEL: &str = "\x07";
 /// Interval for the `visible: true` heartbeat (same as the Dart TUI).
 pub const HEARTBEAT_INTERVAL_MS: u64 = 30_000;
 
+/// Whether the wall counts as "in view" for the daemon's alerts.
+///
+/// Until the terminal has sent a single focus event (it may not support them,
+/// or tmux may have `focus-events` off) the wall is in view whenever it runs,
+/// as it always was. Once one has arrived, the terminal's focus decides: a
+/// wall open in a background window is not in view, so alerts show a banner.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Focus {
+    seen: bool,
+    focused: bool,
+}
+
+impl Default for Focus {
+    fn default() -> Self {
+        Focus {
+            seen: false,
+            focused: true,
+        }
+    }
+}
+
+impl Focus {
+    /// A focus event arrived. True when the answer to [`Focus::visible`] changed.
+    pub fn on_event(&mut self, gained: bool) -> bool {
+        let before = self.visible();
+        self.seen = true;
+        self.focused = gained;
+        self.visible() != before
+    }
+
+    pub fn visible(&self) -> bool {
+        !self.seen || self.focused
+    }
+}
+
 #[derive(Default)]
 pub struct EscalationPolicy {
     blocked: HashSet<String>,
@@ -167,5 +202,33 @@ mod tests {
             Some(BEL.to_owned()),
             "b newly blocked rings; count unchanged keeps the title"
         );
+    }
+}
+
+#[cfg(test)]
+mod focus_tests {
+    use super::Focus;
+
+    #[test]
+    fn without_any_focus_event_the_wall_is_visible_while_it_runs() {
+        let f = Focus::default();
+        assert!(f.visible());
+    }
+
+    #[test]
+    fn once_events_arrive_focus_decides() {
+        let mut f = Focus::default();
+        assert!(f.on_event(false), "lost: visible -> hidden");
+        assert!(!f.visible());
+        assert!(!f.on_event(false), "a repeat changes nothing");
+        assert!(f.on_event(true), "gained: hidden -> visible");
+        assert!(f.visible());
+    }
+
+    #[test]
+    fn a_first_gained_event_is_not_a_change_but_starts_following_focus() {
+        let mut f = Focus::default();
+        assert!(!f.on_event(true));
+        assert!(f.on_event(false));
     }
 }

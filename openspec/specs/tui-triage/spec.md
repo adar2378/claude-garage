@@ -52,7 +52,15 @@ For `needs-input` sessions the TUI SHALL display elapsed waiting time (since the
 - **THEN** the rail row and queue row show a 4-minute waiting duration
 
 ### Requirement: Off-screen escalation
-When a session transitions to `needs-input`, the TUI SHALL ring the terminal bell (SSH-safe) and update the terminal title (OSC) to include the blocked count. The TUI SHALL report visibility to the daemon (`POST /api/ui/visibility`) so daemon-side macOS notifications stay suppressed while the TUI is running in a visible terminal, using the same contract as the web UI.
+When a session transitions to `needs-input`, the TUI SHALL ring the terminal bell (SSH-safe) and update the terminal title (OSC) to include the blocked count. The TUI SHALL report visibility to the daemon (`POST /api/ui/visibility`) so daemon-side alerts (the `alerts` plugin's banner) stay suppressed while garage is the window in front. The TUI SHALL enable terminal focus reporting (DECSET 1004) and post `visible: false` the moment the terminal loses focus and `visible: true` the moment it regains it; the heartbeat repeats the current state. Focus reports are consumed by the TUI in every layer and never forwarded to an engaged session. Until the first focus report arrives (a terminal without support, or tmux with `focus-events` off) the TUI SHALL count as visible whenever it is running.
+
+#### Scenario: Wall in a background window
+- **WHEN** the terminal running the TUI loses focus
+- **THEN** the TUI posts `visible: false` at once and the heartbeat keeps saying false until focus returns
+
+#### Scenario: Terminal without focus reporting
+- **WHEN** no focus report has ever arrived
+- **THEN** the TUI reports visible while it runs, as before
 
 #### Scenario: Bell on new blocked session
 - **WHEN** a working session transitions to needs-input while the user is in another tmux window

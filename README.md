@@ -175,7 +175,7 @@ runs to alert you when a session needs you. Press `P` to choose one.
 
 The built-in `alerts` plugin makes a short chime when a session needs you
 (two rising notes) or finishes a turn that ran 20 seconds or more (one soft
-note). When no garage window is in view it also shows a desktop banner, such
+note). When garage is not the focused window it also shows a desktop banner, such
 as "fix needs you" with Claude's own message. Sessions that need you within
 two seconds of each other make one chime and one banner.
 

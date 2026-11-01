@@ -99,6 +99,7 @@ fn plain(code: KeyCode) -> KeyEvent {
 
 mod dispatch;
 mod draw;
+mod focus;
 mod layers;
 mod motion;
 mod p25;

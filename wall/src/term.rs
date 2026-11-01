@@ -16,8 +16,9 @@ use std::io::stdout;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use crossterm::event::{
-    DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
-    KeyboardEnhancementFlags, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
+    DisableBracketedPaste, DisableFocusChange, DisableMouseCapture, EnableBracketedPaste,
+    EnableFocusChange, EnableMouseCapture, KeyboardEnhancementFlags, PopKeyboardEnhancementFlags,
+    PushKeyboardEnhancementFlags,
 };
 use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
@@ -39,7 +40,11 @@ pub fn enter() -> std::io::Result<WallTerminal> {
         stdout(),
         EnterAlternateScreen,
         EnableBracketedPaste,
-        EnableMouseCapture
+        EnableMouseCapture,
+        // Focus in/out (DECSET 1004) reaches the app as FocusGained/FocusLost
+        // events, never as keys: it tells the daemon whether garage is the
+        // window in front (alerts show a banner when it is not).
+        EnableFocusChange
     )?;
     // p14 (spec tui-key-routing "Enhanced-keyboard passthrough"): without
     // the kitty disambiguate flag the outer terminal reports Shift+Enter as
@@ -79,6 +84,7 @@ pub fn restore() {
     let _ = crossterm::execute!(
         stdout(),
         PopKeyboardEnhancementFlags,
+        DisableFocusChange,
         DisableMouseCapture,
         DisableBracketedPaste,
         LeaveAlternateScreen,

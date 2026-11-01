@@ -47,7 +47,7 @@ use crate::slots::{SlotId, SlotRegistry};
 use crate::state::persistence::{self, WallFile};
 use crate::state::store::WallStore;
 use crate::state::wall_state::{KeyLayer, OverlayKind, WallSession};
-use crate::ui::escalation::{EscalationPolicy, HEARTBEAT_INTERVAL_MS};
+use crate::ui::escalation::{EscalationPolicy, Focus, HEARTBEAT_INTERVAL_MS};
 use crate::ui::layout::WallLayout;
 use crate::ui::motion::Motion;
 use crate::ui::plugins_overlay::PluginsOverlayState;
@@ -404,6 +404,10 @@ struct App {
     wt_finish: WorktreeFinishState,
     /// The `p` overlay's selection, in-flight toggle and inline error.
     plugins_overlay: PluginsOverlayState,
+    /// Terminal focus, which decides what the visibility heartbeat says.
+    focus: Focus,
+    /// A visibility report the loop still has to post (a focus change).
+    visibility_post: Option<bool>,
     /// Rects of the last drawn frame — the mouse router reads the SAME
     /// geometry the paint used. `None` until the first frame.
     layout: Option<WallLayout>,
@@ -495,6 +499,8 @@ impl App {
             view_picker: ViewPickerState::default(),
             wt_finish: WorktreeFinishState::default(),
             plugins_overlay: PluginsOverlayState::default(),
+            focus: Focus::default(),
+            visibility_post: None,
             layout: None,
             badge_cols: None,
             slot_clicks: Vec::new(),
@@ -675,6 +681,14 @@ impl App {
         self.run_effects(effects);
     }
 
+    /// The terminal gained or lost focus: report it to the daemon at once
+    /// (the loop posts [`App::visibility_post`]).
+    fn on_focus(&mut self, gained: bool) {
+        if self.focus.on_event(gained) {
+            self.visibility_post = Some(self.focus.visible());
+        }
+    }
+
     /// Apply one event; true = quit.
     fn apply(&mut self, ev: AppEvent) -> bool {
         match ev {
@@ -794,6 +808,10 @@ impl App {
                 }
             }
             AppEvent::Term(Event::Resize(_, _)) => {} // layout recomputes per frame
+            // The terminal's focus reports belong to the wall, in every layer:
+            // they never reach an engaged session as typed `ESC [ I` / `ESC [ O`.
+            AppEvent::Term(Event::FocusGained) => self.on_focus(true),
+            AppEvent::Term(Event::FocusLost) => self.on_focus(false),
             AppEvent::Term(Event::Paste(text)) => self.handle_paste(&text),
             AppEvent::Term(Event::Mouse(mouse)) => {
                 if self.handle_mouse(&mouse) {
@@ -820,7 +838,6 @@ impl App {
                     }
                 }
             }
-            AppEvent::Term(_) => {}
         }
         false
     }
@@ -1212,8 +1229,11 @@ async fn state_loop(
             last_heartbeat = Instant::now();
             let base_url = base_url.to_owned();
             let client_id = client_id.to_owned();
+            // The current state, not a hard-coded true: a wall in a
+            // background window must not keep claiming it is in view.
+            let visible = app.focus.visible();
             tokio::task::spawn_blocking(move || {
-                let _ = GarageClient::new(Some(base_url)).post_visibility(&client_id, true);
+                let _ = GarageClient::new(Some(base_url)).post_visibility(&client_id, visible);
             });
         }
         // Animated slot items (a plugin's frames cycle from this clock): the
@@ -1321,6 +1341,13 @@ async fn state_loop(
             if app.apply(ev) {
                 let _ = persistence::save(&views_path, &wall_file_snapshot(&app.store));
                 return Ok(());
+            }
+            if let Some(visible) = app.visibility_post.take() {
+                // A focus change is told to the daemon now, not at the next heartbeat.
+                let (base_url, client_id) = (base_url.to_owned(), client_id.to_owned());
+                tokio::task::spawn_blocking(move || {
+                    let _ = GarageClient::new(Some(base_url)).post_visibility(&client_id, visible);
+                });
             }
             // The first Sessions fetch has now populated state().sessions —
             // safe to load the persisted views (see the comment above).

@@ -61,7 +61,7 @@ Every action, event, pane and CLI run gets the same JSON. Keys are never missing
 | `worktree` | The focused session's git worktree: `{path, branch, repo_dir}`. |
 | `event` | Event runs only: `{name, at, data}`. See [events](events.md). |
 | `ui.slots` | Geometry the wall reported for slots (`width`, `max_cols`, `filler`). May be empty. |
-| `ui.visible` | `true` when a wall is in view: one reported itself visible within the last 45 seconds. A plugin that wants to alert the user (a sound, a banner) can skip the banner when this is `true`. Feature `ui.visible`. |
+| `ui.visible` | `true` when a wall is in view: one reported itself visible within the last 45 seconds. A wall reports visible while its terminal has focus; if the terminal never reports focus (no support, or tmux with `focus-events` off) a running wall counts as visible. A plugin that wants to alert the user (a sound, a banner) can skip the banner when this is `true`. Feature `ui.visible`. |
 | `ui.terminal` | The terminal the wall runs in, as the wall reported it (it sends `__CFBundleIdentifier` when set, else `TERM_PROGRAM`): a bundle id such as `com.mitchellh.ghostty`, or a name such as `ghostty`. `null` until a wall has said. Only plain names (letters, digits, `.`, `-`, `_`) are kept. Feature `ui.terminal`. |
 | `garage` | How to run `claude-garage` against this daemon: `bin` (absolute path or `null`), `port`, `dir` (`GARAGE_DIR`), `tmux_socket` (`GARAGE_TMUX_SOCKET` or `null`). Use it to build a command that comes back to garage, for example a click handler. Quote every value if you pass them to a shell. Feature `context.garage`. |
 
