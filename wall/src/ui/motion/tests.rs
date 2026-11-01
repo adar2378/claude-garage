@@ -245,43 +245,25 @@ fn a_tile_that_stops_being_drawn_drops_its_effects() {
 }
 
 #[test]
-fn a_closed_session_dissolves_over_the_new_layout_then_is_gone() {
+fn a_closed_session_disappears_at_once_with_no_exit_animation() {
     let mut m = Motion::new(true);
-    frame(&mut m, 0, true, false); // snapshot of the clean frame
+    frame(&mut m, 0, true, false);
     let mut now = 0;
     while m.next_tick().is_some() {
         now += 33;
         frame(&mut m, now, true, false);
     }
-    // The session left the list.
     m.begin_frame(now + 33);
     m.closed(|_| false);
-    assert!(m.effects_running(), "ghost counts as running");
+    assert!(!m.effects_running(), "closing starts no animation");
     let mut buf = Buffer::empty(Rect::new(0, 0, 40, 10));
-    m.apply(&mut buf);
-    assert_eq!(
-        buf[(2, 2)].symbol(),
-        "h",
-        "first ghost frame shows the old tile"
-    );
-    let mut t = now + 33;
-    let mut frames = 0;
-    while m.next_tick().is_some() {
-        t += 33;
-        frames += 1;
-        m.begin_frame(t);
-        let mut buf = Buffer::empty(Rect::new(0, 0, 40, 10));
-        m.apply(&mut buf);
-        assert!(frames < 100, "dissolve never ended");
-    }
-    let mut buf = Buffer::empty(Rect::new(0, 0, 40, 10));
-    m.begin_frame(t + 33);
     m.apply(&mut buf);
     assert_eq!(
         buf,
         Buffer::empty(Rect::new(0, 0, 40, 10)),
-        "nothing of the tile remains"
+        "nothing of the tile is painted"
     );
+    assert_eq!(m.next_tick(), None);
 }
 
 #[test]
@@ -471,7 +453,7 @@ fn a_closed_session_id_that_comes_back_fades_in_as_a_new_session() {
     let mut m = Motion::new(true);
     frame(&mut m, 0, true, false);
     m.closed(|_| false);
-    // Let the dissolve finish, then the id reappears.
+    // The id reappears.
     let mut now = 0;
     while m.effects_running() {
         now += 33;

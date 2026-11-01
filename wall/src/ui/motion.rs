@@ -53,8 +53,6 @@ const DOWN_SPIN_MS: i64 = 15_000;
 const FADE_IN_MS: u32 = 300;
 /// The single `needs-input` attention pulse.
 const PULSE_MS: u32 = 600;
-/// Closed-session dissolve.
-const DISSOLVE_MS: u32 = 350;
 
 // ── Off switch ───────────────────────────────────────────────────────────
 
@@ -183,15 +181,6 @@ struct TileFx {
     fresh: bool,
 }
 
-/// A closed session's last frame, dissolving away over the new layout.
-struct Ghost {
-    rect: Rect,
-    snapshot: Buffer,
-    scratch: Buffer,
-    effect: Effect,
-    fresh: bool,
-}
-
 fn fx_duration(ms: i64) -> tachyonfx::Duration {
     tachyonfx::Duration::from_millis(ms.clamp(0, MAX_STEP_MS) as _)
 }
@@ -215,7 +204,6 @@ fn new_effect(kind: FxKind) -> Effect {
 pub struct Motion {
     enabled: bool,
     effects: Vec<TileFx>,
-    ghosts: Vec<Ghost>,
     /// Ids whose terminal is attached (fade-in fires on the edge).
     attached: HashSet<String>,
     /// Ids that have faded in once this run: a workspace/view switch
@@ -223,8 +211,7 @@ pub struct Motion {
     faded_in: HashSet<String>,
     /// Last seen `needs-input` per drawn tile (pulse fires on false → true).
     blocked: HashMap<String, bool>,
-    /// The last frame's clean tiles (before effects and overlays).
-    prev_buf: Option<Buffer>,
+    /// The tiles drawn last frame (closed ones are dropped from motion state).
     prev_tiles: Vec<(String, Rect)>,
     drawn: Vec<(String, Rect)>,
     last_ms: Option<i64>,
@@ -245,11 +232,9 @@ impl Motion {
         Motion {
             enabled,
             effects: Vec::new(),
-            ghosts: Vec::new(),
             attached: HashSet::new(),
             faded_in: HashSet::new(),
             blocked: HashMap::new(),
-            prev_buf: None,
             prev_tiles: Vec::new(),
             drawn: Vec::new(),
             last_ms: None,
@@ -272,7 +257,7 @@ impl Motion {
         if !self.enabled {
             return None;
         }
-        if !self.effects.is_empty() || !self.ghosts.is_empty() {
+        if !self.effects.is_empty() {
             Some(FX_TICK)
         } else if self.spinners {
             Some(SPINNER_TICK)
@@ -285,7 +270,7 @@ impl Motion {
 
     /// True while any effect (not spinner) is alive.
     pub fn effects_running(&self) -> bool {
-        !self.effects.is_empty() || !self.ghosts.is_empty()
+        !self.effects.is_empty()
     }
 
     /// The spinner glyph for tiles, or `None` when motion is off (the static
@@ -327,41 +312,21 @@ impl Motion {
     }
 
     /// Tiles drawn last frame whose session no longer exists (`exists`
-    /// says false): closed, not merely scrolled off. Starts their dissolve
-    /// from the last clean frame.
+    /// says false): closed, not merely scrolled off. Drops their motion
+    /// state. No exit animation: a closing tile disappears at once (a
+    /// dissolve here made closing feel slow in the terminal).
     pub fn closed(&mut self, exists: impl Fn(&str) -> bool) {
-        if !self.enabled {
-            return;
-        }
-        let Some(prev) = &self.prev_buf else { return };
-        let gone: Vec<(String, Rect)> = self
+        let gone: Vec<String> = self
             .prev_tiles
             .iter()
             .filter(|(id, _)| !exists(id))
-            .cloned()
+            .map(|(id, _)| id.clone())
             .collect();
-        for (id, rect) in gone {
+        for id in gone {
             self.attached.remove(&id);
             self.faded_in.remove(&id);
             self.blocked.remove(&id);
             self.effects.retain(|e| e.id != id);
-            let rect = rect.intersection(prev.area);
-            if rect.is_empty() {
-                continue;
-            }
-            let mut snapshot = Buffer::empty(rect);
-            for y in rect.top()..rect.bottom() {
-                for x in rect.left()..rect.right() {
-                    snapshot[(x, y)] = prev[(x, y)].clone();
-                }
-            }
-            self.ghosts.push(Ghost {
-                rect,
-                scratch: snapshot.clone(),
-                snapshot,
-                effect: fx::dissolve((DISSOLVE_MS, Interpolation::QuadIn)),
-                fresh: true,
-            });
         }
         self.prev_tiles.retain(|(id, _)| exists(id));
     }
@@ -403,15 +368,12 @@ impl Motion {
         });
     }
 
-    /// After the tiles are painted and before the strip and overlays: keep
-    /// the clean frame for dissolves, then run the effects over it.
+    /// After the tiles are painted and before the strip and overlays: run
+    /// the effects over them.
     pub fn apply(&mut self, buf: &mut Buffer) {
         if !self.enabled {
             return;
         }
-        // Only the tile area matters, but a whole-buffer clone per draw is
-        // cheap and only happens while motion is on.
-        self.prev_buf = Some(buf.clone());
         self.prev_tiles = std::mem::take(&mut self.drawn);
 
         // A finished effect is dropped BEFORE it is processed again, so the
@@ -425,27 +387,6 @@ impl Motion {
                 step
             };
             e.effect.process(dt, buf, e.rect);
-        }
-
-        self.ghosts.retain(|g| !g.effect.done());
-        for g in &mut self.ghosts {
-            let dt = if std::mem::take(&mut g.fresh) {
-                tachyonfx::Duration::ZERO
-            } else {
-                step
-            };
-            let area = g.rect;
-            g.effect.process(dt, &mut g.scratch, area);
-            // Paint what has not dissolved yet; blanks stay transparent so
-            // the tiles that moved in underneath show through.
-            for y in area.top()..area.bottom() {
-                for x in area.left()..area.right() {
-                    let kept = &g.scratch[(x, y)];
-                    if kept.symbol() == g.snapshot[(x, y)].symbol() && kept.symbol() != " " {
-                        buf[(x, y)] = kept.clone();
-                    }
-                }
-            }
         }
     }
 
