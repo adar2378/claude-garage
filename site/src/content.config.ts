@@ -18,7 +18,7 @@ const blog = defineCollection({
     description: z.string(),
     date: z.coerce.date(),
     updated: z.coerce.date().optional(),
-    author: z.string().default('Saiful Islam Adar'),
+    author: z.string().default('Saiful Islam (Adar)'),
     tags: z.array(z.string()).default([]),
     draft: z.boolean().default(false),
   }),
@@ -32,6 +32,9 @@ const compare = defineCollection({
     description: z.string(),
     // 40 to 60 words, shown first: who should pick which, and why.
     shortAnswer: z.string(),
+    // The 'Looking for an X alternative?' heading and its 2 to 3 honest sentences.
+    altQuestion: z.string(),
+    altAnswer: z.string(),
     short: z.string(),
     order: z.number().default(50),
     // 'tool' pages name one product (nominative use only). They carry a verdict, sources and a checked date.

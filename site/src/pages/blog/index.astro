@@ -1,7 +1,7 @@
 ---
 import { getCollection } from 'astro:content';
 import Page from '../../layouts/Page.astro';
-import { ID, WEBSITE, PUBLISHER, SOFTWARE, AUTHOR, abs, breadcrumbs, dayOf, isoDate, longDate } from '../../lib/site';
+import { ID, WEBSITE, PUBLISHER, SOFTWARE, AUTHOR, abs, breadcrumbs, dayOf, isoDate, longDate, sharedNodes } from '../../lib/site';
 
 const posts = (await getCollection('blog', (p) => import.meta.env.DEV || !p.data.draft)).sort(
   (a, b) => b.data.date.getTime() - a.data.date.getTime(),
@@ -10,6 +10,7 @@ const blogUrl = abs('/blog/');
 const jsonLd = {
   '@context': 'https://schema.org',
   '@graph': [
+    ...sharedNodes(),
     {
       '@type': 'Blog',
       '@id': ID.blog,
@@ -21,16 +22,15 @@ const jsonLd = {
       about: SOFTWARE,
       author: AUTHOR,
       publisher: PUBLISHER,
-      blogPost: posts.map((p) => ({ '@type': 'BlogPosting', headline: p.data.title, url: abs(`/blog/${p.id}/`), datePublished: isoDate(p.data.date) })),
+      blogPost: posts.map((p) => ({ '@id': abs(`/blog/${p.id}/#article`) })),
     },
     breadcrumbs([['Home', '/'], ['Blog', '/blog/']]),
   ],
 };
 ---
 <Page title="claude-garage blog: sessions, tmux and plugins" description="Short, factual posts on running many Claude Code sessions, why tmux owns them, and how claude-garage plugins stay under your control." jsonLd={jsonLd} active="blog">
-  <link slot="head" rel="alternate" type="application/rss+xml" title="claude-garage blog" href="/blog/rss.xml" />
   <h1>Blog</h1>
-  <p class="lead">Notes on running many Claude Code sessions, how claude-garage is built, and why. By <a href="/about/">Saiful Islam Adar</a>.</p>
+  <p class="lead">Notes on running many Claude Code sessions, how claude-garage is built, and why. By <a href="/about/">Saiful Islam (Adar)</a>.</p>
   <ul class="cards">
     {posts.map((p) => (
       <li><a class="card" href={`/blog/${p.id}/`}>

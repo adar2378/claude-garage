@@ -13,6 +13,7 @@ export function lastmodFor(pathname: string): string | undefined {
   if (p === '/about') return latest(['src/pages/about.astro']);
   if (p === '/blog') return latest(['src/pages/blog/index.astro', ...mds('src/content/blog')]);
   if (p === '/compare') return latest(['src/pages/compare/index.astro', ...mds('src/content/compare')]);
+  if (p === '/compare/alternatives') return latest(['src/pages/compare/alternatives.astro']);
   const m = p.match(/^\/(blog|compare)\/([^/]+)$/);
   if (m) {
     const f = `src/content/${m[1]}/${m[2]}.md`;
