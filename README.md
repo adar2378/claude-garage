@@ -186,7 +186,13 @@ claude-garage alerts needs-input off    # no alert when a session needs you
 claude-garage alerts done off           # no alert when a session finishes
 claude-garage alerts banners off        # chime only, never a banner
 claude-garage alerts test               # play both chimes and show a sample banner
+claude-garage alerts terminal auto      # app a clicked banner brings forward (or a bundle id)
 ```
+
+On macOS, click a banner to jump to the session (needs
+`brew install terminal-notifier`). The click brings your terminal forward and
+the wall focuses the session, or the one that has waited longest when several
+need you. Without terminal-notifier you get the banner but no click.
 
 Alerts are on by default, also for existing installs: they replace the old
 needs-input banner. To turn them off completely, press `p` and switch `alerts`

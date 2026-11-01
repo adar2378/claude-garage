@@ -23,7 +23,9 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
-use garage_plugin_sdk::{Api, Context, Error, StateLock, Value, read_state_in, write_state_in};
+use garage_plugin_sdk::{
+    Api, Context, Error, StateLock, Value, json, read_state_in, write_state_in,
+};
 use serde::{Deserialize, Serialize};
 
 /// A turn must have run this long for "finished" to be worth an alert.
@@ -53,7 +55,7 @@ fn on() -> bool {
 
 /// The options of `claude-garage alerts`. All on by default; a missing or
 /// unreadable file is the defaults.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Settings {
     #[serde(default = "on")]
     pub sound: bool,
@@ -63,6 +65,10 @@ pub struct Settings {
     pub done: bool,
     #[serde(default = "on")]
     pub banners: bool,
+    /// Bundle id of the terminal a clicked banner brings forward; `None` is
+    /// "work it out from what the wall reported".
+    #[serde(default)]
+    pub terminal: Option<String>,
 }
 
 impl Default for Settings {
@@ -72,6 +78,7 @@ impl Default for Settings {
             needs_input: true,
             done: true,
             banners: true,
+            terminal: None,
         }
     }
 }
@@ -95,6 +102,8 @@ pub enum Kind {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Item {
     pub kind: Kind,
+    /// The session id (`garage/<workspace>/<label>`).
+    pub id: String,
     pub label: String,
     pub workspace: String,
     /// Claude's own message (needs-input), when the daemon had one.
@@ -163,6 +172,18 @@ pub struct Alert {
     pub chime: Option<Chime>,
     /// `(title, body)`.
     pub banner: Option<(String, String)>,
+    /// What a click on the banner jumps to.
+    pub open: Option<Open>,
+}
+
+/// Where a clicked banner leads.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Open {
+    /// That session.
+    Session(String),
+    /// The session that has waited longest for the user.
+    Blocked,
 }
 
 fn human(secs: u64) -> String {
@@ -194,6 +215,7 @@ pub fn compose(items: &[Item], s: &Settings) -> Alert {
         return Alert {
             chime: None,
             banner: None,
+            open: None,
         };
     }
     let chime = s.sound.then_some(if needs.is_empty() {
@@ -206,6 +228,7 @@ pub fn compose(items: &[Item], s: &Settings) -> Alert {
         return Alert {
             chime,
             banner: None,
+            open: None,
         };
     }
     let (mut title, mut body) = match needs.as_slice() {
@@ -235,9 +258,15 @@ pub fn compose(items: &[Item], s: &Settings) -> Alert {
             body = names(many);
         }
     }
+    let open = match (needs.as_slice(), done.as_slice()) {
+        ([one], []) | ([], [one]) => Some(Open::Session(one.id.clone())),
+        ([], _) => None,
+        _ => Some(Open::Blocked),
+    };
     Alert {
         chime,
         banner: Some((title, body)),
+        open,
     }
 }
 
@@ -247,7 +276,7 @@ pub fn compose(items: &[Item], s: &Settings) -> Alert {
 /// swallow: an alert that cannot be shown is not an error.
 pub trait Out: Sync {
     fn play(&self, wav: &Path);
-    fn banner(&self, title: &str, body: &str);
+    fn banner(&self, title: &str, body: &str, click: &Click);
 }
 
 /// Time, injectable so tests neither wait nor read the clock.
@@ -291,7 +320,7 @@ pub fn ensure_chimes(dir: &Path) -> Result<(PathBuf, PathBuf), Error> {
 }
 
 /// Play and show `alert`. The sound and the banner start together.
-pub fn deliver(alert: &Alert, dir: &Path, out: &dyn Out) {
+pub fn deliver(alert: &Alert, dir: &Path, out: &dyn Out, host: &Host, settings: &Settings) {
     let wav = alert.chime.and_then(|c| {
         let (needs, done) = ensure_chimes(dir).ok()?;
         Some(match c {
@@ -304,7 +333,8 @@ pub fn deliver(alert: &Alert, dir: &Path, out: &dyn Out) {
             s.spawn(|| out.play(wav));
         }
         if let Some((title, body)) = &alert.banner {
-            s.spawn(|| out.banner(title, body));
+            let click = click_for(alert.open.as_ref(), host, settings);
+            s.spawn(move || out.banner(title, body, &click));
         }
     });
 }
@@ -401,6 +431,7 @@ pub fn handle_event(
             }
             "needs-input" if settings.needs_input => Some(Item {
                 kind: Kind::NeedsInput,
+                id: id.to_owned(),
                 label,
                 workspace,
                 message: None,
@@ -412,6 +443,7 @@ pub fn handle_event(
                 .filter(|ms| *ms >= MIN_WORKING_MS)
                 .map(|ms| Item {
                     kind: Kind::Done,
+                    id: id.to_owned(),
                     label,
                     workspace,
                     message: None,
@@ -459,7 +491,14 @@ pub fn handle_event(
         write_state_in(dir, STATE, &state)?;
         items
     };
-    deliver(&compose(&items, &Settings::load(dir)), dir, out);
+    let settings = Settings::load(dir);
+    deliver(
+        &compose(&items, &settings),
+        dir,
+        out,
+        &Host::from_context(ctx),
+        &settings,
+    );
     Ok(())
 }
 
@@ -479,15 +518,18 @@ const OPTIONS: [&str; 4] = ["sound", "needs-input", "done", "banners"];
 fn show(s: &Settings) -> String {
     let onoff = |b: bool| if b { "on" } else { "off" };
     format!(
-        "alerts\n  sound        {}   chime when a session needs you or finishes\n  needs-input  {}   alert when a session needs you\n  done         {}   alert when a session finishes a long turn\n  banners      {}   desktop banner when no wall is in view\n\nchange: claude-garage alerts <sound|needs-input|done|banners> <on|off>\ntry:    claude-garage alerts test\n",
+        "alerts\n  sound        {}   chime when a session needs you or finishes\n  needs-input  {}   alert when a session needs you\n  done         {}   alert when a session finishes a long turn\n  banners      {}   desktop banner when no wall is in view\n\nchange: claude-garage alerts <sound|needs-input|done|banners> <on|off>\n        claude-garage alerts terminal <bundle-id|auto>\ntry:    claude-garage alerts test\n",
         onoff(s.sound),
         onoff(s.needs_input),
         onoff(s.done),
         onoff(s.banners),
+    ) + &format!(
+        "  terminal     {}   app a clicked banner brings forward (macOS)\n",
+        s.terminal.as_deref().unwrap_or("auto")
     )
 }
 
-const USAGE: &str = "usage: claude-garage alerts [sound|needs-input|done|banners on|off | test]\n";
+const USAGE: &str = "usage: claude-garage alerts [sound|needs-input|done|banners on|off | terminal <bundle-id|auto> | open <session-id>|--blocked | test]\n";
 
 /// `claude-garage alerts ...`. `Ok` is printed to stdout, `Err` to stderr with
 /// exit code 2.
@@ -505,8 +547,28 @@ pub fn cli(
             out.play(&needs);
             clock.sleep(Duration::from_millis(600));
             out.play(&done);
-            out.banner("Sample needs you", "This is how an alert looks");
+            out.banner(
+                "Sample needs you",
+                "This is how an alert looks",
+                &click_for(None, &Host::default(), &Settings::load(dir)),
+            );
             Ok("played both chimes and showed a sample banner\n".to_owned())
+        }
+        ["terminal", value] => {
+            let terminal = match *value {
+                "auto" => None,
+                v if valid_bundle_id(v) => Some(v.to_owned()),
+                v => {
+                    return Err(format!(
+                        "alerts: {v:?} is not a bundle id (like com.mitchellh.ghostty) or auto\n{USAGE}"
+                    ));
+                }
+            };
+            let _hold = lock(dir).map_err(|e| format!("alerts: {e}\n"))?;
+            let mut s = Settings::load(dir);
+            s.terminal = terminal;
+            write_state_in(dir, SETTINGS, &s).map_err(|e| format!("alerts: {e}\n"))?;
+            Ok(show(&s))
         }
         [name, value] if OPTIONS.contains(name) => {
             let value = match *value {
@@ -531,6 +593,162 @@ pub fn cli(
         }
         _ => Err(USAGE.to_owned()),
     }
+}
+
+// ------------------------------------------------------------- clicking a banner
+
+/// `^garage/[a-z0-9-]+/[a-z0-9-]+$`
+pub fn valid_session_id(id: &str) -> bool {
+    let mut parts = id.split('/');
+    let name = |p: Option<&str>| {
+        p.is_some_and(|p| {
+            !p.is_empty()
+                && p.chars()
+                    .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+        })
+    };
+    parts.next() == Some("garage")
+        && name(parts.next())
+        && name(parts.next())
+        && parts.next().is_none()
+}
+
+/// `^[A-Za-z0-9.-]+$`, with a dot: a macOS bundle id.
+pub fn valid_bundle_id(s: &str) -> bool {
+    s.contains('.')
+        && !s.is_empty()
+        && s.len() <= 100
+        && s.chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-')
+}
+
+/// The bundle id of the terminal the wall reported (`ui.terminal`): a
+/// `TERM_PROGRAM` name we know, else a value that already is a bundle id.
+pub fn terminal_bundle(reported: &str) -> Option<String> {
+    let known = match reported {
+        "ghostty" => "com.mitchellh.ghostty",
+        "iTerm.app" => "com.googlecode.iterm2",
+        "Apple_Terminal" => "com.apple.Terminal",
+        "WezTerm" => "com.github.wez.wezterm",
+        "kitty" => "net.kovidgoyal.kitty",
+        other => return valid_bundle_id(other).then(|| other.to_owned()),
+    };
+    Some(known.to_owned())
+}
+
+/// What the run context says about this machine: the terminal, and how to run
+/// `claude-garage` again.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct Host {
+    pub terminal: Option<String>,
+    pub bin: Option<String>,
+    pub port: Option<u16>,
+    pub dir: Option<String>,
+    pub tmux_socket: Option<String>,
+}
+
+impl Host {
+    pub fn from_context(ctx: &Context) -> Host {
+        let raw = ctx.raw();
+        let text = |p: &str| {
+            raw.pointer(p)
+                .and_then(Value::as_str)
+                .filter(|s| !s.is_empty())
+                .map(str::to_owned)
+        };
+        Host {
+            terminal: text("/ui/terminal"),
+            bin: text("/garage/bin"),
+            port: raw
+                .pointer("/garage/port")
+                .and_then(Value::as_u64)
+                .and_then(|p| u16::try_from(p).ok()),
+            dir: text("/garage/dir"),
+            tmux_socket: text("/garage/tmux_socket"),
+        }
+    }
+}
+
+/// What terminal-notifier is told about a banner.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Click {
+    /// Banners with the same group replace each other.
+    pub group: String,
+    /// Bundle id of the app to bring forward.
+    pub activate: Option<String>,
+    /// A shell command to run on click.
+    pub execute: Option<String>,
+}
+
+/// `'...'` with every `'` inside written as `'\''`. `None` when the text has
+/// a control character: nothing like that belongs in a path or a name.
+pub fn sh_quote(s: &str) -> Option<String> {
+    if s.chars().any(char::is_control) {
+        return None;
+    }
+    Some(format!("'{}'", s.replace('\'', "'\\''")))
+}
+
+/// The shell command a click runs, built only from validated parts: the
+/// binary (an absolute path), the port / dir / tmux socket the daemon runs
+/// with, and a validated session id. Never from Claude's text.
+pub fn execute_command(open: &Open, host: &Host) -> Option<String> {
+    let bin = host.bin.as_deref().filter(|b| b.starts_with('/'))?;
+    let target = match open {
+        Open::Session(id) if valid_session_id(id) => sh_quote(id)?,
+        Open::Session(_) => return None,
+        Open::Blocked => "--blocked".to_owned(),
+    };
+    let mut cmd = String::new();
+    if let Some(port) = host.port {
+        cmd += &format!("GARAGE_PORT={} ", sh_quote(&port.to_string())?);
+    }
+    for (name, value) in [
+        ("GARAGE_DIR", &host.dir),
+        ("GARAGE_TMUX_SOCKET", &host.tmux_socket),
+    ] {
+        if let Some(v) = value {
+            cmd += &format!("{name}={} ", sh_quote(v)?);
+        }
+    }
+    Some(format!("{cmd}{} alerts open {target}", sh_quote(bin)?))
+}
+
+/// The click behaviour of a banner.
+pub fn click_for(open: Option<&Open>, host: &Host, settings: &Settings) -> Click {
+    let group = match open {
+        Some(Open::Session(id)) if valid_session_id(id) => {
+            format!("garage-alerts-{}", id.replace('/', "-"))
+        }
+        _ => "garage-alerts-many".to_owned(),
+    };
+    let activate = settings
+        .terminal
+        .clone()
+        .filter(|t| valid_bundle_id(t))
+        .or_else(|| host.terminal.as_deref().and_then(terminal_bundle));
+    Click {
+        group,
+        activate,
+        execute: open.and_then(|o| execute_command(o, host)),
+    }
+}
+
+/// `claude-garage alerts open <session-id>|--blocked`: ask the wall to focus
+/// that session, or the one waiting longest. With no wall running (or no
+/// daemon) there is nothing to do: the banner already brought the terminal
+/// forward, so those are not errors. Only a bad argument is.
+pub fn open(words: &[String], api: &Api) -> Result<(), String> {
+    let words: Vec<&str> = words.iter().map(String::as_str).collect();
+    let body = match words.as_slice() {
+        ["--blocked"] => json!({"action": "jump.blocked"}),
+        [id] if valid_session_id(id) => {
+            json!({"action": "session.focus", "target": {"session": id}})
+        }
+        _ => return Err(USAGE.to_owned()),
+    };
+    let _ = api.post("/api/plugins/ui/action", &body);
+    Ok(())
 }
 
 // ---------------------------------------------------------- real player/notifier
@@ -606,15 +824,32 @@ pub fn sound_commands(os: &str, wav: &Path) -> Vec<Cmd> {
 }
 
 /// Programs to show a banner. `terminal_notifier` says it is installed.
-pub fn banner_commands(os: &str, terminal_notifier: bool, title: &str, body: &str) -> Vec<Cmd> {
+pub fn banner_commands(
+    os: &str,
+    terminal_notifier: bool,
+    title: &str,
+    body: &str,
+    click: &Click,
+) -> Vec<Cmd> {
     match os {
-        "macos" if terminal_notifier => vec![Cmd::new(&[
-            "terminal-notifier",
-            "-title",
-            &dash_safe(title),
-            "-message",
-            &dash_safe(body),
-        ])],
+        "macos" if terminal_notifier => {
+            let mut c = Cmd::new(&[
+                "terminal-notifier",
+                "-title",
+                &dash_safe(title),
+                "-message",
+                &dash_safe(body),
+                "-group",
+                &click.group,
+            ]);
+            if let Some(app) = &click.activate {
+                c.argv.extend(["-activate".to_owned(), app.clone()]);
+            }
+            if let Some(cmd) = &click.execute {
+                c.argv.extend(["-execute".to_owned(), cmd.clone()]);
+            }
+            vec![c]
+        }
         "macos" => {
             let mut argv = vec!["osascript".to_owned()];
             for line in NOTIFY_SCRIPT_MACOS {
@@ -736,10 +971,10 @@ impl Out for SystemOut {
         }
     }
 
-    fn banner(&self, title: &str, body: &str) {
+    fn banner(&self, title: &str, body: &str, click: &Click) {
         let os = std::env::consts::OS;
         let tn = os == "macos" && on_path("terminal-notifier");
-        for c in banner_commands(os, tn, title, body) {
+        for c in banner_commands(os, tn, title, body, click) {
             if run(&c) {
                 return;
             }
@@ -758,7 +993,7 @@ mod tests {
     // ---- fakes: nothing here plays a sound, shows a banner or waits ----
 
     #[derive(Default)]
-    struct Rec(Mutex<Vec<String>>);
+    struct Rec(Mutex<Vec<String>>, Mutex<Vec<Click>>);
 
     impl Rec {
         fn all(&self) -> Vec<String> {
@@ -771,11 +1006,12 @@ mod tests {
             let name = wav.file_name().unwrap().to_string_lossy().into_owned();
             self.0.lock().unwrap().push(format!("play {name}"));
         }
-        fn banner(&self, title: &str, body: &str) {
+        fn banner(&self, title: &str, body: &str, click: &Click) {
             self.0
                 .lock()
                 .unwrap()
                 .push(format!("banner {title} | {body}"));
+            self.1.lock().unwrap().push(click.clone());
         }
     }
 
@@ -1199,6 +1435,7 @@ mod tests {
         let (d, out) = (FakeDaemon::start(), Rec::default());
         let queued = Item {
             kind: Kind::NeedsInput,
+            id: "garage/ws/old".into(),
             label: "old".into(),
             workspace: "ws".into(),
             message: None,
@@ -1395,7 +1632,8 @@ mod tests {
                 sound: false,
                 needs_input: false,
                 done: false,
-                banners: false
+                banners: false,
+                terminal: None
             }
         );
         cli(&w(&["sound", "on"]), &dir, &out, &clock).unwrap();
@@ -1436,6 +1674,7 @@ mod tests {
     fn item(kind: Kind, label: &str, msg: Option<&str>, secs: Option<u64>, visible: bool) -> Item {
         Item {
             kind,
+            id: format!("garage/app/{label}"),
             label: label.into(),
             workspace: "app".into(),
             message: msg.map(Into::into),
@@ -1525,6 +1764,10 @@ mod tests {
 
     // ---- the real player and notifier: argv only, never run ----
 
+    fn no_click() -> Click {
+        click_for(None, &Host::default(), &Settings::default())
+    }
+
     fn argv(c: &[Cmd]) -> Vec<Vec<&str>> {
         c.iter()
             .map(|c| c.argv.iter().map(String::as_str).collect())
@@ -1547,11 +1790,19 @@ mod tests {
         );
         assert!(sound_commands("freebsd", wav).is_empty());
         assert_eq!(
-            argv(&banner_commands("macos", true, "t", "b")),
-            [["terminal-notifier", "-title", "t", "-message", "b"]]
+            argv(&banner_commands("macos", true, "t", "b", &no_click())),
+            [[
+                "terminal-notifier",
+                "-title",
+                "t",
+                "-message",
+                "b",
+                "-group",
+                "garage-alerts-many"
+            ]]
         );
         assert_eq!(
-            argv(&banner_commands("linux", false, "-t", "b")),
+            argv(&banner_commands("linux", false, "-t", "b", &no_click())),
             [vec![
                 "notify-send",
                 "--app-name=claude-garage",
@@ -1560,9 +1811,9 @@ mod tests {
                 "b"
             ]]
         );
-        assert!(banner_commands("freebsd", false, "t", "b").is_empty());
+        assert!(banner_commands("freebsd", false, "t", "b", &no_click()).is_empty());
         // terminal-notifier must not read a leading dash as an option
-        let tn = &banner_commands("macos", true, "-evil", "--also")[0].argv;
+        let tn = &banner_commands("macos", true, "-evil", "--also", &no_click())[0].argv;
         assert_eq!((tn[2].as_str(), tn[4].as_str()), (" -evil", " --also"));
     }
 
@@ -1573,8 +1824,8 @@ mod tests {
 
     #[test]
     fn untrusted_text_never_enters_a_script() {
-        let plain = banner_commands("windows", false, "title", "body");
-        let evil = banner_commands("windows", false, HOSTILE, HOSTILE);
+        let plain = banner_commands("windows", false, "title", "body", &no_click());
+        let evil = banner_commands("windows", false, HOSTILE, HOSTILE, &no_click());
         assert_eq!(
             plain[0].argv, evil[0].argv,
             "the script does not depend on the text"
@@ -1608,8 +1859,8 @@ mod tests {
         );
 
         // osascript: the -e scripts are fixed; the text is only a trailing argument
-        let plain = &banner_commands("macos", false, "title", "body")[0].argv;
-        let evil = &banner_commands("macos", false, HOSTILE, HOSTILE)[0].argv;
+        let plain = &banner_commands("macos", false, "title", "body", &no_click())[0].argv;
+        let evil = &banner_commands("macos", false, HOSTILE, HOSTILE, &no_click())[0].argv;
         let n = plain.len();
         assert_eq!(plain[..n - 2], evil[..n - 2]);
         assert_eq!(evil[n - 2..], [HOSTILE, HOSTILE]);
@@ -1648,8 +1899,327 @@ mod tests {
             "YQBiAA=="
         );
         assert_eq!(
-            banner_commands("windows", false, "t", "b")[0].argv[0],
+            banner_commands("windows", false, "t", "b", &no_click())[0].argv[0],
             "powershell.exe"
+        );
+    }
+
+    // ---- clicking a banner ----
+
+    fn host() -> Host {
+        Host {
+            terminal: Some("ghostty".into()),
+            bin: Some("/usr/local/bin/claude-garage".into()),
+            port: Some(4747),
+            dir: Some("/Users/me/.garage".into()),
+            tmux_socket: None,
+        }
+    }
+
+    fn tn(click: &Click) -> Vec<String> {
+        banner_commands("macos", true, "t", "b", click)[0]
+            .argv
+            .clone()
+    }
+
+    #[test]
+    fn a_click_banner_has_group_activate_and_execute() {
+        let one = click_for(
+            Some(&Open::Session("garage/app/fix".into())),
+            &host(),
+            &Settings::default(),
+        );
+        assert_eq!(
+            tn(&one),
+            [
+                "terminal-notifier",
+                "-title",
+                "t",
+                "-message",
+                "b",
+                "-group",
+                "garage-alerts-garage-app-fix",
+                "-activate",
+                "com.mitchellh.ghostty",
+                "-execute",
+                "GARAGE_PORT='4747' GARAGE_DIR='/Users/me/.garage' '/usr/local/bin/claude-garage' alerts open 'garage/app/fix'",
+            ]
+        );
+        let many = click_for(Some(&Open::Blocked), &host(), &Settings::default());
+        let argv = tn(&many);
+        assert_eq!(argv[6], "garage-alerts-many");
+        assert_eq!(
+            argv.last().unwrap(),
+            "GARAGE_PORT='4747' GARAGE_DIR='/Users/me/.garage' '/usr/local/bin/claude-garage' alerts open --blocked"
+        );
+        // osascript has no click: it keeps the plain script
+        assert!(
+            banner_commands("macos", false, "t", "b", &one)[0]
+                .argv
+                .iter()
+                .all(|a| !a.contains("alerts open"))
+        );
+        // a tmux socket is passed along
+        let h = Host {
+            tmux_socket: Some("test sock".into()),
+            ..host()
+        };
+        assert!(
+            execute_command(&Open::Blocked, &h)
+                .unwrap()
+                .contains("GARAGE_TMUX_SOCKET='test sock' ")
+        );
+    }
+
+    #[test]
+    fn what_a_click_is_built_from_and_what_it_refuses() {
+        // Claude's message goes through compose into the banner, never into the command.
+        let evil = "'; touch /tmp/pwned; echo '";
+        let items = [Item {
+            kind: Kind::NeedsInput,
+            id: "garage/app/fix".into(),
+            label: "fix".into(),
+            workspace: "app".into(),
+            message: Some(evil.into()),
+            secs: None,
+            visible: false,
+        }];
+        let alert = compose(&items, &Settings::default());
+        assert!(alert.banner.as_ref().unwrap().1.contains("touch"));
+        let click = click_for(alert.open.as_ref(), &host(), &Settings::default());
+        assert!(!click.execute.as_ref().unwrap().contains("touch"));
+        // an id that is not a garage session id gets no -execute (and its own group)
+        for bad in [
+            "garage/app",
+            "garage/a/b/c",
+            "x/app/fix",
+            "garage/App/fix",
+            "garage/a b/fix",
+            "garage/app/fix'; rm -rf ~; '",
+            "garage//fix",
+            "",
+        ] {
+            assert!(!valid_session_id(bad), "{bad:?}");
+            let c = click_for(
+                Some(&Open::Session(bad.into())),
+                &host(),
+                &Settings::default(),
+            );
+            assert_eq!(c.execute, None, "{bad:?}");
+            assert_eq!(c.group, "garage-alerts-many");
+        }
+        // a relative or missing binary: no -execute
+        for bin in [None, Some("claude-garage"), Some("./claude-garage")] {
+            let h = Host {
+                bin: bin.map(Into::into),
+                ..host()
+            };
+            assert_eq!(execute_command(&Open::Blocked, &h), None, "{bin:?}");
+        }
+        // a control character in a path refuses it rather than smuggling a newline
+        let h = Host {
+            bin: Some("/bin/x\nrm".into()),
+            ..host()
+        };
+        assert_eq!(execute_command(&Open::Blocked, &h), None);
+        // a lone done and a lone needs-input click their own session, a mix goes to the blocked one
+        let n = |l| item(Kind::NeedsInput, l, None, None, false);
+        let f = |l| item(Kind::Done, l, None, Some(30), false);
+        let open = |v: Vec<Item>| compose(&v, &Settings::default()).open;
+        assert_eq!(
+            open(vec![f("a")]),
+            Some(Open::Session("garage/app/a".into()))
+        );
+        assert_eq!(open(vec![n("a"), n("b")]), Some(Open::Blocked));
+        assert_eq!(open(vec![n("a"), f("b")]), Some(Open::Blocked));
+        assert_eq!(open(vec![f("a"), f("b")]), None);
+    }
+
+    #[test]
+    fn shell_quoting_survives_spaces_and_single_quotes() {
+        let path = "/Users/o'neil/My Apps/$HOME `x`/claude-garage";
+        let quoted = sh_quote(path).unwrap();
+        assert_eq!(
+            quoted,
+            r#"'/Users/o'\''neil/My Apps/$HOME `x`/claude-garage'"#
+        );
+        // the shell hands the program back exactly the path
+        let out = Command::new("/bin/sh")
+            .arg("-c")
+            .arg(format!("printf %s {quoted}"))
+            .output()
+            .unwrap();
+        assert_eq!(String::from_utf8(out.stdout).unwrap(), path);
+        assert_eq!(sh_quote("a\nb"), None);
+        let h = Host {
+            bin: Some(path.into()),
+            ..host()
+        };
+        assert!(
+            execute_command(&Open::Blocked, &h)
+                .unwrap()
+                .contains(&format!("{quoted} alerts open --blocked"))
+        );
+    }
+
+    #[test]
+    fn the_terminal_comes_from_the_setting_first_then_what_the_wall_reported() {
+        for (reported, bundle) in [
+            ("ghostty", "com.mitchellh.ghostty"),
+            ("iTerm.app", "com.googlecode.iterm2"),
+            ("Apple_Terminal", "com.apple.Terminal"),
+            ("WezTerm", "com.github.wez.wezterm"),
+            ("kitty", "net.kovidgoyal.kitty"),
+            ("com.example.term", "com.example.term"),
+        ] {
+            assert_eq!(
+                terminal_bundle(reported).as_deref(),
+                Some(bundle),
+                "{reported}"
+            );
+        }
+        for unknown in ["vscode", "tmux", "x y.z", "a;b.c", ""] {
+            assert_eq!(terminal_bundle(unknown), None, "{unknown:?}");
+        }
+        let with = |terminal: Option<&str>, setting: Option<&str>| {
+            let h = Host {
+                terminal: terminal.map(Into::into),
+                ..host()
+            };
+            let s = Settings {
+                terminal: setting.map(Into::into),
+                ..Default::default()
+            };
+            click_for(Some(&Open::Blocked), &h, &s).activate
+        };
+        assert_eq!(
+            with(Some("kitty"), None).as_deref(),
+            Some("net.kovidgoyal.kitty")
+        );
+        assert_eq!(
+            with(Some("kitty"), Some("com.apple.Terminal")).as_deref(),
+            Some("com.apple.Terminal")
+        );
+        assert_eq!(with(Some("vscode"), None), None, "unknown: no -activate");
+        assert_eq!(with(None, None), None);
+        let argv = tn(&click_for(
+            Some(&Open::Blocked),
+            &Host {
+                terminal: None,
+                ..host()
+            },
+            &Settings::default(),
+        ));
+        assert!(!argv.contains(&"-activate".to_string()));
+    }
+
+    #[test]
+    fn the_terminal_option_is_set_validated_and_reset_by_the_cli() {
+        let (dir, out, clock) = (tmp("term"), Rec::default(), Fake::at(0));
+        let w = |s: &[&str]| s.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+        let shown = cli(
+            &w(&["terminal", "com.googlecode.iterm2"]),
+            &dir,
+            &out,
+            &clock,
+        )
+        .unwrap();
+        assert!(
+            shown.contains("terminal     com.googlecode.iterm2"),
+            "{shown}"
+        );
+        assert_eq!(
+            Settings::load(&dir).terminal.as_deref(),
+            Some("com.googlecode.iterm2")
+        );
+        for bad in ["iTerm", "a b.c", "x;y.z"] {
+            assert!(
+                cli(&w(&["terminal", bad]), &dir, &out, &clock).is_err(),
+                "{bad}"
+            );
+        }
+        assert!(
+            cli(&w(&["terminal", "auto"]), &dir, &out, &clock)
+                .unwrap()
+                .contains("terminal     auto")
+        );
+        assert_eq!(Settings::load(&dir).terminal, None);
+    }
+
+    #[test]
+    fn a_needs_input_event_carries_the_click_from_the_run_context() {
+        let (dir, d, out, clock) = (tmp("clk"), FakeDaemon::start(), Rec::default(), Fake::at(0));
+        sessions(&d);
+        let c = Context::from_value(json!({
+            "event": {"name": "session.status_changed", "at": 1,
+                "data": {"id": "garage/ws/fix", "from": "working", "to": "needs-input", "since": 1}},
+            "ui": {"visible": false, "terminal": "WezTerm"},
+            "garage": {"bin": "/opt/g/claude-garage", "port": 5151, "dir": "/tmp/g", "tmux_socket": "t1"},
+        }));
+        handle_event(&c, &api(&d), &dir, &out, &clock).unwrap();
+        let clicks = out.1.lock().unwrap().clone();
+        assert_eq!(clicks.len(), 1);
+        assert_eq!(
+            clicks[0].activate.as_deref(),
+            Some("com.github.wez.wezterm")
+        );
+        assert_eq!(clicks[0].group, "garage-alerts-garage-ws-fix");
+        assert_eq!(
+            clicks[0].execute.as_deref(),
+            Some(
+                "GARAGE_PORT='5151' GARAGE_DIR='/tmp/g' GARAGE_TMUX_SOCKET='t1' '/opt/g/claude-garage' alerts open 'garage/ws/fix'"
+            )
+        );
+    }
+
+    // ---- alerts open ----
+
+    #[test]
+    fn open_asks_the_wall_to_focus_the_session_or_the_blocked_one() {
+        let d = FakeDaemon::start();
+        let w = |s: &[&str]| s.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+        open(&w(&["garage/app/fix"]), &api(&d)).unwrap();
+        open(&w(&["--blocked"]), &api(&d)).unwrap();
+        assert_eq!(
+            d.bodies("POST", "/api/plugins/ui/action"),
+            [
+                json!({"action": "session.focus", "target": {"session": "garage/app/fix"}}),
+                json!({"action": "jump.blocked"}),
+            ]
+        );
+    }
+
+    #[test]
+    fn open_with_no_daemon_or_no_wall_is_quiet_and_a_bad_id_is_an_error() {
+        let w = |s: &[&str]| s.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+        let nobody = Api::new("http://127.0.0.1:1", "alerts", "t");
+        assert!(
+            open(&w(&["--blocked"]), &nobody).is_ok(),
+            "exit 0 when nothing listens"
+        );
+        let d = FakeDaemon::start();
+        d.route(
+            "POST",
+            "/api/plugins/ui/action",
+            422,
+            r#"{"error":"x","code":"invalid_target"}"#,
+        );
+        assert!(
+            open(&w(&["garage/app/gone"]), &api(&d)).is_ok(),
+            "a refusal is not worth an error either"
+        );
+        for bad in [
+            w(&[]),
+            w(&["nope"]),
+            w(&["garage/a/b/c"]),
+            w(&["--blocked", "x"]),
+        ] {
+            assert!(open(&bad, &api(&d)).is_err(), "{bad:?}");
+        }
+        assert_eq!(
+            d.bodies("POST", "/api/plugins/ui/action").len(),
+            1,
+            "only the valid call reached the daemon"
         );
     }
 

@@ -1,66 +1,86 @@
 {
   "banners_off": {
     "banner": null,
-    "chime": "done"
+    "chime": "done",
+    "open": null
   },
   "message_is_one_clean_line": {
     "banner": [
       "fix needs you",
       "line one line two"
     ],
-    "chime": "needs-input"
+    "chime": "needs-input",
+    "open": {
+      "session": "garage/app/fix"
+    }
   },
   "needs_and_done": {
     "banner": [
       "a needs you",
       "ok? · finished: b"
     ],
-    "chime": "needs-input"
+    "chime": "needs-input",
+    "open": "blocked"
   },
   "one_done": {
     "banner": [
       "fix finished",
       "Done after 1m 35s in app"
     ],
-    "chime": "done"
+    "chime": "done",
+    "open": {
+      "session": "garage/app/fix"
+    }
   },
   "one_needs_input_generic": {
     "banner": [
       "fix needs you",
       "Waiting for your input in app"
     ],
-    "chime": "needs-input"
+    "chime": "needs-input",
+    "open": {
+      "session": "garage/app/fix"
+    }
   },
   "one_needs_input_with_message": {
     "banner": [
       "fix needs you",
       "Claude needs your permission to use Bash"
     ],
-    "chime": "needs-input"
+    "chime": "needs-input",
+    "open": {
+      "session": "garage/app/fix"
+    }
   },
   "sound_off": {
     "banner": [
       "fix needs you",
       "Waiting for your input in app"
     ],
-    "chime": null
+    "chime": null,
+    "open": {
+      "session": "garage/app/fix"
+    }
   },
   "three_need_you": {
     "banner": [
       "3 sessions need you",
       "a, b, c"
     ],
-    "chime": "needs-input"
+    "chime": "needs-input",
+    "open": "blocked"
   },
   "two_done": {
     "banner": [
       "2 sessions finished",
       "a, b"
     ],
-    "chime": "done"
+    "chime": "done",
+    "open": null
   },
   "wall_visible": {
     "banner": null,
-    "chime": "needs-input"
+    "chime": "needs-input",
+    "open": null
   }
 }

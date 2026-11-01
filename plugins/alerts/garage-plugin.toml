@@ -5,7 +5,7 @@ version     = "0.1.0"
 api_version = 1
 platforms   = ["macos", "linux", "windows"]
 description = "A chime and a desktop banner when a session needs you or finishes a long turn"
-permissions = ["sessions.read"]
+permissions = ["sessions.read", "ui.invoke", "ui.navigate"]
 requires    = ["ui.visible"]
 
 # One run per status change. Most runs only note the time a session started

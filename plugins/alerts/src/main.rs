@@ -21,6 +21,17 @@ fn main() {
         }
         Some("cli") => {
             let words: Vec<String> = args.collect();
+            if words.first().map(String::as_str) == Some("open") {
+                // A clicked banner: never noisy. No wall or no daemon is fine.
+                let result = Api::from_env()
+                    .map_err(|e| e.to_string())
+                    .and_then(|api| alerts::open(&words[1..], &api));
+                if let Err(e) = result {
+                    eprint!("alerts: {e}");
+                    std::process::exit(2);
+                }
+                return;
+            }
             let dir = match state_dir() {
                 Ok(d) => d,
                 Err(e) => {
