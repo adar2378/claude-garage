@@ -140,18 +140,21 @@ pub fn plugins_lines(
         .max()
         .unwrap_or(0)
         .clamp(8, 20);
-    lines.push(rule(width));
+    let dim = Style::default().fg(colors::FAINT);
+    lines.push(Line::styled(
+        format!(
+            "    {:<name_w$} {:<8} {:<3}  permissions",
+            "name", "source", "state"
+        ),
+        dim,
+    ));
     for (i, plugin) in list.plugins.iter().enumerate() {
         lines.push(plugin_row(plugin, i == selected, name_w, width));
     }
     lines.push(rule(width));
-    let hint = format!(
-        "j/k move · Space on/off · {}",
-        remove_hint(&list.plugins[selected])
-    );
-    for row in wrap_rows(&hint, width, 3) {
-        lines.push(Line::styled(row, faint));
-    }
+    lines.push(Line::styled(fit("j/k move · Space on/off", width), faint));
+    // Never split: a command wider than the box is clipped by the edge.
+    lines.push(Line::styled(remove_hint(&list.plugins[selected]), faint));
     if let Some(id) = &state.busy {
         lines.push(Line::styled(format!("updating {id}…"), faint));
     }
@@ -230,15 +233,18 @@ mod tests {
         assert!(rows[1].ends_with("widgets, notices"), "{:?}", rows[1]);
         assert!(rows[2].starts_with("  ○ pet-extras"), "{:?}", rows[2]);
         assert!(rows[2].contains("local    off"), "{:?}", rows[2]);
+        let n = rows.len();
+        assert_eq!(rows[n - 2], "j/k move · Space on/off");
         assert_eq!(
-            rows.last().unwrap(),
-            "j/k move · Space on/off · bundled: on/off only",
+            rows[n - 1],
+            "bundled: on/off only",
             "a bundled plugin offers no remove command"
         );
         state.selected = 1;
         assert_eq!(
-            text(&plugins_lines(&sample(), &state, 90)).last().unwrap(),
-            "j/k move · Space on/off · remove: claude-garage plugin remove pet-extras"
+            text(&plugins_lines(&sample(), &state, 40)).last().unwrap(),
+            "remove: claude-garage plugin remove pet-extras",
+            "the command stays on one line, however narrow"
         );
     }
 

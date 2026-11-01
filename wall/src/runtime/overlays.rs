@@ -422,10 +422,10 @@ pub(super) fn plugin_toggle_settled(
         state.busy = None;
     }
     if overlay_open {
-        state.error = error.map(|e| format!("{id}: {e}"));
+        state.error = error;
         None
     } else {
-        error.map(|e| format!("plugin {id}: {e}"))
+        error
     }
 }
 

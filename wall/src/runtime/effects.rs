@@ -104,6 +104,21 @@ pub enum Effect {
     TogglePlugin { id: String, enable: bool },
 }
 
+/// The overlay's failure line: what was attempted, then why. The daemon's
+/// own message (when it sent one) follows its status.
+pub(super) fn plugin_toggle_error(id: &str, enable: bool, e: &ApiError) -> String {
+    let what = format!("couldn't turn {id} {}", if enable { "on" } else { "off" });
+    match e {
+        ApiError::Status { status, message } if message.trim().is_empty() => {
+            format!("{what} (daemon error {status})")
+        }
+        ApiError::Status { status, message } => {
+            format!("{what} (daemon error {status}: {})", message.trim())
+        }
+        ApiError::Transport(_) => format!("{what} (daemon not reachable)"),
+    }
+}
+
 pub(super) fn send_notice(tx: &EventSender, text: String, ttl_ms: i64) {
     let _ = tx.send(AppEvent::Notice { text, ttl_ms });
 }
@@ -306,14 +321,10 @@ pub(super) fn run_effect(effect: Effect, tx: &EventSender, base_url: &str) {
                 });
             }
             Effect::TogglePlugin { id, enable } => {
-                let error = match client.set_plugin_enabled(&id, enable) {
-                    Ok(()) => None,
-                    Err(ApiError::Status { status, message }) if message.trim().is_empty() => {
-                        Some(format!("daemon answered {status}"))
-                    }
-                    Err(ApiError::Status { message, .. }) => Some(message),
-                    Err(ApiError::Transport(_)) => Some("could not reach the daemon".to_owned()),
-                };
+                let error = client
+                    .set_plugin_enabled(&id, enable)
+                    .err()
+                    .map(|e| plugin_toggle_error(&id, enable, &e));
                 let _ = tx.send(AppEvent::PluginToggleSettled { id, error });
             }
             Effect::OpenWindow { id, label } => match crate::ui::window_open::launch(&id) {

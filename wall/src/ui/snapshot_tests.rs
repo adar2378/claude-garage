@@ -446,7 +446,7 @@ fn plugins_overlay_populated_with_a_toggle_error() {
     let state = PluginsOverlayState {
         selected: 1,
         busy: None,
-        error: Some("pet-extras: daemon answered 500".into()),
+        error: Some("couldn't turn pet-extras on (daemon error 500)".into()),
     };
     insta::assert_snapshot!(plugins_dump(list, &state));
 }

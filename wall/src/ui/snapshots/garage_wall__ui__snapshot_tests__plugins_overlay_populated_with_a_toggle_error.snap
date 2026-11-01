@@ -4,13 +4,13 @@ expression: "plugins_dump(list, &state)"
 ---
 |    ╭ Plugins ─────────────────────────────────────────── p / Esc to close ╮|
 |    │                                                                      │|
-|    │  ──────────────────────────────────────────────────────────────────  │|
+|    │      name       source   state  permissions                          │|
 |    │    ● usage-bar  bundled  on   widgets, notices                       │|
 |    │  ▸ ○ pet-extras local    off  ui.invoke                              │|
 |    │  ──────────────────────────────────────────────────────────────────  │|
-|    │  j/k move · Space on/off · remove: claude-garage plugin remove       │|
-|    │  pet-extras                                                          │|
-|    │  pet-extras: daemon answered 500                                     │|
+|    │  j/k move · Space on/off                                             │|
+|    │  remove: claude-garage plugin remove pet-extras                      │|
+|    │  couldn't turn pet-extras on (daemon error 500)                      │|
 |    │                                                                      │|
 |    ╰──────────────────────────────────────────────────────────────────────╯|
 ||
@@ -23,7 +23,7 @@ r0 c75..76 fg=Gray bg=Reset mod=NONE
 r1 c4..5 fg=Gray bg=Reset mod=NONE
 r1 c75..76 fg=Gray bg=Reset mod=NONE
 r2 c4..5 fg=Gray bg=Reset mod=NONE
-r2 c7..73 fg=DarkGray bg=Reset mod=NONE
+r2 c7..49 fg=DarkGray bg=Reset mod=NONE
 r2 c75..76 fg=Gray bg=Reset mod=NONE
 r3 c4..5 fg=Gray bg=Reset mod=NONE
 r3 c7..9 fg=White bg=Reset mod=NONE
@@ -41,13 +41,13 @@ r5 c4..5 fg=Gray bg=Reset mod=NONE
 r5 c7..73 fg=DarkGray bg=Reset mod=NONE
 r5 c75..76 fg=Gray bg=Reset mod=NONE
 r6 c4..5 fg=Gray bg=Reset mod=NONE
-r6 c7..68 fg=DarkGray bg=Reset mod=NONE
+r6 c7..30 fg=DarkGray bg=Reset mod=NONE
 r6 c75..76 fg=Gray bg=Reset mod=NONE
 r7 c4..5 fg=Gray bg=Reset mod=NONE
-r7 c7..17 fg=DarkGray bg=Reset mod=NONE
+r7 c7..53 fg=DarkGray bg=Reset mod=NONE
 r7 c75..76 fg=Gray bg=Reset mod=NONE
 r8 c4..5 fg=Gray bg=Reset mod=NONE
-r8 c7..38 fg=Red bg=Reset mod=NONE
+r8 c7..53 fg=Red bg=Reset mod=NONE
 r8 c75..76 fg=Gray bg=Reset mod=NONE
 r9 c4..5 fg=Gray bg=Reset mod=NONE
 r9 c75..76 fg=Gray bg=Reset mod=NONE

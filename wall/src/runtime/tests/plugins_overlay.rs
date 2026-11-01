@@ -192,10 +192,10 @@ fn a_failed_toggle_shows_in_the_footer_and_clears_on_the_next_move() {
     app.plugins_overlay.busy = Some("usage-bar".into());
     app.apply(AppEvent::PluginToggleSettled {
         id: "usage-bar".into(),
-        error: Some("plugin usage-bar failed to load".into()),
+        error: Some("couldn't turn usage-bar off (daemon error 500)".into()),
     });
     assert_eq!(app.plugins_overlay.busy, None);
-    assert!(screen(&mut app).contains("usage-bar: plugin usage-bar failed to load"));
+    assert!(screen(&mut app).contains("couldn't turn usage-bar off (daemon error 500)"));
 
     app.handle_key(&plain(KeyCode::Char('j')));
     assert!(!screen(&mut app).contains("failed to load"));
@@ -208,10 +208,38 @@ fn a_failure_after_the_overlay_closed_becomes_a_strip_notice() {
         ..Default::default()
     };
     assert_eq!(
-        plugin_toggle_settled(&mut state, "x", Some("boom".into()), false).as_deref(),
-        Some("plugin x: boom")
+        plugin_toggle_settled(
+            &mut state,
+            "x",
+            Some("couldn't turn x on (daemon error 500)".into()),
+            false
+        )
+        .as_deref(),
+        Some("couldn't turn x on (daemon error 500)")
     );
     assert_eq!(state.busy, None);
+}
+
+#[test]
+fn toggle_errors_name_the_plugin_the_direction_and_the_status() {
+    use crate::api::client::ApiError;
+    use crate::runtime::effects::plugin_toggle_error;
+    let status = |status, message: &str| ApiError::Status {
+        status,
+        message: message.into(),
+    };
+    assert_eq!(
+        plugin_toggle_error("pet-extras", false, &status(500, "")),
+        "couldn't turn pet-extras off (daemon error 500)"
+    );
+    assert_eq!(
+        plugin_toggle_error("pet-extras", true, &status(409, "is bundled")),
+        "couldn't turn pet-extras on (daemon error 409: is bundled)"
+    );
+    assert_eq!(
+        plugin_toggle_error("x", true, &ApiError::Transport("down".into())),
+        "couldn't turn x on (daemon not reachable)"
+    );
 }
 
 #[test]
