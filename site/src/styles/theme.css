@@ -5,15 +5,16 @@
  *
  * Contrast (WCAG), light mode:
  *   --brand-high  #B83F00  5.4:1 on the page (#FAFAF8), 4.7:1 on code chips (#EDECE7). Used for link text. #E85002 is only 3.6:1, so never use it for small text on light.
- *   text on a --brand button: --on-brand #14151A gives 4.8:1. White on #E85002 is only 3.6:1, so never use white there.
+ *   buttons: white on --brand-fill #B83F00 gives 5.6:1. Never put text on #E85002 (white is only 3.6:1, and dark text looked wrong).
  * Contrast, dark mode (page #121317):
  *   --brand-high  #FF7A3D  7.3:1 for link text.
  */
 :root {
   --brand: #E85002;
-  --brand-hover: #FF6A1F;
-  --brand-pressed: #C24300;
-  --on-brand: #14151A;
+  --brand-fill: #B83F00;
+  --brand-fill-hover: #A33800;
+  --brand-fill-pressed: #8C3000;
+  --on-brand: #FFFFFF;
   --needs-input: #FFB020;
 
   --sl-font: 'Geist Variable', system-ui, -apple-system, 'Segoe UI', sans-serif;
@@ -61,15 +62,15 @@
 .site-title { color: var(--sl-color-white); font-weight: 650; letter-spacing: -0.02em; }
 .site-title img { height: 1.75rem; width: auto; }
 
-/* Primary buttons: dark text on the orange, never white. */
+/* Primary buttons: white text on the darker orange fill (5.6:1). */
 .sl-link-button.primary {
-  background: var(--brand);
-  border-color: var(--brand);
+  background: var(--brand-fill);
+  border-color: var(--brand-fill);
   color: var(--on-brand);
   font-weight: 600;
 }
-.sl-link-button.primary:hover { background: var(--brand-hover); border-color: var(--brand-hover); }
-.sl-link-button.primary:active { background: var(--brand-pressed); border-color: var(--brand-pressed); }
+.sl-link-button.primary:hover { background: var(--brand-fill-hover); border-color: var(--brand-fill-hover); }
+.sl-link-button.primary:active { background: var(--brand-fill-pressed); border-color: var(--brand-fill-pressed); }
 
 /* Utility for docs that mention the needs-input state. Amber is not readable on light, so use a deep amber there. */
 .needs-input { color: #8A5A00; font-weight: 600; }

@@ -119,14 +119,12 @@ $('#hattach').addEventListener('click',function(){heroAttach(!heroAttached)});
 /* ---------- story ---------- */
 var steps=$$('.step');
 var btns=$$('.sbtn');
-var notch=$('.notch');
 var progBar=$('.prog i');
 function setActive(i){
   if(i===current&&steps[i].classList.contains('on')) return;
   current=i;
   steps.forEach(function(s,k){s.classList.toggle('on',k===i)});
   btns.forEach(function(b,k){var on=k===i;b.setAttribute('aria-selected',on);b.tabIndex=on?0:-1});
-  notch.style.setProperty('--i',i);
   onStep(i);
 }
 function onStep(i){
