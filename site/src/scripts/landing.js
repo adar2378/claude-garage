@@ -21,8 +21,6 @@ function glyph(){
 function paintPet(){
   pet.className='pet'+(petState==='alert'?' alert awake':petState==='asleep'?'':' awake')+(petAway?' away':'');
   var g=glyph(); pg.textContent=g; ps.textContent=petSay;
-  var lg=petState==='asleep'?'(0.0)':g;
-  $$('[data-logo]').forEach(function(el){el.textContent=lg});
 }
 var petAway=false;
 function setPet(state,say){ if(petLock&&state!=='alert'&&state!=='happy'){state=petLock.state;say=petLock.say} petState=state; if(say) petSay=say; paintPet(); }
@@ -44,7 +42,8 @@ pet.addEventListener('click',function(){var l=['still here.','scroll, I will fol
 pet.addEventListener('keydown',function(e){if(e.key==='Enter'||e.key===' '){e.preventDefault();pet.click()}});
 paintPet();
 var lastY=window.scrollY;
-window.addEventListener('scroll',function(){ if(Math.abs(window.scrollY-lastY)>2){wake()} lastY=window.scrollY; },{passive:true});
+var hbTop=document.getElementById('hintbar');
+window.addEventListener('scroll',function(){ if(Math.abs(window.scrollY-lastY)>2){wake()} lastY=window.scrollY; hbTop.classList.toggle('top',window.scrollY<240); },{passive:true});
 
 /* section lines + away zones */
 var stepSay=['press n for a new one.','everyone in one place.','someone needs you.','press a. I will wait.','tmux has them.'];
@@ -71,24 +70,8 @@ if('IntersectionObserver' in window){
   mobileMQ.addEventListener&&mobileMQ.addEventListener('change',updAway);
 }
 
-/* ---------- copy buttons ---------- */
-document.addEventListener('click',function(e){
-  var b=e.target.closest('[data-copy]'); if(!b) return;
-  var t=b.getAttribute('data-copy');
-  var done=function(){
-    var l=b.querySelector('.lbl'); b.classList.add('done');
-    if(l){l.textContent='Copied'}else{b.dataset.o=b.textContent;b.textContent='Copied'}
-    setTimeout(function(){b.classList.remove('done'); if(l){l.textContent='Copy'}else{b.textContent=b.dataset.o||'Copy'}},1600);
-    toast('copied to clipboard');
-  };
-  if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(t).then(done,done)}
-  else{var ta=document.createElement('textarea');ta.value=t;document.body.appendChild(ta);ta.select();try{document.execCommand('copy')}catch(_){ }ta.remove();done()}
-});
-
-/* ---------- install tabs ---------- */
-var tabs=$$('.tab');
-function selTab(i,focus){tabs.forEach(function(t,k){var on=k===i;t.setAttribute('aria-selected',on);t.tabIndex=on?0:-1;document.getElementById(t.getAttribute('aria-controls')).hidden=!on;if(on&&focus)t.focus()})}
-tabs.forEach(function(t,i){t.addEventListener('click',function(){selTab(i)});t.addEventListener('keydown',function(e){if(e.key==='ArrowRight')selTab((i+1)%tabs.length,1);if(e.key==='ArrowLeft')selTab((i+tabs.length-1)%tabs.length,1)})});
+/* copy buttons and install tabs live in ui.js; it tells us when something was copied */
+document.addEventListener('cg:copied',function(){toast('copied to clipboard')});
 
 /* ---------- reveals ---------- */
 var rv=$$('.rv');
@@ -104,6 +87,8 @@ var Field=createField();
 Field.onHover=function(h){ if(heroAttached) return; setAlert('h',h) };
 
 /* ---------- hero: swap to the engaged wall ---------- */
+/* The engaged render is only seen after pressing a, so it loads after the first paint instead of competing with the one that is shown. */
+(function(){var im=$('#himg-e');var go=function(){im.setAttribute('href',im.getAttribute('data-href'))};if(document.readyState==='complete')(window.requestIdleCallback||setTimeout)(go);else window.addEventListener('load',function(){(window.requestIdleCallback||setTimeout)(go)})})();
 var heroAttached=false;
 function heroAttach(on){
   heroAttached=on;
@@ -243,7 +228,11 @@ function boot(gsap,ScrollTrigger,Lenis){
   try{
     lenis=new Lenis({lerp:.1,wheelMultiplier:1,smoothWheel:true});
     lenis.on('scroll',ScrollTrigger.update);
-    gsap.ticker.add(function(t){lenis.raf(t*1000)});
+    /* The ticker runs only while the page is scrolling or being interacted with, so an idle page does no per-frame work. */
+    var awakeUntil=0;
+    var poke=function(){awakeUntil=performance.now()+500;gsap.ticker.wake()};
+    ['wheel','touchstart','touchmove','keydown','pointerdown','scroll','resize'].forEach(function(ev){window.addEventListener(ev,poke,{passive:true,capture:true})});
+    gsap.ticker.add(function(t){lenis.raf(t*1000);if(!lenis.isScrolling&&performance.now()>awakeUntil)gsap.ticker.sleep()});
     gsap.ticker.lagSmoothing(0);
     $$('a[href^="#"]').forEach(function(a){a.addEventListener('click',function(e){var id=a.getAttribute('href');if(id.length<2)return;var el=document.querySelector(id);if(!el)return;e.preventDefault();lenis.scrollTo(id==='#top'?0:el,{offset:-10,duration:1.2})})});
   }catch(_){lenis=null}
@@ -276,5 +265,10 @@ function loadMotion(){
     boot(m[0].gsap||m[0].default,m[1].ScrollTrigger||m[1].default,m[2].default);
   }).catch(function(){ /* the page works without the motion libraries */ });
 }
-loadMotion();
+/* Load them only when the story is about to matter (a screen and a half away), so the hero and its first scroll cost nothing. */
+var storyEl=document.getElementById('story');
+if('IntersectionObserver' in window&&storyEl){
+  var lo=new IntersectionObserver(function(es){ if(es.some(function(e){return e.isIntersecting})){ loadMotion(); if(motionLoaded) lo.disconnect() } },{rootMargin:'150% 0px 150% 0px'});
+  lo.observe(storyEl);
+} else loadMotion();
 if(motionMQ.addEventListener) motionMQ.addEventListener('change',loadMotion);
