@@ -185,6 +185,26 @@ impl Out for RealHost {
     }
 }
 
+/// `daemon.log` is rotated at daemon start once it passes this size.
+const MAX_LOG_BYTES: u64 = 10 * 1024 * 1024;
+
+/// Move `log` to `<log>.1` (replacing an older one) when it is larger than
+/// `max` bytes. `Ok(true)` when it moved, `Ok(false)` when it was small or
+/// missing.
+fn rotate_log(log: &Path, max: u64) -> std::io::Result<bool> {
+    match std::fs::metadata(log) {
+        Ok(m) if m.len() > max => {
+            let mut old = log.as_os_str().to_owned();
+            old.push(".1");
+            std::fs::rename(log, PathBuf::from(old))?;
+            Ok(true)
+        }
+        Ok(_) => Ok(false),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(e) => Err(e),
+    }
+}
+
 impl Host for RealHost {
     fn port(&self) -> u16 {
         self.port
@@ -294,6 +314,11 @@ impl Host for RealHost {
         std::fs::create_dir_all(&dir)
             .map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
         let log_path = dir.join("daemon.log");
+        // A failed rotation must never keep the daemon from starting: say so
+        // and keep appending.
+        if let Err(e) = rotate_log(&log_path, MAX_LOG_BYTES) {
+            eprintln!("could not rotate {}: {e}", log_path.display());
+        }
         let log = std::fs::OpenOptions::new()
             .create(true)
             .append(true)
@@ -372,6 +397,41 @@ impl Host for RealHost {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_log_over_the_cap_moves_to_dot_1_replacing_the_old_one() {
+        let d = tempfile::tempdir().unwrap();
+        let log = d.path().join("daemon.log");
+        let old = d.path().join("daemon.log.1");
+        std::fs::write(&old, "ancient").unwrap();
+        std::fs::write(&log, vec![b'x'; 101]).unwrap();
+        assert!(rotate_log(&log, 100).unwrap());
+        assert!(!log.exists(), "the caller opens a fresh log");
+        assert_eq!(std::fs::read(&old).unwrap().len(), 101);
+    }
+
+    #[test]
+    fn a_log_at_or_under_the_cap_or_missing_is_left_alone() {
+        let d = tempfile::tempdir().unwrap();
+        let log = d.path().join("daemon.log");
+        assert!(!rotate_log(&log, 100).unwrap(), "missing");
+        std::fs::write(&log, vec![b'x'; 100]).unwrap();
+        assert!(!rotate_log(&log, 100).unwrap(), "exactly at the cap");
+        assert!(log.exists() && !d.path().join("daemon.log.1").exists());
+    }
+
+    #[test]
+    fn a_rotation_that_cannot_happen_is_an_error_and_leaves_the_log() {
+        let d = tempfile::tempdir().unwrap();
+        let log = d.path().join("daemon.log");
+        std::fs::write(&log, vec![b'x'; 101]).unwrap();
+        // a non-empty directory where .1 should go: the rename fails
+        let blocker = d.path().join("daemon.log.1");
+        std::fs::create_dir(&blocker).unwrap();
+        std::fs::write(blocker.join("f"), "x").unwrap();
+        assert!(rotate_log(&log, 100).is_err());
+        assert!(log.exists(), "appending can continue");
+    }
 
     #[test]
     fn the_wall_override_is_honoured_in_debug_builds_only() {
