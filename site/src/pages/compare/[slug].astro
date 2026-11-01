@@ -1,6 +1,7 @@
 ---
 import { getCollection, render } from 'astro:content';
 import Page from '../../layouts/Page.astro';
+import { ogAlt, ogCard } from '../../lib/og';
 import { AUTHOR, PUBLISHER, SOFTWARE, WEBSITE, abs, breadcrumbs, dayOf, longDate } from '../../lib/site';
 import { fileDates } from '../../lib/gitdates';
 
@@ -42,7 +43,7 @@ const jsonLd = {
   ],
 };
 ---
-<Page title={d.title} description={d.description} jsonLd={jsonLd} active="compare">
+<Page title={d.title} description={d.description} jsonLd={jsonLd} ogImage={ogCard('compare', page.id)} ogAlt={ogAlt('compare', d.title)} active="compare">
   <p class="crumbs"><a href="/">Home</a> / <a href="/compare/">Compare</a></p>
   <h1>{d.title}</h1>
   <p class="meta">By <a href="/about/">Saiful Islam Adar</a>, creator of claude-garage · Last updated <time datetime={dayOf(modified)}>{longDate(modified)}</time></p>

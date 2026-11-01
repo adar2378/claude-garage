@@ -2,10 +2,10 @@
 import Base from './Base.astro';
 import '../styles/marketing.css';
 
-interface Props { title: string; description: string; jsonLd?: object; ogType?: string; active?: 'blog' | 'compare' | 'about' | '' }
-const { title, description, jsonLd, ogType, active = '' } = Astro.props;
+interface Props { title: string; description: string; jsonLd?: object; ogType?: string; ogImage?: string; ogAlt?: string; active?: 'blog' | 'compare' | 'about' | '' }
+const { title, description, jsonLd, ogType, ogImage, ogAlt, active = '' } = Astro.props;
 ---
-<Base title={title} description={description} jsonLd={jsonLd} ogType={ogType}>
+<Base title={title} description={description} jsonLd={jsonLd} ogType={ogType} ogImage={ogImage} ogAlt={ogAlt}>
   <slot name="head" slot="head" />
   <header class="mk-head">
     <a class="mk-logo" href="/"><b aria-hidden="true">(0.0)</b>claude-garage</a>

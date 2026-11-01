@@ -1,56 +1,56 @@
-// Builds public/og-default.png (1200x630) in the light brand look: warm off-white page, the headline,
-// and the real needs-input wall render in a dark terminal window.
-// Text uses a generic sans-serif stack because librsvg cannot read web fonts.
-import { dirname, resolve } from 'node:path';
+// Builds the social cards (1200x630, light brand look, Geist text drawn as paths):
+//   public/og-default.png    the homepage and any page without its own card
+//   public/og/<slug>.png     one per blog post, compare page and docs page (names: see src/lib/og.ts)
+// Output is gitignored. Needs no network and no browser.
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { readFileSync, mkdirSync } from 'node:fs';
-import sharp from 'sharp';
+import { mkdirSync, readFileSync, readdirSync, rmSync } from 'node:fs';
+import { parse } from 'yaml';
+import { ACCENT, MARGIN, MUTED, H, brandRow, card, fitTitle, fonts, measure, textPath } from './og-lib.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
-const render = resolve(here, '../../docs/brand/renders/wall-needs-input.svg');
-const out = resolve(here, '../public/og-default.png');
-const ACCENT = process.env.BRAND_ACCENT ?? '#E85002';
-const INK = '#14151A';
-const PAGE = '#FAFAF8';
+const pub = resolve(here, '../public');
+const content = resolve(here, '../src/content');
+mkdirSync(join(pub, 'og'), { recursive: true });
 
-const W = 1200, H = 630;
-const WIN_W = 980, BAR = 30, WIN_X = (W - WIN_W) / 2, WIN_Y = 330;
-const wallW = WIN_W - 2;
-const wall = await sharp(readFileSync(render), { density: 150 }).resize({ width: wallW }).png().toBuffer();
-const wallH = (await sharp(wall).metadata()).height;
-const winH = BAR + wallH;
+// Homepage card: the two-line headline with the one orange word.
+{
+  const sans = fonts.sans, ls = -0.04;
+  const body = `${brandRow()}
+${textPath('Every Claude session.', MARGIN, 190, 74, { font: sans, letterSpacing: ls })}
+${textPath('One ', MARGIN, 272, 74, { font: sans, letterSpacing: ls })}
+${textPath('calm', MARGIN + measure('One ', 74, { letterSpacing: ls }), 272, 74, { font: sans, letterSpacing: ls, fill: ACCENT })}
+${textPath('wall.', MARGIN + measure('One calm ', 74, { letterSpacing: ls }), 272, 74, { font: sans, letterSpacing: ls })}`;
+  await card(body, 330, join(pub, 'og-default.png'));
+}
 
-// Dark window: title bar with dots, the render below, rounded top corners.
-const bar = Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="${WIN_W}" height="${BAR}">
-<rect width="${WIN_W}" height="${BAR}" fill="#1d1f27"/>
-<circle cx="18" cy="15" r="5" fill="#3a3d4a"/><circle cx="36" cy="15" r="5" fill="#3a3d4a"/><circle cx="54" cy="15" r="5" fill="#3a3d4a"/>
-<text x="76" y="19.5" font-family="Menlo, Courier, monospace" font-size="12" fill="#9094a3">claude-garage</text>
-</svg>`);
-const mask = Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="${WIN_W}" height="${winH}"><rect width="${WIN_W}" height="${winH + 40}" rx="18" fill="#fff"/></svg>`);
-const winFull = await sharp({ create: { width: WIN_W, height: winH, channels: 4, background: '#16171d' } })
-  .composite([{ input: bar, left: 0, top: 0 }, { input: wall, left: 1, top: BAR }, { input: mask, blend: 'dest-in' }])
-  .png().toBuffer();
-const win = await sharp(winFull).extract({ left: 0, top: 0, width: WIN_W, height: Math.min(winH, H - WIN_Y) }).png().toBuffer();
+// Per-page cards.
+const files = (dir) => readdirSync(dir, { withFileTypes: true, recursive: true }).filter((e) => e.isFile() && e.name.endsWith('.md')).map((e) => join(e.parentPath, e.name));
+const front = (file) => parse(readFileSync(file, 'utf8').match(/^---\n([\s\S]*?)\n---/)?.[1] ?? '') ?? {};
+// Same id rules as src/content.config.ts for docs.
+const docId = (rel) => {
+  const clean = rel.replace(/\.[^.]+$/, '').replace(/\/index$/, '').replace(/^index$/, '');
+  return clean ? `docs/${clean.toLowerCase()}` : 'docs';
+};
 
-const shadow = await sharp(Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="${WIN_W + 160}" height="${H - WIN_Y + 160}"><rect x="80" y="80" width="${WIN_W}" height="${H - WIN_Y + 100}" rx="18" fill="#14162a" fill-opacity=".35"/></svg>`))
-  .blur(28).png().toBuffer();
+const jobs = [];
+for (const f of files(join(content, 'blog'))) jobs.push({ kind: 'blog', slug: `blog-${f.slice(join(content, 'blog').length + 1, -3)}`, title: front(f).title });
+for (const f of files(join(content, 'compare'))) jobs.push({ kind: 'compare', slug: `compare-${f.slice(join(content, 'compare').length + 1, -3)}`, title: front(f).title });
+for (const f of files(join(content, 'docs'))) jobs.push({ kind: 'docs', slug: docId(f.slice(join(content, 'docs').length + 1)).replace(/\//g, '-'), title: front(f).title });
 
-const text = Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}">
-<rect x="${WIN_X}" y="64" width="76" height="30" rx="10" fill="${INK}"/>
-<g fill="none" stroke="${ACCENT}" stroke-width="2.2" stroke-linecap="round" transform="translate(${WIN_X} 64)"><path d="M15 8.5Q9.5 15 15 21.5"/><circle cx="27" cy="15" r="4.4"/><circle cx="49" cy="15" r="4.4"/><path d="M61 8.5Q66.5 15 61 21.5"/></g>
-<circle cx="${WIN_X + 38}" cy="${64 + 18.6}" r="1.7" fill="${ACCENT}"/>
-<text x="${WIN_X + 92}" y="86" font-family="Helvetica, Arial, sans-serif" font-size="24" font-weight="700" fill="${INK}" letter-spacing="-0.5">claude-garage</text>
-<text x="${WIN_X}" y="190" font-family="Helvetica, Arial, sans-serif" font-size="74" font-weight="700" fill="${INK}" letter-spacing="-3">Every Claude session.</text>
-<text x="${WIN_X}" y="272" font-family="Helvetica, Arial, sans-serif" font-size="74" font-weight="700" fill="${INK}" letter-spacing="-3">One <tspan fill="${ACCENT}">calm</tspan> wall.</text>
-</svg>`);
-
-mkdirSync(dirname(out), { recursive: true });
-await sharp({ create: { width: W, height: H, channels: 4, background: PAGE } })
-  .composite([
-    { input: shadow, left: WIN_X - 80, top: WIN_Y - 60 },
-    { input: win, left: WIN_X, top: WIN_Y },
-    { input: text, left: 0, top: 0 },
-  ])
-  .png({ compressionLevel: 9 })
-  .toFile(out);
-console.log('og-image: wrote public/og-default.png');
+rmSync(join(pub, 'og'), { recursive: true, force: true });
+mkdirSync(join(pub, 'og'), { recursive: true });
+for (const { kind, slug, title } of jobs) {
+  if (!title) { console.warn(`og-image: no title for ${slug}, skipped`); continue; }
+  const { size, lines } = fitTitle(title);
+  const lead = Math.round(size * 1.12);
+  const first = 196 + Math.round(size * 0.8);
+  const last = first + lead * (lines.length - 1);
+  const t = lines.map((l, i) => textPath(l, MARGIN, first + i * lead, size, { letterSpacing: -0.03 })).join('\n');
+  const body = `${brandRow()}
+${textPath(`claude-garage · ${kind}`, MARGIN, 160, 17, { font: fonts.mono, fill: MUTED, letterSpacing: 0.02 })}
+${t}`;
+  const top = last + Math.round(size * 0.3) + 40;
+  await card(body, H - top >= 110 ? top : null, join(pub, 'og', `${slug}.png`));
+}
+console.log(`og-image: wrote og-default.png and ${jobs.length} cards in public/og/`);
