@@ -1,0 +1,114 @@
+---
+import Page from '../../layouts/Page.astro';
+import { AUTHOR, PUBLISHER, SOFTWARE, WEBSITE, abs, breadcrumbs, dayOf, longDate } from '../../lib/site';
+import { fileDates } from '../../lib/gitdates';
+
+const title = 'Best tools to run multiple Claude Code sessions (2026)';
+const description = 'A fair guide to tools for running several Claude Code sessions: claude-garage, herdr, cmux, Claude Squad, Emdash and Claude Code built-in features. Who each one suits, with sources. Checked 2026-11-01.';
+const url = abs('/compare/alternatives/');
+const dates = fileDates('src/pages/compare/alternatives.astro');
+const checked = new Date('2026-11-01T00:00:00Z');
+
+const tools = [
+  { name: 'claude-garage', slug: null, url: 'https://github.com/adar2378/claude-garage', type: 'Terminal wall on tmux', best: 'Claude Code only, many sessions, a one-key jump to the one that waits for you.', platforms: 'macOS, Linux, Windows preview', license: 'MIT' },
+  { name: 'herdr', slug: 'claude-garage-vs-herdr', url: 'https://herdr.dev', type: 'Agent runtime and multiplexer', best: 'Many kinds of agents, several machines, a plugin marketplace.', platforms: 'macOS, Linux, Windows (beta)', license: 'Apache-2.0' },
+  { name: 'cmux', slug: 'claude-garage-vs-cmux', url: 'https://cmux.com', type: 'macOS terminal app', best: 'A new terminal app with notification rings, a sidebar and a browser pane.', platforms: 'macOS 14 or newer', license: 'GPL-3.0-or-later (some directories BUSL-1.1)' },
+  { name: 'Claude Code built-in features', slug: 'claude-garage-vs-claude-code-agent-view', url: 'https://code.claude.com/docs/en/agent-view.md', type: 'First-party: agent view, --bg, --worktree', best: 'A few sessions, nothing to install, background work with no terminal attached.', platforms: 'Wherever Claude Code runs', license: 'Part of Claude Code' },
+  { name: 'Claude Squad', slug: 'claude-garage-vs-claude-squad', url: 'https://github.com/smtg-ai/claude-squad', type: 'Terminal app on tmux and worktrees', best: 'A diff tab, commit and push, and several agents in a terminal.', platforms: 'Not documented', license: 'AGPL-3.0' },
+  { name: 'Emdash', slug: 'claude-garage-vs-emdash', url: 'https://emdash.com', type: 'Desktop app', best: 'Task to pull request in one app, issue import, many agents.', platforms: 'macOS, Windows, Linux', license: 'Apache-2.0' },
+];
+
+const jsonLd = {
+  '@context': 'https://schema.org',
+  '@graph': [
+    {
+      '@type': 'WebPage',
+      name: title,
+      description,
+      '@id': `${url}#webpage`,
+      url,
+      datePublished: dates.published,
+      dateModified: dates.modified,
+      inLanguage: 'en',
+      isPartOf: WEBSITE,
+      about: SOFTWARE,
+      author: AUTHOR,
+      publisher: PUBLISHER,
+    },
+    {
+      '@type': 'ItemList',
+      name: title,
+      itemListOrder: 'https://schema.org/ItemListUnordered',
+      numberOfItems: tools.length,
+      itemListElement: tools.map((t, i) => ({ '@type': 'ListItem', position: i + 1, name: t.name, url: t.slug ? abs(`/compare/${t.slug}/`) : abs('/') })),
+    },
+    breadcrumbs([['Home', '/'], ['Compare', '/compare/'], ['Alternatives', '/compare/alternatives/']]),
+  ],
+};
+---
+<Page title={title} description={description} jsonLd={jsonLd} active="compare">
+  <p class="crumbs"><a href="/">Home</a> / <a href="/compare/">Compare</a></p>
+  <h1>{title}</h1>
+  <p class="meta">By <a href="https://github.com/adar2378">Saiful Islam</a>, creator of claude-garage · Last checked <time datetime="2026-11-01">{longDate(checked)}</time></p>
+  <p class="meta"><strong>Disclosure:</strong> I made claude-garage, so read this page with that in mind. Checked on 2026-11-01 against each project's own README and documentation, linked from the matching comparison page. Product names are used only to refer to those products.</p>
+  <p class="lead">To run several Claude Code sessions at once you need three things: a place where they keep running, a way to see which one is waiting for you, and isolation so they do not overwrite each other. Several tools cover this. This guide says what each is for, and when claude-garage is not the right choice.</p>
+  <div class="note"><strong>Short answer.</strong> Running one to three sessions: Claude Code's own features or tmux are enough. Many Claude Code sessions in a terminal: claude-garage or Claude Squad. Several kinds of agents or machines: herdr. A macOS terminal with a browser pane: cmux. A desktop app from ticket to pull request: Emdash.</div>
+
+  <h2>How we chose and ordered these tools</h2>
+  <p>We looked for tools that people use to run and manage several Claude Code sessions, using each project's public GitHub page and documentation, with relevance to Claude Code as the test. The list is not a ranking. We do not use star counts, ratings or reviews as evidence of quality, and claude-garage is made by the author of this page, so we list it first only because the page is about it. Every fact below links to a source on the matching comparison page. We left out tools whose own pages say they are being shut down.</p>
+
+  <h2>The tools at a glance</h2>
+  <div class="tablewrap">
+    <table>
+      <thead><tr><th scope="col">Tool</th><th scope="col">Type</th><th scope="col">Best for</th><th scope="col">Platforms</th><th scope="col">License</th></tr></thead>
+      <tbody>{tools.map((t) => (
+        <tr>
+          <th scope="row">{t.slug ? <a href={`/compare/${t.slug}/`}>{t.name}</a> : t.name}</th>
+          <td>{t.type}</td><td>{t.best}</td><td>{t.platforms}</td><td>{t.license}</td>
+        </tr>
+      ))}</tbody>
+    </table>
+  </div>
+  <p>Facts are as of {longDate(checked)}. Each row links to a page with sources.</p>
+
+  <h2>Which tool fits which situation?</h2>
+  <h3>You run a few Claude Code sessions and want no new tool</h3>
+  <p>Use Claude Code's own features: <code>claude --worktree</code> for isolated checkouts, <code>claude --resume</code> to continue a conversation, and the agent view for background sessions. See <a href="/compare/claude-garage-vs-claude-code-agent-view/">claude-garage vs Claude Code's built-in tools</a>. Plain <a href="/compare/tmux-alone/">tmux</a> is another free option if you like scripting.</p>
+  <h3>You run many Claude Code sessions and lose track of which one waits</h3>
+  <p>This is the case claude-garage is built for: a wall of live tiles, an amber state for the session waiting on you, and a key that jumps to it. <a href="/compare/claude-garage-vs-claude-squad/">Claude Squad</a> is the closest alternative if you prefer a list with a diff tab and a commit-and-push key.</p>
+  <h3>You use several kinds of agents, or work on several machines</h3>
+  <p><a href="/compare/claude-garage-vs-herdr/">herdr</a> documents many supported agents, saved SSH machines in one window, a CLI and socket API, and a plugin marketplace. claude-garage supports Claude Code only.</p>
+  <h3>You want a native macOS terminal app</h3>
+  <p><a href="/compare/claude-garage-vs-cmux/">cmux</a> is a Ghostty-based macOS app with notification rings, a sidebar and a browser pane. claude-garage runs inside the terminal you already have.</p>
+  <h3>You think in tickets and pull requests</h3>
+  <p><a href="/compare/claude-garage-vs-emdash/">Emdash</a> is a desktop app with a worktree per task, diff review, pull requests, CI checks and issue import. claude-garage is for the sessions themselves.</p>
+  <h3>You just have too many terminal tabs</h3>
+  <p>Start with <a href="/compare/many-terminal-tabs/">many terminal tabs</a> and the guide to <a href="/docs/guides/from-terminal-tabs/">moving from terminal tabs</a>.</p>
+
+  <h2>What to check before you pick</h2>
+  <ul>
+    <li><strong>Where sessions live.</strong> A background server, tmux, or the app itself decides what survives a closed terminal.</li>
+    <li><strong>What survives a reboot.</strong> In every tool we read, the running process ends. What differs is how the conversation comes back.</li>
+    <li><strong>How you learn a session needs you.</strong> A visual state, a jump key, a notification, or nothing documented.</li>
+    <li><strong>Isolation.</strong> Worktrees stop two sessions from overwriting the same files. Check how each tool ends a worktree session.</li>
+    <li><strong>License and telemetry.</strong> Read each license for your own use.</li>
+  </ul>
+
+  <h2>Frequently asked questions</h2>
+  <h3>What is the best tool to run multiple Claude Code sessions?</h3>
+  <p>There is no single best one. It depends on how many sessions you run, which agents you use, and whether you work in a terminal. For Claude Code only, in a terminal, claude-garage and Claude Squad are the closest fits. For several agents or machines, herdr. For a desktop app, Emdash. For a Mac terminal app, cmux.</p>
+  <h3>Do I need a tool at all?</h3>
+  <p>Not for a few sessions. Claude Code's own worktree and resume features, or plain tmux, are enough. A tool starts to help when you can no longer tell which session is waiting for you.</p>
+  <h3>Can these tools run agents other than Claude Code?</h3>
+  <p>herdr, cmux, Claude Squad and Emdash document support for other agent CLIs. claude-garage and Claude Code's built-in features are for Claude Code only.</p>
+  <h3>How current is this guide?</h3>
+  <p>It was last checked on {longDate(checked)}. These tools change quickly, so check the official pages linked from each comparison. If something is wrong, <a href="https://github.com/adar2378/claude-garage/issues">open an issue</a>.</p>
+
+  <h2>Next steps</h2>
+  <ul>
+    <li><a href="/try/">Try the claude-garage wall in your browser</a>. Nothing to install.</li>
+    <li><a href="/docs/guides/install/">Install claude-garage</a> (macOS, Linux, Windows preview).</li>
+    <li><a href="/compare/">All comparisons</a></li>
+  </ul>
+  <p class="note">This site is not affiliated with the tools above or with Anthropic.</p>
+</Page>

@@ -3,7 +3,14 @@ import { getCollection } from 'astro:content';
 import Page from '../../layouts/Page.astro';
 import { PUBLISHER, SOFTWARE, WEBSITE, abs, breadcrumbs } from '../../lib/site';
 
-const pages = (await getCollection('compare')).sort((a, b) => a.data.order - b.data.order);
+const all = (await getCollection('compare')).sort((a, b) => a.data.order - b.data.order);
+const tools = all.filter((p) => p.data.kind === 'tool');
+const workflows = all.filter((p) => p.data.kind !== 'tool');
+const pages = [...tools, ...workflows];
+const items = [
+  { name: 'Best tools to run multiple Claude Code sessions', url: '/compare/alternatives/' },
+  ...pages.map((p) => ({ name: p.data.title, url: `/compare/${p.id}/` })),
+];
 const jsonLd = {
   '@context': 'https://schema.org',
   '@graph': [
@@ -15,26 +22,38 @@ const jsonLd = {
       isPartOf: WEBSITE,
       about: SOFTWARE,
       publisher: PUBLISHER,
-      description: 'Honest comparisons of claude-garage with terminal tabs, tmux on its own, one session at a time, and IDE agent panels.',
+      description: 'Honest comparisons of claude-garage with herdr, cmux, Claude Code built-in features, Claude Squad and Emdash, plus terminal tabs, tmux on its own, one session at a time and IDE agent panels.',
     },
     {
       '@type': 'ItemList',
-      itemListElement: pages.map((p, i) => ({ '@type': 'ListItem', position: i + 1, name: p.data.title, url: abs(`/compare/${p.id}/`) })),
+      itemListElement: items.map((it, i) => ({ '@type': 'ListItem', position: i + 1, name: it.name, url: abs(it.url) })),
     },
     breadcrumbs([['Home', '/'], ['Compare', '/compare/']]),
   ],
 };
 ---
-<Page title="Compare ways to run many Claude Code sessions" description="Compare claude-garage with terminal tabs, tmux alone, one session at a time and IDE agent panels. Facts, trade-offs and when you do not need it." jsonLd={jsonLd} active="compare">
+<Page title="Compare claude-garage with herdr, cmux, Claude Squad, Emdash and more" description="Compare claude-garage with herdr, cmux, Claude Code's built-in features, Claude Squad and Emdash, and with terminal tabs, tmux and IDE panels. Sourced facts, checked 2026-11-01." jsonLd={jsonLd} active="compare">
   <p class="crumbs"><a href="/">Home</a> / Compare</p>
   <h1>Compare ways to run many Claude Code sessions</h1>
-  <p class="lead">claude-garage is one way to run several Claude Code sessions. It is not the only way, and it is not always the right one. Each page below lists what you get, what you give up, and when you should skip it.</p>
+  <p class="lead">claude-garage is one way to run several Claude Code sessions. It is not the only way, and it is not always the right one. Each page below lists what you get, what you give up, and when another tool is the better pick.</p>
+  <p class="cta"><a class="btn primary" href="/compare/alternatives/">Best tools to run multiple Claude Code sessions</a></p>
+
+  <h2>claude-garage against named tools</h2>
   <ul class="cards">
-    {pages.map((p) => (
+    {tools.map((p) => (
       <li><a class="card" href={`/compare/${p.id}/`}><strong>{p.data.title}</strong><span>{p.data.short}</span></a></li>
     ))}
   </ul>
+
+  <h2>claude-garage against ways of working</h2>
+  <ul class="cards">
+    {workflows.map((p) => (
+      <li><a class="card" href={`/compare/${p.id}/`}><strong>{p.data.title}</strong><span>{p.data.short}</span></a></li>
+    ))}
+  </ul>
+
   <h2>How we compare</h2>
-  <p>claude-garage is made by the author of this site, so read these pages with that in mind. Every claim about claude-garage comes from its source code and docs. We compare against general workflows, not named products, so nothing here depends on a vendor's current feature list.</p>
-  <p>Ready to try it? Read the <a href="/docs/guides/install/">install guide</a>, or see how to <a href="/docs/guides/from-terminal-tabs/">move over from terminal tabs</a>.</p>
+  <p>claude-garage is made by the author of this site, so read these pages with that in mind. Every claim about claude-garage comes from its source code and docs. Every claim about another tool links to that tool's own README or documentation, with the date we checked it. When we could not find a fact, the page says "not documented" instead of guessing. We do not use star counts, ratings or reviews as evidence of quality.</p>
+  <p>Product names are used only to refer to those products. This site is not affiliated with them. If a page is out of date, <a href="https://github.com/adar2378/claude-garage/issues">open an issue</a>.</p>
+  <p>Ready to try it? <a href="/try/">Try the wall in your browser</a>, read the <a href="/docs/guides/install/">install guide</a>, or see how to <a href="/docs/guides/from-terminal-tabs/">move over from terminal tabs</a>.</p>
 </Page>

@@ -6,7 +6,8 @@ export const GET: APIRoute = async ({ site }) => {
   const base = (site ?? new URL('https://claude-garage.xyz')).origin;
   const docs = await docsInOrder(await getCollection('docs'));
   const posts = (await getCollection('blog', (p) => !p.data.draft)).sort((a, b) => b.data.date.getTime() - a.data.date.getTime());
-  const compares = (await getCollection('compare')).sort((a, b) => a.data.order - b.data.order);
+  const compareAll = (await getCollection('compare')).sort((a, b) => a.data.order - b.data.order);
+  const compares = [...compareAll.filter((p) => p.data.kind === 'tool'), ...compareAll.filter((p) => p.data.kind !== 'tool')];
   const lines = [
     '# claude-garage',
     '',
@@ -30,6 +31,7 @@ export const GET: APIRoute = async ({ site }) => {
     '## Compare',
     '',
     `- [Compare index](${base}/compare/): How claude-garage compares with other ways to run Claude Code sessions.`,
+    `- [Best tools to run multiple Claude Code sessions](${base}/compare/alternatives/): A fair guide to claude-garage, herdr, cmux, Claude Squad, Emdash and Claude Code built-in features, with sources and when each fits. Checked 2026-11-01.`,
     ...compares.map((p) => `- [${p.data.title}](${base}/compare/${p.id}/): ${p.data.description}`),
     '',
   ];

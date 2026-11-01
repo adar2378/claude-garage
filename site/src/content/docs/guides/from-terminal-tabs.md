@@ -40,6 +40,10 @@ You run Claude Code in several tabs or windows today. garage puts all of them on
 - Use a terminal with good key support. Ghostty, iTerm2, kitty and WezTerm work best. In macOS Terminal.app, `Shift+Enter` acts like `Enter`. Use `Option+Enter` for a new line.
 - A wall shows at most 6 tiles per view. Extra sessions stay in the rail. Press `d` to split a session into its own view.
 
+## Other tools
+
+Garage is one option. For a sourced look at herdr, cmux, Claude Squad, Emdash and Claude Code's own features, see [Best tools to run multiple Claude Code sessions](/compare/alternatives/).
+
 ## Next
 
 [Configuration](/docs/guides/configuration/)

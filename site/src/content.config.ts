@@ -30,8 +30,16 @@ const compare = defineCollection({
   schema: z.object({
     title: z.string(),
     description: z.string(),
+    // 40 to 60 words, shown first: who should pick which, and why.
+    shortAnswer: z.string(),
     short: z.string(),
     order: z.number().default(50),
+    // 'tool' pages name one product (nominative use only). They carry a verdict, sources and a checked date.
+    kind: z.enum(['workflow', 'tool']).default('workflow'),
+    competitor: z.object({ name: z.string(), url: z.string().url() }).optional(),
+    method: z.string().optional(),
+    checked: z.string().optional(),
+    sources: z.array(z.object({ label: z.string(), url: z.string().url() })).default([]),
     otherLabel: z.string(),
     intro: z.string(),
     who: z.array(z.string()),

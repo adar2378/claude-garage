@@ -1,6 +1,7 @@
 ---
-title: "claude-garage vs IDE agent panels"
+title: "claude-garage vs IDE agent panels for Claude Code sessions"
 description: "Compare claude-garage, a terminal wall for Claude Code, with agent panels inside an editor: sessions that outlive the window, plugins and trade-offs."
+shortAnswer: "Use an editor panel if you work in the editor, one conversation at a time, and rely on inline diffs. Use claude-garage if you work in a terminal, run several Claude Code sessions, or need them to outlive a closed window. They do not conflict, so many people can use both."
 short: "A terminal wall versus an agent panel inside your editor. Where each one fits."
 order: 4
 otherLabel: "IDE agent panels"
@@ -10,11 +11,11 @@ who:
   - "You want sessions that keep running when the editor or terminal closes."
   - "You work over SSH or on a machine without a graphical editor."
 rows:
-  - { topic: "Where it lives", garage: "A terminal. Works over SSH.", other: "Inside the editor window." }
-  - { topic: "Editor integration", garage: "None. It does not see your editor's open files or selection.", other: "Strong. Panels can use open files, selections and inline diffs." }
-  - { topic: "Reviewing changes", garage: "Diff review in the wall is on the roadmap, not shipped. Use git and your editor.", other: "Usually built in." }
-  - { topic: "Many sessions at once", garage: "Built for it: a wall per project, amber for waiting, a to jump.", other: "Varies by panel. Often one conversation per panel or tab." }
-  - { topic: "Surviving a closed window", garage: "Yes. tmux runs the sessions.", other: "Depends on the editor and the panel." }
+  - { topic: "Where it lives", garage: "claude-garage runs in a terminal, so it works over SSH.", other: "Inside the editor window." }
+  - { topic: "Editor integration", garage: "claude-garage has none. It does not see your editor's open files or selection.", other: "Strong. Panels can use open files, selections and inline diffs." }
+  - { topic: "Reviewing changes", garage: "claude-garage does not review diffs yet; that is on the roadmap. You use git and your editor.", other: "Usually built in." }
+  - { topic: "Many sessions at once", garage: "It is built for this: a wall per project, an amber state for waiting sessions, and the `a` key to jump to one.", other: "Varies by panel. Often one conversation per panel or tab." }
+  - { topic: "Surviving a closed window", garage: "Yes. tmux runs the sessions, so closing the window does not end them.", other: "Depends on the editor and the panel." }
   - { topic: "Extending it", garage: "Plugins in any language, shown in the rail, tiles and status strip.", other: "The editor's own extension system." }
   - { topic: "Privacy", garage: "The service listens on 127.0.0.1 only. No account, no telemetry.", other: "Depends on the panel." }
 notNeeded:
