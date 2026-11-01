@@ -4,6 +4,8 @@ import '@fontsource-variable/geist-mono/index.css';
 import '../styles/theme.css';
 
 import { NOINDEX } from '../lib/site';
+import geistLatin from '@fontsource-variable/geist/files/geist-latin-wght-normal.woff2?url';
+import monoLatin from '@fontsource-variable/geist-mono/files/geist-mono-latin-wght-normal.woff2?url';
 
 interface Props { title: string; description: string; jsonLd?: object; noindex?: boolean; ogType?: string; canonical?: boolean }
 const { title, description, jsonLd, noindex = false, ogType = 'website', canonical: withCanonical = true } = Astro.props;
@@ -18,6 +20,8 @@ const image = new URL('/og-default.png', site).href;
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="preload" as="font" type="font/woff2" href={geistLatin} crossorigin />
+    <link rel="preload" as="font" type="font/woff2" href={monoLatin} crossorigin />
     <title>{title}</title>
     <meta name="description" content={description} />
     {withCanonical && <link rel="canonical" href={canonical} />}

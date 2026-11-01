@@ -268,8 +268,15 @@ function boot(gsap,ScrollTrigger,Lenis){
     return function(){doc.classList.remove('pin');st=null;steps.forEach(function(s){s.classList.remove('on')});steps[0].classList.add('on');if(progBar)progBar.style.transform=''};
   });
 }
-if(!reduce){
+/* Phones and short windows keep native scrolling: the libraries are fetched only where the pinned story can run. */
+var motionMQ=window.matchMedia('(min-width: 900px) and (min-height: 620px)');
+var motionLoaded=false;
+function loadMotion(){
+  if(motionLoaded||reduce||!motionMQ.matches) return;
+  motionLoaded=true;
   Promise.all([import('gsap'),import('gsap/ScrollTrigger'),import('lenis')]).then(function(m){
     boot(m[0].gsap||m[0].default,m[1].ScrollTrigger||m[1].default,m[2].default);
   }).catch(function(){ /* the page works without the motion libraries */ });
 }
+loadMotion();
+if(motionMQ.addEventListener) motionMQ.addEventListener('change',loadMotion);

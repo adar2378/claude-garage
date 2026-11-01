@@ -41,7 +41,7 @@ The custom domain (`claude-garage.xyz`) is attached on release day, not before. 
 
 `npm run build` also writes the sha256 of the one inline script on `/try/` into `dist/_headers` (`scripts/postbuild.mjs`), so deploy the `dist` it produced. `npm run check:links` crawls `dist` for broken internal links. Page dates in JSON-LD and the sitemap come from git history, so build from a full clone, not a shallow one. `public/_redirects` redirects the old install URL to `/docs/guides/install/`. Check `/.well-known/security.txt` after the first deploy: it must return 200.
 
-`npm run icons` regenerates `logo-512.png`, `apple-touch-icon.png` and `favicon.ico` from `public/favicon.svg`.
+`npm run crops` renders the below-the-fold wall screenshots as WebP (hashed names, immutable cache) from the synced SVGs; `prebuild` runs it. `npm run icons` regenerates `logo-512.png`, `apple-touch-icon.png` and `favicon.ico` from `public/favicon.svg`.
 
 ## Deploy to Cloudflare Pages (older notes)
 

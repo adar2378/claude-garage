@@ -9,13 +9,14 @@
   "scripts": {
     "sync": "node scripts/sync-docs.mjs",
     "og": "node scripts/og-image.mjs",
-    "dev": "npm run sync && astro dev",
-    "prebuild": "npm run sync && npm run og",
+    "dev": "npm run sync && npm run crops && astro dev",
+    "prebuild": "npm run sync && npm run og && npm run crops",
     "build": "rm -rf dist && astro build && node scripts/postbuild.mjs",
     "preview": "astro preview",
     "check": "astro check",
     "icons": "node scripts/icons.mjs",
-    "check:links": "node scripts/check-links.mjs"
+    "check:links": "node scripts/check-links.mjs",
+    "crops": "node scripts/crops.mjs"
   },
   "dependencies": {
     "@astrojs/sitemap": "^3.7.4",

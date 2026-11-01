@@ -1,6 +1,7 @@
 ---
 // The approved landing page. Styles: src/styles/landing.css. Behaviour: src/scripts/landing.js (bundled by Astro).
 import '../styles/landing.css';
+import crops from '../generated/crops.json';
 ---
 <header class="nav">
   <a class="logo" href="#top" aria-label="claude-garage home">
@@ -61,7 +62,7 @@ import '../styles/landing.css';
             </div>
             <div class="vis v-a">
               <div class="term"><div class="term-bar"><i></i><i></i><i></i><span>claude-garage</span></div>
-                <svg viewBox="250 0 600 340" role="img" aria-label="A Claude Code session tile in claude-garage, showing a diff and passing tests"><image href="/renders/wall-calm.svg" width="1440" height="880"/></svg></div>
+                <img src={crops.s0.src} srcset={crops.s0.srcset} sizes="(min-width: 900px) 530px, 86vw" width={crops.s0.w} height={crops.s0.h} alt="A Claude Code session tile in claude-garage, showing a diff and passing tests" loading="lazy" decoding="async" /></div>
               <div class="fl fl-tl bob" style="--d:.05s"><code>$ claude-garage ~/acme</code></div>
               <div class="fl fl-br" style="--d:.2s"><span class="key" style="width:46px;height:46px;font-size:21px;border-radius:12px">n</span><span>New session<small>pick a folder</small></span></div>
             </div>
@@ -75,7 +76,7 @@ import '../styles/landing.css';
             </div>
             <div class="vis v-b">
               <div class="term"><div class="term-bar"><i></i><i></i><i></i><span>claude-garage</span></div>
-                <svg viewBox="0 0 1440 880" role="img" aria-label="The claude-garage wall with three project groups and five sessions"><image href="/renders/wall-calm.svg" width="1440" height="880"/></svg></div>
+                <img src={crops.s1.src} srcset={crops.s1.srcset} sizes="(min-width: 900px) 530px, 86vw" width={crops.s1.w} height={crops.s1.h} alt="The claude-garage wall with three project groups and five sessions" loading="lazy" decoding="async" /></div>
               <div class="fl fl-tr bob" style="--d:.05s"><span class="gr"></span><span>3 folders<small>5 sessions running</small></span></div>
               <div class="fl fl-bl" style="--d:.2s"><code>5h 24% · wk 61%</code></div>
             </div>
@@ -89,7 +90,7 @@ import '../styles/landing.css';
             </div>
             <div class="vis v-c">
               <div class="term"><div class="term-bar"><i></i><i></i><i></i><span>claude-garage</span></div>
-                <svg viewBox="0 0 1440 880" role="img" aria-label="The claude-garage wall with one tile outlined in amber, waiting for approval"><image href="/renders/wall-needs-input.svg" width="1440" height="880"/></svg></div>
+                <img src={crops.s2.src} srcset={crops.s2.srcset} sizes="(min-width: 900px) 530px, 86vw" width={crops.s2.w} height={crops.s2.h} alt="The claude-garage wall with one tile outlined in amber, waiting for approval" loading="lazy" decoding="async" /></div>
               <div class="fl fl-tr bob" style="--d:.05s"><span class="am"></span><span>web needs you<small>Bash command · claude-1</small></span></div>
               <div class="fl fl-bl" style="--d:.2s"><span class="am"></span><span>1 blocked</span></div>
             </div>
@@ -103,7 +104,7 @@ import '../styles/landing.css';
             </div>
             <div class="vis v-d">
               <div class="term"><div class="term-bar"><i></i><i></i><i></i><span>web / claude-1</span></div>
-                <svg viewBox="255 520 600 330" role="img" aria-label="The blocked tile up close: Do you want to proceed? 1. Yes, 2. Yes and do not ask again, 3. No"><image href="/renders/wall-engaged.svg" width="1440" height="880"/></svg></div>
+                <img src={crops.s3.src} srcset={crops.s3.srcset} sizes="(min-width: 900px) 530px, 86vw" width={crops.s3.w} height={crops.s3.h} alt="The blocked tile up close: Do you want to proceed? 1. Yes, 2. Yes and do not ask again, 3. No" loading="lazy" decoding="async" /></div>
               <div class="fl fl-tl bob" style="--d:.05s"><span class="key">a</span></div>
               <div class="fl fl-br" style="--d:.2s"><code>keys → web/claude-1</code></div>
             </div>
@@ -117,7 +118,7 @@ import '../styles/landing.css';
             </div>
             <div class="vis v-e">
               <div class="term"><div class="term-bar"><i></i><i></i><i></i><span>claude-garage</span></div>
-                <svg viewBox="0 0 600 290" role="img" aria-label="The sidebar listing closed, crashed and restartable chats next to live sessions"><image href="/renders/wall-plugins.svg" width="1440" height="880"/></svg></div>
+                <img src={crops.s4.src} srcset={crops.s4.srcset} sizes="(min-width: 900px) 530px, 86vw" width={crops.s4.w} height={crops.s4.h} alt="The sidebar listing closed, crashed and restartable chats next to live sessions" loading="lazy" decoding="async" /></div>
               <div class="fl fl-tr bob" style="--d:.05s"><span class="gr"></span><span id="rest">restored 3 sessions</span></div>
               <div class="fl fl-br" style="--d:.2s"><span class="key w" style="height:46px;font-size:20px;border-radius:12px">r</span><span class="key w" style="height:46px;font-size:20px;border-radius:12px">r</span><span style="margin-left:4px">resume</span></div>
             </div>
@@ -143,19 +144,19 @@ import '../styles/landing.css';
 
     <div class="pgrid">
       <article class="pc rv">
-        <div class="pv"><div class="mini" style="width:62%"><svg viewBox="0 98 250 160" role="img" aria-label="Sidebar rows reading claude-3 closed, claude-4 crashed"><image href="/renders/wall-plugins.svg" width="1440" height="880"/></svg></div></div>
+        <div class="pv"><div class="mini" style="width:62%"><img src={crops.p0.src} width={crops.p0.w} height={crops.p0.h} alt="Sidebar rows reading claude-3 closed, claude-4 crashed" loading="lazy" decoding="async" /></div></div>
         <h3>Closed chats</h3><p>Closed sessions stay in the rail. Click one to bring it back.</p>
       </article>
       <article class="pc rv" style="--rd:.07s">
-        <div class="pv"><div class="mini"><svg viewBox="268 16 570 110" role="img" aria-label="A tile header with x and del buttons"><image href="/renders/wall-plugins.svg" width="1440" height="880"/></svg></div></div>
+        <div class="pv"><div class="mini"><img src={crops.p1.src} width={crops.p1.w} height={crops.p1.h} alt="A tile header with x and del buttons" loading="lazy" decoding="async" /></div></div>
         <h3>Tile buttons</h3><p>Close and delete buttons in each tile title.</p>
       </article>
       <article class="pc rv" style="--rd:.14s">
-        <div class="pv"><div class="mini"><svg viewBox="1040 857 400 23" role="img" aria-label="Status bar showing 5h 24% and weekly 61% usage"><image href="/renders/wall-plugins.svg" width="1440" height="880"/></svg></div></div>
+        <div class="pv"><div class="mini"><img src={crops.p2.src} width={crops.p2.w} height={crops.p2.h} alt="Status bar showing 5h 24% and weekly 61% usage" loading="lazy" decoding="async" /></div></div>
         <h3>Usage bar</h3><p>Your 5 hour and weekly limits in the status strip.</p>
       </article>
       <article class="pc rv">
-        <div class="pv"><div class="mini" style="width:88%"><svg viewBox="0 857 300 23" role="img" aria-label="Status bar with folder tabs and a tiny pet"><image href="/renders/wall-plugins.svg" width="1440" height="880"/></svg></div></div>
+        <div class="pv"><div class="mini" style="width:88%"><img src={crops.p3.src} width={crops.p3.w} height={crops.p3.h} alt="Status bar with folder tabs and a tiny pet" loading="lazy" decoding="async" /></div></div>
         <h3>Pit pet</h3><p>A tiny pet in the status strip. It wakes when a session needs you.</p>
       </article>
       <article class="pc rv" style="--rd:.07s">
@@ -250,7 +251,7 @@ import '../styles/landing.css';
   </div>
   <div class="peek rv" style="--rd:.16s">
     <div class="term"><div class="term-bar"><i></i><i></i><i></i><span>claude-garage</span></div>
-      <svg viewBox="0 0 1440 560" role="img" aria-label="The claude-garage wall with one amber tile"><image href="/renders/wall-needs-input.svg" width="1440" height="880"/></svg></div>
+      <img src={crops.peek.src} srcset={crops.peek.srcset} sizes="(min-width: 900px) 880px, 92vw" width={crops.peek.w} height={crops.peek.h} alt="The claude-garage wall with one amber tile" loading="lazy" decoding="async" /></div>
   </div>
 </section>
 </main>
