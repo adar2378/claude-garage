@@ -325,6 +325,12 @@ pub const DEFAULT_ON: [&str; 6] = [
     "alerts",
 ];
 
+/// Plugins that take over a core feature, so they arrive ON even when added to
+/// an existing plugins file by a later release (every other plugin new in a
+/// later release arrives off). Only applies when the entry is absent and was
+/// never seeded: a plugin the user turned off or removed stays that way.
+pub const ON_WHEN_ADDED: [&str; 1] = ["alerts"];
+
 /// `plugins.json` key listing the bundled ids already seeded.
 pub const SEEDED_KEY: &str = "bundledSeeded";
 
@@ -468,7 +474,9 @@ pub fn seed(paths: &Paths, root: &Path) -> Result<Seeded, String> {
                 }
                 None if !seeded.contains(id) => {
                     let mut entry = Entry::new(id, Source::Bundled { path });
-                    entry.enabled = first_run && trusted && DEFAULT_ON.contains(&id.as_str());
+                    entry.enabled = trusted
+                        && ((first_run && DEFAULT_ON.contains(&id.as_str()))
+                            || ON_WHEN_ADDED.contains(&id.as_str()));
                     file.plugins.push(entry);
                     out.added.push(id.clone());
                 }
@@ -629,6 +637,45 @@ mod tests {
         let now = enabled(&paths);
         assert!(now.contains(&("usage-bar".into(), true)));
         assert!(now.contains(&("pit-pet".into(), false)) && now.contains(&("extra".into(), false)));
+    }
+
+    #[test]
+    fn alerts_arrives_on_for_an_existing_install_but_other_new_plugins_stay_off() {
+        let (garage, bundle) = (tempfile::tempdir().unwrap(), root(&["usage-bar"]));
+        let paths = Paths::new(garage.path());
+        seed(&paths, bundle.path()).unwrap();
+        // The release that adds alerts (and another default-named plugin).
+        add(bundle.path(), "alerts", "1.0.0");
+        add(bundle.path(), "pit-pet", "1.0.0");
+        seed(&paths, bundle.path()).unwrap();
+        let now = enabled(&paths);
+        assert!(now.contains(&("alerts".into(), true)), "{now:?}");
+        assert!(now.contains(&("pit-pet".into(), false)), "{now:?}");
+    }
+
+    #[test]
+    fn alerts_is_never_re_enabled_after_the_user_turned_it_off_or_removed_it() {
+        let (garage, bundle) = (tempfile::tempdir().unwrap(), root(&["usage-bar", "alerts"]));
+        let paths = Paths::new(garage.path());
+        seed(&paths, bundle.path()).unwrap();
+        PluginsFile::update(&paths, |f| {
+            for e in &mut f.plugins {
+                if e.id == "alerts" {
+                    e.enabled = false;
+                }
+            }
+            (true, ())
+        })
+        .unwrap();
+        seed(&paths, bundle.path()).unwrap();
+        assert!(enabled(&paths).contains(&("alerts".into(), false)));
+        PluginsFile::update(&paths, |f| {
+            f.plugins.retain(|e| e.id != "alerts");
+            (true, ())
+        })
+        .unwrap();
+        seed(&paths, bundle.path()).unwrap();
+        assert!(!enabled(&paths).iter().any(|(id, _)| id == "alerts"));
     }
 
     #[test]

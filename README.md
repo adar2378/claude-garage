@@ -184,7 +184,9 @@ claude-garage alerts banners off        # chime only, never a banner
 claude-garage alerts test               # play both chimes and show a sample banner
 ```
 
-To turn alerts off completely, press `p` and switch `alerts` off.
+Alerts are on by default, also for existing installs: they replace the old
+needs-input banner. To turn them off completely, press `p` and switch `alerts`
+off; garage will not turn them back on.
 
 ## Privacy
 
