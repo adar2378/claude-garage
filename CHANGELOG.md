@@ -53,6 +53,21 @@ has not been tested on real Windows yet.
 
 - The unused `GET /api/diff/:workspace` route.
 
+## 0.6.3 — fixes
+
+### Fixed
+
+- **Sessions in folders with a dot in the path now show their context.**
+  Worktrees live under `~/.garage`, and their transcripts were never found,
+  so the context meter stayed empty.
+- **Restarting a session no longer makes it disappear when Claude has no
+  conversation to resume.** The session is created again instead of
+  failing.
+- **Finishing a worktree can no longer delete the wrong folder.** Discard
+  and merge now check the folder is inside the garage worktrees folder, and
+  merge also checks it is on the expected branch; nothing is deleted if not.
+  Discard still works if the agent switched branches.
+
 ## 0.6.2 — parent folders lead their group
 
 0.6.1 was tagged but never published; this is the same change.
