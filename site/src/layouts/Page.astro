@@ -1,0 +1,29 @@
+---
+import Base from './Base.astro';
+import '../styles/marketing.css';
+
+interface Props { title: string; description: string; jsonLd?: object; ogType?: string; active?: 'blog' | 'compare' | '' }
+const { title, description, jsonLd, ogType, active = '' } = Astro.props;
+---
+<Base title={title} description={description} jsonLd={jsonLd} ogType={ogType}>
+  <slot name="head" slot="head" />
+  <header class="mk-head">
+    <a class="mk-logo" href="/"><b aria-hidden="true">(0.0)</b>claude-garage</a>
+    <nav class="mk-nav" aria-label="Main">
+      <a href="/docs/">Docs</a>
+      <a href="/try/">Try it</a>
+      <a href="/blog/" aria-current={active === 'blog' ? 'page' : undefined}>Blog</a>
+      <a href="/compare/" aria-current={active === 'compare' ? 'page' : undefined}>Compare</a>
+      <a href="https://github.com/adar2378/claude-garage">GitHub</a>
+    </nav>
+  </header>
+  <main class="mk"><slot /></main>
+  <footer class="mk-foot">
+    <a href="/docs/guides/install/">Install</a>
+    <a href="/try/">Try it in your browser</a>
+    <a href="/docs/guides/first-plugin/">Build a plugin</a>
+    <a href="/docs/guides/contributing/">Contribute</a>
+    <a href="/blog/rss.xml">RSS</a>
+    <span>MIT licensed. Not affiliated with Anthropic.</span>
+  </footer>
+</Base>

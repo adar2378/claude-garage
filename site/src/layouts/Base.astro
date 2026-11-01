@@ -1,0 +1,62 @@
+---
+import '@fontsource-variable/geist/index.css';
+import '@fontsource-variable/geist-mono/index.css';
+import '../styles/theme.css';
+
+import { NOINDEX } from '../lib/site';
+import geistLatin from '@fontsource-variable/geist/files/geist-latin-wght-normal.woff2?url';
+import monoLatin from '@fontsource-variable/geist-mono/files/geist-mono-latin-wght-normal.woff2?url';
+
+interface Props { title: string; description: string; jsonLd?: object; noindex?: boolean; ogType?: string; canonical?: boolean }
+const { title, description, jsonLd, noindex = false, ogType = 'website', canonical: withCanonical = true } = Astro.props;
+const site = Astro.site ?? new URL('https://claude-garage.xyz');
+const canonical = new URL(Astro.url.pathname, site).href;
+// SITE_NOINDEX=1 marks a preview build: every page says noindex.
+const hideFromSearch = noindex || NOINDEX;
+const image = new URL('/og-default.png', site).href;
+---
+<!doctype html>
+<html lang="en" data-theme="light">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="preload" as="font" type="font/woff2" href={geistLatin} crossorigin />
+    <link rel="preload" as="font" type="font/woff2" href={monoLatin} crossorigin />
+    <title>{title}</title>
+    <meta name="description" content={description} />
+    {withCanonical && <link rel="canonical" href={canonical} />}
+    <link rel="icon" href="/favicon.ico" sizes="32x32" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <link rel="manifest" href="/site.webmanifest" />
+    <meta name="theme-color" content="#FAFAF8" />
+    {hideFromSearch && <meta name="robots" content="noindex" />}
+    <meta property="og:type" content={ogType} />
+    <meta property="og:site_name" content="claude-garage" />
+    <meta property="og:title" content={title} />
+    <meta property="og:description" content={description} />
+    {withCanonical && <meta property="og:url" content={canonical} />}
+    <meta property="og:image" content={image} />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content={title} />
+    <meta name="twitter:description" content={description} />
+    <meta name="twitter:image" content={image} />
+    <slot name="head" />
+    {jsonLd && <script type="application/ld+json" set:html={JSON.stringify(jsonLd)} />}
+  </head>
+  <body>
+    <slot />
+  </body>
+</html>
+<style is:global>
+  body {
+    margin: 0;
+    background: var(--sl-color-black);
+    color: var(--sl-color-white);
+    font-family: var(--sl-font);
+    -webkit-font-smoothing: antialiased;
+  }
+  code, pre { font-family: var(--sl-font-mono); }
+</style>

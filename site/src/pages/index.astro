@@ -1,0 +1,14 @@
+---
+import Base from '../layouts/Base.astro';
+import Landing from '../components/Landing.astro';
+import { entityGraph } from '../lib/site';
+
+const title = 'claude-garage: a terminal wall for Claude Code';
+const description =
+  'See every Claude Code session at once, jump to the one that needs you, and keep sessions alive in tmux. For macOS and Linux, with a Windows preview.';
+// The one place the shared entities are defined. Every other page references them by @id.
+const jsonLd = { '@context': 'https://schema.org', '@graph': entityGraph() };
+---
+<Base title={title} description={description} jsonLd={jsonLd}>
+  <Landing />
+</Base>

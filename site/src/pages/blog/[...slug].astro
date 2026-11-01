@@ -1,0 +1,57 @@
+---
+import { getCollection, render } from 'astro:content';
+import Page from '../../layouts/Page.astro';
+import { AUTHOR, ID, PUBLISHER, SOFTWARE, WEBSITE, abs, breadcrumbs, dayOf, isoDate, longDate, ref } from '../../lib/site';
+
+export async function getStaticPaths() {
+  const posts = await getCollection('blog', (p) => import.meta.env.DEV || !p.data.draft);
+  return posts.map((post) => ({ params: { slug: post.id }, props: { post } }));
+}
+const { post } = Astro.props;
+const { Content, remarkPluginFrontmatter } = await render(post);
+const d = post.data;
+const url = abs(`/blog/${post.id}/`);
+const jsonLd = {
+  '@context': 'https://schema.org',
+  '@graph': [
+    {
+      '@type': 'BlogPosting',
+      headline: d.title,
+      description: d.description,
+      url,
+      mainEntityOfPage: url,
+      image: abs('/og-default.png'),
+      datePublished: isoDate(d.date),
+      dateModified: isoDate(d.updated ?? d.date),
+      inLanguage: 'en',
+      keywords: d.tags.join(', '),
+      isPartOf: ref(ID.blog),
+      about: SOFTWARE,
+      author: AUTHOR,
+      publisher: PUBLISHER,
+    },
+    breadcrumbs([['Home', '/'], ['Blog', '/blog/'], [d.title, `/blog/${post.id}/`]]),
+  ],
+};
+void remarkPluginFrontmatter;
+---
+<Page title={`${d.title} | claude-garage`} description={d.description} jsonLd={jsonLd} ogType="article" active="blog">
+  <Fragment slot="head">
+    <meta property="article:published_time" content={isoDate(d.date)} />
+    <meta property="article:modified_time" content={isoDate(d.updated ?? d.date)} />
+    <meta property="article:author" content={d.author} />
+    {d.tags.map((t) => <meta property="article:tag" content={t} />)}
+    {d.draft && <meta name="robots" content="noindex" />}
+    <link rel="alternate" type="application/rss+xml" title="claude-garage blog" href="/blog/rss.xml" />
+  </Fragment>
+  <p class="crumbs"><a href="/">Home</a> / <a href="/blog/">Blog</a></p>
+  <h1>{d.title}</h1>
+  <p class="meta">
+    By <a href="https://github.com/adar2378">{d.author}</a>, creator of claude-garage ·
+    <time datetime={dayOf(d.date)}>{longDate(d.date)}</time>
+    {d.updated && <> · updated <time datetime={dayOf(d.updated)}>{longDate(d.updated)}</time></>}
+    {d.draft && <> · DRAFT</>}
+  </p>
+  <article><Content /></article>
+  <p class="cta"><a class="btn primary" href="/docs/guides/install/">Install claude-garage</a><a class="btn" href="/blog/">More posts</a></p>
+</Page>

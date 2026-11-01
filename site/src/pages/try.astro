@@ -1,0 +1,112 @@
+---
+import Base from '../layouts/Base.astro';
+import TryLessons from '../components/TryLessons.astro';
+import TrySim from '../components/TrySim.astro';
+import '../styles/try.css';
+import { LESSONS, GLOSSARY } from '../scripts/try-data.js';
+import { BINDINGS } from '../scripts/try-bindings.js';
+import { PUBLISHER, SOFTWARE, WEBSITE, breadcrumbs } from '../lib/site';
+
+const title = 'Try claude-garage in your browser';
+const description =
+  'Try claude-garage in your browser: a keyboard-driven simulation of the real terminal wall. Learn the keys for Claude Code sessions in eight short lessons.';
+const site = Astro.site ?? new URL('https://claude-garage.xyz');
+const url = new URL('/try/', site).href;
+const jsonLd = {
+  '@context': 'https://schema.org',
+  '@graph': [
+    {
+      '@type': 'WebApplication',
+      '@id': `${url}#app`,
+      name: 'claude-garage interactive tutorial',
+      description,
+      url,
+      applicationCategory: 'DeveloperApplication',
+      operatingSystem: 'Any (runs in a web browser)',
+      browserRequirements: 'Requires JavaScript',
+      inLanguage: 'en',
+      isAccessibleForFree: true,
+      offers: { '@type': 'Offer', price: '0', priceCurrency: 'USD' },
+      about: SOFTWARE,
+      isPartOf: WEBSITE,
+      publisher: PUBLISHER,
+    },
+    breadcrumbs([['Home', '/'], ['Try it in your browser', '/try/']]),
+  ],
+};
+---
+<Base title={title} description={description} jsonLd={jsonLd}>
+  <script is:inline>document.documentElement.classList.add('tr-js');</script>
+  <a class="tr-skip" href="#try">Skip to the tutorial</a>
+  <header class="tr-nav">
+    <a class="tr-logo" href="/" aria-label="claude-garage home"><b aria-hidden="true">(0.0)</b>claude-garage</a>
+    <nav aria-label="Primary">
+      <a href="/#story">How it works</a>
+      <a href="/docs/guides/install/">Install</a>
+      <a href="/docs/reference/keys/">Keys</a>
+      <a href="/docs/">Docs</a>
+      <a class="tr-gh" href="https://github.com/adar2378/claude-garage">GitHub</a>
+    </nav>
+  </header>
+
+  <main>
+    <section class="tr-hero">
+      <nav class="tr-crumb" aria-label="Breadcrumb"><a href="/">claude-garage</a> / <span aria-current="page">Try it</span></nav>
+      <h1>Try claude-garage <em>in your browser</em></h1>
+      <p class="tr-lead">claude-garage is a terminal wall that shows every Claude Code session at once and turns the one that needs you amber. This page simulates it, so you can learn the keys with your real keyboard in about two minutes, with nothing to install.</p>
+      <p class="tr-sub">Eight short lessons. Install later with <a href="/docs/guides/install/">one command</a>.</p>
+    </section>
+
+    <section class="tr-lab" id="try" aria-label="Interactive tutorial">
+      <TrySim />
+      <aside class="tr-panel" aria-label="Lessons">
+        <div class="tr-ph">
+          <p class="tr-count" id="tr-count" aria-hidden="true">Lesson 1 of 8</p>
+          <nav class="tr-dots" aria-label="Lesson progress">
+            {LESSONS.map((l, i) => <button type="button" class="tr-dot" data-dot data-state={i === 0 ? 'current' : 'todo'} aria-label={`Lesson ${i + 1}, ${l.title}`} title={l.title}><span>{i + 1}</span></button>)}
+          </nav>
+          <div class="tr-ctl">
+            <button type="button" id="tr-skip" class="tr-mini">Skip lesson</button>
+            <button type="button" id="tr-reset" class="tr-mini">Start over</button>
+          </div>
+        </div>
+        <TryLessons />
+      </aside>
+    </section>
+
+    <section class="tr-sec" aria-labelledby="keys-h">
+      <h2 id="keys-h">Which keys does claude-garage use?</h2>
+      <p>This is the full key list from the real app, the same one that <kbd>?</kbd> opens on the wall. The first eight lessons cover the ones you will use every day.</p>
+      <div class="tr-tw">
+        <table class="tr-table">
+          <thead><tr><th scope="col">Key</th><th scope="col">What it does</th></tr></thead>
+          <tbody>{BINDINGS.map(([k, w]) => <tr><th scope="row"><kbd>{k}</kbd></th><td>{w}</td></tr>)}</tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="tr-sec" aria-labelledby="col-h">
+      <h2 id="col-h">What do the colors on the wall mean?</h2>
+      <p>The wall keeps one loud color. Amber means a session is waiting for you, and nothing else is ever amber.</p>
+      <dl class="tr-gl">
+        {GLOSSARY.map(([t, d]) => <><dt>{t}</dt><dd>{d}</dd></>)}
+      </dl>
+    </section>
+
+    <section class="tr-sec" aria-labelledby="sim-h">
+      <h2 id="sim-h">How is the simulation different from the real wall?</h2>
+      <p>The wall here is drawn in HTML and scripted. No Claude, tmux or network is involved, and the transcripts are canned. The layout, glyphs, colors, keys and overlay wording follow the real terminal app. Differences you may notice: the done color fades in seconds instead of two minutes, Esc releases your keyboard (a real engaged session would receive it), and only the keys from these lessons are wired up.</p>
+      <p>Ready for the real thing? Follow the <a href="/docs/guides/install/">install guide</a>, then <a href="/docs/guides/first-wall/">build your first wall</a>. Working in parallel branches? See <a href="/docs/guides/worktrees/">worktree sessions</a>, and <a href="/docs/guides/nothing-lost/">how nothing gets lost</a> when you restart.</p>
+    </section>
+  </main>
+
+  <footer class="tr-foot">
+    <a href="/">claude-garage</a>
+    <a href="/docs/">Docs</a>
+    <a href="https://github.com/adar2378/claude-garage">GitHub</a>
+    <span>MIT licensed</span>
+  </footer>
+  <script>
+    import '../scripts/try.js';
+  </script>
+</Base>

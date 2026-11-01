@@ -1,0 +1,4 @@
+Contact: https://github.com/adar2378/claude-garage/security/advisories/new
+Expires: 2027-11-01T00:00:00.000Z
+Preferred-Languages: en
+Canonical: https://claude-garage.xyz/.well-known/security.txt

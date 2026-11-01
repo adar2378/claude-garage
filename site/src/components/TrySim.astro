@@ -1,0 +1,18 @@
+---
+// The simulated wall frame. The static real render is the no-JS fallback; try.js replaces it with the live simulation.
+---
+<div class="tr-simcol">
+  <div class="tr-bar"><i></i><i></i><i></i><span>Simulated wall. Real keys.</span><em id="tr-state">Click the wall to use your keyboard</em></div>
+  <div class="tr-frame" id="tr-frame" tabindex="0" role="group" aria-label="Simulated claude-garage wall. Click it to capture your keyboard. Press Escape to release it." aria-describedby="tr-hint">
+    <div class="tr-wall" id="tr-wall" aria-hidden="true">
+      <img src="/renders/wall-needs-input-120x36.svg" width="1080" height="720" alt="" decoding="async" />
+    </div>
+    <div class="tr-veil" aria-hidden="true"><span>Click here, then press the keys</span></div>
+  </div>
+  <div class="tr-padrow">
+    <p class="tr-hint" id="tr-hint">Click the wall to focus it, or tap the keys below.</p>
+    <div class="tr-keypad" id="tr-keypad" role="group" aria-label="On-screen keys for this lesson"></div>
+  </div>
+  <div class="tr-sr" id="tr-live" aria-live="polite" aria-relevant="additions" role="log" aria-label="Simulator status"></div>
+  <noscript><p class="tr-ns">The live simulator needs JavaScript. The lessons on this page work as a written guide, and the image above is a real render of the wall.</p></noscript>
+</div>
