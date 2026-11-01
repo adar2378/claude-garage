@@ -2,6 +2,7 @@
 import Base from '../layouts/Base.astro';
 import TryLessons from '../components/TryLessons.astro';
 import TrySim from '../components/TrySim.astro';
+import SiteHeader from '../components/SiteHeader.astro';
 import '../styles/try.css';
 import { LESSONS, GLOSSARY } from '../scripts/try-data.js';
 import { BINDINGS } from '../scripts/try-bindings.js';
@@ -38,16 +39,7 @@ const jsonLd = {
 <Base title={title} description={description} jsonLd={jsonLd}>
   <script is:inline>document.documentElement.classList.add('tr-js');</script>
   <a class="tr-skip" href="#try">Skip to the tutorial</a>
-  <header class="tr-nav">
-    <a class="tr-logo" href="/" aria-label="claude-garage home"><b aria-hidden="true">(0.0)</b>claude-garage</a>
-    <nav aria-label="Primary">
-      <a href="/#story">How it works</a>
-      <a href="/docs/guides/install/">Install</a>
-      <a href="/docs/reference/keys/">Keys</a>
-      <a href="/docs/">Docs</a>
-      <a class="tr-gh" href="https://github.com/adar2378/claude-garage">GitHub</a>
-    </nav>
-  </header>
+  <SiteHeader active="try" />
 
   <main>
     <section class="tr-hero">

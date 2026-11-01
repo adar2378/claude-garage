@@ -15,6 +15,8 @@ export default defineConfig({
   site: SITE,
   output: 'static',
   build: { inlineStylesheets: 'never' },
+  // Small bundled scripts must stay files: the page CSPs allow script-src 'self' only, so no inline modules.
+  vite: { build: { assetsInlineLimit: 0 } },
   trailingSlash: 'ignore',
   integrations: [
     starlight({
