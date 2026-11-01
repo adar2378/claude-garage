@@ -103,7 +103,7 @@ h1 em{font-style:normal;color:var(--orange)}
 .stage-pin{padding:var(--gut)}
 .stage{border-radius:var(--r);padding:56px 24px;display:flex;flex-direction:column;align-items:center}
 .center{position:relative;width:100%;max-width:1040px}
-.stepper,.notch,.prog,.hint{display:none}
+.stepper,.prog,.hint{display:none}
 .deck{display:grid;gap:20px}
 .step{background:var(--card);border-radius:28px;padding:28px;display:grid;gap:24px;box-shadow:0 30px 70px -40px rgba(60,40,40,.45)}
 .step .copy{display:flex;flex-direction:column;align-items:flex-start;justify-content:center}
@@ -143,11 +143,7 @@ h1 em{font-style:normal;color:var(--orange)}
 .pin .sbtn{width:60px;height:60px;border-radius:50%;background:#E6E5E1;border:0;padding:0;display:grid;place-items:center;color:#4C4F5B;box-shadow:0 0 0 4px #fff,0 10px 20px -10px rgba(30,30,60,.35);transition:background-color .35s,color .35s,transform .35s var(--ease)}
 .pin .sbtn svg{width:26px;height:26px}
 .pin .sbtn:hover{transform:translateY(-3px);background:#fff}
-.pin .sbtn[aria-selected=true]{background:var(--orange-ink);color:#fff;transform:none}
-.pin .notch{display:block;position:absolute;left:50%;top:62px;width:48px;height:22px;margin-left:-24px;background:var(--card);border-radius:18px 18px 0 0;transform:translateX(calc((var(--i,0) - 2) * 76px));transition:transform .55s var(--ease);z-index:2}
-.pin .notch::before,.pin .notch::after{content:"";position:absolute;bottom:0;width:16px;height:16px}
-.pin .notch::before{right:100%;background:radial-gradient(circle at 0 0,transparent 15.5px,var(--card) 16px)}
-.pin .notch::after{left:100%;background:radial-gradient(circle at 100% 0,transparent 15.5px,var(--card) 16px)}
+.pin .sbtn[aria-selected=true]{background:var(--orange-ink);color:#fff;transform:none;box-shadow:0 0 0 4px #fff,0 12px 24px -10px rgba(184,63,0,.55)}
 .pin .deck{display:block;position:relative;height:clamp(420px,56svh,468px);background:var(--card);border-radius:30px;box-shadow:0 40px 80px -44px rgba(60,40,50,.55);overflow:clip;isolation:isolate;contain:paint}
 .pin .step{position:absolute;inset:0;grid-template-columns:.82fr 1.18fr;gap:28px;padding:22px;border-radius:30px;box-shadow:none;background:transparent;opacity:0;visibility:hidden;pointer-events:none;transform:translateY(22px) scale(.985);filter:blur(6px);transition:opacity .45s var(--ease),transform .6s var(--ease),filter .45s var(--ease),visibility 0s .6s}
 .pin .step .copy{padding:18px 6px 18px 26px}
