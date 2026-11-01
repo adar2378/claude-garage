@@ -1,0 +1,11 @@
+{
+	// Static site on Cloudflare Workers static assets. No server code.
+	"$schema": "./node_modules/wrangler/config-schema.json",
+	"name": "claude-garage-site",
+	"compatibility_date": "2026-10-23",
+	"assets": {
+		"directory": "./dist",
+		"not_found_handling": "404-page",
+		"html_handling": "auto-trailing-slash"
+	}
+}
