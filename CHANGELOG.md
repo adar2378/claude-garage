@@ -1,8 +1,9 @@
 # Changelog
 
-## 1.0.0 — one binary, plugins and alerts
+## 1.0.1 — one binary, plugins and alerts
 
-The first stable release. `npx claude-garage` installs it; the shell and
+The first stable release. (The 1.0.0 tag stopped in CI before any binary
+was built; 1.0.1 is the same release with a test fix.) `npx claude-garage` installs it; the shell and
 PowerShell installers are on the GitHub release. There is no Homebrew
 formula yet. Windows (x64) has a prebuilt binary and is still a preview: it
 has not been tested on real Windows yet.

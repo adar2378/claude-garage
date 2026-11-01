@@ -1126,11 +1126,22 @@ mod tests {
             .unwrap();
             crate::test_support::make_executable(&path);
             // macOS scans a new executable on its first exec, which can take
-            // longer than the resume timing under test: pay that now.
-            let warm = std::process::Command::new(&path)
-                .env("GARAGE_WARM", "1")
-                .status()
-                .unwrap();
+            // longer than the resume timing under test: pay that now. On
+            // Linux a test thread forking at the same moment can still hold
+            // the file open for writing ("Text file busy"): retry briefly.
+            let mut tries = 0;
+            let warm = loop {
+                match std::process::Command::new(&path)
+                    .env("GARAGE_WARM", "1")
+                    .status()
+                {
+                    Err(e) if e.kind() == std::io::ErrorKind::ExecutableFileBusy && tries < 50 => {
+                        tries += 1;
+                        std::thread::sleep(std::time::Duration::from_millis(20));
+                    }
+                    other => break other.unwrap(),
+                }
+            };
             assert!(warm.success());
             self.st.claude.program = path.to_string_lossy().into_owned();
         }
