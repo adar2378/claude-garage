@@ -1,10 +1,10 @@
 ---
 import Page from '../../layouts/Page.astro';
-import { AUTHOR, PUBLISHER, SOFTWARE, WEBSITE, abs, breadcrumbs, dayOf, longDate } from '../../lib/site';
+import { AUTHOR, PUBLISHER, SOFTWARE, WEBSITE, abs, breadcrumbs, dayOf, longDate, sharedNodes } from '../../lib/site';
 import { fileDates } from '../../lib/gitdates';
 
 const title = 'Best tools to run multiple Claude Code sessions (2026)';
-const description = 'A fair guide to tools for running several Claude Code sessions: claude-garage, herdr, cmux, Claude Squad, Emdash and Claude Code built-in features. Who each one suits, with sources. Checked 2026-11-01.';
+const description = 'Claude Code session manager alternatives: claude-garage, herdr, cmux, Claude Squad, Emdash and built-in features. Who each suits, with sources.';
 const url = abs('/compare/alternatives/');
 const dates = fileDates('src/pages/compare/alternatives.astro');
 const checked = new Date('2026-11-01T00:00:00Z');
@@ -21,6 +21,7 @@ const tools = [
 const jsonLd = {
   '@context': 'https://schema.org',
   '@graph': [
+    ...sharedNodes(),
     {
       '@type': 'WebPage',
       name: title,
@@ -49,9 +50,9 @@ const jsonLd = {
 <Page title={title} description={description} jsonLd={jsonLd} active="compare">
   <p class="crumbs"><a href="/">Home</a> / <a href="/compare/">Compare</a></p>
   <h1>{title}</h1>
-  <p class="meta">By <a href="/about/">Saiful Islam Adar</a>, creator of claude-garage · Last checked <time datetime="2026-11-01">{longDate(checked)}</time></p>
+  <p class="meta">By <a href="/about/">Saiful Islam (Adar)</a>, creator of claude-garage · Last checked <time datetime="2026-11-01">{longDate(checked)}</time></p>
   <p class="meta"><strong>Disclosure:</strong> I made claude-garage, so read this page with that in mind. Checked on 2026-11-01 against each project's own README and documentation, linked from the matching comparison page. Product names are used only to refer to those products.</p>
-  <p class="lead">To run several Claude Code sessions at once you need three things: a place where they keep running, a way to see which one is waiting for you, and isolation so they do not overwrite each other. Several tools cover this. This guide says what each is for, and when claude-garage is not the right choice.</p>
+  <p class="lead">A Claude Code session manager helps you run several sessions at once. You need three things: a place where they keep running, a way to see which one is waiting for you, and isolation so they do not overwrite each other. Several tools cover this. This guide says what each is for, and when claude-garage is not the right choice.</p>
   <div class="note"><strong>Short answer.</strong> Running one to three sessions: Claude Code's own features or tmux are enough. Many Claude Code sessions in a terminal: claude-garage or Claude Squad. Several kinds of agents or machines: herdr. A macOS terminal with a browser pane: cmux. A desktop app from ticket to pull request: Emdash.</div>
 
   <h2>How we chose and ordered these tools</h2>
@@ -106,6 +107,7 @@ const jsonLd = {
 
   <h2>Next steps</h2>
   <ul>
+    <li><a href="https://github.com/adar2378/claude-garage" rel="noopener">claude-garage on GitHub</a>: source, issues and releases.</li>
     <li><a href="/try/">Try the claude-garage wall in your browser</a>. Nothing to install.</li>
     <li><a href="/docs/guides/install/">Install claude-garage</a> (macOS, Linux, Windows preview).</li>
     <li><a href="/compare/">All comparisons</a></li>

@@ -1,6 +1,6 @@
 ---
-title: "claude-garage vs Claude Code's built-in agent view and worktrees"
-description: "claude-garage vs Claude Code's own parallel features (agent view, --bg background sessions, --worktree, --resume): hosting, restart behaviour, needs-input signals. Last checked 2026-11-01."
+title: "claude-garage vs Claude Code agent view and worktrees"
+description: "An alternative to Claude Code's built-in agent view, --bg and --worktree: hosting, restart behaviour and needs-input signals. Checked 2026-11-01."
 short: "Claude Code now has background sessions, an agent view and worktrees. See what a separate wall still adds, and when the built-in tools are enough."
 order: 3
 kind: tool
@@ -10,6 +10,8 @@ competitor:
 method: "Checked on 2026-11-01 against Claude Code's agent view documentation (research preview) and claude-garage 1.0.0-rc.1, using each project's own README and documentation, linked under Sources. Anything marked not documented was not in those sources."
 checked: "2026-11-01"
 otherLabel: "Claude Code built-in"
+altQuestion: "Looking for an alternative to Claude Code's built-in features?"
+altAnswer: "claude-garage is an alternative to the built-in agent view when you want sessions in tmux, a wall of live tiles and one key to the session that waits for you. If you run a few sessions and want nothing extra to install, the built-in features are enough."
 shortAnswer: "Use Claude Code's built-in tools if they cover your workflow: nothing to install, and they come from Anthropic. Pick claude-garage if you want ordinary interactive sessions shown as live tiles on one screen, sessions held by tmux, and one key to jump to the session waiting for you."
 intro: "Claude Code has its own answer to running several sessions: background sessions you start with claude --bg, an agent view you open with claude agents, claude --worktree for isolated checkouts, and claude --resume to continue a conversation. claude-garage does not replace Claude Code. It is a wall around ordinary Claude Code sessions."
 who:

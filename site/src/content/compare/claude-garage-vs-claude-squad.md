@@ -1,6 +1,6 @@
 ---
-title: "claude-garage vs Claude Squad for running Claude Code sessions"
-description: "claude-garage vs Claude Squad compared with sources: both use tmux and git worktrees. Differences in agents, needs-input signals, restore, diff review, plugins and license. Last checked 2026-11-01."
+title: "claude-garage vs Claude Squad for Claude Code sessions"
+description: "A Claude Squad alternative, with sources: both use tmux and worktrees. Compare needs-input signals, restore, diff review, plugins and license."
 short: "Both are terminal apps built on tmux and git worktrees. Claude Squad has a diff tab and many agents. claude-garage has the live wall and a needs-input jump."
 order: 4
 kind: tool
@@ -10,6 +10,8 @@ competitor:
 method: "Checked on 2026-11-01 against Claude Squad 1.0.20 (released 2026-08-20) and claude-garage 1.0.0-rc.1, using each project's own README and documentation, linked under Sources. Anything marked not documented was not in those sources."
 checked: "2026-11-01"
 otherLabel: "Claude Squad"
+altQuestion: "Looking for a Claude Squad alternative?"
+altAnswer: "claude-garage is a Claude Squad alternative if you want Claude Code only, an amber needs-input signal, restore after a reboot and plugins under an MIT license. If you want a diff tab and commit and push in the same app, Claude Squad is the better fit."
 shortAnswer: "Both are terminal apps built on tmux and git worktrees. Pick Claude Squad for a built-in diff tab, a key to commit and push, or agents such as Codex, Gemini and Aider. Pick claude-garage for a grid of live tiles, a documented needs-input signal with a jump key, restore after a reboot, and plugins."
 intro: "Claude Squad and claude-garage both start from the same two building blocks: tmux for the sessions and git worktrees for isolation. After that they diverge. Claude Squad is a list with a preview and a diff tab. claude-garage is a wall of live tiles."
 who:

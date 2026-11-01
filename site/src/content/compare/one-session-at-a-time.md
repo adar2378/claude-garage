@@ -1,6 +1,8 @@
 ---
 title: "claude-garage vs running one Claude Code session at a time"
-description: "Compare running Claude Code one session at a time with claude-garage: when single-session focus is enough and when parallel sessions need a wall."
+description: "An alternative to one Claude Code session at a time: when single-session focus is enough and when parallel sessions need a wall like claude-garage."
+altQuestion: "Looking for an alternative to one session at a time?"
+altAnswer: "claude-garage is an alternative once one session is not enough and you want several running while you answer the one that waits. If you work on one task at a time, a single session is simpler and you do not need a wall."
 shortAnswer: "One session at a time is enough if your tasks depend on each other or your reviews are slow. Use claude-garage when you have independent tasks and Claude often waits on you, so a second or third session can run in that time. More sessions also use more of your Claude usage."
 short: "Running one Claude Code session at a time is simple. See when parallel sessions are worth a wall."
 order: 3
