@@ -1,6 +1,7 @@
 ---
-title: "claude-garage vs one session at a time"
+title: "claude-garage vs running one Claude Code session at a time"
 description: "Compare running Claude Code one session at a time with claude-garage: when single-session focus is enough and when parallel sessions need a wall."
+shortAnswer: "One session at a time is enough if your tasks depend on each other or your reviews are slow. Use claude-garage when you have independent tasks and Claude often waits on you, so a second or third session can run in that time. More sessions also use more of your Claude usage."
 short: "Running one Claude Code session at a time is simple. See when parallel sessions are worth a wall."
 order: 3
 otherLabel: "one session at a time"
@@ -10,11 +11,11 @@ who:
   - "You work on separate repos or separate branches of one repo at once."
   - "You want to answer a permission question quickly, wherever it appears."
 rows:
-  - { topic: "Focus", garage: "You can still maximize one tile with m and work as if it were alone.", other: "Full attention on one task." }
+  - { topic: "Focus", garage: "You can still press `m` to maximize one tile and work as if it were alone.", other: "Full attention on one task." }
   - { topic: "Throughput", garage: "Several tasks run while you review another.", other: "One task at a time. Waiting time is idle time." }
   - { topic: "Review load", garage: "More sessions means more to review. You must keep up.", other: "Low. You review one result at a time." }
-  - { topic: "File conflicts", garage: "N gives a session its own git worktree, so parallel edits do not collide.", other: "No conflict between sessions." }
-  - { topic: "Permission prompts", garage: "A waiting session turns amber, and a jumps to it from any project.", other: "You are already looking at it." }
+  - { topic: "File conflicts", garage: "Press `N` to give a session its own git worktree, so parallel edits do not collide.", other: "No conflict between sessions." }
+  - { topic: "Permission prompts", garage: "A waiting session turns amber, and you press `a` to jump to it from any project.", other: "You are already looking at it." }
   - { topic: "Setup", garage: "Install a binary and tmux.", other: "None beyond Claude Code." }
   - { topic: "Cost", garage: "The tool is MIT licensed and free. Parallel sessions use more of your Claude usage.", other: "Lower usage per hour." }
 notNeeded:

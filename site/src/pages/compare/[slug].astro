@@ -6,7 +6,7 @@ import { fileDates } from '../../lib/gitdates';
 
 export async function getStaticPaths() {
   const pages = await getCollection('compare');
-  return pages.map((page) => ({ params: { slug: page.id }, props: { page, all: pages.map((p) => ({ id: p.id, title: p.data.title, order: p.data.order })) } }));
+  return pages.map((page) => ({ params: { slug: page.id }, props: { page, all: pages.map((p) => ({ id: p.id, title: p.data.title, order: p.data.order, kind: p.data.kind })) } }));
 }
 const { page, all } = Astro.props;
 const { Content } = await render(page);
@@ -15,7 +15,12 @@ const url = abs(`/compare/${page.id}/`);
 // Dates come from git history of the page source.
 const dates = fileDates(`src/content/compare/${page.id}.md`);
 const modified = new Date(dates.modified);
-const related = all.filter((p) => p.id !== page.id).sort((a, b) => a.order - b.order);
+const isTool = d.kind === 'tool';
+const sorted = all.filter((p) => p.id !== page.id).sort((a, b) => a.order - b.order);
+const relatedTools = sorted.filter((p) => p.kind === 'tool');
+const relatedWorkflows = sorted.filter((p) => p.kind !== 'tool');
+const code = (t: string) => t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/`([^`]+)`/g, '<code>$1</code>');
+const checkedDate = d.checked ? new Date(`${d.checked}T00:00:00Z`) : undefined;
 const jsonLd = {
   '@context': 'https://schema.org',
   '@graph': [
@@ -29,22 +34,20 @@ const jsonLd = {
       dateModified: dates.modified,
       inLanguage: 'en',
       isPartOf: WEBSITE,
-      about: SOFTWARE,
+      about: isTool && d.competitor ? [SOFTWARE, { '@type': 'SoftwareApplication', name: d.competitor.name, url: d.competitor.url }] : SOFTWARE,
       author: AUTHOR,
       publisher: PUBLISHER,
-    },
-    {
-      '@type': 'FAQPage',
-      mainEntity: d.faq.map((f) => ({ '@type': 'Question', name: f.q, acceptedAnswer: { '@type': 'Answer', text: f.a } })),
     },
     breadcrumbs([['Home', '/'], ['Compare', '/compare/'], [d.title, `/compare/${page.id}/`]]),
   ],
 };
 ---
-<Page title={`${d.title} | claude-garage`} description={d.description} jsonLd={jsonLd} active="compare">
+<Page title={d.title} description={d.description} jsonLd={jsonLd} active="compare">
   <p class="crumbs"><a href="/">Home</a> / <a href="/compare/">Compare</a></p>
   <h1>{d.title}</h1>
   <p class="meta">By <a href="https://github.com/adar2378">Saiful Islam</a>, creator of claude-garage · Last updated <time datetime={dayOf(modified)}>{longDate(modified)}</time></p>
+  <div class="note"><strong>Short answer.</strong> {d.shortAnswer}</div>
+  <p class="meta"><strong>Disclosure:</strong> I made claude-garage, so read this page with that in mind. {d.method ?? 'Claims about claude-garage come from its source code (version 1.0.0-rc.1) and docs, checked on 2026-11-01.'}</p>
   <p class="lead">{d.intro}</p>
   <p class="cta"><a class="btn primary" href="/docs/guides/install/">Install claude-garage</a><a class="btn" href="/docs/guides/first-wall/">First wall guide</a></p>
 
@@ -55,13 +58,19 @@ const jsonLd = {
   <div class="tablewrap">
     <table>
       <thead><tr><th scope="col">Topic</th><th scope="col">claude-garage</th><th scope="col" style="text-transform:capitalize">{d.otherLabel}</th></tr></thead>
-      <tbody>{d.rows.map((r) => <tr><th scope="row">{r.topic}</th><td>{r.garage}</td><td>{r.other}</td></tr>)}</tbody>
+      <tbody>{d.rows.map((r) => <tr><th scope="row">{r.topic}</th><td set:html={code(r.garage)} /><td set:html={code(r.other)} /></tr>)}</tbody>
     </table>
   </div>
 
   <Content />
 
-  <h2>When you do not need claude-garage</h2>
+  {d.sources.length > 0 && (<>
+    <h2>Sources</h2>
+    <p>Last checked <time datetime={d.checked}>{checkedDate && longDate(checkedDate)}</time>. Anything marked "not documented" means we could not find it in these sources. Product details change, so check the official pages before you decide.</p>
+    <ul>{d.sources.map((src) => <li><a href={src.url} rel="noopener">{src.label}</a></li>)}</ul>
+  </>)}
+
+  <h2>{isTool ? `When ${d.otherLabel} is the better pick` : 'When you do not need claude-garage'}</h2>
   <ul>{d.notNeeded.map((w) => <li>{w}</li>)}</ul>
 
   <h2>Frequently asked questions</h2>
@@ -69,11 +78,18 @@ const jsonLd = {
 
   <h2>Next steps</h2>
   <ul>
+    <li><a href="/try/">Try the wall in your browser</a>. Nothing to install.</li>
     <li><a href="/docs/guides/install/">Install claude-garage</a> (macOS, Linux, Windows preview).</li>
+    {isTool && <li><a href="/compare/alternatives/">Best tools to run multiple Claude Code sessions</a>, with when each one fits.</li>}
     <li><a href="/docs/guides/many-sessions/">Run many sessions</a> and <a href="/docs/guides/nothing-lost/">keep them alive</a>.</li>
     <li><a href="/docs/guides/plugins/">Plugins</a> and <a href="/docs/guides/first-plugin/">build your first plugin</a>.</li>
   </ul>
   <h2>Related comparisons</h2>
-  <ul>{related.map((r) => <li><a href={`/compare/${r.id}/`}>{r.title}</a></li>)}</ul>
-  <p class="note">Disclosure: claude-garage is made by the author of this page. Claims about it come from its source code and docs. No other product is named here.</p>
+  <ul>
+    {relatedTools.map((r) => <li><a href={`/compare/${r.id}/`}>{r.title}</a></li>)}
+    {relatedWorkflows.map((r) => <li><a href={`/compare/${r.id}/`}>{r.title}</a></li>)}
+  </ul>
+  {isTool
+    ? <p class="note">Product names are used only to refer to those products. Claims about claude-garage come from its source code and docs. This site is not affiliated with {d.competitor?.name ?? d.otherLabel} or Anthropic. If a fact here is wrong, <a href="https://github.com/adar2378/claude-garage/issues">open an issue</a> and we will fix it.</p>
+    : <p class="note">Claims about claude-garage come from its source code and docs.</p>}
 </Page>

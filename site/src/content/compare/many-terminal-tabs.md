@@ -1,6 +1,7 @@
 ---
-title: "claude-garage vs many terminal tabs"
+title: "claude-garage vs many terminal tabs for Claude Code sessions"
 description: "Compare claude-garage with running Claude Code in many terminal tabs: waiting signals, session survival, setup cost and when plain tabs are enough."
+shortAnswer: "Use plain tabs if you run one or two sessions and always know what each is doing. Use claude-garage if you run three or more sessions and lose track of which one is blocked on a question, or if you want sessions to survive a closed terminal or a reboot. The cost is a second set of keys."
 short: "One screen for every session, and a key that jumps to the one waiting for you."
 order: 1
 otherLabel: "many terminal tabs"
@@ -10,14 +11,14 @@ who:
   - "You close terminals, reboot, or lose an SSH link, and you want the conversations back."
   - "You work in several repos and want sessions grouped by project folder."
 rows:
-  - { topic: "Seeing every session", garage: "One grid per project, all sessions live in tiles.", other: "One session per tab. You switch to see each." }
-  - { topic: "Knowing who waits for you", garage: "A session that needs input turns amber. Press a to jump to the one waiting longest, A to list all.", other: "No signal. You check each tab, or you notice late." }
+  - { topic: "Seeing every session", garage: "Each project has one grid, and every session is a live tile.", other: "One session per tab. You switch to see each." }
+  - { topic: "Knowing who waits for you", garage: "A session that needs input turns amber. Press `a` to jump to the one waiting longest, or `A` to list all of them.", other: "No signal. You check each tab, or you notice late." }
   - { topic: "Closing the terminal", garage: "Sessions keep running, because tmux runs them, not the wall.", other: "The session usually ends with the tab or window." }
-  - { topic: "After a reboot", garage: "Sessions show as restorable. Enter brings one back with claude --resume and its conversation.", other: "You start again and use /resume by hand." }
-  - { topic: "Parallel work in one repo", garage: "N starts a session in its own git worktree. Closing it offers merge, discard or keep.", other: "You make and clean up worktrees yourself." }
+  - { topic: "After a reboot", garage: "Sessions show as restorable. Press `Enter` to bring one back with `claude --resume` and its conversation.", other: "You start again and use /resume by hand." }
+  - { topic: "Parallel work in one repo", garage: "Press `N` to start a session in its own git worktree. Closing it offers merge, discard or keep.", other: "You make and clean up worktrees yourself." }
   - { topic: "Setup", garage: "Install one binary. Needs tmux 3.2 or newer on macOS and Linux, and Claude Code on your PATH.", other: "None." }
   - { topic: "Keys", garage: "Single keys control the wall. Enter types into a tile. Ctrl+G leaves the tile.", other: "Your terminal's own keys only." }
-  - { topic: "Sessions started elsewhere", garage: "Not adopted. garage manages the sessions it starts.", other: "Not applicable." }
+  - { topic: "Sessions started elsewhere", garage: "claude-garage does not adopt sessions you started elsewhere. It manages the sessions it starts.", other: "This does not apply to tabs." }
 notNeeded:
   - "You run one or two sessions and always know what each is doing."
   - "You never close the terminal and never reboot in the middle of a task."

@@ -1,6 +1,7 @@
 ---
-title: "claude-garage vs tmux on its own"
+title: "claude-garage vs tmux on its own for Claude Code sessions"
 description: "Compare claude-garage with plain tmux for Claude Code: what tmux gives you already, what claude-garage adds on top, and when plain tmux is better."
+shortAnswer: "Plain tmux is enough if you are happy to script your own status checks and restore steps. Use claude-garage if you want that work done: it runs on tmux, marks the session waiting for your answer, jumps to it with one key, and restores conversations with claude --resume after a reboot."
 short: "claude-garage is built on tmux. See what it adds and what plain tmux already covers."
 order: 2
 otherLabel: "tmux on its own"
@@ -10,11 +11,11 @@ who:
   - "You want sessions grouped by project with one key to jump to a blocked one."
   - "You want a restored session to resume its Claude conversation, not just open an empty shell."
 rows:
-  - { topic: "Keeping sessions alive", garage: "Yes. tmux runs every session.", other: "Yes. This is what tmux does best." }
-  - { topic: "Layout", garage: "A wall of tiles per project, plus a rail of projects and sessions.", other: "You design windows and panes." }
-  - { topic: "Which session waits for me", garage: "Amber marks it. a jumps to it, A lists every waiting session.", other: "Nothing built in. You write a script or watch the panes." }
-  - { topic: "After a reboot", garage: "Records are kept. Enter restores a session with claude --resume. R restores all stopped sessions of a project.", other: "tmux sessions are gone. You restart and resume each by hand, or use a plugin." }
-  - { topic: "Git worktrees", garage: "N creates one per session. Closing offers merge, discard or keep, and aborts a failed merge.", other: "Manual git commands." }
+  - { topic: "Keeping sessions alive", garage: "Yes. claude-garage uses tmux to run every session.", other: "Yes. This is what tmux does best." }
+  - { topic: "Layout", garage: "claude-garage shows a wall of tiles per project, plus a rail of projects and sessions.", other: "You design windows and panes." }
+  - { topic: "Which session waits for me", garage: "The waiting session turns amber. Press `a` to jump to it, or `A` to list every waiting session.", other: "Nothing built in. You write a script or watch the panes." }
+  - { topic: "After a reboot", garage: "Records are kept. Press `Enter` on a stopped tile to restore the session with `claude --resume`. R restores all stopped sessions of a project.", other: "tmux sessions are gone. You restart and resume each by hand, or use a plugin." }
+  - { topic: "Git worktrees", garage: "Press `N` to start a session in its own git worktree. Closing it offers merge, discard or keep, and a failed merge is aborted.", other: "Manual git commands." }
   - { topic: "Extending it", garage: "Plugins: widgets, keys, panes and CLI commands, written in any language.", other: "tmux config, scripts and tmux plugins." }
   - { topic: "Your own tmux setup", garage: "garage sessions are ordinary tmux sessions named garage/<project>/<label> on your tmux server. garage turns the tmux status line off for them, because the wall draws its own title bars.", other: "Full control: your config, your keys, your layout." }
   - { topic: "Windows", garage: "Preview. Uses a session host process instead of tmux.", other: "tmux is not native on Windows." }
