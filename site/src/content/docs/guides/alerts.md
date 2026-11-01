@@ -38,9 +38,16 @@ claude-garage alerts needs-input off    # no alert when a session needs you
 claude-garage alerts done off           # no alert when a session finishes
 claude-garage alerts banners off        # chime only, never a banner
 claude-garage alerts test               # play both chimes and show a sample banner
+claude-garage alerts terminal auto      # app a clicked banner brings forward (or a bundle id)
 ```
 
 Use `claude-garage alerts test` after a change to hear and see the result.
+
+## Can I click a banner to jump to the session?
+
+On macOS, yes. Click a banner to jump to the session (needs `brew install terminal-notifier`). The click brings your terminal forward and the wall focuses that session. When several sessions need you, it focuses the one that has waited the longest. Without terminal-notifier you still get the banner, but a click does nothing.
+
+claude-garage finds your terminal on its own (Ghostty, iTerm2, Terminal, WezTerm and kitty). For another one, give its bundle id: `claude-garage alerts terminal com.example.term`. Use `auto` to go back.
 
 ## How do I turn alerts off completely?
 
