@@ -147,35 +147,39 @@ const version = appVersion();
     <div class="pgrid">
       <article class="pc rv">
         <div class="pv"><div class="mini" style="width:62%"><img src={crops.p0.src} width={crops.p0.w} height={crops.p0.h} alt="Sidebar rows reading claude-3 closed, claude-4 crashed" loading="lazy" decoding="async" /></div></div>
-        <h3><a href="/docs/guides/plugins/#the-nine-built-in-plugins">Closed chats</a></h3><p>Closed sessions stay in the rail. Click one to bring it back.</p>
+        <h3><a href="/docs/guides/plugins/#the-ten-built-in-plugins">Closed chats</a></h3><p>Closed sessions stay in the rail. Click one to bring it back.</p>
       </article>
       <article class="pc rv" style="--rd:.07s">
         <div class="pv"><div class="mini"><img src={crops.p1.src} width={crops.p1.w} height={crops.p1.h} alt="A tile header with x and del buttons" loading="lazy" decoding="async" /></div></div>
-        <h3><a href="/docs/guides/plugins/#the-nine-built-in-plugins">Tile buttons</a></h3><p>Close and delete buttons in each tile title.</p>
+        <h3><a href="/docs/guides/plugins/#the-ten-built-in-plugins">Tile buttons</a></h3><p>Close and delete buttons in each tile title.</p>
       </article>
       <article class="pc rv" style="--rd:.14s">
         <div class="pv"><div class="mini"><img src={crops.p2.src} width={crops.p2.w} height={crops.p2.h} alt="Status bar showing 5h 24% and weekly 61% usage" loading="lazy" decoding="async" /></div></div>
-        <h3><a href="/docs/guides/plugins/#the-nine-built-in-plugins">Usage bar</a></h3><p>Your 5 hour and weekly limits in the status strip.</p>
+        <h3><a href="/docs/guides/plugins/#the-ten-built-in-plugins">Usage bar</a></h3><p>Your 5 hour and weekly limits in the status strip.</p>
       </article>
       <article class="pc rv">
         <div class="pv"><div class="mini" style="width:88%"><img src={crops.p3.src} width={crops.p3.w} height={crops.p3.h} alt="Status bar with folder tabs and a tiny pet" loading="lazy" decoding="async" /></div></div>
-        <h3><a href="/docs/guides/plugins/#the-nine-built-in-plugins">Pit pet</a></h3><p>A tiny pet in the status strip. It wakes when a session needs you.</p>
+        <h3><a href="/docs/guides/plugins/#the-ten-built-in-plugins">Pit pet</a></h3><p>A tiny pet in the status strip. It wakes when a session needs you.</p>
+      </article>
+      <article class="pc rv">
+        <div class="pv"><div class="keys"><span class="skey">♪</span></div></div>
+        <h3><a href="/docs/guides/alerts/">Alerts</a></h3><p>A chime when a session needs you or finishes a long turn, and a desktop banner when garage is out of view.</p>
       </article>
       <article class="pc rv" style="--rd:.07s">
         <div class="pv"><div class="keys"><span class="skey">s</span><span class="skey">S</span></div></div>
-        <h3><a href="/docs/guides/plugins/#the-nine-built-in-plugins">Quick send</a></h3><p><span class="inl">s</span> sends a line to one session, <span class="inl">S</span> to every session in the project.</p>
+        <h3><a href="/docs/guides/plugins/#the-ten-built-in-plugins">Quick send</a></h3><p><span class="inl">s</span> sends a line to one session, <span class="inl">S</span> to every session in the project.</p>
       </article>
       <article class="pc rv" style="--rd:.14s">
         <div class="pv"><div class="keys"><span class="skey">/</span></div></div>
-        <h3><a href="/docs/guides/plugins/#the-nine-built-in-plugins">Jump palette</a></h3><p>Press <span class="inl">/</span> to jump to any session.</p>
+        <h3><a href="/docs/guides/plugins/#the-ten-built-in-plugins">Jump palette</a></h3><p>Press <span class="inl">/</span> to jump to any session.</p>
       </article>
       <article class="pc rv">
         <div class="pv"><div class="ico"><svg aria-hidden="true" focusable="false" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M5 5v14M12 9v10M19 13v6"/></svg></div></div>
-        <h3><a href="/docs/guides/plugins/#the-nine-built-in-plugins">Turn markers</a></h3><p>Marks where each Claude turn ended, right in the tile.</p>
+        <h3><a href="/docs/guides/plugins/#the-ten-built-in-plugins">Turn markers</a></h3><p>Marks where each Claude turn ended, right in the tile.</p>
       </article>
       <article class="pc rv" style="--rd:.07s">
         <div class="pv"><div class="ico"><svg aria-hidden="true" focusable="false" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M9 7V5h6v2M6.5 7l1 12h9l1-12"/></svg></div></div>
-        <h3><a href="/docs/guides/plugins/#the-nine-built-in-plugins">Prune empty projects</a> <span class="tag">off by default</span></h3><p>Removes a project after you close its last session. Off by default.</p>
+        <h3><a href="/docs/guides/plugins/#the-ten-built-in-plugins">Prune empty projects</a> <span class="tag">off by default</span></h3><p>Removes a project after you close its last session. Off by default.</p>
       </article>
       <article class="pc rv" style="--rd:.14s">
         <div class="pv"><div class="ico"><svg aria-hidden="true" focusable="false" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M5 8l4.5 4L5 16M12.5 17H19"/></svg></div></div>
@@ -206,8 +210,8 @@ const version = appVersion();
     <div class="kgrid">
       <div class="kc rv"><div class="caps"><span class="cap">r</span><span class="cap">r</span></div><h3><a href="/docs/guides/nothing-lost/">Restart and resume</a></h3><p>Brings a session back and picks the conversation up where it stopped.</p></div>
       <div class="kc rv" style="--rd:.07s"><div class="caps"><span class="cap">x</span><span class="cap">x</span></div><h3><a href="/docs/guides/worktrees/#finish-a-worktree-session">Close a session</a></h3><p>Closes the chat and lets you merge or discard its worktree.</p></div>
-      <div class="kc rv" style="--rd:.14s"><div class="caps"><span class="cap">/</span></div><h3><a href="/docs/guides/plugins/#the-nine-built-in-plugins">Jump palette</a></h3><p>Fuzzy-jump to any session without leaving the keyboard.</p></div>
-      <div class="kc rv" style="--rd:.21s"><div class="caps"><span class="cap">s</span><span class="cap">S</span></div><h3><a href="/docs/guides/plugins/#the-nine-built-in-plugins">Send a line</a></h3><p><span class="inl">s</span> to one session, <span class="inl">S</span> to all of them at once.</p></div>
+      <div class="kc rv" style="--rd:.14s"><div class="caps"><span class="cap">/</span></div><h3><a href="/docs/guides/plugins/#the-ten-built-in-plugins">Jump palette</a></h3><p>Fuzzy-jump to any session without leaving the keyboard.</p></div>
+      <div class="kc rv" style="--rd:.21s"><div class="caps"><span class="cap">s</span><span class="cap">S</span></div><h3><a href="/docs/guides/plugins/#the-ten-built-in-plugins">Send a line</a></h3><p><span class="inl">s</span> to one session, <span class="inl">S</span> to all of them at once.</p></div>
     </div>
   </div>
 </section>
@@ -225,6 +229,7 @@ const version = appVersion();
         <li><a href="/compare/tmux-alone/">vs tmux on its own</a></li>
         <li><a href="/compare/ide-agent-panels/">vs IDE agent panels</a></li>
         <li><a href="/compare/one-session-at-a-time/">vs one session at a time</a></li>
+        <li><a href="/compare/claude-garage-vs-claude-code-agent-view/">vs Claude Code's agent view</a></li>
       </ul>
       <a class="btn btn-line sm" href="/compare/alternatives/">Compare with other session managers <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg></a>
     </div>
