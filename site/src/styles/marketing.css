@@ -1,11 +1,5 @@
 /* Shared styles for /blog/ and /compare/. Light-first, same palette as the landing page. */
 .mk { max-width: 46rem; margin: 0 auto; padding: 0 1.5rem 5rem; font-size: 1.0625rem; line-height: 1.65; color: var(--sl-color-gray-1); }
-.mk-head { display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap; max-width: 64rem; margin: 0 auto; padding: 1.25rem 1.5rem; }
-.mk-logo { display: inline-flex; align-items: center; gap: .6rem; text-decoration: none; font-weight: 650; letter-spacing: -.02em; color: var(--sl-color-white); }
-.mk-logo b { height: 1.75rem; padding: 0 .55rem; border-radius: .6rem; background: #14151A; color: #E85002; display: inline-grid; place-items: center; font: 600 .8rem/1 var(--sl-font-mono); letter-spacing: -.06em; }
-.mk-nav { display: flex; gap: 1.4rem; font: 500 .875rem/1 var(--sl-font-mono); }
-.mk-nav a { color: var(--sl-color-white); text-decoration: none; padding: .4rem 0; }
-.mk-nav a:hover, .mk-nav a[aria-current] { text-decoration: underline; text-underline-offset: 5px; }
 .mk h1 { font-size: clamp(2rem, 5vw, 2.9rem); line-height: 1.08; letter-spacing: -.035em; font-weight: 650; color: var(--sl-color-white); margin: 2.5rem 0 1rem; text-wrap: balance; }
 .mk h2 { font-size: 1.5rem; line-height: 1.2; letter-spacing: -.02em; font-weight: 650; color: var(--sl-color-white); margin: 2.6rem 0 .8rem; text-wrap: balance; }
 .mk h3 { font-size: 1.1rem; font-weight: 650; color: var(--sl-color-white); margin: 1.6rem 0 .4rem; }
@@ -32,13 +26,15 @@
 .mk .card span { color: var(--sl-color-gray-2); font-size: .95rem; }
 .mk .card time { display: block; font: 500 .8rem/1 var(--sl-font-mono); color: var(--sl-color-gray-3); margin-bottom: .5rem; }
 .mk .cta { display: flex; flex-wrap: wrap; gap: .8rem; margin: 1.6rem 0; }
-.mk .btn { display: inline-block; padding: .7rem 1.2rem; border-radius: .8rem; font-weight: 600; text-decoration: none; border: 1.5px solid #14151A; color: var(--sl-color-white); }
-.mk .btn.primary { background: var(--brand-fill); border-color: var(--brand-fill); color: var(--on-brand); }
-.mk .btn.primary:hover { background: var(--brand-fill-hover); border-color: var(--brand-fill-hover); }
-.mk .note { border-left: 3px solid var(--brand); padding: .2rem 0 .2rem 1rem; color: var(--sl-color-gray-2); }
-.mk-foot { max-width: 46rem; margin: 0 auto; padding: 2rem 1.5rem 3rem; border-top: 1px solid var(--sl-color-gray-5); font: 500 .85rem/1.6 var(--sl-font-mono); color: var(--sl-color-gray-3); display: flex; flex-wrap: wrap; gap: .4rem 1.4rem; }
-.mk-foot a { color: var(--sl-color-gray-2); }
-.mk :focus-visible, .mk-head :focus-visible, .mk-foot :focus-visible { outline: 2px solid var(--brand-high); outline-offset: 2px; }
+.mk .btn { display: inline-flex; align-items: center; min-height: 48px; padding: 0 22px; border-radius: 12px; font-weight: 600; text-decoration: none; border: 1.5px solid #14151A; color: var(--sl-color-white); background: transparent; transition: background-color .2s, color .2s; }
+.mk .btn:hover { background: #14151A; color: #fff; }
+.mk .btn.primary { background: #14151A; border-color: #14151A; color: #fff; }
+.mk .btn.primary:hover { background: #2a2c35; border-color: #2a2c35; color: #fff; }
+.mk .note { border-left: 3px solid var(--sl-color-gray-5); padding: .2rem 0 .2rem 1rem; color: var(--sl-color-gray-2); }
+.mk-foot { max-width: 46rem; margin: 0 auto; padding: 2rem 1.5rem 3rem; border-top: 1px solid var(--sl-color-gray-5); font: 500 .85rem/1.6 var(--sl-font-mono); color: var(--sl-color-gray-3); display: flex; flex-wrap: wrap; gap: 0 .6rem; }
+.mk-foot a { display: inline-flex; align-items: center; min-height: 44px; padding: 0 .4rem; color: var(--sl-color-gray-2); }
+.mk-foot span { display: inline-flex; align-items: center; min-height: 44px; padding: 0 .4rem; }
+.mk :focus-visible, .mk-foot :focus-visible { outline: 2px solid var(--brand-high); outline-offset: 2px; }
 .mk figure.diagram { margin: 1.6rem 0; }
 .mk figure.diagram svg { width: 100%; max-width: 36rem; height: auto; color: var(--sl-color-white); }
 .mk figcaption { font-size: .9rem; color: var(--sl-color-gray-3); margin-top: .5rem; }

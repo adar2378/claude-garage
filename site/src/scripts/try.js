@@ -432,7 +432,7 @@ function init() {
     root.querySelector('#tr-count').textContent = cur >= 8 ? 'All 8 lessons done' : `Lesson ${cur + 1} of 8`;
     buildPad(); updateHint();
     const panel = root.querySelector('.tr-panel'); const c = cur < 8 ? lis[cur] : root.querySelector('[data-finish]');
-    if (c && panel.scrollHeight > panel.clientHeight + 4) panel.scrollTop = Math.max(0, c.offsetTop - 84);
+    if (c && panel.scrollHeight > panel.clientHeight + 4) panel.scrollTop = Math.max(0, c.offsetTop - ((panel.querySelector('.tr-ph')?.offsetHeight ?? 74) + 10));
   }
   function buildPad() {
     const keys = cur >= 8 ? ['[', ']', 'n', 'a', 'A', '?'] : LESSONS[cur].keypad;
