@@ -21,7 +21,7 @@ The hard part isn't the windows. It's knowing **which session is
 waiting for you** right now, and not losing sessions when you close a
 terminal or reboot.
 
-[herdr](https://github.com/ogulcancelik/herdr) solves a lot of this and
+[herdr](https://github.com/herdrdev/herdr) solves a lot of this and
 is a good product. I found it too complex and verbose for what I
 needed. So I built something simpler: one wall, one key to jump to
 whoever is waiting, and tmux keeping every session alive.
