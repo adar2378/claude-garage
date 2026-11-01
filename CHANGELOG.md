@@ -1,10 +1,28 @@
 # Changelog
 
-## 1.0.0-rc.1 — one binary
+## 1.0.0 — one binary, plugins and alerts
 
-Release candidate. The npm package is published under the `next` tag
-(`npx claude-garage@next`); the shell and PowerShell installers are on the
-GitHub release. There is no Homebrew formula yet.
+The first stable release. `npx claude-garage` installs it; the shell and
+PowerShell installers are on the GitHub release. There is no Homebrew
+formula yet. Windows (x64) has a prebuilt binary and is still a preview: it
+has not been tested on real Windows yet.
+
+### Added
+
+- **Alerts.** A chime when a session needs you, and a softer one when a
+  session finishes a turn that took 20 seconds or more. When garage is not
+  the focused window you also get a desktop banner with Claude's question.
+  On macOS, clicking the banner brings your terminal forward and jumps to
+  that session (needs `terminal-notifier`). Options: `claude-garage alerts`.
+  Alerts are a bundled plugin, on by default, also when you upgrade.
+- **Plugins overlay.** Press `p` to see every plugin, where it came from and
+  what it may do, and turn it on or off with Space. Changes apply at once.
+- **Status colours in the rail.** A working session has a cyan spinning
+  glyph and a bright name, a fresh done session is green, and sessions in
+  other views keep their colours.
+- `x x` kills the focused session with no history (as in 0.6.x); `x X`
+  closes it and keeps it in closed chats.
+- garage refuses to start on tmux older than 3.2 and says how to upgrade.
 
 ### Changed
 
@@ -13,8 +31,7 @@ GitHub release. There is no Homebrew formula yet.
   download. Your sessions are untouched: tmux still owns them.
 - **Install with whichever you like.** `npx claude-garage`, or a shell or
   PowerShell installer. macOS (Apple silicon and Intel), Linux (x64 and arm64)
-  and Windows (x64) get prebuilt binaries. Windows is a preview until a
-  contributor has verified it on real Windows, which is planned before 1.0.0.
+  and Windows (x64) get prebuilt binaries. Windows is a preview.
 - **Upgrading from 0.6.x is automatic.** The first `claude-garage` after the
   upgrade notices the old daemon, stops only that process, and starts the new
   one. No session is closed.
@@ -26,6 +43,10 @@ GitHub release. There is no Homebrew formula yet.
   runs code as you. Unpacked sets are keyed by the build, and one is removed
   only after a week without use. All first-party plugins, including on
   Windows, ship in the binary.
+- The bottom strip no longer repeats the workspace list; the rail has it.
+- Closing a tile is instant, with no exit animation.
+- `daemon.log` is rotated at 10 MB when the daemon starts.
+- The built-in needs-input notification moved into the alerts plugin.
 - `GARAGE_TUI_BIN` is read by debug builds only.
 
 ### Removed
