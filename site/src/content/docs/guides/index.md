@@ -21,7 +21,7 @@ These guides take you from install to a wall you trust. Read them in order, or j
 
 ## Plugins and settings
 
-- [Use and install plugins](/docs/guides/plugins/): the nine built-in plugins, installing more from GitHub, and turning them on or off.
+- [Use and install plugins](/docs/guides/plugins/): the ten built-in plugins, installing more from GitHub, and turning them on or off.
 - [Build your first plugin](/docs/guides/first-plugin/): scaffold, write, test and publish a plugin in about 20 minutes.
 - [Configuration](/docs/guides/configuration/): environment variables and the `config.toml` file.
 

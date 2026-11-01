@@ -1,0 +1,24 @@
+#:schema https://raw.githubusercontent.com/adar2378/claude-garage/main/schemas/garage-plugin.schema.json
+id          = "alerts"
+name        = "Alerts"
+version     = "0.1.0"
+api_version = 1
+platforms   = ["macos", "linux", "windows"]
+description = "A chime and a desktop banner when a session needs you or finishes a long turn"
+permissions = ["sessions.read"]
+requires    = ["ui.visible"]
+
+# One run per status change. Most runs only note the time a session started
+# working; a session that needs you, or that finished after 20 seconds of
+# work, waits 2 seconds for others to join it, then makes one sound and (when
+# no wall is in view) one banner. Options: `claude-garage alerts`.
+[[events]]
+on           = "session.status_changed"
+command      = ["{plugin_dir}/bin/alerts", "status"]
+timeout_secs = 15
+
+[[cli]]
+name         = "alerts"
+description  = "Show or change the alert options (sound, needs-input, done, banners, test)"
+command      = ["{plugin_dir}/bin/alerts", "cli"]
+needs_daemon = false

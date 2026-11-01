@@ -95,6 +95,8 @@ impl AppState {
         });
         let plugins = PluginHost::new(&config, bus.clone(), lookup);
         plugins.set_backend(backend.clone());
+        let visibility = Visibility::default();
+        plugins.set_visibility(visibility.clone());
         Self {
             config: Arc::new(config),
             bus,
@@ -107,7 +109,7 @@ impl AppState {
             agents,
             poller_cell: Arc::default(),
             shutdown: Arc::new(watch::channel(false).0),
-            visibility: Visibility::default(),
+            visibility,
             lifecycle: Lifecycle::default(),
             plugins,
             closing: Default::default(),
@@ -123,6 +125,7 @@ impl AppState {
         });
         self.plugins = PluginHost::with_runner(&self.config, self.bus.clone(), lookup, runner);
         self.plugins.set_backend(self.backend.clone());
+        self.plugins.set_visibility(self.visibility.clone());
         self
     }
 

@@ -974,6 +974,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "garage-plugin-alerts"
+version = "1.0.0-rc.1"
+dependencies = [
+ "garage-plugin-sdk",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "garage-plugin-cli-extras"
 version = "1.0.0-rc.1"
 dependencies = [

@@ -142,10 +142,9 @@ pub fn plugins_lines(
         .clamp(8, 20);
     let dim = Style::default().fg(colors::FAINT);
     lines.push(Line::styled(
-        format!(
-            "    {:<name_w$} {:<8} {:<3}  permissions",
-            "name", "source", "state"
-        ),
+        // "state" is as wide as a row's `{state:<3}` plus its two spaces, so
+        // "permissions" starts in the same column as the permissions below.
+        format!("    {:<name_w$} {:<8} state permissions", "name", "source"),
         dim,
     ));
     for (i, plugin) in list.plugins.iter().enumerate() {

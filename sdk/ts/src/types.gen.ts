@@ -463,6 +463,12 @@ export interface ContextUi {
   slots: {
     [k: string]: unknown;
   };
+  /**
+   * Whether a wall is in view right now (it reported itself visible within
+   * the last 45 seconds). `false` when none did, or from a daemon that does
+   * not say.
+   */
+  visible?: boolean;
 }
 /**
  * The payload (`event.data`) of each event, by event name. `daemon.started`
@@ -573,6 +579,7 @@ export interface Features {
   "widgets.frame_x": boolean;
   "widgets.slot_geometry": boolean;
   "ui.notice": boolean;
+  "ui.visible"?: boolean;
   "cli.fallback": boolean;
   "panes.placements": string[];
   "sessions.input": boolean;

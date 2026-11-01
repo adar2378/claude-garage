@@ -121,11 +121,17 @@ pub struct PluginFacts<'a> {
     pub state_dir: &'a std::path::Path,
 }
 
+/// The `ui` part of the context: what the wall reported and whether one is in view.
+pub struct UiFacts {
+    pub slots: Value,
+    pub visible: bool,
+}
+
 pub async fn build(
     lookup: &dyn SessionLookup,
     plugin: &PluginFacts<'_>,
     req: CtxRequest,
-    ui_slots: &Value,
+    ui: &UiFacts,
 ) -> Value {
     let (session, worktree) = match &req.session {
         Some(id) => {
@@ -146,7 +152,7 @@ pub async fn build(
         "selection": {"session": selection("session"), "index": selection("index"), "view": selection("view")},
         "worktree": worktree,
         "event": req.event,
-        "ui": {"slots": ui_slots},
+        "ui": {"slots": ui.slots, "visible": ui.visible},
     })
 }
 
@@ -188,7 +194,10 @@ mod tests {
             &Fixed(Some(info)),
             &facts(),
             req,
-            &json!({"strip.right": {"width": 38}}),
+            &UiFacts {
+                slots: json!({"strip.right": {"width": 38}}),
+                visible: true,
+            },
         )
         .await;
         assert_eq!(
@@ -207,6 +216,7 @@ mod tests {
         );
         assert_eq!(ctx["worktree"]["branch"], "b");
         assert_eq!(ctx["ui"]["slots"]["strip.right"]["width"], 38);
+        assert_eq!(ctx["ui"]["visible"], true);
         assert_eq!(ctx["plugin"]["state_dir"], "/data/p");
         assert_eq!(ctx["api_version"], 1);
     }
@@ -217,7 +227,10 @@ mod tests {
             &Fixed(None),
             &facts(),
             CtxRequest::from_run_body("palette", "p:x", &json!({})),
-            &json!({}),
+            &UiFacts {
+                slots: json!({}),
+                visible: false,
+            },
         )
         .await;
         assert_eq!(
@@ -229,6 +242,7 @@ mod tests {
             ctx["selection"],
             json!({"session": null, "index": null, "view": null})
         );
+        assert_eq!(ctx["ui"], json!({"slots": {}, "visible": false}));
         for k in ["worktree", "event"] {
             assert!(ctx.get(k).is_some_and(Value::is_null), "{k}");
         }
@@ -243,7 +257,11 @@ mod tests {
             status: Some("idle".into()),
             ..Default::default()
         };
-        let ctx = build(&Fixed(None), &facts(), req, &json!({})).await;
+        let ui = UiFacts {
+            slots: json!({}),
+            visible: false,
+        };
+        let ctx = build(&Fixed(None), &facts(), req, &ui).await;
         assert_eq!(ctx["focus"]["session"]["dir"], "/was");
         assert_eq!(ctx["focus"]["session"]["branch"], Value::Null);
     }

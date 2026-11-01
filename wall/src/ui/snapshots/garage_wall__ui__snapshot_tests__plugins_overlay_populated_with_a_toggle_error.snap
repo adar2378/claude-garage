@@ -4,7 +4,7 @@ expression: "plugins_dump(list, &state)"
 ---
 |    ╭ Plugins ─────────────────────────────────────────── p / Esc to close ╮|
 |    │                                                                      │|
-|    │      name       source   state  permissions                          │|
+|    │      name       source   state permissions                           │|
 |    │    ● usage-bar  bundled  on   widgets, notices                       │|
 |    │  ▸ ○ pet-extras local    off  ui.invoke                              │|
 |    │  ──────────────────────────────────────────────────────────────────  │|
@@ -23,7 +23,7 @@ r0 c75..76 fg=Gray bg=Reset mod=NONE
 r1 c4..5 fg=Gray bg=Reset mod=NONE
 r1 c75..76 fg=Gray bg=Reset mod=NONE
 r2 c4..5 fg=Gray bg=Reset mod=NONE
-r2 c7..49 fg=DarkGray bg=Reset mod=NONE
+r2 c7..48 fg=DarkGray bg=Reset mod=NONE
 r2 c75..76 fg=Gray bg=Reset mod=NONE
 r3 c4..5 fg=Gray bg=Reset mod=NONE
 r3 c7..9 fg=White bg=Reset mod=NONE

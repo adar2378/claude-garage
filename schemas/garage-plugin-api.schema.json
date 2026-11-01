@@ -1222,6 +1222,11 @@
       "properties": {
         "slots": {
           "description": "Slot geometry the wall reported (`width`, `max_cols`, `filler`), by\nslot name. May be empty."
+        },
+        "visible": {
+          "description": "Whether a wall is in view right now (it reported itself visible within\nthe last 45 seconds). `false` when none did, or from a daemon that does\nnot say.",
+          "type": "boolean",
+          "default": false
         }
       },
       "required": [
@@ -1589,6 +1594,10 @@
         },
         "ui.notice": {
           "type": "boolean"
+        },
+        "ui.visible": {
+          "type": "boolean",
+          "default": false
         },
         "cli.fallback": {
           "type": "boolean"

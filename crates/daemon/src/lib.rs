@@ -132,7 +132,6 @@ pub async fn run(config: Config) -> Result<()> {
     // tmux backend has a control-mode client.
     let control = control_on.then(|| control::spawn(control_backend, shared.control_link()));
     let poller = shared.start();
-    let notifier = os::notify::spawn(&state.bus, state.os.clone(), state.visibility.clone());
     // First-party plugins: register and refresh them before the host loads.
     if let Some(root) = plugins::bundled::prepare(state.plugins.paths()) {
         match plugins::bundled::seed(state.plugins.paths(), &root) {
@@ -150,23 +149,20 @@ pub async fn run(config: Config) -> Result<()> {
     }
     let plugin_host = state.plugins.start();
     let closed = closed::spawn(&state.bus, state.registry.clone(), state.backend.clone());
-    let (poller_stop, notifier_stop, control_stop) = (
+    let (poller_stop, control_stop) = (
         poller.abort_handle(),
-        notifier.abort_handle(),
         control.as_ref().map(|c| c.abort_handle()),
     );
     let lifecycle = state.lifecycle.shutdown.clone();
     let (begin_tx, begin_rx) = tokio::sync::oneshot::channel::<()>();
-    // One shutdown source: ctrl-c or the restart route. The poller and
-    // notifier stop first, so a successor never overlaps with this daemon's
-    // polling or notifications; then `serve` ends the SSE streams.
+    // One shutdown source: ctrl-c or the restart route. The poller
+    // stops first, so a successor never overlaps with this daemon's polling; then `serve` ends the SSE streams.
     let signal = async move {
         tokio::select! {
             _ = tokio::signal::ctrl_c() => {}
             _ = lifecycle.notified() => {}
         }
         poller_stop.abort();
-        notifier_stop.abort();
         if let Some(c) = &control_stop {
             c.abort();
         }
@@ -180,7 +176,6 @@ pub async fn run(config: Config) -> Result<()> {
         _ = async { let _ = begin_rx.await; tokio::time::sleep(SHUTDOWN_GRACE).await } => Ok(()),
     };
     poller.abort();
-    notifier.abort();
     plugin_host.abort();
     closed.abort();
     if let Some(c) = &control {

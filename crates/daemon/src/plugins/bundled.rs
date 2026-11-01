@@ -316,13 +316,20 @@ pub fn prepare(paths: &Paths) -> Option<PathBuf> {
 }
 
 /// On at first run. Every other bundled plugin starts off.
-pub const DEFAULT_ON: [&str; 5] = [
+pub const DEFAULT_ON: [&str; 6] = [
     "usage-bar",
     "closed-chats",
     "quick-send",
     "tile-buttons",
     "pit-pet",
+    "alerts",
 ];
+
+/// Plugins that take over a core feature, so they arrive ON even when added to
+/// an existing plugins file by a later release (every other plugin new in a
+/// later release arrives off). Only applies when the entry is absent and was
+/// never seeded: a plugin the user turned off or removed stays that way.
+pub const ON_WHEN_ADDED: [&str; 1] = ["alerts"];
 
 /// `plugins.json` key listing the bundled ids already seeded.
 pub const SEEDED_KEY: &str = "bundledSeeded";
@@ -467,7 +474,9 @@ pub fn seed(paths: &Paths, root: &Path) -> Result<Seeded, String> {
                 }
                 None if !seeded.contains(id) => {
                     let mut entry = Entry::new(id, Source::Bundled { path });
-                    entry.enabled = first_run && trusted && DEFAULT_ON.contains(&id.as_str());
+                    entry.enabled = trusted
+                        && ((first_run && DEFAULT_ON.contains(&id.as_str()))
+                            || ON_WHEN_ADDED.contains(&id.as_str()));
                     file.plugins.push(entry);
                     out.added.push(id.clone());
                 }
@@ -534,8 +543,9 @@ mod tests {
             .collect()
     }
 
-    const ALL: [&str; 9] = [
+    const ALL: [&str; 10] = [
         "usage-bar",
+        "alerts",
         "closed-chats",
         "quick-send",
         "tile-buttons",
@@ -568,13 +578,13 @@ mod tests {
         let (garage, bundle) = (tempfile::tempdir().unwrap(), root(&ALL));
         let paths = Paths::new(garage.path());
         let out = seed(&paths, bundle.path()).unwrap();
-        assert_eq!(out.added.len(), 9);
+        assert_eq!(out.added.len(), 10);
         for (id, on) in enabled(&paths) {
             assert_eq!(on, DEFAULT_ON.contains(&id.as_str()), "{id}");
         }
         let file = PluginsFile::read(&paths).unwrap();
         assert!(file.plugins.iter().all(Entry::is_first_party));
-        assert_eq!(file.extra[SEEDED_KEY].as_array().unwrap().len(), 9);
+        assert_eq!(file.extra[SEEDED_KEY].as_array().unwrap().len(), 10);
     }
 
     #[test]
@@ -627,6 +637,45 @@ mod tests {
         let now = enabled(&paths);
         assert!(now.contains(&("usage-bar".into(), true)));
         assert!(now.contains(&("pit-pet".into(), false)) && now.contains(&("extra".into(), false)));
+    }
+
+    #[test]
+    fn alerts_arrives_on_for_an_existing_install_but_other_new_plugins_stay_off() {
+        let (garage, bundle) = (tempfile::tempdir().unwrap(), root(&["usage-bar"]));
+        let paths = Paths::new(garage.path());
+        seed(&paths, bundle.path()).unwrap();
+        // The release that adds alerts (and another default-named plugin).
+        add(bundle.path(), "alerts", "1.0.0");
+        add(bundle.path(), "pit-pet", "1.0.0");
+        seed(&paths, bundle.path()).unwrap();
+        let now = enabled(&paths);
+        assert!(now.contains(&("alerts".into(), true)), "{now:?}");
+        assert!(now.contains(&("pit-pet".into(), false)), "{now:?}");
+    }
+
+    #[test]
+    fn alerts_is_never_re_enabled_after_the_user_turned_it_off_or_removed_it() {
+        let (garage, bundle) = (tempfile::tempdir().unwrap(), root(&["usage-bar", "alerts"]));
+        let paths = Paths::new(garage.path());
+        seed(&paths, bundle.path()).unwrap();
+        PluginsFile::update(&paths, |f| {
+            for e in &mut f.plugins {
+                if e.id == "alerts" {
+                    e.enabled = false;
+                }
+            }
+            (true, ())
+        })
+        .unwrap();
+        seed(&paths, bundle.path()).unwrap();
+        assert!(enabled(&paths).contains(&("alerts".into(), false)));
+        PluginsFile::update(&paths, |f| {
+            f.plugins.retain(|e| e.id != "alerts");
+            (true, ())
+        })
+        .unwrap();
+        seed(&paths, bundle.path()).unwrap();
+        assert!(!enabled(&paths).iter().any(|(id, _)| id == "alerts"));
     }
 
     #[test]
@@ -733,10 +782,11 @@ mod tests {
             );
             ids.push(id);
         }
-        for id in ["usage-bar", "pit-pet", "turn-markers"] {
+        for id in ["usage-bar", "pit-pet", "turn-markers", "alerts"] {
             assert!(ids.iter().any(|i| i == id), "{id} is missing from plugins/");
         }
         assert!(DEFAULT_ON.contains(&"usage-bar") && DEFAULT_ON.contains(&"pit-pet"));
+        assert!(DEFAULT_ON.contains(&"alerts"), "it replaces the core notification");
         assert!(!DEFAULT_ON.contains(&"turn-markers"));
     }
 
@@ -840,6 +890,7 @@ mod tests {
     /// release. (`hello`, the dev fixture, never ships.)
     fn expected_plugins(os: &str) -> Vec<&'static str> {
         let all = [
+            "alerts",
             "cli-extras",
             "closed-chats",
             "jump-palette",

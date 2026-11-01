@@ -191,6 +191,11 @@ pub struct ContextUi {
     /// Slot geometry the wall reported (`width`, `max_cols`, `filler`), by
     /// slot name. May be empty.
     pub slots: Value,
+    /// Whether a wall is in view right now (it reported itself visible within
+    /// the last 45 seconds). `false` when none did, or from a daemon that does
+    /// not say.
+    #[serde(default)]
+    pub visible: bool,
 }
 
 // ---- events ----
@@ -367,6 +372,8 @@ pub struct Features {
     pub widgets_slot_geometry: bool,
     #[serde(rename = "ui.notice")]
     pub ui_notice: bool,
+    #[serde(rename = "ui.visible", default)]
+    pub ui_visible: bool,
     #[serde(rename = "cli.fallback")]
     pub cli_fallback: bool,
     #[serde(rename = "panes.placements")]

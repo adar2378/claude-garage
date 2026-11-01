@@ -995,7 +995,7 @@ async fn pick_directory_strips_the_trailing_slash_and_maps_cancel_unsupported_fa
 // ---------------------------------------------------------------- visibility
 
 #[tokio::test]
-async fn visibility_requires_client_id_and_boolean_and_feeds_the_notification_rule() {
+async fn visibility_requires_client_id_and_boolean_and_feeds_the_plugin_context() {
     let garage = tempfile::tempdir().unwrap();
     let (st, os) = fake_state(garage.path());
     for body in [
@@ -1031,14 +1031,8 @@ async fn visibility_requires_client_id_and_boolean_and_feeds_the_notification_ru
     assert_eq!((s, b), (StatusCode::OK, json!({"ok": true})));
     assert!(st.visibility.any_visible());
 
-    // A visible wall suppresses the notification; hiding it re-enables it.
-    let needs_input = crate::bus::DaemonEvent::StatusTransition {
-        id: "garage/ws/a".into(),
-        from: garage_protocol::SessionStatus::Working,
-        to: garage_protocol::SessionStatus::NeedsInput,
-        since: Some(1),
-    };
-    assert!(!crate::os::notify::handle(&needs_input, os.as_ref(), &st.visibility).await);
+    // Plugin runs see the same answer as `ui.visible`; hiding the wall clears it.
+    assert!(st.plugins.ui_visible());
     call(
         &st,
         "POST",
@@ -1046,14 +1040,8 @@ async fn visibility_requires_client_id_and_boolean_and_feeds_the_notification_ru
         Some(json!({"clientId": "tui", "visible": false})),
     )
     .await;
-    assert!(crate::os::notify::handle(&needs_input, os.as_ref(), &st.visibility).await);
-    assert_eq!(
-        os.notifications(),
-        [(
-            "claude-garage".to_string(),
-            "garage/ws/a needs input".to_string()
-        )]
-    );
+    assert!(!st.plugins.ui_visible());
+    assert!(os.notifications().is_empty(), "the core no longer notifies");
 }
 
 // ------------------------------------------------------------------- restart
