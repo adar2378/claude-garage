@@ -118,6 +118,7 @@ pub struct ClickMap<'a> {
     pub view_strip_targets: &'a [(Range<u16>, String)],
     pub triage_rect: Option<Rect>,
     pub ws_add_rect: Option<Rect>,
+    pub plugins_rect: Option<Rect>,
     pub view_picker_rect: Option<Rect>,
     /// Entries in the view picker (every other view plus "new group…").
     pub view_picker_entries: usize,
@@ -240,6 +241,11 @@ pub fn action_at(
             OverlayKind::WorktreeFinish => None,
             // The runtime handles the pane's clicks (outside closes it).
             OverlayKind::PluginPane => None,
+            // An outside click closes it; rows are keyboard-only.
+            OverlayKind::Plugins => {
+                let inside = map.plugins_rect.is_some_and(|r| r.contains(point));
+                (!inside).then(|| (ids::OVERLAY_CLOSE, ctx()))
+            }
         };
     }
     // View-strip click: focus that view.
@@ -747,6 +753,7 @@ mod tests {
                 view_strip_targets: &f.targets,
                 triage_rect: Some(Rect::new(20, 5, 60, 12)),
                 ws_add_rect: Some(Rect::new(20, 5, 60, 12)),
+                plugins_rect: None,
                 view_picker_rect: Some(Rect::new(20, 5, 60, 12)),
                 view_picker_entries: 3,
                 view_picker_typing: false,

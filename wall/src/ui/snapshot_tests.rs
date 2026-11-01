@@ -11,6 +11,7 @@ use crate::api::models::{SessionInfo, WorkspaceInfo};
 use crate::slots::SlotRegistry;
 use crate::state::store::WallStore;
 use crate::state::wall_state::WallSession;
+use crate::ui::plugins_overlay::{PluginsOverlayState, render_plugins_overlay};
 use crate::ui::rail::render_rail;
 use crate::ui::strip::{STATUSLINE_HINT, render_strip};
 use crate::ui::tile::{TileView, render_tile};
@@ -423,4 +424,37 @@ fn a_calm_frame_pets_and_an_alert_frame_jumps_in_the_same_item() {
         .unwrap()
         .1;
     assert_eq!(target.action.as_str(), "pit-pet:pet");
+}
+
+fn plugins_dump(list: serde_json::Value, state: &PluginsOverlayState) -> String {
+    let list: garage_protocol::plugins::PluginList =
+        serde_json::from_value(serde_json::json!({ "plugins": list })).unwrap();
+    let area = Rect::new(0, 0, 80, 12);
+    let mut buf = Buffer::empty(area);
+    render_plugins_overlay(&mut buf, area, &list, state);
+    dump(&buf)
+}
+
+#[test]
+fn plugins_overlay_populated_with_a_toggle_error() {
+    let list = serde_json::json!([
+        {"id": "usage-bar", "name": "Usage bar", "enabled": true, "active": true,
+         "source": "bundled", "permissions": ["widgets", "notices"]},
+        {"id": "pet-extras", "name": "Pet extras", "enabled": false, "active": false,
+         "source": "local", "permissions": ["ui.invoke"]},
+    ]);
+    let state = PluginsOverlayState {
+        selected: 1,
+        busy: None,
+        error: Some("pet-extras: daemon answered 500".into()),
+    };
+    insta::assert_snapshot!(plugins_dump(list, &state));
+}
+
+#[test]
+fn plugins_overlay_empty() {
+    insta::assert_snapshot!(plugins_dump(
+        serde_json::json!([]),
+        &PluginsOverlayState::default()
+    ));
 }

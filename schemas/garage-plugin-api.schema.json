@@ -575,6 +575,11 @@
           ],
           "default": null
         },
+        "source": {
+          "description": "Where it came from: `bundled`, `local` (a linked folder) or `github`.\nEmpty from a daemon that does not say.",
+          "type": "string",
+          "default": ""
+        },
         "permissions": {
           "type": "array",
           "items": {

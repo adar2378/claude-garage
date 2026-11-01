@@ -1,0 +1,38 @@
+---
+source: wall/src/ui/snapshot_tests.rs
+expression: "plugins_dump(serde_json::json!([]), &PluginsOverlayState::default())"
+---
+||
+||
+|    ╭ Plugins ─────────────────────────────────────────── p / Esc to close ╮|
+|    │                                                                      │|
+|    │  No plugins installed                                                │|
+|    │                                                                      │|
+|    │  Install one with: claude-garage plugin install owner/repo (or       │|
+|    │  `claude-garage plugin link <folder>`)                               │|
+|    │                                                                      │|
+|    ╰──────────────────────────────────────────────────────────────────────╯|
+||
+||
+--- styles ---
+r2 c4..5 fg=Gray bg=Reset mod=NONE
+r2 c5..14 fg=White bg=Reset mod=NONE
+r2 c14..57 fg=Gray bg=Reset mod=NONE
+r2 c57..75 fg=DarkGray bg=Reset mod=NONE
+r2 c75..76 fg=Gray bg=Reset mod=NONE
+r3 c4..5 fg=Gray bg=Reset mod=NONE
+r3 c75..76 fg=Gray bg=Reset mod=NONE
+r4 c4..5 fg=Gray bg=Reset mod=NONE
+r4 c7..27 fg=Gray bg=Reset mod=NONE
+r4 c75..76 fg=Gray bg=Reset mod=NONE
+r5 c4..5 fg=Gray bg=Reset mod=NONE
+r5 c75..76 fg=Gray bg=Reset mod=NONE
+r6 c4..5 fg=Gray bg=Reset mod=NONE
+r6 c7..68 fg=DarkGray bg=Reset mod=NONE
+r6 c75..76 fg=Gray bg=Reset mod=NONE
+r7 c4..5 fg=Gray bg=Reset mod=NONE
+r7 c7..44 fg=DarkGray bg=Reset mod=NONE
+r7 c75..76 fg=Gray bg=Reset mod=NONE
+r8 c4..5 fg=Gray bg=Reset mod=NONE
+r8 c75..76 fg=Gray bg=Reset mod=NONE
+r9 c4..76 fg=Gray bg=Reset mod=NONE

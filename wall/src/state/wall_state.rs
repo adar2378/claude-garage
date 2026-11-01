@@ -36,6 +36,10 @@ pub enum OverlayKind {
     /// Which pane lives in the runtime's `PluginPaneState`, like the other
     /// overlays' state, so this tag stays `Copy`.
     PluginPane,
+    /// `p`: the installed plugins, with on/off. The selection, the busy flag
+    /// and the inline error live in the runtime's `PluginsOverlayState`; the
+    /// list itself is read from the plugin store every frame.
+    Plugins,
 }
 
 /// One session as the wall tracks it. Mirrors the daemon entry plus the
@@ -324,6 +328,7 @@ impl WallState {
                 Some(OverlayKind::ViewPicker) => "keys → move to group".to_owned(),
                 Some(OverlayKind::WorktreeFinish) => "keys → finish worktree".to_owned(),
                 Some(OverlayKind::PluginPane) => "keys → plugin pane".to_owned(),
+                Some(OverlayKind::Plugins) => "keys → plugins".to_owned(),
                 _ => "keys → help".to_owned(),
             },
         }

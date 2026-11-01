@@ -437,6 +437,17 @@ impl GarageClient {
         self.ui_request("DELETE", &path, None).map(|_| ())
     }
 
+    /// `POST /api/plugins/{id}/enable` or `/disable` with the UI token. The
+    /// daemon reloads and answers with an SSE `plugins` frame.
+    pub fn set_plugin_enabled(&self, plugin: &str, enable: bool) -> Result<(), ApiError> {
+        let path = format!(
+            "/api/plugins/{}/{}",
+            encode_component(plugin),
+            if enable { "enable" } else { "disable" }
+        );
+        self.ui_request("POST", &path, None).map(|_| ())
+    }
+
     /// `PUT /api/plugins/ui/slots` with the UI token.
     pub fn put_ui_slots(&self, geometry: &Value) -> Result<(), ApiError> {
         self.ui_request("PUT", "/api/plugins/ui/slots", Some(geometry))

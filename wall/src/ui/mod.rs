@@ -14,6 +14,7 @@ pub mod help;
 pub mod hit_targets;
 pub mod layout;
 pub mod motion;
+pub mod plugins_overlay;
 pub mod rail;
 pub mod registry;
 pub mod scroll;

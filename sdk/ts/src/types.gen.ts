@@ -256,6 +256,11 @@ export interface PluginSummary {
    */
   active: boolean;
   version?: string | null;
+  /**
+   * Where it came from: `bundled`, `local` (a linked folder) or `github`.
+   * Empty from a daemon that does not say.
+   */
+  source?: string;
   permissions?: string[];
   /**
    * The user's own key bindings (`action` local id to key).

@@ -14,7 +14,7 @@ use crate::ui::theme::colors;
 /// The full binding legend (the Dart `_bindings` list, verbatim — the help
 /// overlay must list every p8.1–p8.4 key, plus the p16-restart `r` chords:
 /// spec restart "TUI chords" requires `?` to list all three).
-pub const BINDINGS: [(&str, &str); 26] = [
+pub const BINDINGS: [(&str, &str); 27] = [
     ("1-9", "focus workspace"),
     ("[ ]", "cycle focused tile"),
     ("Enter", "engage focused tile (restore it when restorable)"),
@@ -44,6 +44,7 @@ pub const BINDINGS: [(&str, &str); 26] = [
         "detach focused session to its own view, or rejoin main",
     ),
     ("D", "move focused session to another view / new group"),
+    ("p", "plugins: list, turn on/off"),
     ("Tab", "cycle the focused workspace's views"),
     ("?", "toggle this help"),
     ("q", "quit (tmux sessions keep running)"),

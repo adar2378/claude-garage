@@ -104,6 +104,7 @@ mod motion;
 mod p25;
 mod plugin_gate;
 mod plugins;
+mod plugins_overlay;
 mod render_frames;
 mod router;
 mod svg_render;

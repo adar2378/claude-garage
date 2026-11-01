@@ -447,6 +447,12 @@ impl PluginHost {
                     enabled: p.entry.enabled,
                     active: p.active(),
                     version: p.manifest().map(|m| m.version.clone()),
+                    source: match p.entry.source {
+                        Source::Bundled { .. } => "bundled",
+                        Source::Link { .. } => "local",
+                        Source::Github { .. } => "github",
+                    }
+                    .to_owned(),
                     permissions: p
                         .manifest()
                         .map(|m| m.permission_names())

@@ -50,6 +50,7 @@ use crate::state::wall_state::{KeyLayer, OverlayKind, WallSession};
 use crate::ui::escalation::{EscalationPolicy, HEARTBEAT_INTERVAL_MS};
 use crate::ui::layout::WallLayout;
 use crate::ui::motion::Motion;
+use crate::ui::plugins_overlay::PluginsOverlayState;
 use crate::ui::registry::{FrozenTile, TileRegistry};
 use crate::ui::scroll::{ScrollModel, capture_frozen, history_info, history_size, page_lines};
 use crate::ui::view_picker::ViewPickerState;
@@ -189,6 +190,13 @@ pub enum AppEvent {
     WorktreeFinishSettled {
         record: WorktreeRecord,
         action: FinishAction,
+        error: Option<String>,
+    },
+    /// The plugins overlay's enable/disable call settled. Success changes
+    /// nothing here (the `plugins` frame refreshes the list); a failure is
+    /// shown in the overlay's footer.
+    PluginToggleSettled {
+        id: String,
         error: Option<String>,
     },
     /// The add-workspace PUT settled: `error: None` closes the overlay and
@@ -394,6 +402,8 @@ struct App {
     /// The worktree-finish overlay's queued records, busy flag, inline
     /// error and armed discard (p17).
     wt_finish: WorktreeFinishState,
+    /// The `p` overlay's selection, in-flight toggle and inline error.
+    plugins_overlay: PluginsOverlayState,
     /// Rects of the last drawn frame — the mouse router reads the SAME
     /// geometry the paint used. `None` until the first frame.
     layout: Option<WallLayout>,
@@ -423,6 +433,7 @@ struct App {
     /// Modal rects from the last frame, per open overlay.
     triage_rect: Option<Rect>,
     ws_add_rect: Option<Rect>,
+    plugins_rect: Option<Rect>,
     view_picker_rect: Option<Rect>,
 
     /// p23: running effects, spinner flags and the redraw clock.
@@ -483,6 +494,7 @@ impl App {
             ws_form: WorkspaceAddForm::default(),
             view_picker: ViewPickerState::default(),
             wt_finish: WorktreeFinishState::default(),
+            plugins_overlay: PluginsOverlayState::default(),
             layout: None,
             badge_cols: None,
             slot_clicks: Vec::new(),
@@ -495,6 +507,7 @@ impl App {
             rail_drag: None,
             triage_rect: None,
             ws_add_rect: None,
+            plugins_rect: None,
             view_picker_rect: None,
             motion,
             plugins,
@@ -511,6 +524,10 @@ impl App {
     /// the router what each `plugin:action` does.
     fn apply_plugin_listing(&mut self, list: garage_protocol::plugins::PluginList) {
         self.plugins.borrow_mut().apply_listing(list);
+        // An open plugins overlay reads the store each frame; only its
+        // selection can point past a list that got shorter.
+        let len = self.plugins.borrow().list().plugins.len();
+        self.plugins_overlay.clamp(len);
         let store = self.plugins.borrow();
         let per_plugin: Vec<_> = store
             .list()
@@ -726,6 +743,7 @@ impl App {
                 if show_worktree_finish(&mut self.store, &mut self.wt_finish, record) {
                     self.ws_form.reset();
                     self.view_picker.reset();
+                    self.plugins_overlay.reset();
                 }
             }
             AppEvent::WorktreeFinishSettled {
@@ -741,6 +759,14 @@ impl App {
                     error,
                 );
                 if let Some(text) = notice {
+                    self.router.notices.show(text, 5000, now_ms());
+                }
+            }
+            AppEvent::PluginToggleSettled { id, error } => {
+                let open = self.store.state().overlay == Some(OverlayKind::Plugins);
+                if let Some(text) =
+                    plugin_toggle_settled(&mut self.plugins_overlay, &id, error, open)
+                {
                     self.router.notices.show(text, 5000, now_ms());
                 }
             }
@@ -846,6 +872,19 @@ impl App {
                         &mut self.wt_finish,
                         now_ms(),
                     );
+                    self.run_effects(effects);
+                    return false;
+                }
+                if self.store.state().overlay == Some(OverlayKind::Plugins) {
+                    let effects = {
+                        let store = self.plugins.borrow();
+                        handle_plugins_key(
+                            &mut self.store,
+                            key,
+                            &mut self.plugins_overlay,
+                            store.list(),
+                        )
+                    };
                     self.run_effects(effects);
                     return false;
                 }

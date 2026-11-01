@@ -11,6 +11,7 @@ use crate::state::views::ViewSummary;
 use crate::state::wall_state::{KeyLayer, OverlayKind};
 use crate::ui::help::render_help_with;
 use crate::ui::layout::{slot_geometry, tile_inner, wall_layout_with_rail};
+use crate::ui::plugins_overlay::render_plugins_overlay;
 use crate::ui::rail::render_rail_fading;
 use crate::ui::strip::render_strip;
 use crate::ui::theme::colors;
@@ -232,6 +233,7 @@ impl App {
 
         self.triage_rect = None;
         self.ws_add_rect = None;
+        self.plugins_rect = None;
         self.view_picker_rect = None;
         match self.store.state().overlay {
             Some(OverlayKind::Help) => render_help_with(buf, area, &self.plugin_help_rows()),
@@ -261,6 +263,15 @@ impl App {
             }
             Some(OverlayKind::WorktreeFinish) => {
                 render_worktree_finish(buf, area, &self.wt_finish, now_ms);
+            }
+            Some(OverlayKind::Plugins) => {
+                let store = self.plugins.borrow();
+                self.plugins_rect = Some(render_plugins_overlay(
+                    buf,
+                    area,
+                    store.list(),
+                    &self.plugins_overlay,
+                ));
             }
             Some(OverlayKind::PluginPane) => self.draw_plugin_pane(buf, area, now_ms),
             None => {}

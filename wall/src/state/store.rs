@@ -743,6 +743,10 @@ impl WallStore {
                 true
             }
             GarageCommand::OpenViewPicker => self.open_view_picker(),
+            GarageCommand::OpenPlugins => {
+                self.open_overlay(OverlayKind::Plugins);
+                true
+            }
             GarageCommand::Engage => self.engage(),
         }
     }

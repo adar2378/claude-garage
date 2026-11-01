@@ -242,6 +242,7 @@ impl App {
             view_strip_targets: &self.view_strip_targets,
             triage_rect: self.triage_rect,
             ws_add_rect: self.ws_add_rect,
+            plugins_rect: self.plugins_rect,
             view_picker_rect: self.view_picker_rect,
             view_picker_entries: picker_entries,
             view_picker_typing: self.view_picker.new_group_input.is_some(),

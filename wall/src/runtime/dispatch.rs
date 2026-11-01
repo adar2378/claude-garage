@@ -62,6 +62,7 @@ impl App {
             ids::OVERLAY_OPEN_QUEUE => self.queue_selection = 0,
             ids::OVERLAY_OPEN_WORKSPACE_ADD => self.ws_form.reset(),
             ids::OVERLAY_OPEN_VIEW_PICKER => self.view_picker.reset(),
+            ids::OVERLAY_OPEN_PLUGINS => self.plugins_overlay.reset(),
             _ => {}
         }
         let ui = OverlayRefs {

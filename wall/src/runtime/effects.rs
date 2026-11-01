@@ -98,6 +98,10 @@ pub enum Effect {
     },
     /// The user closed a plugin pane: `DELETE /api/plugins/{plugin}/panes/{pane}`.
     ClosePluginPane { plugin: String, pane: String },
+    /// Space in the plugins overlay: `POST /api/plugins/{id}/enable` or
+    /// `/disable` with the UI token. The listing refreshes through the SSE
+    /// `plugins` frame; only a failure comes back as an event.
+    TogglePlugin { id: String, enable: bool },
 }
 
 pub(super) fn send_notice(tx: &EventSender, text: String, ttl_ms: i64) {
@@ -300,6 +304,17 @@ pub(super) fn run_effect(effect: Effect, tx: &EventSender, base_url: &str) {
                     action,
                     error,
                 });
+            }
+            Effect::TogglePlugin { id, enable } => {
+                let error = match client.set_plugin_enabled(&id, enable) {
+                    Ok(()) => None,
+                    Err(ApiError::Status { status, message }) if message.trim().is_empty() => {
+                        Some(format!("daemon answered {status}"))
+                    }
+                    Err(ApiError::Status { message, .. }) => Some(message),
+                    Err(ApiError::Transport(_)) => Some("could not reach the daemon".to_owned()),
+                };
+                let _ = tx.send(AppEvent::PluginToggleSettled { id, error });
             }
             Effect::OpenWindow { id, label } => match crate::ui::window_open::launch(&id) {
                 Ok(()) => send_notice(&tx, format!("opened {label} in a new window"), 3000),

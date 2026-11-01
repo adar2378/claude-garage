@@ -31,6 +31,10 @@ pub struct PluginSummary {
     pub active: bool,
     #[serde(default)]
     pub version: Option<String>,
+    /// Where it came from: `bundled`, `local` (a linked folder) or `github`.
+    /// Empty from a daemon that does not say.
+    #[serde(default)]
+    pub source: String,
     #[serde(default)]
     pub permissions: Vec<String>,
     /// The user's own key bindings (`action` local id to key).

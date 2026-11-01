@@ -71,6 +71,7 @@ impl Keymap {
             ("K", ids::WORKSPACE_REMOVE_KILL),
             ("d", ids::SESSION_DETACH),
             ("D", ids::OVERLAY_OPEN_VIEW_PICKER),
+            ("p", ids::OVERLAY_OPEN_PLUGINS),
             ("\t", ids::VIEW_CYCLE),
             ("\n", ids::SESSION_ENGAGE),
             ("\r", ids::SESSION_ENGAGE),
@@ -398,6 +399,7 @@ mod tests {
             ("K", "workspace.remove.kill"),
             ("d", "session.detach"),
             ("D", "overlay.open.view_picker"),
+            ("p", "overlay.open.plugins"),
             ("\t", "view.cycle"),
             ("\n", "session.engage"),
             ("\r", "session.engage"),
@@ -445,7 +447,7 @@ mod tests {
 
     #[test]
     fn unbound_garage_keys_stay_unbound() {
-        for key in ["0", "z", " ", "i", "k", "j", "p", "Q"] {
+        for key in ["0", "z", " ", "i", "k", "j", "y", "Q"] {
             assert_eq!(garage(key), None, "key {key:?}");
         }
     }

@@ -4,11 +4,14 @@
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
+use garage_protocol::plugins::PluginList;
+
 use crate::actions::{ActionCtx, ActionId, ActionSource, ids};
 use crate::api::models::{FinishAction, WorktreeRecord};
 use crate::keymap::{Keymap, Layer, overlay_key_string};
 use crate::state::store::WallStore;
 use crate::state::wall_state::{KeyLayer, OverlayKind};
+use crate::ui::plugins_overlay::PluginsOverlayState;
 use crate::ui::triage::{triage_queue_rows, wrap_selection};
 use crate::ui::view_picker::{ViewPickerState, picker_entries};
 use crate::ui::workspace_add::WorkspaceAddForm;
@@ -117,7 +120,7 @@ pub fn handle_overlay_key(
         }
         // Routed by `App::handle_key` to [`handle_worktree_finish_key`]: the
         // armed discard needs the clock, which this router never sees.
-        OverlayKind::WorktreeFinish | OverlayKind::PluginPane => {}
+        OverlayKind::WorktreeFinish | OverlayKind::PluginPane | OverlayKind::Plugins => {}
     }
     (effects, notice)
 }
@@ -355,6 +358,74 @@ pub(super) fn handle_worktree_finish_key(
             Vec::new()
         }
         FinishChoice::Kept { close: false } | FinishChoice::Nothing => Vec::new(),
+    }
+}
+
+/// Plugins-overlay key routing: Esc or `p` closes, `j`/`k`/arrows move
+/// (wrapping), Space asks the daemon to turn the selected plugin on or off.
+/// Everything else is consumed. Space does nothing while a toggle is in
+/// flight; the list itself is never edited here, the `plugins` event
+/// refreshes it.
+pub(super) fn handle_plugins_key(
+    store: &mut WallStore,
+    key: &KeyEvent,
+    state: &mut PluginsOverlayState,
+    list: &PluginList,
+) -> Vec<Effect> {
+    let plain_char = match key.code {
+        KeyCode::Char(c)
+            if !key
+                .modifiers
+                .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
+        {
+            Some(c)
+        }
+        _ => None,
+    };
+    let len = list.plugins.len();
+    match (key.code, plain_char) {
+        (KeyCode::Esc, _) | (_, Some('p')) => {
+            state.reset();
+            store.close_overlay();
+        }
+        (KeyCode::Down, _) | (_, Some('j')) => {
+            state.selected = wrap_selection(state.selected, 1, len);
+            state.error = None;
+        }
+        (KeyCode::Up, _) | (_, Some('k')) => {
+            state.selected = wrap_selection(state.selected, -1, len);
+            state.error = None;
+        }
+        (_, Some(' ')) if state.busy.is_none() => {
+            if let Some(plugin) = state.current(list) {
+                let (id, enable) = (plugin.id.clone(), !plugin.enabled);
+                state.error = None;
+                state.busy = Some(id.clone());
+                return vec![Effect::TogglePlugin { id, enable }];
+            }
+        }
+        _ => {}
+    }
+    Vec::new()
+}
+
+/// A toggle call settled: free the guard and keep a failure for the footer.
+/// When the overlay was closed meanwhile, the failure comes back as the strip
+/// notice instead, so it is not lost.
+pub(super) fn plugin_toggle_settled(
+    state: &mut PluginsOverlayState,
+    id: &str,
+    error: Option<String>,
+    overlay_open: bool,
+) -> Option<String> {
+    if state.busy.as_deref() == Some(id) {
+        state.busy = None;
+    }
+    if overlay_open {
+        state.error = error.map(|e| format!("{id}: {e}"));
+        None
+    } else {
+        error.map(|e| format!("plugin {id}: {e}"))
     }
 }
 

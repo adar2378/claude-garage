@@ -36,7 +36,7 @@ pub fn wrap_selection(current: usize, delta: i32, length: usize) -> usize {
 }
 
 /// Truncate to `width` cells with a trailing ellipsis.
-fn fit(text: &str, width: usize) -> String {
+pub(crate) fn fit(text: &str, width: usize) -> String {
     if width == 0 {
         return String::new();
     }

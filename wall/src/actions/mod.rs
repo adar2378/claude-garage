@@ -94,6 +94,9 @@ pub mod ids {
     pub const OVERLAY_OPEN_HELP: ActionId = ActionId("overlay.open.help");
     pub const OVERLAY_OPEN_VIEW_PICKER: ActionId = ActionId("overlay.open.view_picker");
     pub const OVERLAY_OPEN_WORKSPACE_ADD: ActionId = ActionId("overlay.open.workspace_add");
+    /// `p`: the installed-plugins list. Not plugin-invocable: a plugin has no
+    /// business opening the screen that turns plugins off.
+    pub const OVERLAY_OPEN_PLUGINS: ActionId = ActionId("overlay.open.plugins");
     pub const SESSION_SPAWN: ActionId = ActionId("session.spawn");
     pub const SESSION_SPAWN_WORKTREE: ActionId = ActionId("session.spawn.worktree");
     pub const SESSION_ENGAGE: ActionId = ActionId("session.engage");
@@ -141,6 +144,7 @@ pub mod ids {
         OVERLAY_OPEN_HELP,
         OVERLAY_OPEN_VIEW_PICKER,
         OVERLAY_OPEN_WORKSPACE_ADD,
+        OVERLAY_OPEN_PLUGINS,
         SESSION_SPAWN,
         SESSION_SPAWN_WORKTREE,
         SESSION_ENGAGE,
@@ -201,6 +205,7 @@ pub const META: &[ActionMeta] = &[
     meta_row(ids::OVERLAY_OPEN_HELP, false, true),
     meta_row(ids::OVERLAY_OPEN_VIEW_PICKER, false, true),
     meta_row(ids::OVERLAY_OPEN_WORKSPACE_ADD, false, true),
+    meta_row(ids::OVERLAY_OPEN_PLUGINS, false, false),
     meta_row(ids::SESSION_SPAWN, false, true),
     meta_row(ids::SESSION_SPAWN_WORKTREE, false, true),
     meta_row(ids::SESSION_ENGAGE, false, false),
@@ -412,6 +417,8 @@ pub enum GarageCommand {
     /// `D` (shift+d, spec tui-views "Move to a group"): open the view-picker
     /// overlay for the focused session (its views list + "new group…").
     OpenViewPicker,
+    /// `p`: open the plugins overlay.
+    OpenPlugins,
     ToggleHelp,
     /// `I` (shift+i, spec tui-context-meters "Install affordance", spec
     /// tui-hooks-install): `POST /api/statusline/install` then `POST
@@ -452,6 +459,7 @@ pub fn command_for_action(id: ActionId, index: Option<usize>) -> Option<GarageCo
         ids::OVERLAY_OPEN_HELP => C::ToggleHelp,
         ids::OVERLAY_OPEN_VIEW_PICKER => C::OpenViewPicker,
         ids::OVERLAY_OPEN_WORKSPACE_ADD => C::WorkspaceAdd,
+        ids::OVERLAY_OPEN_PLUGINS => C::OpenPlugins,
         ids::SESSION_SPAWN => C::Spawn { worktree: false },
         ids::SESSION_SPAWN_WORKTREE => C::Spawn { worktree: true },
         ids::SESSION_ENGAGE => C::Engage,
@@ -568,6 +576,7 @@ mod tests {
         assert_eq!(
             refused,
             [
+                "overlay.open.plugins",
                 "session.engage",
                 "app.quit",
                 "rail.toggle",

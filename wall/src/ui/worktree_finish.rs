@@ -180,7 +180,7 @@ fn tail(s: &str, width: usize) -> String {
 
 /// Word-wrap every line of `text` to `width` chars, capped at `max` rows.
 /// A word longer than `width` (a long path) is hard-split.
-fn wrap_rows(text: &str, width: usize, max: usize) -> Vec<String> {
+pub(crate) fn wrap_rows(text: &str, width: usize, max: usize) -> Vec<String> {
     let width = width.max(1);
     let mut rows = Vec::new();
     for line in text.lines() {
