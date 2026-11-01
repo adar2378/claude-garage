@@ -228,6 +228,16 @@ impl Host for RealHost {
             Err(_) => Probe::OtherFail,
         }
     }
+    fn output(&self, bin: &str, args: &[&str]) -> Option<String> {
+        let o = Command::new(bin)
+            .args(args)
+            .stdin(Stdio::null())
+            .output()
+            .ok()?;
+        o.status
+            .success()
+            .then(|| String::from_utf8_lossy(&o.stdout).into_owned())
+    }
     fn interactive(&self) -> bool {
         std::io::stdin().is_terminal() && std::io::stdout().is_terminal()
     }

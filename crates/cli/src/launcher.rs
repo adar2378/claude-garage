@@ -105,6 +105,11 @@ pub trait Host: Out {
     fn fetch_health(&self, timeout_ms: u64) -> Option<Value>;
     fn post(&self, path: &str, body: Option<&Value>) -> Result<Reply, String>;
     fn probe(&self, bin: &str, args: &[&str]) -> Probe;
+    /// stdout of a successful run, `None` when it cannot run or fails.
+    /// The default knows nothing, which every caller treats as "unknown".
+    fn output(&self, _bin: &str, _args: &[&str]) -> Option<String> {
+        None
+    }
     fn interactive(&self) -> bool;
     fn ask(&self, prompt: &str) -> String;
     /// Run with inherited stdio; true on exit code 0.
@@ -244,12 +249,58 @@ pub fn tmux_missing_message() -> &'static str {
     }
 }
 
+/// The oldest tmux garage works with (control mode and the format strings
+/// it relies on).
+const MIN_TMUX: (u32, u32) = (3, 2);
+
+/// `major.minor` out of `tmux -V` output. Handles `tmux 3.2a`, `tmux 3.5`,
+/// `tmux next-3.6` and `tmux 3.4-rc`; `None` for anything else (`tmux
+/// master`), which callers treat as "unknown, let it pass".
+pub fn parse_tmux_version(out: &str) -> Option<(u32, u32)> {
+    let v = out.trim().strip_prefix("tmux")?.trim();
+    let v = v.strip_prefix("next-").unwrap_or(v);
+    let digits = |s: &str| -> (Option<u32>, usize) {
+        let n = s.bytes().take_while(u8::is_ascii_digit).count();
+        (s[..n].parse().ok(), n)
+    };
+    let (major, n) = digits(v);
+    let major = major?;
+    let minor = match v[n..].strip_prefix('.') {
+        Some(rest) => digits(rest).0?,
+        None => 0,
+    };
+    Some((major, minor))
+}
+
+/// Whether `tmux -V` output names a version below [`MIN_TMUX`].
+pub fn tmux_too_old(version_output: &str) -> bool {
+    parse_tmux_version(version_output).is_some_and(|v| v < MIN_TMUX)
+}
+
+pub fn tmux_too_old_message(version_output: &str) -> String {
+    let upgrade = if cfg!(target_os = "macos") {
+        "brew upgrade tmux"
+    } else {
+        "update it with your package manager (apt install --only-upgrade tmux, dnf upgrade tmux, pacman -Syu tmux)"
+    };
+    format!(
+        "{} is too old — claude-garage needs tmux {}.{} or newer. Upgrade: {upgrade}",
+        version_output.trim(),
+        MIN_TMUX.0,
+        MIN_TMUX.1
+    )
+}
+
 pub fn check_prerequisites(host: &dyn Host) -> Result<(), Fail> {
-    if host.uses_tmux()
-        && host.probe("tmux", &["-V"]) == Probe::Missing
-        && !offer_tmux_install(host)
-    {
-        return fail(tmux_missing_message());
+    if host.uses_tmux() {
+        if host.probe("tmux", &["-V"]) == Probe::Missing && !offer_tmux_install(host) {
+            return fail(tmux_missing_message());
+        }
+        if let Some(v) = host.output("tmux", &["-V"])
+            && tmux_too_old(&v)
+        {
+            return fail(tmux_too_old_message(&v));
+        }
     }
     require_binary(
         host,
@@ -519,6 +570,8 @@ mod tests {
         interactive: bool,
         answer: &'static str,
         brew_install_ok: bool,
+        /// `tmux -V` output; `None` = the version cannot be read.
+        tmux_version: Option<String>,
         listener: Option<u32>,
         terminate: RefCell<Terminate>,
         terminate_frees_port: bool,
@@ -550,6 +603,7 @@ mod tests {
                 interactive: false,
                 answer: "n",
                 brew_install_ok: true,
+                tmux_version: None,
                 listener: None,
                 terminate: RefCell::new(Terminate::Sent),
                 terminate_frees_port: true,
@@ -640,6 +694,9 @@ mod tests {
                 return Probe::Ok;
             }
             self.probes.get(bin).copied().unwrap_or(Probe::Ok)
+        }
+        fn output(&self, bin: &str, _args: &[&str]) -> Option<String> {
+            (bin == "tmux").then(|| self.tmux_version.clone()).flatten()
         }
         fn interactive(&self) -> bool {
             self.interactive
@@ -820,6 +877,73 @@ mod tests {
         assert_eq!(err.0, tmux_missing_message());
         assert_eq!(f.called("spawn_daemon"), 0);
         assert_eq!(f.called("ask"), 0, "never prompts off a tty");
+    }
+
+    #[test]
+    fn tmux_versions_parse_in_every_known_format() {
+        for (out, want) in [
+            ("tmux 3.2a\n", Some((3, 2))),
+            ("tmux 3.5", Some((3, 5))),
+            ("tmux 3.7b", Some((3, 7))),
+            ("tmux next-3.6", Some((3, 6))),
+            ("tmux 3.4-rc", Some((3, 4))),
+            ("tmux 2.9a", Some((2, 9))),
+            ("tmux 10.0", Some((10, 0))),
+            ("tmux 3", Some((3, 0))),
+            ("tmux master", None),
+            ("tmux", None),
+            ("", None),
+            ("screen 4.09", None),
+        ] {
+            assert_eq!(parse_tmux_version(out), want, "{out:?}");
+        }
+    }
+
+    #[test]
+    fn only_a_known_version_below_3_2_is_too_old() {
+        for old in ["tmux 3.1", "tmux 3.1c", "tmux 2.9a", "tmux 1.8"] {
+            assert!(tmux_too_old(old), "{old}");
+        }
+        for ok in [
+            "tmux 3.2",
+            "tmux 3.2a",
+            "tmux 3.5",
+            "tmux 4.0",
+            "tmux next-3.6",
+            "tmux master",
+            "garbage",
+            "",
+        ] {
+            assert!(!tmux_too_old(ok), "{ok}");
+        }
+    }
+
+    #[test]
+    fn a_tmux_older_than_3_2_is_refused_with_an_upgrade_hint() {
+        let mut f = Fake::new(None);
+        f.tmux_version = Some("tmux 3.1c\n".into());
+        let err = check_prerequisites(&f).unwrap_err();
+        assert_eq!(err.0, tmux_too_old_message("tmux 3.1c\n"));
+        assert!(err.0.contains("3.1c") && err.0.contains("3.2 or newer"));
+        assert!(err.0.contains("brew upgrade tmux") || err.0.contains("package manager"));
+        assert_eq!(f.called("probe claude"), 0, "refused before anything else");
+    }
+
+    #[test]
+    fn a_new_or_unreadable_tmux_version_passes() {
+        for v in [Some("tmux 3.2a"), Some("tmux master"), Some("???"), None] {
+            let mut f = Fake::new(None);
+            f.tmux_version = v.map(Into::into);
+            assert!(check_prerequisites(&f).is_ok(), "{v:?}");
+        }
+    }
+
+    #[test]
+    fn the_host_backend_ignores_the_tmux_version() {
+        let mut f = Fake::new(None);
+        f.host_backend = true;
+        f.tmux_version = Some("tmux 2.0".into());
+        assert!(check_prerequisites(&f).is_ok());
     }
 
     #[test]
