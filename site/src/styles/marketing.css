@@ -38,3 +38,6 @@
 .mk-foot { max-width: 46rem; margin: 0 auto; padding: 2rem 1.5rem 3rem; border-top: 1px solid var(--sl-color-gray-5); font: 500 .85rem/1.6 var(--sl-font-mono); color: var(--sl-color-gray-3); display: flex; flex-wrap: wrap; gap: .4rem 1.4rem; }
 .mk-foot a { color: var(--sl-color-gray-2); }
 .mk :focus-visible, .mk-head :focus-visible, .mk-foot :focus-visible { outline: 2px solid var(--brand-high); outline-offset: 2px; }
+.mk figure.diagram { margin: 1.6rem 0; }
+.mk figure.diagram svg { width: 100%; max-width: 36rem; height: auto; color: var(--sl-color-white); }
+.mk figcaption { font-size: .9rem; color: var(--sl-color-gray-3); margin-top: .5rem; }

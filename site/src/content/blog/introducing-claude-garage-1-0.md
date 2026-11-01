@@ -1,5 +1,5 @@
 ---
-title: "Introducing claude-garage 1.0"
+title: "Introducing claude-garage 1.0: a terminal wall for Claude Code"
 description: "claude-garage 1.0 is a terminal wall for Claude Code, now one native Rust binary with plugins and a Windows preview. What it is, what changed, how to try it."
 date: 2026-11-01
 tags: [release, rust, plugins]
@@ -30,7 +30,7 @@ For a longer comparison with other ways of working, see [claude-garage vs many t
 
 ## What changed in 1.0?
 
-The biggest change is the shape of the program. In 0.6 there was a Node daemon and a Rust terminal wall. In the 1.0 release candidate, the daemon, the terminal wall and the `claude-garage` command are one Rust program. The changelog states it plainly: there is no Node at runtime, and nothing else to download.
+The biggest change is the shape of the program. In 0.6 there was a Node daemon and a Rust terminal wall. In the 1.0 release candidate, the daemon, the terminal wall and the `claude-garage` command are one Rust program. The [changelog](/docs/changelog/) states it plainly: there is no Node at runtime, and nothing else to download.
 
 Other changes from the 1.0.0-rc.1 changelog:
 
@@ -63,5 +63,20 @@ Press `w` to add a project folder, `n` to start a session, `Enter` to type into 
 ## What is next?
 
 The README lists diff review in the terminal wall, adopting an existing tmux session, and phone notifications on the roadmap. Nothing there is promised for a date.
+
+## Why did I build it?
+
+I wanted a simple TUI to manage my Claude Code sessions across different projects. I tried a few similar apps before, but they were quite complex and did too much. So I made claude-garage: very simple, close to how the Claude desktop app feels, but in the terminal, with a flexible plugin architecture so anyone can add what they need. More about me and the project is on the [About page](/about/).
+
+## Sources
+
+- [claude-garage README](https://github.com/adar2378/claude-garage#readme) and [changelog](/docs/changelog/), version 1.0.0-rc.1.
+- Claude Code docs: [CLI reference](https://code.claude.com/docs/en/cli-reference).
+
+## Keep reading
+
+- [Why tmux owns your Claude Code sessions](/blog/why-tmux-owns-your-sessions/).
+- [How the claude-garage plugin rule keeps you in control of Claude Code](/blog/plugin-confirm-rule/).
+- [Install claude-garage](/docs/guides/install/) or [try the wall in your browser](/try/).
 
 claude-garage is not affiliated with Anthropic. "Claude" and "Claude Code" are Anthropic trademarks.
