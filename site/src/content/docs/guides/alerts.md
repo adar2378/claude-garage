@@ -23,7 +23,7 @@ The [run many sessions](/docs/guides/many-sessions/) guide covers both keys in d
 
 - A chime of two rising notes when a session needs you.
 - One soft note when a session finishes a turn that ran 20 seconds or more.
-- A desktop banner when no garage window is in view, such as "fix needs you" with Claude's own message.
+- A desktop banner when garage is not the focused window, such as "fix needs you" with Claude's own message.
 
 Sessions that need you within two seconds of each other make one chime and one banner.
 
