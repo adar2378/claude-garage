@@ -3,7 +3,9 @@
 ## Purpose
 
 The `npx claude-garage` entrypoint: one process serving UI + API on loopback, actionable prerequisite errors, and shutdown that never touches tmux sessions.
+
 ## Requirements
+
 ### Requirement: Prerequisite checks before starting
 Before starting the daemon, the entrypoint SHALL verify that both `tmux` and `claude` (Claude Code CLI) are available on `PATH`. If either is missing, the entrypoint SHALL print an actionable error message naming the specific missing tool and SHALL exit with code 1 without starting the daemon.
 
@@ -48,17 +50,6 @@ If the configured port (default 4747) is already in use, the entrypoint SHALL ex
 - **WHEN** `npx claude-garage tui` is run while a daemon is already serving 4747
 - **THEN** no second daemon is started and the TUI attaches to the existing one
 
-### Requirement: TUI binary availability
-The package SHALL provide the compiled TUI binary for the host platform (macOS arm64 at minimum), either shipped per-release or compiled on first run when a Rust toolchain (`cargo`) is available. The build SHALL be `npm run build:tui` invoking cargo on the `wall/` workspace, producing the binary at the launcher's platform-specific dist path. If the binary is unavailable and cannot be built, `claude-garage tui` SHALL print an actionable error naming what is missing (prebuilt binary for this platform, or install the Rust toolchain) and exit non-zero without starting a broken UI. During the port's transition window the launcher MAY fall back to the Dart binary; after parity removal, the Rust binary is the only TUI.
-
-#### Scenario: Missing binary is actionable
-- **WHEN** `claude-garage tui` runs on a platform with no prebuilt binary and no `cargo` on PATH
-- **THEN** the command prints an error explaining how to get the TUI (install Rust or use a supported platform) and exits non-zero
-
-#### Scenario: Self-build via cargo
-- **WHEN** no prebuilt binary exists but `cargo` is on PATH
-- **THEN** the launcher builds the `wall/` workspace once (announcing it), uses the result, and subsequent launches reuse it
-
 ### Requirement: Bare entrypoint runs the TUI
 Running `npx claude-garage` with no subcommand SHALL behave exactly like `npx claude-garage tui`. The daemon SHALL NOT serve any UI files and SHALL NOT accept WebSocket connections under `/term`.
 
@@ -70,3 +61,20 @@ Running `npx claude-garage` with no subcommand SHALL behave exactly like `npx cl
 - **WHEN** the daemon is running and `GET http://127.0.0.1:4747/` is requested
 - **THEN** no HTML page is returned, while `GET /api/health` returns 200
 
+### Requirement: Quiet startup
+The launcher SHALL print only errors and essential prompts on a normal start, and SHALL print full startup detail when `GARAGE_VERBOSE=1` is set.
+
+#### Scenario: Quiet by default
+- **WHEN** the user runs `claude-garage` with a healthy daemon
+- **THEN** no startup log lines are printed before the wall opens
+
+### Requirement: Native binary availability
+The package SHALL ship one native `claude-garage` binary per supported platform (macOS arm64 and x64, Linux x64 and arm64 at minimum), containing the TUI, the daemon and the CLI. Installing through npm (`npx claude-garage`), Homebrew or the shell installer SHALL fetch the binary for the host platform; no Node runtime and no Rust toolchain SHALL be needed to run it. On a platform with no published binary, the installer SHALL print an actionable error naming the platform and exit non-zero without installing a broken command.
+
+#### Scenario: npx on a supported platform
+- **WHEN** a user on Linux x64 with no Rust toolchain runs `npx claude-garage`
+- **THEN** npm installs the Linux x64 binary package and the TUI opens, with the daemon started from the same binary
+
+#### Scenario: Unsupported platform is actionable
+- **WHEN** `npx claude-garage` runs on a platform with no published binary
+- **THEN** the command prints an error naming the platform and the supported ones, and exits non-zero
