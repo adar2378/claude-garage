@@ -1,15 +1,15 @@
 ---
 title: Use and install plugins
-description: Meet the nine built-in claude-garage plugins, turn them on or off, install more from GitHub with a safe preview, search for plugins and write your own.
+description: Meet the ten built-in claude-garage plugins, turn them on or off, install more from GitHub with a safe preview, search for plugins and write your own.
 sidebar:
   order: 6
 ---
 
-A plugin adds a key, a button, a status widget, a panel or a command to garage. Nine plugins are built into the binary. You can add more from GitHub or write your own.
+A plugin adds a key, a button, a status widget, a panel or a command to garage. Ten plugins are built into the binary. You can add more from GitHub or write your own.
 
-## The nine built-in plugins
+## The ten built-in plugins
 
-Five are on after your first run. Four are off.
+Six are on after your first run. Four are off.
 
 | Plugin | Default | What it does | Key |
 |---|---|---|---|
@@ -18,6 +18,7 @@ Five are on after your first run. Four are off.
 | `quick-send` | on | Sends one line of text to a session, or to every session of the project. | `s`, `S` |
 | `tile-buttons` | on | Adds `x` (close) and `del` (delete) buttons to every tile title bar. | click |
 | `pit-pet` | on | A pet lives in the strip and reacts to your sessions. The pet is off until you press `P`. | `P` |
+| `alerts` | on | Plays a chime, and shows a desktop banner when no garage window is in view, when a session needs you or finishes a long turn. Options: `claude-garage alerts`. | none |
 | `turn-markers` | off | Draws a marker in the tile gutter where each Claude turn ended. | none |
 | `jump-palette` | off | Opens a fuzzy search over sessions and projects. Choose one to focus it. | `/` |
 | `prune-empty-projects` | off | Removes a project from the rail when you close its last chat. | none |

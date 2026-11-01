@@ -44,7 +44,8 @@ You do not need an SDK. Any language that can read an environment variable and m
 
 The plugins in [`plugins/`](../../plugins) ship with garage and use only this public API:
 `hello` (smallest), `usage-bar` (timer and widget), `pit-pet` (animation), `turn-markers` (gutter),
-`closed-chats` (extra rows), `quick-send` (pane and session input), `tile-buttons` (buttons only, no program).
+`closed-chats` (extra rows), `quick-send` (pane and session input), `tile-buttons` (buttons only, no program),
+`alerts` (event hook that plays sounds and shows banners itself, with a CLI command).
 
 ## Install and manage
 

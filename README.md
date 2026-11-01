@@ -131,6 +131,7 @@ its branch.
 | `r d` | restart garage's background service |
 | `I` | install hooks (instant status) and the context meter |
 | `P` | pick a pit pet |
+| `p` | list plugins, turn them on or off |
 | `?` | show all keys |
 | `q` | quit |
 
@@ -165,6 +166,25 @@ runs to alert you when a session needs you. Press `P` to choose one.
 
 <b>Arthur</b> &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; <b>Papito</b> &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; <b>Segan</b>
 </div>
+
+## Alerts
+
+The built-in `alerts` plugin makes a short chime when a session needs you
+(two rising notes) or finishes a turn that ran 20 seconds or more (one soft
+note). When no garage window is in view it also shows a desktop banner, such
+as "fix needs you" with Claude's own message. Sessions that need you within
+two seconds of each other make one chime and one banner.
+
+```bash
+claude-garage alerts                    # show the options
+claude-garage alerts sound off          # no chime (on | off)
+claude-garage alerts needs-input off    # no alert when a session needs you
+claude-garage alerts done off           # no alert when a session finishes
+claude-garage alerts banners off        # chime only, never a banner
+claude-garage alerts test               # play both chimes and show a sample banner
+```
+
+To turn alerts off completely, press `p` and switch `alerts` off.
 
 ## Privacy
 

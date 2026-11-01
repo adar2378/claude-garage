@@ -1,0 +1,66 @@
+{
+  "banners_off": {
+    "banner": null,
+    "chime": "done"
+  },
+  "message_is_one_clean_line": {
+    "banner": [
+      "fix needs you",
+      "line one line two"
+    ],
+    "chime": "needs-input"
+  },
+  "needs_and_done": {
+    "banner": [
+      "a needs you",
+      "ok? · finished: b"
+    ],
+    "chime": "needs-input"
+  },
+  "one_done": {
+    "banner": [
+      "fix finished",
+      "Done after 1m 35s in app"
+    ],
+    "chime": "done"
+  },
+  "one_needs_input_generic": {
+    "banner": [
+      "fix needs you",
+      "Waiting for your input in app"
+    ],
+    "chime": "needs-input"
+  },
+  "one_needs_input_with_message": {
+    "banner": [
+      "fix needs you",
+      "Claude needs your permission to use Bash"
+    ],
+    "chime": "needs-input"
+  },
+  "sound_off": {
+    "banner": [
+      "fix needs you",
+      "Waiting for your input in app"
+    ],
+    "chime": null
+  },
+  "three_need_you": {
+    "banner": [
+      "3 sessions need you",
+      "a, b, c"
+    ],
+    "chime": "needs-input"
+  },
+  "two_done": {
+    "banner": [
+      "2 sessions finished",
+      "a, b"
+    ],
+    "chime": "done"
+  },
+  "wall_visible": {
+    "banner": null,
+    "chime": "needs-input"
+  }
+}

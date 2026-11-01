@@ -316,12 +316,13 @@ pub fn prepare(paths: &Paths) -> Option<PathBuf> {
 }
 
 /// On at first run. Every other bundled plugin starts off.
-pub const DEFAULT_ON: [&str; 5] = [
+pub const DEFAULT_ON: [&str; 6] = [
     "usage-bar",
     "closed-chats",
     "quick-send",
     "tile-buttons",
     "pit-pet",
+    "alerts",
 ];
 
 /// `plugins.json` key listing the bundled ids already seeded.
@@ -534,8 +535,9 @@ mod tests {
             .collect()
     }
 
-    const ALL: [&str; 9] = [
+    const ALL: [&str; 10] = [
         "usage-bar",
+        "alerts",
         "closed-chats",
         "quick-send",
         "tile-buttons",
@@ -568,13 +570,13 @@ mod tests {
         let (garage, bundle) = (tempfile::tempdir().unwrap(), root(&ALL));
         let paths = Paths::new(garage.path());
         let out = seed(&paths, bundle.path()).unwrap();
-        assert_eq!(out.added.len(), 9);
+        assert_eq!(out.added.len(), 10);
         for (id, on) in enabled(&paths) {
             assert_eq!(on, DEFAULT_ON.contains(&id.as_str()), "{id}");
         }
         let file = PluginsFile::read(&paths).unwrap();
         assert!(file.plugins.iter().all(Entry::is_first_party));
-        assert_eq!(file.extra[SEEDED_KEY].as_array().unwrap().len(), 9);
+        assert_eq!(file.extra[SEEDED_KEY].as_array().unwrap().len(), 10);
     }
 
     #[test]
@@ -733,10 +735,11 @@ mod tests {
             );
             ids.push(id);
         }
-        for id in ["usage-bar", "pit-pet", "turn-markers"] {
+        for id in ["usage-bar", "pit-pet", "turn-markers", "alerts"] {
             assert!(ids.iter().any(|i| i == id), "{id} is missing from plugins/");
         }
         assert!(DEFAULT_ON.contains(&"usage-bar") && DEFAULT_ON.contains(&"pit-pet"));
+        assert!(DEFAULT_ON.contains(&"alerts"), "it replaces the core notification");
         assert!(!DEFAULT_ON.contains(&"turn-markers"));
     }
 
@@ -840,6 +843,7 @@ mod tests {
     /// release. (`hello`, the dev fixture, never ships.)
     fn expected_plugins(os: &str) -> Vec<&'static str> {
         let all = [
+            "alerts",
             "cli-extras",
             "closed-chats",
             "jump-palette",
