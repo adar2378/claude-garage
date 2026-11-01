@@ -1,20 +1,30 @@
 ---
 import { getCollection } from 'astro:content';
 import Page from '../../layouts/Page.astro';
-import { isoDate, longDate } from '../../lib/site';
+import { ID, WEBSITE, PUBLISHER, SOFTWARE, AUTHOR, abs, breadcrumbs, dayOf, isoDate, longDate } from '../../lib/site';
 
 const posts = (await getCollection('blog', (p) => import.meta.env.DEV || !p.data.draft)).sort(
   (a, b) => b.data.date.getTime() - a.data.date.getTime(),
 );
-const site = Astro.site ?? new URL('https://claude-garage.xyz');
+const blogUrl = abs('/blog/');
 const jsonLd = {
   '@context': 'https://schema.org',
-  '@type': 'Blog',
-  name: 'claude-garage blog',
-  url: new URL('/blog/', site).href,
-  description: 'Notes on running many Claude Code sessions, the design of claude-garage, and its plugin system.',
-  inLanguage: 'en',
-  blogPost: posts.map((p) => ({ '@type': 'BlogPosting', headline: p.data.title, url: new URL(`/blog/${p.id}/`, site).href, datePublished: isoDate(p.data.date) })),
+  '@graph': [
+    {
+      '@type': 'Blog',
+      '@id': ID.blog,
+      name: 'claude-garage blog',
+      url: blogUrl,
+      description: 'Notes on running many Claude Code sessions, the design of claude-garage, and its plugin system.',
+      inLanguage: 'en',
+      isPartOf: WEBSITE,
+      about: SOFTWARE,
+      author: AUTHOR,
+      publisher: PUBLISHER,
+      blogPost: posts.map((p) => ({ '@type': 'BlogPosting', headline: p.data.title, url: abs(`/blog/${p.id}/`), datePublished: isoDate(p.data.date) })),
+    },
+    breadcrumbs([['Home', '/'], ['Blog', '/blog/']]),
+  ],
 };
 ---
 <Page title="claude-garage blog: sessions, tmux and plugins" description="Short, factual posts on running many Claude Code sessions, why tmux owns them, and how claude-garage plugins stay under your control." jsonLd={jsonLd} active="blog">
@@ -24,11 +34,11 @@ const jsonLd = {
   <ul class="cards">
     {posts.map((p) => (
       <li><a class="card" href={`/blog/${p.id}/`}>
-        <time datetime={isoDate(p.data.date)}>{longDate(p.data.date)}{p.data.draft ? ' (draft)' : ''}</time>
+        <time datetime={dayOf(p.data.date)}>{longDate(p.data.date)}{p.data.draft ? ' (draft)' : ''}</time>
         <strong>{p.data.title}</strong>
         <span>{p.data.description}</span>
       </a></li>
     ))}
   </ul>
-  <p>Subscribe with <a href="/blog/rss.xml">RSS</a>. New here? Start with the <a href="/docs/getting-started/install/">install guide</a> or see <a href="/compare/">how claude-garage compares</a> with other ways to run sessions.</p>
+  <p>Subscribe with <a href="/blog/rss.xml">RSS</a>. New here? Start with the <a href="/docs/guides/install/">install guide</a> or see <a href="/compare/">how claude-garage compares</a> with other ways to run sessions.</p>
 </Page>

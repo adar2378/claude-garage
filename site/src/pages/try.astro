@@ -5,6 +5,7 @@ import TrySim from '../components/TrySim.astro';
 import '../styles/try.css';
 import { LESSONS, GLOSSARY } from '../scripts/try-data.js';
 import { BINDINGS } from '../scripts/try-bindings.js';
+import { PUBLISHER, SOFTWARE, WEBSITE, breadcrumbs } from '../lib/site';
 
 const title = 'Try claude-garage in your browser';
 const description =
@@ -26,15 +27,11 @@ const jsonLd = {
       inLanguage: 'en',
       isAccessibleForFree: true,
       offers: { '@type': 'Offer', price: '0', priceCurrency: 'USD' },
-      about: { '@type': 'SoftwareApplication', name: 'claude-garage', url: site.href },
+      about: SOFTWARE,
+      isPartOf: WEBSITE,
+      publisher: PUBLISHER,
     },
-    {
-      '@type': 'BreadcrumbList',
-      itemListElement: [
-        { '@type': 'ListItem', position: 1, name: 'claude-garage', item: site.href },
-        { '@type': 'ListItem', position: 2, name: 'Try it in your browser', item: url },
-      ],
-    },
+    breadcrumbs([['Home', '/'], ['Try it in your browser', '/try/']]),
   ],
 };
 ---
@@ -45,7 +42,7 @@ const jsonLd = {
     <a class="tr-logo" href="/" aria-label="claude-garage home"><b aria-hidden="true">(0.0)</b>claude-garage</a>
     <nav aria-label="Primary">
       <a href="/#story">How it works</a>
-      <a href="/docs/getting-started/install/">Install</a>
+      <a href="/docs/guides/install/">Install</a>
       <a href="/docs/reference/keys/">Keys</a>
       <a href="/docs/">Docs</a>
       <a class="tr-gh" href="https://github.com/adar2378/claude-garage">GitHub</a>
@@ -57,7 +54,7 @@ const jsonLd = {
       <nav class="tr-crumb" aria-label="Breadcrumb"><a href="/">claude-garage</a> / <span aria-current="page">Try it</span></nav>
       <h1>Try claude-garage <em>in your browser</em></h1>
       <p class="tr-lead">claude-garage is a terminal wall that shows every Claude Code session at once and turns the one that needs you amber. This page simulates it, so you can learn the keys with your real keyboard in about two minutes, with nothing to install.</p>
-      <p class="tr-sub">Eight short lessons. Install later with <a href="/docs/getting-started/install/">one command</a>.</p>
+      <p class="tr-sub">Eight short lessons. Install later with <a href="/docs/guides/install/">one command</a>.</p>
     </section>
 
     <section class="tr-lab" id="try" aria-label="Interactive tutorial">
@@ -99,7 +96,7 @@ const jsonLd = {
     <section class="tr-sec" aria-labelledby="sim-h">
       <h2 id="sim-h">How is the simulation different from the real wall?</h2>
       <p>The wall here is drawn in HTML and scripted. No Claude, tmux or network is involved, and the transcripts are canned. The layout, glyphs, colors, keys and overlay wording follow the real terminal app. Differences you may notice: the done color fades in seconds instead of two minutes, Esc releases your keyboard (a real engaged session would receive it), and only the keys from these lessons are wired up.</p>
-      <p>Ready for the real thing? Follow the <a href="/docs/getting-started/install/">install guide</a>, then <a href="/docs/guides/first-wall/">build your first wall</a>. Working in parallel branches? See <a href="/docs/guides/worktrees/">worktree sessions</a>, and <a href="/docs/guides/nothing-lost/">how nothing gets lost</a> when you restart.</p>
+      <p>Ready for the real thing? Follow the <a href="/docs/guides/install/">install guide</a>, then <a href="/docs/guides/first-wall/">build your first wall</a>. Working in parallel branches? See <a href="/docs/guides/worktrees/">worktree sessions</a>, and <a href="/docs/guides/nothing-lost/">how nothing gets lost</a> when you restart.</p>
     </section>
   </main>
 

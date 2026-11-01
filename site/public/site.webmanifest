@@ -1,0 +1,13 @@
+{
+  "name": "claude-garage",
+  "short_name": "claude-garage",
+  "description": "A terminal wall for Claude Code.",
+  "start_url": "/",
+  "display": "browser",
+  "theme_color": "#FAFAF8",
+  "background_color": "#FAFAF8",
+  "icons": [
+    { "src": "/apple-touch-icon.png", "sizes": "180x180", "type": "image/png" },
+    { "src": "/logo-512.png", "sizes": "512x512", "type": "image/png" }
+  ]
+}

@@ -1,7 +1,8 @@
 ---
 import { getCollection, render } from 'astro:content';
 import Page from '../../layouts/Page.astro';
-import { AUTHOR, PUBLISHER } from '../../lib/site';
+import { AUTHOR, PUBLISHER, SOFTWARE, WEBSITE, abs, breadcrumbs, dayOf, longDate } from '../../lib/site';
+import { fileDates } from '../../lib/gitdates';
 
 export async function getStaticPaths() {
   const pages = await getCollection('compare');
@@ -10,9 +11,10 @@ export async function getStaticPaths() {
 const { page, all } = Astro.props;
 const { Content } = await render(page);
 const d = page.data;
-const site = Astro.site ?? new URL('https://claude-garage.xyz');
-const url = new URL(`/compare/${page.id}/`, site).href;
-const UPDATED = '2026-11-01';
+const url = abs(`/compare/${page.id}/`);
+// Dates come from git history of the page source.
+const dates = fileDates(`src/content/compare/${page.id}.md`);
+const modified = new Date(dates.modified);
 const related = all.filter((p) => p.id !== page.id).sort((a, b) => a.order - b.order);
 const jsonLd = {
   '@context': 'https://schema.org',
@@ -21,9 +23,13 @@ const jsonLd = {
       '@type': 'WebPage',
       name: d.title,
       description: d.description,
+      '@id': `${url}#webpage`,
       url,
-      dateModified: UPDATED,
+      datePublished: dates.published,
+      dateModified: dates.modified,
       inLanguage: 'en',
+      isPartOf: WEBSITE,
+      about: SOFTWARE,
       author: AUTHOR,
       publisher: PUBLISHER,
     },
@@ -31,23 +37,16 @@ const jsonLd = {
       '@type': 'FAQPage',
       mainEntity: d.faq.map((f) => ({ '@type': 'Question', name: f.q, acceptedAnswer: { '@type': 'Answer', text: f.a } })),
     },
-    {
-      '@type': 'BreadcrumbList',
-      itemListElement: [
-        { '@type': 'ListItem', position: 1, name: 'Home', item: site.origin + '/' },
-        { '@type': 'ListItem', position: 2, name: 'Compare', item: new URL('/compare/', site).href },
-        { '@type': 'ListItem', position: 3, name: d.title, item: url },
-      ],
-    },
+    breadcrumbs([['Home', '/'], ['Compare', '/compare/'], [d.title, `/compare/${page.id}/`]]),
   ],
 };
 ---
 <Page title={`${d.title} | claude-garage`} description={d.description} jsonLd={jsonLd} active="compare">
   <p class="crumbs"><a href="/">Home</a> / <a href="/compare/">Compare</a></p>
   <h1>{d.title}</h1>
-  <p class="meta">By <a href="https://github.com/adar2378">Saiful Islam</a>, creator of claude-garage · Last updated <time datetime={UPDATED}>November 1, 2026</time></p>
+  <p class="meta">By <a href="https://github.com/adar2378">Saiful Islam</a>, creator of claude-garage · Last updated <time datetime={dayOf(modified)}>{longDate(modified)}</time></p>
   <p class="lead">{d.intro}</p>
-  <p class="cta"><a class="btn primary" href="/docs/getting-started/install/">Install claude-garage</a><a class="btn" href="/docs/guides/first-wall/">First wall guide</a></p>
+  <p class="cta"><a class="btn primary" href="/docs/guides/install/">Install claude-garage</a><a class="btn" href="/docs/guides/first-wall/">First wall guide</a></p>
 
   <h2>Who is claude-garage for, compared with {d.otherLabel}?</h2>
   <ul>{d.who.map((w) => <li>{w}</li>)}</ul>
@@ -70,7 +69,7 @@ const jsonLd = {
 
   <h2>Next steps</h2>
   <ul>
-    <li><a href="/docs/getting-started/install/">Install claude-garage</a> (macOS, Linux, Windows preview).</li>
+    <li><a href="/docs/guides/install/">Install claude-garage</a> (macOS, Linux, Windows preview).</li>
     <li><a href="/docs/guides/many-sessions/">Run many sessions</a> and <a href="/docs/guides/nothing-lost/">keep them alive</a>.</li>
     <li><a href="/docs/guides/plugins/">Plugins</a> and <a href="/docs/guides/first-plugin/">build your first plugin</a>.</li>
   </ul>

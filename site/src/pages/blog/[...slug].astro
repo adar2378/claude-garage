@@ -1,7 +1,7 @@
 ---
 import { getCollection, render } from 'astro:content';
 import Page from '../../layouts/Page.astro';
-import { AUTHOR, PUBLISHER, isoDate, longDate } from '../../lib/site';
+import { AUTHOR, ID, PUBLISHER, SOFTWARE, WEBSITE, abs, breadcrumbs, dayOf, isoDate, longDate, ref } from '../../lib/site';
 
 export async function getStaticPaths() {
   const posts = await getCollection('blog', (p) => import.meta.env.DEV || !p.data.draft);
@@ -10,8 +10,7 @@ export async function getStaticPaths() {
 const { post } = Astro.props;
 const { Content, remarkPluginFrontmatter } = await render(post);
 const d = post.data;
-const site = Astro.site ?? new URL('https://claude-garage.xyz');
-const url = new URL(`/blog/${post.id}/`, site).href;
+const url = abs(`/blog/${post.id}/`);
 const jsonLd = {
   '@context': 'https://schema.org',
   '@graph': [
@@ -21,22 +20,17 @@ const jsonLd = {
       description: d.description,
       url,
       mainEntityOfPage: url,
-      image: new URL('/og-default.png', site).href,
+      image: abs('/og-default.png'),
       datePublished: isoDate(d.date),
       dateModified: isoDate(d.updated ?? d.date),
       inLanguage: 'en',
       keywords: d.tags.join(', '),
+      isPartOf: ref(ID.blog),
+      about: SOFTWARE,
       author: AUTHOR,
       publisher: PUBLISHER,
     },
-    {
-      '@type': 'BreadcrumbList',
-      itemListElement: [
-        { '@type': 'ListItem', position: 1, name: 'Home', item: site.origin + '/' },
-        { '@type': 'ListItem', position: 2, name: 'Blog', item: new URL('/blog/', site).href },
-        { '@type': 'ListItem', position: 3, name: d.title, item: url },
-      ],
-    },
+    breadcrumbs([['Home', '/'], ['Blog', '/blog/'], [d.title, `/blog/${post.id}/`]]),
   ],
 };
 void remarkPluginFrontmatter;
@@ -54,10 +48,10 @@ void remarkPluginFrontmatter;
   <h1>{d.title}</h1>
   <p class="meta">
     By <a href="https://github.com/adar2378">{d.author}</a>, creator of claude-garage ·
-    <time datetime={isoDate(d.date)}>{longDate(d.date)}</time>
-    {d.updated && <> · updated <time datetime={isoDate(d.updated)}>{longDate(d.updated)}</time></>}
+    <time datetime={dayOf(d.date)}>{longDate(d.date)}</time>
+    {d.updated && <> · updated <time datetime={dayOf(d.updated)}>{longDate(d.updated)}</time></>}
     {d.draft && <> · DRAFT</>}
   </p>
   <article><Content /></article>
-  <p class="cta"><a class="btn primary" href="/docs/getting-started/install/">Install claude-garage</a><a class="btn" href="/blog/">More posts</a></p>
+  <p class="cta"><a class="btn primary" href="/docs/guides/install/">Install claude-garage</a><a class="btn" href="/blog/">More posts</a></p>
 </Page>
