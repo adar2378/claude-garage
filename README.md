@@ -10,6 +10,8 @@
 
 [Website](https://claude-garage.xyz) · [Docs](https://claude-garage.xyz/docs/) · [Try it in your browser](https://claude-garage.xyz/try/)
 
+If garage saves you some tab-juggling, a ⭐ on this repo helps other Claude Code users find it.
+
 <img src="docs/hero-tui.png" alt="The terminal wall: two projects in the rail, four live Claude sessions, one asking for permission (amber)" width="100%" />
 
 </div>
@@ -242,6 +244,14 @@ Note: plain `cargo test` also starts and kills real tmux sessions.
 - Diff review in the TUI
 - Adopt an existing tmux session
 - Phone notifications
+
+## Support
+
+claude-garage is free, MIT licensed and built by one person. The best way to help:
+
+- **Star the repo.** It is how other Claude Code users find it.
+- **Open an issue** when something breaks or feels slow.
+- **Share it** with someone who runs more than one Claude session.
 
 ## License
 
