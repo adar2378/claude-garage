@@ -1,12 +1,14 @@
 <div align="center">
 
-<img src="docs/banner.png" alt="claude-garage: a pit wall for your Claude Code agents" width="100%" />
+<img src="docs/banner.png" alt="claude-garage: every Claude session, one calm wall" width="100%" />
 
 **Run many Claude Code sessions. See them all in one terminal.**
 
-[![npm](https://img.shields.io/npm/v/claude-garage?color=e2a75e&label=npm)](https://www.npmjs.com/package/claude-garage)
-[![license](https://img.shields.io/badge/license-MIT-79b26e)](LICENSE)
-[![local](https://img.shields.io/badge/100%25-local-c6cfdb)](#privacy)
+[![npm](https://img.shields.io/npm/v/claude-garage?color=B83F00&label=npm)](https://www.npmjs.com/package/claude-garage)
+[![license](https://img.shields.io/badge/license-MIT-14151A)](LICENSE)
+[![local](https://img.shields.io/badge/100%25-local-5B5E69)](#privacy)
+
+[Website](https://claude-garage.xyz) · [Docs](https://claude-garage.xyz/docs/) · [Try it in your browser](https://claude-garage.xyz/try/)
 
 <img src="docs/hero-tui.png" alt="The terminal wall: two projects in the rail, four live Claude sessions, one asking for permission (amber)" width="100%" />
 
@@ -41,8 +43,8 @@ It's small: one 17 MB binary (the plugins are inside it), about 6 MB of RAM and 
 
 You need:
 
-- macOS or Linux. Windows x64 is a preview: it has a prebuilt binary, but a
-  contributor still has to verify it on real Windows before 1.0.0.
+- macOS or Linux. Windows x64 is a preview: it has a prebuilt binary, but it
+  has not been tested on real Windows yet.
 - [tmux](https://github.com/tmux/tmux) 3.2 or newer (garage offers to
   install it with `brew`)
 - [Claude Code](https://docs.claude.com/en/docs/claude-code) on your `PATH`
@@ -188,6 +190,19 @@ Alerts are on by default, also for existing installs: they replace the old
 needs-input banner. To turn them off completely, press `p` and switch `alerts`
 off; garage will not turn them back on.
 
+## Plugins
+
+garage ships with built-in plugins (the usage bar, the pit pet, alerts and
+more). Press `p` to see every plugin, its permissions, and turn it on or off.
+Changes apply at once, no restart.
+
+```bash
+claude-garage plugin install owner/repo   # add one from GitHub
+claude-garage plugin remove <id>          # remove it again
+```
+
+Writing your own: see the [plugin docs](docs/plugins/README.md).
+
 ## Privacy
 
 Everything stays on your machine.
@@ -224,7 +239,6 @@ Note: plain `cargo test` also starts and kills real tmux sessions.
 
 ## Roadmap
 
-- Linux support
 - Diff review in the TUI
 - Adopt an existing tmux session
 - Phone notifications
