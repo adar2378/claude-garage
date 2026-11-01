@@ -2,8 +2,8 @@
 
 | OS | Session backend | Notifications | Folder picker | Prebuilt binary |
 |---|---|---|---|---|
-| macOS arm64 / x64 | tmux | terminal-notifier or osascript | osascript | arm64 ships today |
-| Linux x64 / arm64 | tmux | `notify-send` if installed | `zenity` or `kdialog` if installed | planned (cargo-dist) |
+| macOS arm64 / x64 | tmux | terminal-notifier or osascript | osascript | prebuilt binary (cargo-dist) |
+| Linux x64 / arm64 | tmux | `notify-send` if installed | `zenity` or `kdialog` if installed | prebuilt binary (cargo-dist) |
 | Windows x64 | session host (below) | PowerShell toast | PowerShell WinForms dialog | prebuilt binary and PowerShell installer (preview, not yet verified on real Windows); x64 runs under emulation on ARM |
 
 A feature the OS lacks answers 501 and the TUI says so; nothing else changes.
