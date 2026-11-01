@@ -1,6 +1,6 @@
 ---
 title: First run
-description: Add a project, start a Claude session, and learn the five session states in the claude-garage wall.
+description: "Add a project, start a Claude Code session, and learn the five session states in the claude-garage wall: needs input, working, done, idle and restorable."
 sidebar:
   order: 2
 ---

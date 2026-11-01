@@ -36,4 +36,4 @@ faq:
 
 An editor panel is close to the code. A wall is close to the sessions. If your main pain is "which of my five sessions is waiting for me", the wall answers it. If your main pain is "show me this change in context", the editor does.
 
-Start with [Install](/docs/getting-started/install/) and the [first wall guide](/docs/guides/first-wall/) if you want to try both side by side.
+Start with [Install](/docs/guides/install/) and the [first wall guide](/docs/guides/first-wall/) if you want to try both side by side.

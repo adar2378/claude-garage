@@ -1,6 +1,6 @@
 ---
 title: Commands
-description: The claude-garage command line, including restart options and plugin subcommands.
+description: "The claude-garage command line: start the wall, restart the daemon, restart idle or busy sessions on the latest claude, and run plugin subcommands."
 # TODO: hand-written from the README; generate when the CLI exposes a list.
 sidebar:
   order: 2

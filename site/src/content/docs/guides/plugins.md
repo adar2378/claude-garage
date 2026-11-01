@@ -1,5 +1,5 @@
 ---
-title: Plugins
+title: Use and install plugins
 description: Meet the nine built-in claude-garage plugins, turn them on or off, install more from GitHub with a safe preview, search for plugins and write your own.
 sidebar:
   order: 6

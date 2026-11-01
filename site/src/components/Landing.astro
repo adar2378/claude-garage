@@ -11,6 +11,7 @@ import '../styles/landing.css';
     <li><a href="#story">How it works</a></li>
     <li><a href="#plugins">Plugins</a></li>
     <li><a href="#keys">Keys</a></li>
+    <li><a href="/try/">Try it</a></li>
     <li><a href="#install">Install</a></li>
   </ul></nav>
   <a class="btn btn-dark sm" href="https://github.com/adar2378/claude-garage">GitHub</a>
@@ -19,15 +20,16 @@ import '../styles/landing.css';
 <main id="top">
 <section class="hero" id="hero" aria-labelledby="h1">
   <canvas id="field" aria-hidden="true"></canvas>
-  <div class="pill rv"><span class="dot" aria-hidden="true"></span>The session waiting on you turns amber</div>
-  <h1 id="h1" class="rv" style="--rd:.06s">Every Claude session. One <em>calm</em> wall.</h1>
-  <p class="sub rv" style="--rd:.14s">claude-garage puts all your Claude Code sessions in a single terminal. See who is busy, spot who needs you, press <span class="inl">a</span> and answer. tmux keeps them all alive.</p>
-  <div class="cta rv" style="--rd:.22s">
+  <div class="pill"><span class="dot" aria-hidden="true"></span>The session waiting on you turns amber</div>
+  <h1 id="h1">Every Claude session. One <em>calm</em> wall.</h1>
+  <p class="sub">claude-garage puts all your Claude Code sessions in a single terminal. See who is busy, spot who needs you, press <span class="inl">a</span> and answer. tmux keeps them all alive.</p>
+  <div class="cta">
     <button class="copybox" data-copy="npx claude-garage" aria-label="Copy command: npx claude-garage"><span><span class="p">$ </span>npx claude-garage</span><span class="c"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2.5"/><path d="M5 15V6.5A2.5 2.5 0 0 1 7.5 4H15"/></svg><span class="lbl">Copy</span></span></button>
     <a class="btn btn-line" href="https://github.com/adar2378/claude-garage">View on GitHub <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg></a>
+    <a class="btn btn-dark" href="/try/">Try it in your browser</a>
   </div>
-  <p class="note rv" style="--rd:.3s">macOS and Linux. Windows in preview. MIT licensed.</p>
-  <div class="hwin rv" id="hwin" style="--rd:.36s">
+  <p class="note">macOS and Linux. Windows in preview. MIT licensed.</p>
+  <div class="hwin" id="hwin">
     <div class="term"><div class="term-bar"><i></i><i></i><i></i><span id="hwt">claude-garage</span>
       <button class="abtn" id="hattach" type="button" aria-pressed="false" aria-label="Attach to the session that needs you"><kbd>a</kbd><span class="lbl" id="hlbl">needs you</span></button></div>
       <div class="vw"><svg viewBox="236 450 1204 430" preserveAspectRatio="xMinYMin slice" role="img" aria-label="The bottom of the claude-garage wall: one session asks Do you want to proceed, and the status strip says someone needs you"><image href="/renders/wall-needs-input.svg" width="1440" height="880"/><image id="himg-e" href="/renders/wall-engaged.svg" width="1440" height="880"/></svg></div></div>
@@ -255,7 +257,7 @@ import '../styles/landing.css';
 
 <footer>
   <a class="logo" href="#top" style="color:var(--ink)"><b data-logo aria-hidden="true">(0.0)</b>claude-garage</a>
-  <nav aria-label="Footer"><a href="https://github.com/adar2378/claude-garage">GitHub</a><a href="https://github.com/adar2378/claude-garage/releases">Releases</a><a href="/docs/">Docs</a><a href="/blog/">Blog</a><a href="/compare/">Compare</a><a href="#plugins">Plugins</a><a href="#install">Install</a></nav>
+  <nav aria-label="Footer"><a href="https://github.com/adar2378/claude-garage">GitHub</a><a href="https://github.com/adar2378/claude-garage/releases">Releases</a><a href="/docs/">Docs</a><a href="/blog/">Blog</a><a href="/compare/">Compare</a><a href="/try/">Try it</a><a href="#plugins">Plugins</a><a href="#install">Install</a></nav>
   <span>MIT licensed. macOS and Linux, Windows in preview.</span>
 </footer>
 

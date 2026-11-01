@@ -1,6 +1,6 @@
 ---
 title: "Why tmux owns your sessions"
-description: "claude-garage lets tmux run every Claude Code session, not the wall. Why that keeps sessions alive when you close the terminal, and how restarts resume conversations."
+description: "In claude-garage, tmux runs every Claude Code session and the wall is only a viewer. Why that keeps sessions alive and lets restarts resume chats."
 date: 2026-11-01
 tags: [design, tmux, sessions]
 ---

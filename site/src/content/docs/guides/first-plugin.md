@@ -1,6 +1,6 @@
 ---
 title: Build your first plugin
-description: Build a claude-garage plugin step by step. Scaffold it with plugin new, write the manifest and a widget, run plugin dev, set permissions, test it and publish it to GitHub.
+description: "Build a claude-garage plugin in about 20 minutes: scaffold it with plugin new, write the manifest and a widget, test it live and publish it to GitHub."
 sidebar:
   order: 8
 ---

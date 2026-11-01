@@ -58,7 +58,7 @@ You need macOS or Linux, tmux 3.2 or newer, and Claude Code on your `PATH`. Then
 npx claude-garage@next
 ```
 
-Press `w` to add a project folder, `n` to start a session, `Enter` to type into it and `Ctrl+G` to get back to the wall. Press `?` for all keys. The [install guide](/docs/getting-started/install/) has the other install methods.
+Press `w` to add a project folder, `n` to start a session, `Enter` to type into it and `Ctrl+G` to get back to the wall. Press `?` for all keys. The [install guide](/docs/guides/install/) has the other install methods.
 
 ## What is next?
 

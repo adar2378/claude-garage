@@ -1,6 +1,6 @@
 # claude-garage site
 
-Astro + Starlight, static output, built for Cloudflare Pages.
+Astro + Starlight, static output, deployed to Cloudflare Workers static assets (`wrangler.jsonc`).
 
 - `/` landing page (`src/pages/index.astro`, hosts `src/components/Landing.astro`, currently a stub)
 - `/docs/...` Starlight docs. Hand-written pages and `guides/` live in `src/content/docs/`; the loader prefixes every id with `docs/`.
@@ -27,9 +27,23 @@ npm run check     # astro check
 | Variable | Default | Use |
 |---|---|---|
 | `SITE_URL` | `https://claude-garage.xyz` | Canonical URLs, sitemap, OG tags, llms.txt. TODO confirm the domain. |
+| `SITE_NOINDEX` | unset | Set to `1` for a preview build: `noindex` meta on every page, `robots.txt` says `Disallow: /`, no sitemap, and an `X-Robots-Tag: noindex` header. |
 | `BRAND_ACCENT` | `#E85002` | OG image accent bar only. CSS accent lives in `src/styles/theme.css` (`--brand`). |
 
-## Deploy to Cloudflare Pages
+## Deploy (Cloudflare Workers static assets)
+
+Run every command from `site/`.
+
+- **Preview** (must not be indexed): `SITE_NOINDEX=1 npm run build && npx wrangler deploy`
+- **Production** (indexable): `npm run build && npx wrangler deploy`, with `SITE_NOINDEX` unset.
+
+The custom domain (`claude-garage.xyz`) is attached on release day, not before. Until then the site lives on its `workers.dev` address, built with `SITE_NOINDEX=1`. On release day: attach the domain to the Worker, build without `SITE_NOINDEX`, deploy, then submit the sitemap.
+
+`npm run build` also writes the sha256 of the one inline script on `/try/` into `dist/_headers` (`scripts/postbuild.mjs`), so deploy the `dist` it produced. `npm run check:links` crawls `dist` for broken internal links. Page dates in JSON-LD and the sitemap come from git history, so build from a full clone, not a shallow one. `public/_redirects` redirects the old install URL to `/docs/guides/install/`. Check `/.well-known/security.txt` after the first deploy: it must return 200.
+
+`npm run icons` regenerates `logo-512.png`, `apple-touch-icon.png` and `favicon.ico` from `public/favicon.svg`.
+
+## Deploy to Cloudflare Pages (older notes)
 
 1. Push the branch to GitHub.
 2. Cloudflare dashboard, Workers & Pages, Create, Pages, Connect to Git. Pick the `claude-garage` repo.

@@ -11,9 +11,11 @@
     "og": "node scripts/og-image.mjs",
     "dev": "npm run sync && astro dev",
     "prebuild": "npm run sync && npm run og",
-    "build": "astro build",
+    "build": "rm -rf dist && astro build && node scripts/postbuild.mjs",
     "preview": "astro preview",
-    "check": "astro check"
+    "check": "astro check",
+    "icons": "node scripts/icons.mjs",
+    "check:links": "node scripts/check-links.mjs"
   },
   "dependencies": {
     "@astrojs/sitemap": "^3.7.4",

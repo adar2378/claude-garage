@@ -1,6 +1,6 @@
 ---
 title: "How the plugin confirm rule keeps you in control"
-description: "A claude-garage plugin can arm a dangerous action like closing a session, but only a human key press or click can confirm it. How the rule works and where it stops."
+description: "A claude-garage plugin can arm a dangerous action such as closing a session, but only a human key press or click confirms it. How the rule works."
 date: 2026-11-01
 tags: [plugins, security, design]
 ---

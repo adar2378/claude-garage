@@ -1,6 +1,6 @@
 ---
 title: "claude-garage vs tmux on its own"
-description: "Compare claude-garage with plain tmux for Claude Code: what tmux already gives you, what claude-garage adds on top, and when plain tmux is the better choice."
+description: "Compare claude-garage with plain tmux for Claude Code: what tmux gives you already, what claude-garage adds on top, and when plain tmux is better."
 short: "claude-garage is built on tmux. See what it adds and what plain tmux already covers."
 order: 2
 otherLabel: "tmux on its own"
