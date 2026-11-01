@@ -8,7 +8,8 @@ expression: out
 |│                                                                    │|
 |╰────────────────────────────────────────────────────────────────────╯|
 --- styles ---
-r0 c0..4 fg=Gray bg=Reset mod=NONE
+r0 c0..1 fg=Gray bg=Reset mod=NONE
+r0 c1..4 fg=Rgb(94, 196, 214) bg=Reset mod=NONE
 r0 c4..31 fg=White bg=Reset mod=UNDERLINED
 r0 c31..40 fg=DarkGray bg=Reset mod=NONE
 r0 c40..45 fg=Gray bg=Reset mod=NONE
@@ -28,7 +29,7 @@ r3 c0..70 fg=Gray bg=Reset mod=NONE
 |┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛|
 --- styles ---
 r0 c0..1 fg=White bg=Reset mod=NONE
-r0 c1..4 fg=Gray bg=Reset mod=NONE
+r0 c1..4 fg=Rgb(94, 196, 214) bg=Reset mod=NONE
 r0 c4..13 fg=White bg=Reset mod=BOLD | UNDERLINED
 r0 c13..22 fg=DarkGray bg=Reset mod=NONE
 r0 c22..27 fg=Gray bg=Reset mod=NONE
@@ -48,7 +49,8 @@ r3 c0..36 fg=White bg=Reset mod=NONE
 |╰────────────────────────────────────────────────────────────────────╯|
 --- styles ---
 r0 c0..1 fg=DarkGray bg=Reset mod=NONE
-r0 c1..31 fg=Gray bg=Reset mod=NONE
+r0 c1..4 fg=Rgb(94, 196, 214) bg=Reset mod=NONE
+r0 c4..31 fg=Gray bg=Reset mod=NONE
 r0 c31..40 fg=DarkGray bg=Reset mod=NONE
 r0 c40..54 fg=Gray bg=Reset mod=NONE
 r0 c54..70 fg=DarkGray bg=Reset mod=NONE

@@ -4,7 +4,8 @@
 //! The visual contract is the p7 UX mockup's salience ladder: amber is
 //! EXCLUSIVELY needs-input — the
 //! only loud state — `done` is green and fades 2 minutes after the
-//! transition, `working`/`idle` are deliberately colourless neutrals.
+//! transition, `working` is a soft cyan (never amber, never yellow), `idle`
+//! is a quiet neutral.
 //!
 //! Everything here is pure (time is injected) so it unit-tests without a
 //! terminal.
@@ -65,7 +66,11 @@ pub mod colors {
     pub const GREEN: Color = Color::Green;
     /// Normal foreground.
     pub const FG: Color = Color::White;
-    /// Working/idle neutral.
+    /// A working session's glyph: soft cyan, distinct from amber, green, the
+    /// plugin blue and the warn khaki. Never orange/yellow (amber is
+    /// exclusive to needs-input).
+    pub const WORKING: Color = Color::Rgb(94, 196, 214);
+    /// Idle neutral.
     pub const DIM: Color = Color::Gray;
     /// De-emphasized (idle glyphs, non-gridded rail rows, faded done).
     pub const FAINT: Color = Color::DarkGray;
@@ -96,7 +101,7 @@ pub fn status_color(status: &str, since_ms: Option<i64>, now_ms: i64) -> Color {
                 colors::GREEN
             }
         }
-        "working" => colors::DIM,
+        "working" => colors::WORKING,
         _ => colors::FAINT, // idle, restorable
     }
 }
@@ -207,8 +212,16 @@ mod tests {
     }
 
     #[test]
+    fn working_is_cyan_distinct_from_every_other_hue() {
+        assert_eq!(colors::WORKING, Color::Rgb(94, 196, 214));
+        assert_eq!(status_color("working", None, 0), colors::WORKING);
+        for other in [colors::AMBER, colors::GREEN, colors::PLUGIN, colors::WARN] {
+            assert_ne!(colors::WORKING, other);
+        }
+    }
+
+    #[test]
     fn neutrals_for_the_quiet_states() {
-        assert_eq!(status_color("working", None, 0), colors::DIM);
         assert_eq!(status_color("idle", None, 0), colors::FAINT);
         assert_eq!(status_color("restorable", None, 0), colors::FAINT);
     }

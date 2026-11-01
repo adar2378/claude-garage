@@ -11,7 +11,7 @@ use std::collections::HashSet;
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
-use ratatui::style::{Modifier, Style};
+use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph, Widget};
 
@@ -19,7 +19,7 @@ use crate::slots::{self, ClickTarget, SlotClickRegion, SlotCtx, SlotId, SlotItem
 use crate::state::salience::WorkspaceGroup;
 use crate::state::wall_state::{WallSession, WallState};
 use crate::ui::theme::{
-    animated_glyph_for, colors, elapsed_for, status_color, status_color_fading,
+    animated_glyph_for, colors, done_faded, elapsed_for, status_color, status_color_fading,
 };
 
 /// A clickable slot item on one rail row: `cols` are rail-local columns.
@@ -248,6 +248,32 @@ fn workspace_row(group: &WorkspaceGroup, index: usize, focused: bool) -> Line<'s
     Line::from(spans)
 }
 
+/// Rail label colour. Needs-input stays amber; the focused row is bright;
+/// otherwise by status: working and fresh `done` read FG (`done` steps to DIM
+/// when its 2-minute green fade ends), idle DIM, restorable FAINT. A row with
+/// no tile on the grid drops one step (FG to DIM, DIM to FAINT).
+fn label_color(s: &WallSession, gridded: bool, focused: bool, now_ms: i64) -> Color {
+    if s.needs_input() {
+        return colors::AMBER;
+    }
+    if focused {
+        return colors::FG;
+    }
+    let base = match s.status.as_str() {
+        "working" => colors::FG,
+        "done" if !done_faded(s.since, now_ms) => colors::FG,
+        "restorable" => colors::FAINT,
+        _ => colors::DIM,
+    };
+    if gridded {
+        base
+    } else if base == colors::FG {
+        colors::DIM
+    } else {
+        colors::FAINT
+    }
+}
+
 fn session_row(
     s: &WallSession,
     gridded: bool,
@@ -261,22 +287,12 @@ fn session_row(
     // amber (amber stays exclusive to needs-input, whose label keeps its hue
     // and just gains bold). The marker column is always reserved so rows
     // never shift as focus moves.
-    let glyph_color = if gridded && fade_done {
+    let glyph_color = if fade_done {
         status_color_fading(&s.status, s.since, now_ms)
-    } else if gridded {
+    } else {
         status_color(&s.status, s.since, now_ms)
-    } else {
-        colors::FAINT
     };
-    let label_color = if s.needs_input() {
-        colors::AMBER
-    } else if focused {
-        colors::FG
-    } else if gridded {
-        colors::DIM
-    } else {
-        colors::FAINT
-    };
+    let label_color = label_color(s, gridded, focused, now_ms);
     let mut label_style = Style::default().fg(label_color);
     if focused {
         label_style = label_style.add_modifier(Modifier::BOLD);
@@ -369,6 +385,7 @@ mod tests {
     use super::*;
     use crate::api::models::{SessionInfo, WorkspaceInfo};
     use crate::state::store::WallStore;
+    use crate::ui::theme::DONE_FADE_MS;
 
     fn ws(name: &str) -> WorkspaceInfo {
         WorkspaceInfo {
@@ -447,27 +464,111 @@ mod tests {
         assert_eq!(line.spans[3].style.fg, Some(colors::AMBER));
     }
 
-    #[test]
-    fn non_gridded_sessions_render_faint() {
+    /// Glyph and label colours of the row labelled `label` in group `a`.
+    fn row_colors(
+        store: &WallStore,
+        label: &str,
+        now_ms: i64,
+        fade: bool,
+    ) -> (Option<Color>, Option<Color>) {
+        let (lines, _) = rail_render(store.state(), &SlotRegistry::core(), now_ms, fade);
+        let line = lines
+            .iter()
+            .find(|l| l.spans.len() > 2 && l.spans[2].content == label)
+            .unwrap_or_else(|| panic!("no rail row {label}"));
+        (line.spans[1].style.fg, line.spans[2].style.fg)
+    }
+
+    fn store_with(sessions: Vec<SessionInfo>) -> WallStore {
         let mut store = WallStore::new();
         store.workspaces_fetched(vec![ws("a")]);
-        store.sessions_fetched(
-            (1..=7)
-                .map(|i| si("a", &format!("s{i}"), "working", Some(0)))
-                .collect(),
-        );
-        let lines = rail_lines(store.state(), &SlotRegistry::core(), 0);
-        let overflow = &lines[7]; // header + 6 gridded rows before it
-        assert!(overflow.to_string().contains("s7"));
+        store.sessions_fetched(sessions);
+        store
+    }
+
+    #[test]
+    fn working_row_is_cyan_glyph_with_bright_label_when_not_focused() {
+        // Row 1 is focused (first session); row 2 is the unfocused working one.
+        let store = store_with(vec![
+            si("a", "first", "idle", None),
+            si("a", "busy", "working", Some(0)),
+        ]);
         assert_eq!(
-            overflow.spans[1].style.fg,
-            Some(colors::FAINT),
-            "glyph dimmed"
+            row_colors(&store, "busy", 0, false),
+            (Some(colors::WORKING), Some(colors::FG))
+        );
+    }
+
+    #[test]
+    fn idle_and_restorable_rows_keep_their_quiet_colours() {
+        let store = store_with(vec![
+            si("a", "first", "working", Some(0)),
+            si("a", "calm", "idle", None),
+            si("a", "gone", "restorable", None),
+        ]);
+        assert_eq!(
+            row_colors(&store, "calm", 0, false),
+            (Some(colors::FAINT), Some(colors::DIM))
         );
         assert_eq!(
-            overflow.spans[2].style.fg,
-            Some(colors::FAINT),
-            "label dimmed"
+            row_colors(&store, "gone", 0, false),
+            (Some(colors::FAINT), Some(colors::FAINT))
+        );
+    }
+
+    #[test]
+    fn fresh_done_label_is_bright_then_dim_after_the_fade() {
+        let store = store_with(vec![
+            si("a", "first", "idle", None),
+            si("a", "fin", "done", Some(0)),
+        ]);
+        let (glyph, label) = row_colors(&store, "fin", 1000, false);
+        assert_eq!((glyph, label), (Some(colors::GREEN), Some(colors::FG)));
+        let (glyph, label) = row_colors(&store, "fin", DONE_FADE_MS + 1, false);
+        assert_eq!((glyph, label), (Some(colors::FAINT), Some(colors::DIM)));
+        // With the fade on the glyph is the RGB ramp; the label still flips
+        // when the ramp ends.
+        let (_, label) = row_colors(&store, "fin", DONE_FADE_MS, true);
+        assert_eq!(label, Some(colors::FG));
+        let (glyph, label) = row_colors(&store, "fin", DONE_FADE_MS + 1, true);
+        assert!(matches!(glyph, Some(Color::Rgb(..))));
+        assert_eq!(label, Some(colors::DIM));
+        assert!(done_faded(Some(0), DONE_FADE_MS + 1));
+    }
+
+    #[test]
+    fn needs_input_stays_amber_when_not_focused() {
+        let store = store_with(vec![
+            si("a", "first", "idle", None),
+            si("a", "stuck", "needs-input", Some(0)),
+        ]);
+        assert_eq!(
+            row_colors(&store, "stuck", 0, false),
+            (Some(colors::AMBER), Some(colors::AMBER))
+        );
+    }
+
+    #[test]
+    fn non_gridded_rows_keep_the_status_glyph_and_dim_the_label_one_step() {
+        let mut sessions = vec![si("a", "first", "idle", None)];
+        sessions.extend((2..=6).map(|i| si("a", &format!("s{i}"), "idle", None)));
+        sessions.push(si("a", "off-work", "working", Some(0)));
+        sessions.push(si("a", "off-idle", "idle", None));
+        sessions.push(si("a", "off-stuck", "needs-input", Some(0)));
+        let store = store_with(sessions);
+        // header + 6 gridded rows, then the three overflow rows.
+        assert_eq!(
+            row_colors(&store, "off-work", 0, false),
+            (Some(colors::WORKING), Some(colors::DIM)),
+            "working: glyph cyan, label FG stepped to DIM"
+        );
+        assert_eq!(
+            row_colors(&store, "off-idle", 0, false),
+            (Some(colors::FAINT), Some(colors::FAINT))
+        );
+        assert_eq!(
+            row_colors(&store, "off-stuck", 0, false),
+            (Some(colors::AMBER), Some(colors::AMBER))
         );
     }
 
@@ -551,7 +652,6 @@ mod tests {
     #[test]
     fn extra_rows_paint_with_their_style_and_click_across_the_whole_row() {
         use crate::actions::ids;
-        use ratatui::style::Color;
         let mut store = WallStore::new();
         store.workspaces_fetched(vec![ws("alpha")]);
         store.sessions_fetched(vec![si("alpha", "one", "idle", None)]);

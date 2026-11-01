@@ -21,11 +21,12 @@ r1 c0..7 fg=Gray bg=Reset mod=NONE
 r1 c7..12 fg=Rgb(255, 179, 64) bg=Reset mod=NONE
 r1 c29..30 fg=DarkGray bg=Reset mod=NONE
 r2 c0..3 fg=White bg=Reset mod=BOLD
-r2 c3..5 fg=DarkGray bg=Reset mod=NONE
-r2 c5..15 fg=Rgb(255, 179, 64) bg=Reset mod=NONE
+r2 c3..15 fg=Rgb(255, 179, 64) bg=Reset mod=NONE
 r2 c29..30 fg=DarkGray bg=Reset mod=NONE
 r3 c0..3 fg=White bg=Reset mod=BOLD
-r3 c3..14 fg=DarkGray bg=Reset mod=NONE
+r3 c3..5 fg=Rgb(94, 196, 214) bg=Reset mod=NONE
+r3 c5..9 fg=Gray bg=Reset mod=NONE
+r3 c9..14 fg=DarkGray bg=Reset mod=NONE
 r3 c29..30 fg=DarkGray bg=Reset mod=NONE
 r4 c0..3 fg=Gray bg=Reset mod=NONE
 r4 c3..7 fg=White bg=Reset mod=BOLD
@@ -37,7 +38,8 @@ r5 c29..30 fg=DarkGray bg=Reset mod=NONE
 r6 c0..7 fg=Gray bg=Reset mod=NONE
 r6 c29..30 fg=DarkGray bg=Reset mod=NONE
 r7 c0..3 fg=White bg=Reset mod=BOLD
-r7 c3..13 fg=DarkGray bg=Reset mod=NONE
+r7 c3..5 fg=Green bg=Reset mod=NONE
+r7 c5..13 fg=Gray bg=Reset mod=NONE
 r7 c29..30 fg=DarkGray bg=Reset mod=NONE
 r8 c0..3 fg=White bg=Reset mod=BOLD
 r8 c3..12 fg=DarkGray bg=Reset mod=NONE
