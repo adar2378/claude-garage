@@ -2,24 +2,23 @@
 // Replaces Starlight's social icons with the landing page's header nav, so both headers match.
 // "How it works" returns to the landing page; the rest go to the matching docs pages.
 const links = [
-  { label: 'How it works', href: '/#story' },
+  { label: 'Blog', href: '/blog/' },
+  { label: 'Compare', href: '/compare/' },
   { label: 'Try it', href: '/try/' },
-  { label: 'Plugins', href: '/docs/plugins/' },
-  { label: 'Keys', href: '/docs/reference/keys/' },
   { label: 'Install', href: '/docs/guides/install/' },
 ];
 ---
 <nav class="gnav" aria-label="Site">
   {links.map((l) => <a class="gl" href={l.href}>{l.label}</a>)}
-  <a class="gh" href="https://github.com/adar2378/claude-garage" rel="me">GitHub</a>
+  <a class="gh" href="https://github.com/adar2378/claude-garage" rel="me">Star</a>
 </nav>
 <style>
   @layer starlight.core {
     .gnav { display: flex; align-items: center; gap: 1.4rem; }
     a { color: var(--sl-color-gray-1); text-decoration: none; font-family: var(--sl-font-mono); font-size: var(--sl-text-sm); font-weight: 500; white-space: nowrap; }
     a:hover { color: var(--sl-color-white); text-decoration: underline; text-underline-offset: 5px; }
-    .gh { padding: 0.35rem 0.8rem; border-radius: 0.6rem; background: var(--sl-color-white); color: var(--sl-color-black); }
-    .gh:hover { color: var(--sl-color-black); opacity: 0.88; text-decoration: none; }
+    .gh { padding: 0.35rem 0.8rem; border-radius: 0.75rem; border: 1.5px solid var(--sl-color-white); color: var(--sl-color-white); }
+    .gh:hover { background: var(--sl-color-white); color: var(--sl-color-black); text-decoration: none; }
     @media (max-width: 71.99rem) { .gl { display: none; } }
   }
 </style>

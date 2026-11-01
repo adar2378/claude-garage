@@ -1,0 +1,43 @@
+---
+// One header for the landing page, /try/, blog, compare and about. The docs use Starlight's own header (see SocialIcons.astro).
+// The mark is the drawn logo (src/assets/logo.svg), inlined so it needs no request.
+import logoSvg from '../assets/logo.svg?raw';
+import '../styles/header.css';
+
+interface Props { active?: 'docs' | 'blog' | 'compare' | 'try' | 'about' | ''; home?: boolean }
+const { active = '', home = false } = Astro.props;
+const GH = 'https://github.com/adar2378/claude-garage';
+const links = [
+  { key: 'docs', label: 'Docs', href: '/docs/' },
+  { key: 'blog', label: 'Blog', href: '/blog/' },
+  { key: 'compare', label: 'Compare', href: '/compare/' },
+  { key: 'try', label: 'Try it', href: '/try/' },
+  { key: 'install', label: 'Install', href: home ? '#install' : '/docs/guides/install/' },
+];
+const star = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true"><path d="M12 2.8l2.9 5.9 6.5.9-4.7 4.6 1.1 6.5L12 17.6l-5.8 3.1 1.1-6.5-4.7-4.6 6.5-.9z"/></svg>';
+---
+<header class="sh">
+  <div class="sh-in">
+    <a class="sh-logo" href={home ? '#top' : '/'} aria-label="claude-garage home"><span class="sh-mark" aria-hidden="true" set:html={logoSvg} />claude-garage</a>
+    <nav class="sh-nav" aria-label="Primary">
+      <ul>
+        {links.map((l) => <li><a href={l.href} aria-current={active === l.key ? 'page' : undefined}>{l.label}</a></li>)}
+      </ul>
+    </nav>
+    <div class="sh-end">
+      <a class="sh-star" href={GH} data-star title="Star claude-garage on GitHub"><Fragment set:html={star} /><span>Star</span><b class="sh-count" data-star-count hidden></b></a>
+      <details class="sh-menu" data-menu>
+        <summary aria-label="Menu"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path class="l1" d="M4 7h16"/><path class="l2" d="M4 12h16"/><path class="l3" d="M4 17h16"/></svg></summary>
+        <div class="sh-panel">
+          <ul>
+            {links.map((l) => <li><a href={l.href} aria-current={active === l.key ? 'page' : undefined}>{l.label}</a></li>)}
+            <li><a href={GH}>GitHub</a></li>
+          </ul>
+        </div>
+      </details>
+    </div>
+  </div>
+</header>
+<script>
+  import '../scripts/header.js';
+</script>

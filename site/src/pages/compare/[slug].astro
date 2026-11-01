@@ -1,7 +1,8 @@
 ---
 import { getCollection, render } from 'astro:content';
 import Page from '../../layouts/Page.astro';
-import { AUTHOR, PUBLISHER, SOFTWARE, WEBSITE, abs, breadcrumbs, dayOf, longDate } from '../../lib/site';
+import { ogAlt, ogCard } from '../../lib/og';
+import { AUTHOR, PUBLISHER, SOFTWARE, WEBSITE, abs, breadcrumbs, dayOf, longDate, sharedNodes } from '../../lib/site';
 import { fileDates } from '../../lib/gitdates';
 
 export async function getStaticPaths() {
@@ -24,6 +25,7 @@ const checkedDate = d.checked ? new Date(`${d.checked}T00:00:00Z`) : undefined;
 const jsonLd = {
   '@context': 'https://schema.org',
   '@graph': [
+    ...sharedNodes(),
     {
       '@type': 'WebPage',
       name: d.title,
@@ -42,10 +44,10 @@ const jsonLd = {
   ],
 };
 ---
-<Page title={d.title} description={d.description} jsonLd={jsonLd} active="compare">
+<Page title={d.title} description={d.description} jsonLd={jsonLd} ogImage={ogCard('compare', page.id)} ogAlt={ogAlt('compare', d.title)} active="compare">
   <p class="crumbs"><a href="/">Home</a> / <a href="/compare/">Compare</a></p>
   <h1>{d.title}</h1>
-  <p class="meta">By <a href="/about/">Saiful Islam Adar</a>, creator of claude-garage · Last updated <time datetime={dayOf(modified)}>{longDate(modified)}</time></p>
+  <p class="meta">By <a href="/about/">Saiful Islam (Adar)</a>, creator of claude-garage · Last updated <time datetime={dayOf(modified)}>{longDate(modified)}</time></p>
   <div class="note"><strong>Short answer.</strong> {d.shortAnswer}</div>
   <p class="meta"><strong>Disclosure:</strong> I made claude-garage, so read this page with that in mind. {d.method ?? 'Claims about claude-garage come from its source code (version 1.0.0-rc.1) and docs, checked on 2026-11-01.'}</p>
   <p class="lead">{d.intro}</p>
@@ -61,6 +63,9 @@ const jsonLd = {
       <tbody>{d.rows.map((r) => <tr><th scope="row">{r.topic}</th><td set:html={code(r.garage)} /><td set:html={code(r.other)} /></tr>)}</tbody>
     </table>
   </div>
+
+  <h2>{d.altQuestion}</h2>
+  <p>{d.altAnswer}</p>
 
   <Content />
 
@@ -82,6 +87,7 @@ const jsonLd = {
     <li><a href="/docs/guides/install/">Install claude-garage</a> (macOS, Linux, Windows preview).</li>
     {isTool && <li><a href="/compare/alternatives/">Best tools to run multiple Claude Code sessions</a>, with when each one fits.</li>}
     <li><a href="/docs/guides/many-sessions/">Run many sessions</a> and <a href="/docs/guides/nothing-lost/">keep them alive</a>.</li>
+    <li><a href="https://github.com/adar2378/claude-garage" rel="noopener">claude-garage on GitHub</a>: source, issues and releases.</li>
     <li><a href="/docs/guides/plugins/">Plugins</a> and <a href="/docs/guides/first-plugin/">build your first plugin</a>.</li>
   </ul>
   <h2>Related comparisons</h2>

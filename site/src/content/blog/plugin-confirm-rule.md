@@ -1,5 +1,5 @@
 ---
-title: "How the claude-garage plugin rule keeps you in control of Claude Code"
+title: "The claude-garage plugin confirm rule"
 description: "A claude-garage plugin can arm a dangerous action such as closing a session, but only a human key press or click confirms it. How the rule works."
 date: 2026-11-01
 tags: [plugins, security, design]

@@ -1,6 +1,8 @@
 ---
 title: "claude-garage vs IDE agent panels for Claude Code sessions"
-description: "Compare claude-garage, a terminal wall for Claude Code, with agent panels inside an editor: sessions that outlive the window, plugins and trade-offs."
+description: "An alternative to IDE agent panels: claude-garage, a terminal wall for Claude Code, on sessions that outlive the window, plugins and trade-offs."
+altQuestion: "Looking for an IDE agent panel alternative?"
+altAnswer: "claude-garage is an alternative if you want Claude Code sessions to outlive your editor window and see them all on one wall. If you want the agent next to your code, an IDE panel is the better pick."
 shortAnswer: "Use an editor panel if you work in the editor, one conversation at a time, and rely on inline diffs. Use claude-garage if you work in a terminal, run several Claude Code sessions, or need them to outlive a closed window. They do not conflict, so many people can use both."
 short: "A terminal wall versus an agent panel inside your editor. Where each one fits."
 order: 4

@@ -117,7 +117,7 @@ for (const f of readdirSync(pluginsSrc).filter((f) => f.endsWith('.md'))) {
   write(
     'platforms.md',
     page({
-      title: 'Platforms',
+      title: 'Claude Code session manager on Windows, macOS and Linux',
       description: DESCRIPTIONS.platforms,
       updated: gitDates('docs/PLATFORMS.md', 'platforms.md'),
       body: rewriteLinks(body, 'docs'),

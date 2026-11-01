@@ -1,6 +1,6 @@
 ---
 title: "claude-garage vs cmux for running Claude Code sessions"
-description: "claude-garage vs cmux compared with sources: macOS terminal app versus tmux-based wall, notifications, session restore, worktrees, browser pane, license. Last checked 2026-11-01."
+description: "A cmux alternative inside your own terminal: notifications, session restore, worktrees, browser pane and license, with sources. Checked 2026-11-01."
 short: "cmux is a macOS terminal app with notification rings and a browser pane. claude-garage is a wall that runs inside your terminal on tmux."
 order: 2
 kind: tool
@@ -10,6 +10,8 @@ competitor:
 method: "Checked on 2026-11-01 against cmux 0.65.2.2 (released 2026-10-27) and claude-garage 1.0.0-rc.1, using each project's own README and documentation, linked under Sources. Anything marked not documented was not in those sources."
 checked: "2026-11-01"
 otherLabel: "cmux"
+altQuestion: "Looking for a cmux alternative?"
+altAnswer: "claude-garage is a cmux alternative if you want a wall inside the terminal you already use, on macOS or Linux, with a Windows preview. It has no browser pane and it is not a terminal app. If you want a new macOS terminal app with those extras, cmux fits better."
 shortAnswer: "Pick cmux if you are on a Mac and want a new terminal app with vertical tabs, notification rings and a built-in browser pane. Pick claude-garage if you want to keep your current terminal, use it on Linux too, and have tmux hold the sessions outside any app."
 intro: "cmux and claude-garage sit at different layers. cmux replaces your terminal application with one built for coding agents. claude-garage runs inside the terminal you already use and manages Claude Code sessions through tmux."
 who:

@@ -25,7 +25,7 @@ export const GET: APIRoute = async ({ site }) => {
     '',
     '## About',
     '',
-    `- [About claude-garage and its author](${base}/about/): Who built claude-garage (Saiful Islam Adar, CTO and co-founder of Dev Monks), why, and the principles behind it.`,
+    `- [About claude-garage and its author](${base}/about/): Who built claude-garage (Saiful Islam (Adar), founder and CTO of Dev Monks), why, and the principles behind it.`,
     '',
     '## Blog',
     '',
@@ -35,7 +35,7 @@ export const GET: APIRoute = async ({ site }) => {
     '## Compare',
     '',
     `- [Compare index](${base}/compare/): How claude-garage compares with other ways to run Claude Code sessions.`,
-    `- [Best tools to run multiple Claude Code sessions](${base}/compare/alternatives/): A fair guide to claude-garage, herdr, cmux, Claude Squad, Emdash and Claude Code built-in features, with sources and when each fits. Checked 2026-11-01.`,
+    `- [Best tools to run multiple Claude Code sessions](${base}/compare/alternatives/): A fair guide to claude-garage and other ways to run multiple Claude Code sessions, with sources and when each fits. Checked 2026-11-01.`,
     ...compares.map((p) => `- [${p.data.title}](${base}/compare/${p.id}/): ${p.data.description}`),
     '',
   ];

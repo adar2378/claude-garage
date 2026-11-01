@@ -1,23 +1,14 @@
 ---
 import Base from './Base.astro';
 import '../styles/marketing.css';
+import SiteHeader from '../components/SiteHeader.astro';
 
-interface Props { title: string; description: string; jsonLd?: object; ogType?: string; active?: 'blog' | 'compare' | 'about' | '' }
-const { title, description, jsonLd, ogType, active = '' } = Astro.props;
+interface Props { title: string; description: string; jsonLd?: object; ogType?: string; ogImage?: string; ogAlt?: string; active?: 'blog' | 'compare' | 'about' | '' }
+const { title, description, jsonLd, ogType, ogImage, ogAlt, active = '' } = Astro.props;
 ---
-<Base title={title} description={description} jsonLd={jsonLd} ogType={ogType}>
+<Base title={title} description={description} jsonLd={jsonLd} ogType={ogType} ogImage={ogImage} ogAlt={ogAlt}>
   <slot name="head" slot="head" />
-  <header class="mk-head">
-    <a class="mk-logo" href="/"><b aria-hidden="true">(0.0)</b>claude-garage</a>
-    <nav class="mk-nav" aria-label="Main">
-      <a href="/docs/">Docs</a>
-      <a href="/try/">Try it</a>
-      <a href="/blog/" aria-current={active === 'blog' ? 'page' : undefined}>Blog</a>
-      <a href="/compare/" aria-current={active === 'compare' ? 'page' : undefined}>Compare</a>
-      <a href="/about/" aria-current={active === 'about' ? 'page' : undefined}>About</a>
-      <a href="https://github.com/adar2378/claude-garage">GitHub</a>
-    </nav>
-  </header>
+  <SiteHeader active={active || ''} />
   <main class="mk"><slot /></main>
   <footer class="mk-foot">
     <a href="/docs/guides/install/">Install</a>

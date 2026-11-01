@@ -1,11 +1,11 @@
 ---
 import Page from '../layouts/Page.astro';
-import { ID, PUBLISHER, SOFTWARE, WEBSITE, abs, appVersion, breadcrumbs, dayOf, longDate, personNode } from '../lib/site';
+import { ID, PUBLISHER, SOFTWARE, WEBSITE, abs, appVersion, breadcrumbs, dayOf, longDate, sharedNodes } from '../lib/site';
 import { fileDates } from '../lib/gitdates';
 
-const title = 'About claude-garage and its author, Saiful Islam Adar';
+const title = 'About claude-garage and its author, Saiful Islam (Adar)';
 const description =
-  'claude-garage is a simple terminal app for Claude Code sessions, built by Saiful Islam Adar, CTO and co-founder of Dev Monks. Why it exists and what it stands for.';
+  'claude-garage is a simple terminal app for Claude Code sessions, built by Saiful Islam (Adar), founder and CTO of Dev Monks. Why it exists and what it stands for.';
 const url = abs('/about/');
 const dates = fileDates('src/pages/about.astro');
 const modified = new Date(dates.modified);
@@ -28,7 +28,7 @@ const jsonLd = {
       mainEntity: { '@id': ID.person },
       publisher: PUBLISHER,
     },
-    personNode(),
+    ...sharedNodes(),
     breadcrumbs([['Home', '/'], ['About', '/about/']]),
   ],
 };
@@ -42,9 +42,9 @@ const jsonLd = {
   <p>It runs on macOS and Linux, with a Windows preview. The current release is {version}. Start with the <a href="/docs/guides/install/">install guide</a>, or <a href="/try/">try the wall in your browser</a> first.</p>
 
   <h2>Who built claude-garage?</h2>
-  <p>I am Saiful Islam Adar, CTO and co-founder of <a href="https://devmonks.co" rel="noopener">Dev Monks</a>. I built claude-garage because I wanted a simple TUI to manage my Claude Code sessions across different projects.</p>
+  <p>I am Saiful Islam (Adar), founder and CTO of <a href="https://www.devmonks.co/" rel="noopener">Dev Monks</a>. I built claude-garage because I wanted a simple TUI to manage my Claude Code sessions across different projects.</p>
   <p>I tried a few similar apps before, but they were quite complex and did too much. So I made claude-garage: very simple, close to how the Claude desktop app feels, but in the terminal, with a flexible plugin architecture so anyone can add what they need.</p>
-  <p>You can find me on <a href="https://github.com/adar2378" rel="me noopener">GitHub</a> and at <a href="https://devmonks.co" rel="me noopener">Dev Monks</a>.</p>
+  <p>You can find me at <a href="https://saifulislamadar.com/" rel="me noopener">saifulislamadar.com</a>, on <a href="https://github.com/adar2378" rel="me noopener">GitHub</a>, <a href="https://x.com/adar2378" rel="me noopener">X</a> and <a href="https://www.linkedin.com/in/saiful-islam-adar/" rel="me noopener">LinkedIn</a>, and at <a href="https://www.devmonks.co/" rel="noopener">Dev Monks</a>.</p>
 
   <h2>What are the principles behind claude-garage?</h2>
   <ul>

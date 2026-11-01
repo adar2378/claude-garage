@@ -13,6 +13,8 @@ These guides take you from install to a wall you trust. Read them in order, or j
 2. [Your first wall](/docs/guides/first-wall/): add a project, start sessions, and move around the wall.
 3. [Run many sessions at once](/docs/guides/many-sessions/): groups, the amber needs-input signal, and the jump and queue keys.
 
+- [Know when Claude Code needs you](/docs/guides/alerts/): the amber tile, chimes, desktop banners and how to turn them off.
+
 ## Work safely
 
 - [Sessions in git worktrees](/docs/guides/worktrees/): give each session its own folder and branch, then merge, discard or keep it.

@@ -1,7 +1,7 @@
 ---
 import { getCollection } from 'astro:content';
 import Page from '../../layouts/Page.astro';
-import { PUBLISHER, SOFTWARE, WEBSITE, abs, breadcrumbs } from '../../lib/site';
+import { PUBLISHER, SOFTWARE, WEBSITE, abs, breadcrumbs, sharedNodes } from '../../lib/site';
 
 const all = (await getCollection('compare')).sort((a, b) => a.data.order - b.data.order);
 const tools = all.filter((p) => p.data.kind === 'tool');
@@ -14,6 +14,7 @@ const items = [
 const jsonLd = {
   '@context': 'https://schema.org',
   '@graph': [
+    ...sharedNodes(),
     {
       '@type': 'CollectionPage',
       name: 'Compare claude-garage with other ways to run Claude Code',
@@ -32,7 +33,7 @@ const jsonLd = {
   ],
 };
 ---
-<Page title="Compare claude-garage with herdr, cmux, Claude Squad, Emdash and more" description="Compare claude-garage with herdr, cmux, Claude Code's built-in features, Claude Squad and Emdash, and with terminal tabs, tmux and IDE panels. Sourced facts, checked 2026-11-01." jsonLd={jsonLd} active="compare">
+<Page title="claude-garage vs herdr, cmux, Claude Squad and Emdash" description="Compare claude-garage with herdr, cmux, Claude Squad and Emdash, or find an alternative among tabs, tmux and IDE panels. Sourced, checked 2026-11-01." jsonLd={jsonLd} active="compare">
   <p class="crumbs"><a href="/">Home</a> / Compare</p>
   <h1>Compare ways to run many Claude Code sessions</h1>
   <p class="lead">claude-garage is one way to run several Claude Code sessions. It is not the only way, and it is not always the right one. Each page below lists what you get, what you give up, and when another tool is the better pick.</p>

@@ -43,15 +43,19 @@ export function createField() {
       T.k=f;
       tiles.push(T);
     }
-    var tx=W<700?W*.62:W-190, ty=W<700?52:H*.27, best=1e9; amber=null;
-    tiles.forEach(function(T){if(T.md<24||T.y+T.h>H-4)return;var d=Math.hypot(T.cx-tx,T.cy-ty);if(d<best&&T.x>-cw&&T.x+T.w<W+cw){best=d;amber=T}});
-    if(!amber){tiles.forEach(function(T){if(!amber||T.md>amber.md)amber=T})}
+    /* The amber tile sits in the right gutter beside the terminal, clear of the headline. Narrow screens have no free gutter, so they get none. */
+    amber=null; var hw=$('#hwin');
+    if(W>=1240&&hw){
+      var hr=rel(hw), tx=W-(W-hr.w)/4, ty=hr.y+60, best=1e9;
+      tiles.forEach(function(T){if(T.md<24||T.y+T.h>H-4)return;var d=Math.hypot(T.cx-tx,T.cy-ty);if(d<best&&T.x>-cw&&T.x+T.w<W+cw){best=d;amber=T}});
+    }
     if(amber){amber.k=1;amber.isAmber=true}
+    wrap.style.display=amber?'':'none';
     paintAmber();
     ready=true;
   }
   function ripple(x,y,s){rips.push({x:x,y:y,t:performance.now(),s:s||1});if(rips.length>8)rips.shift();kick(2700)}
-  function kick(ms){var n=performance.now();until=Math.max(until,n+(ms||0));if(!raf&&vis&&ready&&!reduce)raf=requestAnimationFrame(frame)}
+  function kick(ms){var n=performance.now();until=Math.max(until,n+(ms||0));if(small()&&n>=until)return;if(!raf&&vis&&ready&&!reduce)raf=requestAnimationFrame(frame)}
   function intensity(T,now){
     var I=0;
     for(var i=0;i<rips.length;i++){var R=rips[i],age=(now-R.t)/1000;if(age>2.6)continue;var d=Math.hypot(T.cx-R.x,T.cy-R.y),rad=age*560,z=(d-rad)/80;I+=Math.exp(-z*z)*Math.max(0,1-age/2.6)*R.s}
@@ -102,11 +106,12 @@ export function createField() {
     ring.style.setProperty('--sx',(T.w+97.2)/(T.w+14.4));ring.style.setProperty('--sy',(T.h+54)/(T.h+8));
     wrap.classList.toggle('on',!attached);
   }
-  function draw(now,t){
-    ctx.clearRect(0,0,W,H);
+  function draw(now,t,from,to){
+    from=from||0; to=to===undefined?tiles.length:to;
+    if(!from) ctx.clearRect(0,0,W,H);
     if(amber){var da=Math.hypot(amber.cx-W/2,amber.cy-H*.3)/Math.hypot(W/2,H*.7);wrap.style.opacity=clamp(reveal*2-da,0,1)}
     ctx.font='400 '+fs+'px "Geist Mono Variable",ui-monospace,Menlo,monospace';ctx.textBaseline='top';
-    for(var i=0;i<tiles.length;i++){
+    for(var i=from;i<to;i++){
       var T=tiles[i]; if(T.isAmber) continue; if(T.x>W||T.x+T.w<0||T.y>H||T.y+T.h<0) continue;
       var popping=(now-T.pop)<2400;
       if(T.k<.02&&!popping&&!T.isAmber) continue;
@@ -119,12 +124,14 @@ export function createField() {
   }
   function frame(now){
     raf=0; if(!vis||!ready) return;
-    if(lastDraw&&now-lastDraw<30){raf=requestAnimationFrame(frame);return} /* at most ~33 fps */
+    if(lastDraw&&now-lastDraw<32){ /* at most ~30 fps: wait out the rest of the slot instead of polling every frame */
+      raf=-1; setTimeout(function(){raf=0;if(vis)raf=requestAnimationFrame(frame)},Math.max(1,34-(now-lastDraw))); return;
+    }
     lastDraw=now;
     if(!t0) t0=now;
     var t=(now-t0)/1000;
-    reveal=sm((t-.3)/2.2);
-    if(t<.05&&!rips.length) ripple(W*.5,H*.3,1.1);
+    reveal=small()?1:sm((t-.3)/2.2);
+    if(t<.05&&!rips.length&&!small()) ripple(W*.5,H*.3,1.1);
     draw(now,t);
     /* keep going only while something is still moving */
     if((reveal<1||now<until)&&!raf) raf=requestAnimationFrame(frame);
@@ -135,18 +142,26 @@ export function createField() {
     if(ah!==hover){hover=ah;Field.onHover&&Field.onHover(ah)}
   }
   function still(){reveal=1;draw(performance.now(),1.3)}
-  function go(){ if(reduce){still();return} kick(0) }
+  /* Phones skip the reveal animation: one static paint, drawn in small slices so no single task blocks input. */
+  var idle=window.requestIdleCallback||function(f){return setTimeout(f,16)};
+  function stillChunked(){
+    reveal=1; var i=0, now=performance.now();
+    (function step(){ var end=Math.min(i+12,tiles.length); draw(now,1.3,i,end); i=end; if(i<tiles.length) idle(step); })();
+  }
+  function small(){return W<700}
+  function redraw(){ if(reduce) still(); else if(small()) stillChunked(); else kick(0) }
+  function go(){ if(reduce){still();return} if(small()){stillChunked();return} kick(0) }
   var rt;
-  window.addEventListener('resize',function(){clearTimeout(rt);rt=setTimeout(function(){build();if(reduce)still();else kick(0)},150)});
+  window.addEventListener('resize',function(){clearTimeout(rt);rt=setTimeout(function(){build();redraw()},150)});
   hero.addEventListener('pointermove',function(e){var b=hero.getBoundingClientRect();ptr.x=e.clientX-b.left;ptr.y=e.clientY-b.top;hoverCheck();kick(0)},{passive:true});
   hero.addEventListener('pointerleave',function(){ptr.x=ptr.y=-999;hoverCheck();kick(0)});
   hero.addEventListener('pointerdown',function(e){if(e.target.closest('a,button,.hwin'))return;var b=hero.getBoundingClientRect();ripple(e.clientX-b.left,e.clientY-b.top,1.1)});
   if('IntersectionObserver' in window){new IntersectionObserver(function(es){vis=es[0].isIntersecting&&!document.hidden; if(vis) kick(0)}).observe(hero)}
   document.addEventListener('visibilitychange',function(){ vis=!document.hidden; if(vis) kick(0) });
   /* a faint ripple now and then, only while the hero is on screen */
-  (function ambient(){setTimeout(function(){ if(vis&&!reduce&&ready&&reveal>=1) ripple(W*(.12+Math.random()*.76),H*(.08+Math.random()*.6),.8); ambient() },9000)})();
+  (function ambient(){setTimeout(function(){ if(vis&&!reduce&&!small()&&ready&&reveal>=1) ripple(W*(.12+Math.random()*.76),H*(.08+Math.random()*.6),.8); ambient() },9000)})();
   /* One build, after the mono font and its box-drawing subset are in (or after 1.8 s). */
-  var started=false; function init(){if(started)return;started=true;build();go()}
+  var started=false; function init(){if(started)return;started=true;idle(function(){build();go()},{timeout:1500})}
   if(document.fonts&&document.fonts.load){
     Promise.race([Promise.all([document.fonts.load('12px "Geist Mono Variable"','┌┏╔─│'),document.fonts.ready]),new Promise(function(r){setTimeout(r,1800)})]).then(init,init);
   }else init();

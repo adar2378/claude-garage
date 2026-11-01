@@ -1,7 +1,8 @@
 ---
-title: Nothing gets lost
+title: "Claude Code sessions that survive a reboot"
 description: tmux keeps your Claude sessions alive when you close the terminal. After a reboot, restore them with their full conversation. Recover unsent drafts with u.
 sidebar:
+  label: Nothing gets lost
   order: 5
 ---
 

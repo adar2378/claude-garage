@@ -1,0 +1,32 @@
+/* Shared site header. Self-contained: palette is fixed here so it looks the same under landing.css, marketing.css and try.css. */
+.sh{--sh-ink:#14151A;--sh-muted:#5B5E69;--sh-line:#E6E4DE;--sh-surface:#F4F3F0;--sh-page:#FAFAF8;--sh-mono:'Geist Mono Variable','Geist Mono',ui-monospace,'SF Mono',Menlo,Consolas,monospace;--sh-font:'Geist Variable','Geist',ui-sans-serif,system-ui,-apple-system,'Segoe UI',sans-serif;position:relative;z-index:30;font-family:var(--sh-font);color:var(--sh-ink)}
+.sh,.sh *{box-sizing:border-box}
+.sh ul{list-style:none;margin:0;padding:0}
+.sh-in{display:flex;align-items:center;justify-content:space-between;gap:16px;height:72px;width:min(1280px,100% - 48px);margin-inline:auto}
+.sh-logo{display:flex;align-items:center;gap:10px;min-height:44px;text-decoration:none;color:var(--sh-ink);font-weight:650;font-size:18px;letter-spacing:-.02em;white-space:nowrap}
+.sh-mark{display:block;line-height:0}
+.sh-mark svg{display:block;width:76px;height:30px}
+.sh-nav ul{display:flex;gap:4px}
+.sh-nav a{display:inline-flex;align-items:center;min-height:44px;padding:0 12px;border-radius:8px;text-decoration:none;color:var(--sh-ink);font:500 14px/1 var(--sh-mono);letter-spacing:-.01em}
+.sh-nav a:hover,.sh-nav a[aria-current]{text-decoration:underline;text-underline-offset:6px}
+.sh-end{display:flex;align-items:center;gap:8px}
+.sh-star{display:inline-flex;align-items:center;gap:8px;min-height:44px;height:44px;padding:0 16px;border-radius:12px;border:1.5px solid var(--sh-ink);background:transparent;color:var(--sh-ink);text-decoration:none;font:600 15px/1 var(--sh-font);white-space:nowrap;transition:background-color .2s,color .2s}
+.sh-star:hover{background:var(--sh-ink);color:#fff}
+.sh-count{font:600 13px/1 var(--sh-mono);padding-left:8px;border-left:1.5px solid currentColor;opacity:.85}
+.sh-menu{display:none;position:relative}
+.sh-menu summary{list-style:none;cursor:pointer;display:grid;place-items:center;width:44px;height:44px;border-radius:12px;border:1.5px solid var(--sh-ink);color:var(--sh-ink)}
+.sh-menu summary::-webkit-details-marker{display:none}
+.sh-menu[open] summary{background:var(--sh-ink);color:#fff}
+.sh-panel{position:absolute;right:0;top:calc(100% + 8px);width:min(260px,calc(100vw - 32px));padding:8px;border-radius:16px;background:#fff;border:1px solid var(--sh-line);box-shadow:0 24px 50px -24px rgba(30,30,60,.45)}
+.sh-panel a{display:flex;align-items:center;min-height:48px;padding:0 14px;border-radius:12px;color:var(--sh-ink);text-decoration:none;font:500 16px/1 var(--sh-mono)}
+.sh-panel a:hover,.sh-panel a[aria-current]{background:var(--sh-surface)}
+.sh :focus-visible{outline:3px solid var(--sh-ink);outline-offset:2px}
+@media (max-width:720px){.sh-in{width:calc(100% - 32px)}}
+@media (max-width:860px){
+  .sh-nav{display:none}
+  .sh-menu{display:block}
+}
+@media (max-width:420px){
+  .sh-count{display:none}
+  .sh-star{padding:0 12px}
+}

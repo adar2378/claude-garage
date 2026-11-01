@@ -189,3 +189,5 @@ Your sessions' Claude conversations stay in Claude Code's own history. Removing 
 ## Next
 
 Start with [Your first wall](/docs/guides/first-wall/). Then see [how to run many sessions](/docs/guides/many-sessions/), [keep sessions alive](/docs/guides/nothing-lost/), or the [key reference](/docs/reference/keys/). If you are weighing options, read [claude-garage vs tmux on its own](/compare/tmux-alone/).
+
+If garage works for you, [star it on GitHub](https://github.com/adar2378/claude-garage). It is free and built by one person, and stars are how other Claude Code users find it.
