@@ -56,7 +56,7 @@ command = ["{plugin_dir}/bin/usage", "cli"]
 - **Actions**: exactly one of `command` and `pane`.
 - **Events**: `timer` needs `every_secs` of at least 5. Other events must not have it.
 - **Buttons and clicks**: `on_click` is a core id, one of this plugin's own action ids (`this-plugin:action` or the bare local id), never another plugin's.
-- **`[[cli]]`**: the name must not be a core command (`start`, `stop`, `status`, `restart`, `plugin`, `tui`, `daemon`, `help`, `version`) or another plugin's. Only one installed plugin may set `fallback = true`.
+- **`[[cli]]`**: the name must not be a core command (`tui`, `daemon`, `restart`, `plugin`, `host`, `help`, `version`), a name kept free for core (`start`, `stop`, `status`), or another plugin's. Only one installed plugin may set `fallback = true`.
 - **`[release]`** needs `checksums` and at least one asset. Keys are `<macos|linux|windows>-<aarch64|x86_64>`.
 - **Slots**: `rail.row`, `tile.title.right` and `tile.gutter` are about one session. `rail.header` and `rail.extra_rows` are about one workspace. `strip.right` is global.
 

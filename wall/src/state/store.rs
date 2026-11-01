@@ -577,7 +577,7 @@ impl WallStore {
         true
     }
 
-    /// Return from engaged to garage (the Ctrl+G/Ctrl+Q chord).
+    /// Return from engaged to garage (the Ctrl+G chord).
     pub fn disengage(&mut self) {
         if self.state.layer != KeyLayer::Engaged {
             return;

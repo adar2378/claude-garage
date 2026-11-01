@@ -54,7 +54,6 @@ GARAGE_PORT=4800 claude-garage
 | `GARAGE_BACKEND` | `tmux` on macOS and Linux, `host` on Windows | `tmux` or `host`. The host backend runs each session in its own small process, with no tmux. |
 | `GARAGE_CLAUDE_CMD` | `claude` | The program that sessions run. |
 | `GARAGE_CLAUDE_HOME` | `~/.claude` | Where `I` writes the hooks and statusline. |
-| `GARAGE_EDITOR_CMD` | `code` | The editor command the daemon uses to open a project folder. |
 
 ### Turn animations off
 

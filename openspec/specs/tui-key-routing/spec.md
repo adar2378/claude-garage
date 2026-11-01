@@ -15,7 +15,7 @@ Keyboard input SHALL be governed by exactly one active layer at a time: `garage`
 - **THEN** no bytes are written to any tile PTY
 
 ### Requirement: Engage and disengage
-Pressing Enter (or clicking a tile) in the garage layer SHALL engage the focused tile. While engaged, every key event except the reserved disengage chord SHALL be forwarded to that tile's PTY. The disengage chord SHALL be a single Ctrl-chord (Ctrl+Q unless the vendored framework's Ctrl+G debug intercept has been disabled, in which case Ctrl+G per the UX mockup), SHALL return to the garage layer, and SHALL NOT be forwarded. Esc SHALL always be forwarded while engaged (never used as a layer control).
+Pressing Enter (or clicking a tile) in the garage layer SHALL engage the focused tile. While engaged, every key event except the reserved disengage chord SHALL be forwarded to that tile's PTY. The disengage chord SHALL be Ctrl+G, SHALL return to the garage layer, and SHALL NOT be forwarded. Esc SHALL always be forwarded while engaged (never used as a layer control).
 
 #### Scenario: Esc reaches Claude Code
 - **WHEN** the user presses Esc while engaged on a Claude Code session

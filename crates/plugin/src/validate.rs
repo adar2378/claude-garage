@@ -74,10 +74,12 @@ pub const RESERVED_IDS: &[&str] = &[
     "reload",
 ];
 
-/// `claude-garage` subcommands a `[[cli]]` entry may not shadow. `install`
-/// is NOT here: core has no such subcommand, so a plugin may own it.
+/// Names a `[[cli]]` entry may not take: the core subcommands (`host` is the
+/// hidden one main.rs intercepts before clap), plus `start`, `stop` and
+/// `status`, kept free for core. `install` is NOT here: core has no such
+/// subcommand, so a plugin may own it.
 pub const RESERVED_CLI: &[&str] = &[
-    "start", "stop", "status", "restart", "plugin", "tui", "daemon", "help", "version",
+    "start", "stop", "status", "restart", "plugin", "tui", "daemon", "host", "help", "version",
 ];
 
 /// `^[a-z][a-z0-9-]{1,30}$`

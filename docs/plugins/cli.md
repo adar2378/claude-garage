@@ -12,7 +12,7 @@ needs_daemon = false
 
 Now `claude-garage usage 5h` runs `bin/usage cli 5h`: the words after the name are appended to the command. It works with the daemon down, because the CLI reads the plugin list itself.
 
-The name matches `^[a-z][a-z0-9-]{0,31}$`. It cannot be a core command (`start`, `stop`, `status`, `restart`, `plugin`, `tui`, `daemon`, `help`, `version`) or the name of another plugin's command.
+The name matches `^[a-z][a-z0-9-]{0,31}$`. It cannot be a core command (`tui`, `daemon`, `restart`, `plugin`, `host`, `help`, `version`), a name kept free for core (`start`, `stop`, `status`), or the name of another plugin's command.
 
 ## The run
 
