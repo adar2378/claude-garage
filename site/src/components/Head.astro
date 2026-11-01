@@ -1,6 +1,11 @@
 ---
 import Default from '@astrojs/starlight/components/Head.astro';
+import geistLatin from '@fontsource-variable/geist/files/geist-latin-wght-normal.woff2?url';
+import monoLatin from '@fontsource-variable/geist-mono/files/geist-mono-latin-wght-normal.woff2?url';
 ---
+<link rel="preload" as="font" type="font/woff2" href={geistLatin} crossorigin />
+<link rel="preload" as="font" type="font/woff2" href={monoLatin} crossorigin />
+<link rel="alternate" type="application/rss+xml" title="claude-garage blog" href="/blog/rss.xml" />
 <Default {...Astro.props}><slot /></Default>
 <script is:inline>
   // Light-first: default to light until the visitor picks a theme.
