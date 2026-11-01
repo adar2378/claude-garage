@@ -36,6 +36,8 @@ use crate::ui::theme::{DONE_FADE_MS, colors};
 pub const FX_TICK: Duration = Duration::from_millis(33);
 /// Redraw cadence while only spinners are visible (one braille step).
 pub const SPINNER_TICK: Duration = Duration::from_millis(100);
+/// Redraw cadence while a working glyph is visible (one half-moon frame).
+pub const WORKING_TICK: Duration = Duration::from_millis(crate::ui::theme::WORKING_FRAME_MS as u64);
 /// Longest animation step applied in one frame; a wake after idle must not
 /// skip an effect to its end.
 const MAX_STEP_MS: i64 = 100;
@@ -228,6 +230,8 @@ pub struct Motion {
     last_ms: Option<i64>,
     step_ms: i64,
     spinners: bool,
+    /// A working session's rotating glyph was drawn this frame.
+    working: bool,
     /// Shared with the strip's spinner provider.
     clock: Rc<Cell<i64>>,
     restarting_since: Rc<Cell<Option<i64>>>,
@@ -251,6 +255,7 @@ impl Motion {
             last_ms: None,
             step_ms: 0,
             spinners: false,
+            working: false,
             clock: Rc::new(Cell::new(0)),
             restarting_since: Rc::new(Cell::new(None)),
             down_since: Rc::new(Cell::new(None)),
@@ -271,6 +276,8 @@ impl Motion {
             Some(FX_TICK)
         } else if self.spinners {
             Some(SPINNER_TICK)
+        } else if self.working {
+            Some(WORKING_TICK)
         } else {
             None
         }
@@ -298,6 +305,7 @@ impl Motion {
         self.last_ms = Some(now_ms);
         self.clock.set(now_ms);
         self.spinners = false;
+        self.working = false;
         self.drawn.clear();
         for e in &mut self.effects {
             e.seen = false;
@@ -308,6 +316,13 @@ impl Motion {
     pub fn spinner_shown(&mut self) {
         if self.enabled {
             self.spinners = true;
+        }
+    }
+
+    /// A rotating working glyph was drawn (rail row or tile title).
+    pub fn working_shown(&mut self) {
+        if self.enabled {
+            self.working = true;
         }
     }
 

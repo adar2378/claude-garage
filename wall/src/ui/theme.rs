@@ -23,6 +23,28 @@ pub fn glyph_for(status: &str) -> &'static str {
     }
 }
 
+/// Frames of the working glyph, a half-moon turning clockwise.
+const WORKING_FRAMES: [&str; 4] = ["◐", "◓", "◑", "◒"];
+/// How long each working frame shows (~4 fps).
+pub const WORKING_FRAME_MS: i64 = 250;
+
+/// The rotating working glyph for `now_ms`. Pure; the loop's motion tick
+/// only decides when to redraw.
+pub fn working_glyph(now_ms: i64) -> &'static str {
+    let step = (now_ms.max(0) / WORKING_FRAME_MS) as usize;
+    WORKING_FRAMES[step % WORKING_FRAMES.len()]
+}
+
+/// [`glyph_for`], except a working session rotates when `animate` (motion
+/// enabled) is set.
+pub fn animated_glyph_for(status: &str, now_ms: i64, animate: bool) -> &'static str {
+    if animate && status == "working" {
+        working_glyph(now_ms)
+    } else {
+        glyph_for(status)
+    }
+}
+
 /// `done` stops being highlighted this long after the transition
 /// (spec tui-wall: "Done fades").
 pub const DONE_FADE_MS: i64 = 2 * 60 * 1000;
@@ -134,6 +156,24 @@ mod tests {
         assert_eq!(glyph_for("idle"), "○");
         assert_eq!(glyph_for("restorable"), "⟳");
         assert_eq!(glyph_for("unknown-status"), "○");
+    }
+
+    #[test]
+    fn working_glyph_turns_every_250ms_and_wraps() {
+        let frames: Vec<_> = [0, 249, 250, 500, 750, 1000, 1250]
+            .iter()
+            .map(|&t| working_glyph(t))
+            .collect();
+        assert_eq!(frames, ["◐", "◐", "◓", "◑", "◒", "◐", "◓"]);
+        assert_eq!(working_glyph(-5), "◐");
+    }
+
+    #[test]
+    fn only_working_animates_and_only_with_motion_on() {
+        assert_eq!(animated_glyph_for("working", 250, true), "◓");
+        assert_eq!(animated_glyph_for("working", 250, false), "◐");
+        assert_eq!(animated_glyph_for("done", 250, true), "✓");
+        assert_eq!(animated_glyph_for("idle", 250, true), "○");
     }
 
     #[test]

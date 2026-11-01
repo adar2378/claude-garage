@@ -23,7 +23,9 @@ use tui_term::widget::{Cursor, PseudoTerminal};
 
 use crate::slots::{self, ClickTarget, SlotClickRegion, SlotCtx, SlotId, SlotItem, SlotRegistry};
 use crate::state::wall_state::WallSession;
-use crate::ui::theme::{colors, elapsed_for, glyph_for, status_color, status_color_fading};
+use crate::ui::theme::{
+    animated_glyph_for, colors, elapsed_for, status_color, status_color_fading,
+};
 
 /// Everything the tile render needs besides the terminal screen itself.
 pub struct TileView<'a> {
@@ -281,7 +283,7 @@ pub fn title_parts(
     let laid = slots::layout(v.slots.items(SlotId::TileTitleRight, &slot_ctx), None);
     tail.extend(laid.spans.iter().cloned());
 
-    let glyph = format!(" {} ", glyph_for(&s.status));
+    let glyph = format!(" {} ", animated_glyph_for(&s.status, v.now_ms, v.fade_done));
     let glyph_w = glyph.chars().count();
     let fixed: usize = glyph.chars().count() + tail.iter().map(Span::width).sum::<usize>() + 1; // +1 trailing space
     let avail = (width as usize).saturating_sub(fixed);

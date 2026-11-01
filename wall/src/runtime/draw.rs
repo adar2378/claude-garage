@@ -101,6 +101,17 @@ impl App {
             )
         };
 
+        if layout.rail.width > 0
+            && self
+                .store
+                .state()
+                .groups
+                .iter()
+                .any(|g| g.sessions.iter().any(|s| s.status == "working"))
+        {
+            self.motion.working_shown();
+        }
+
         if show_view_strip {
             let ranges = render_view_strip(buf, layout.view_strip, &views, &focused_view_name);
             self.view_strip_targets = views
@@ -162,6 +173,14 @@ impl App {
                     .tile_drawn(id, layout.tiles[i], attached, blocked);
                 if spinning {
                     self.motion.spinner_shown();
+                }
+                if self
+                    .store
+                    .state()
+                    .session_by_id(Some(id))
+                    .is_some_and(|s| s.status == "working")
+                {
+                    self.motion.working_shown();
                 }
                 slot_clicks.extend(self.draw_tile(buf, layout.tiles[i], id, now_ms, spinning));
                 if let Some(sel) = self.selection.as_ref().filter(|s| s.session == *id) {

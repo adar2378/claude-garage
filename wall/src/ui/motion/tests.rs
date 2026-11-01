@@ -130,6 +130,21 @@ fn an_effect_asks_for_the_fx_tick_and_a_lone_spinner_for_the_slower_one() {
     assert_eq!(m.next_tick(), None);
 }
 
+#[test]
+fn a_visible_working_glyph_asks_for_the_slow_tick_only_while_shown() {
+    let mut m = Motion::new(true);
+    m.begin_frame(0);
+    assert_eq!(m.next_tick(), None, "nothing working, no timer");
+    m.working_shown();
+    assert_eq!(m.next_tick(), Some(WORKING_TICK));
+    m.begin_frame(250);
+    assert_eq!(m.next_tick(), None, "the flag is per frame");
+    let mut off = Motion::new(false);
+    off.begin_frame(0);
+    off.working_shown();
+    assert_eq!(off.next_tick(), None, "motion off never ticks");
+}
+
 // ── Motion off (task 3.2) ────────────────────────────────────────────────
 
 #[test]

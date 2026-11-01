@@ -18,7 +18,9 @@ use ratatui::widgets::{Block, Borders, Paragraph, Widget};
 use crate::slots::{self, ClickTarget, SlotClickRegion, SlotCtx, SlotId, SlotItem, SlotRegistry};
 use crate::state::salience::WorkspaceGroup;
 use crate::state::wall_state::{WallSession, WallState};
-use crate::ui::theme::{colors, elapsed_for, glyph_for, status_color, status_color_fading};
+use crate::ui::theme::{
+    animated_glyph_for, colors, elapsed_for, status_color, status_color_fading,
+};
 
 /// A clickable slot item on one rail row: `cols` are rail-local columns.
 #[derive(Debug, PartialEq, Eq)]
@@ -285,7 +287,7 @@ fn session_row(
             Style::default().fg(colors::FG).add_modifier(Modifier::BOLD),
         ),
         Span::styled(
-            format!("{} ", glyph_for(&s.status)),
+            format!("{} ", animated_glyph_for(&s.status, now_ms, fade_done)),
             Style::default().fg(glyph_color),
         ),
         // Spec tui-wall "Title as display name": the live title when there
