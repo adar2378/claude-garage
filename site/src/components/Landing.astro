@@ -2,6 +2,8 @@
 // The approved landing page. Styles: src/styles/landing.css. Behaviour: src/scripts/landing.js (bundled by Astro).
 import '../styles/landing.css';
 import crops from '../generated/crops.json';
+import { appVersion } from '../lib/site';
+const version = appVersion();
 ---
 <header class="nav">
   <a class="logo" href="#top" aria-label="claude-garage home">
@@ -9,11 +11,14 @@ import crops from '../generated/crops.json';
     claude-garage
   </a>
   <nav aria-label="Primary"><ul>
-    <li><a href="#story">How it works</a></li>
-    <li><a href="#plugins">Plugins</a></li>
-    <li><a href="#keys">Keys</a></li>
+    <li class="opt"><a href="#story">How it works</a></li>
+    <li class="opt"><a href="#plugins">Plugins</a></li>
+    <li class="opt"><a href="#keys">Keys</a></li>
+    <li><a href="/docs/">Docs</a></li>
+    <li><a href="/blog/">Blog</a></li>
+    <li><a href="/compare/">Compare</a></li>
     <li><a href="/try/">Try it</a></li>
-    <li><a href="#install">Install</a></li>
+    <li class="opt"><a href="#install">Install</a></li>
   </ul></nav>
   <a class="btn btn-dark sm" href="https://github.com/adar2378/claude-garage">GitHub</a>
 </header>
@@ -29,7 +34,7 @@ import crops from '../generated/crops.json';
     <a class="btn btn-line" href="https://github.com/adar2378/claude-garage">View on GitHub <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg></a>
     <a class="btn btn-dark" href="/try/">Try it in your browser</a>
   </div>
-  <p class="note">macOS and Linux. Windows in preview. MIT licensed.</p>
+  <p class="note">Needs tmux 3.2 or newer and Claude Code on your PATH. npx also needs Node.js 20 or newer. macOS and Linux, Windows in preview. MIT licensed. <a href="/docs/guides/install/">Install guide</a></p>
   <div class="hwin" id="hwin">
     <div class="term"><div class="term-bar"><i></i><i></i><i></i><span id="hwt">claude-garage</span>
       <button class="abtn" id="hattach" type="button" aria-pressed="false" aria-label="Attach to the session that needs you"><kbd>a</kbd><span class="lbl" id="hlbl">needs you</span></button></div>
@@ -37,8 +42,15 @@ import crops from '../generated/crops.json';
   </div>
 </section>
 
+<!-- ===== definition: plain text, quotable on its own ===== -->
+<section class="def" aria-labelledby="def-h">
+  <h2 id="def-h" class="sr">What is claude-garage?</h2>
+  <p>claude-garage is a free, open-source terminal app (MIT license) that shows all your Claude Code sessions on one wall, grouped by project. Sessions run in tmux, so they survive closing the terminal. The session waiting for your answer turns amber; press <span class="inl">a</span> to jump to it. It runs on macOS and Linux, with a Windows preview. Made by <a href="/about/">Saiful Islam Adar</a>.</p>
+</section>
+
 <!-- ===== pinned story ===== -->
-<section class="story" id="story" aria-label="How claude-garage works, in five steps">
+<section class="story" id="story" aria-labelledby="story-h">
+  <h2 id="story-h" class="sr">How claude-garage works, in five steps</h2>
   <div class="stage-pin">
     <div class="stage mesh">
       <i class="b1"></i><i class="b2"></i><i class="b3"></i><i class="b4"></i><i class="b5"></i>
@@ -59,6 +71,7 @@ import crops from '../generated/crops.json';
               <span class="chip"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 8l4.5 4L5 16M12.5 17H19"/></svg></span>Start <span class="num">1 / 5</span></span>
               <h3>Point it at a folder.</h3>
               <p>Press <kbd>n</kbd>, or run <span class="inl">claude-garage &lt;folder&gt;</span>. A fresh Claude Code session opens in its own tile, grouped under its project.</p>
+              <a class="more" href="/docs/guides/first-wall/">Your first wall <span aria-hidden="true">&rarr;</span></a>
             </div>
             <div class="vis v-a">
               <div class="term"><div class="term-bar"><i></i><i></i><i></i><span>claude-garage</span></div>
@@ -73,6 +86,7 @@ import crops from '../generated/crops.json';
               <span class="chip"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linejoin="round"><rect x="4" y="4" width="7" height="7" rx="2"/><rect x="13" y="4" width="7" height="7" rx="2"/><rect x="4" y="13" width="7" height="7" rx="2"/><rect x="13" y="13" width="7" height="7" rx="2"/></svg></span>See them all <span class="num">2 / 5</span></span>
               <h3>Every session, one wall.</h3>
               <p>Each tile is a live Claude Code session. The sidebar groups them by folder, and the status strip keeps your 5h and weekly usage in view.</p>
+              <a class="more" href="/docs/guides/many-sessions/">Run many sessions <span aria-hidden="true">&rarr;</span></a>
             </div>
             <div class="vis v-b">
               <div class="term"><div class="term-bar"><i></i><i></i><i></i><span>claude-garage</span></div>
@@ -87,6 +101,7 @@ import crops from '../generated/crops.json';
               <span class="chip"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="12" cy="12" r="3.2" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="8"/></svg></span>Spot the amber one <span class="num">3 / 5</span></span>
               <h3>The one waiting on you turns amber.</h3>
               <p>When a tool call needs approval, that tile lights up, its folder gets a dot, and the bar says someone needs you. No tab hunting.</p>
+              <a class="more" href="/docs/guides/many-sessions/#how-do-i-know-which-session-needs-me">How the amber signal works <span aria-hidden="true">&rarr;</span></a>
             </div>
             <div class="vis v-c">
               <div class="term"><div class="term-bar"><i></i><i></i><i></i><span>claude-garage</span></div>
@@ -101,6 +116,7 @@ import crops from '../generated/crops.json';
               <span class="chip"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linejoin="round"><rect x="3.5" y="3.5" width="17" height="17" rx="5"/></svg></span>Press a and answer <span class="num">4 / 5</span></span>
               <h3>Press a. You are in.</h3>
               <p>One key jumps to the session that is blocked, right at its prompt. Pick <span class="inl">1. Yes</span> or tell Claude what to do instead, then carry on.</p>
+              <a class="more" href="/docs/guides/many-sessions/#how-do-i-jump-to-the-waiting-session">Jump with a <span aria-hidden="true">&rarr;</span></a>
             </div>
             <div class="vis v-d">
               <div class="term"><div class="term-bar"><i></i><i></i><i></i><span>web / claude-1</span></div>
@@ -115,6 +131,7 @@ import crops from '../generated/crops.json';
               <span class="chip"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M19.5 12a7.5 7.5 0 1 1-2.2-5.3M19.5 4.5v4h-4"/></svg></span>Nothing gets lost <span class="num">5 / 5</span></span>
               <h3>tmux owns your sessions.</h3>
               <p>Quit the wall and they keep running. Closed or crashed chats stay in the sidebar; press <kbd>r</kbd> <kbd>r</kbd> to restart and resume the conversation.</p>
+              <a class="more" href="/docs/guides/nothing-lost/">Close and come back <span aria-hidden="true">&rarr;</span></a>
             </div>
             <div class="vis v-e">
               <div class="term"><div class="term-bar"><i></i><i></i><i></i><span>claude-garage</span></div>
@@ -137,58 +154,58 @@ import crops from '../generated/crops.json';
 <section class="s" id="plugins">
   <div class="wrap">
     <div class="head">
-      <span class="eyebrow rv">Plugins</span>
-      <h2 class="rv" style="--rd:.05s">Nine in the box. Install more from GitHub.</h2>
-      <p class="lead rv" style="--rd:.1s">Small, switchable add-ons that tune the wall to how you work. The crops below are the real thing.</p>
+      <span class="eyebrow rv">Nine in the box. Install more from GitHub.</span>
+      <h2 class="rv" style="--rd:.05s">Nine built-in plugins, and how to add your own</h2>
+      <p class="lead rv" style="--rd:.1s">Plugins are small, switchable add-ons that tune the wall to how you work. The crops below are the real thing. <a href="/docs/guides/plugins/">Read the plugin guide</a> or <a href="/docs/guides/first-plugin/">build your first plugin</a>.</p>
     </div>
 
     <div class="pgrid">
       <article class="pc rv">
         <div class="pv"><div class="mini" style="width:62%"><img src={crops.p0.src} width={crops.p0.w} height={crops.p0.h} alt="Sidebar rows reading claude-3 closed, claude-4 crashed" loading="lazy" decoding="async" /></div></div>
-        <h3>Closed chats</h3><p>Closed sessions stay in the rail. Click one to bring it back.</p>
+        <h3><a href="/docs/guides/plugins/#the-nine-built-in-plugins">Closed chats</a></h3><p>Closed sessions stay in the rail. Click one to bring it back.</p>
       </article>
       <article class="pc rv" style="--rd:.07s">
         <div class="pv"><div class="mini"><img src={crops.p1.src} width={crops.p1.w} height={crops.p1.h} alt="A tile header with x and del buttons" loading="lazy" decoding="async" /></div></div>
-        <h3>Tile buttons</h3><p>Close and delete buttons in each tile title.</p>
+        <h3><a href="/docs/guides/plugins/#the-nine-built-in-plugins">Tile buttons</a></h3><p>Close and delete buttons in each tile title.</p>
       </article>
       <article class="pc rv" style="--rd:.14s">
         <div class="pv"><div class="mini"><img src={crops.p2.src} width={crops.p2.w} height={crops.p2.h} alt="Status bar showing 5h 24% and weekly 61% usage" loading="lazy" decoding="async" /></div></div>
-        <h3>Usage bar</h3><p>Your 5 hour and weekly limits in the status strip.</p>
+        <h3><a href="/docs/guides/plugins/#the-nine-built-in-plugins">Usage bar</a></h3><p>Your 5 hour and weekly limits in the status strip.</p>
       </article>
       <article class="pc rv">
         <div class="pv"><div class="mini" style="width:88%"><img src={crops.p3.src} width={crops.p3.w} height={crops.p3.h} alt="Status bar with folder tabs and a tiny pet" loading="lazy" decoding="async" /></div></div>
-        <h3>Pit pet</h3><p>A tiny pet in the status strip. It wakes when a session needs you.</p>
+        <h3><a href="/docs/guides/plugins/#the-nine-built-in-plugins">Pit pet</a></h3><p>A tiny pet in the status strip. It wakes when a session needs you.</p>
       </article>
       <article class="pc rv" style="--rd:.07s">
         <div class="pv"><div class="keys"><span class="skey">s</span><span class="skey">S</span></div></div>
-        <h3>Quick send</h3><p><span class="inl">s</span> sends a line to one session, <span class="inl">S</span> to every session in the project.</p>
+        <h3><a href="/docs/guides/plugins/#the-nine-built-in-plugins">Quick send</a></h3><p><span class="inl">s</span> sends a line to one session, <span class="inl">S</span> to every session in the project.</p>
       </article>
       <article class="pc rv" style="--rd:.14s">
         <div class="pv"><div class="keys"><span class="skey">/</span></div></div>
-        <h3>Jump palette</h3><p>Press <span class="inl">/</span> to jump to any session.</p>
+        <h3><a href="/docs/guides/plugins/#the-nine-built-in-plugins">Jump palette</a></h3><p>Press <span class="inl">/</span> to jump to any session.</p>
       </article>
       <article class="pc rv">
         <div class="pv"><div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M5 5v14M12 9v10M19 13v6"/></svg></div></div>
-        <h3>Turn markers</h3><p>Marks where each Claude turn ended, right in the tile.</p>
+        <h3><a href="/docs/guides/plugins/#the-nine-built-in-plugins">Turn markers</a></h3><p>Marks where each Claude turn ended, right in the tile.</p>
       </article>
       <article class="pc rv" style="--rd:.07s">
         <div class="pv"><div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M9 7V5h6v2M6.5 7l1 12h9l1-12"/></svg></div></div>
-        <h3>Prune empty projects <span class="tag">off by default</span></h3><p>Removes a project after you close its last session. Off by default.</p>
+        <h3><a href="/docs/guides/plugins/#the-nine-built-in-plugins">Prune empty projects</a> <span class="tag">off by default</span></h3><p>Removes a project after you close its last session. Off by default.</p>
       </article>
       <article class="pc rv" style="--rd:.14s">
         <div class="pv"><div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M5 8l4.5 4L5 16M12.5 17H19"/></svg></div></div>
-        <h3>CLI extras</h3><p>Adds <span class="inl">claude-garage &lt;folder&gt;</span>, <span class="inl">open</span>, <span class="inl">install</span> and <span class="inl">prune</span> to your shell.</p>
+        <h3><a href="/docs/plugins/cli/">CLI extras</a></h3><p>Adds <span class="inl">claude-garage &lt;folder&gt;</span>, <span class="inl">open</span>, <span class="inl">install</span> and <span class="inl">prune</span> to your shell.</p>
       </article>
     </div>
 
     <div class="install-row">
       <div class="box dk rv">
-        <span class="l">Add a plugin from any GitHub repo</span>
+        <span class="l">Add a plugin from any GitHub repo (<a href="/docs/guides/plugins/">how installing works</a>)</span>
         <div class="cmd"><span>claude-garage plugin install owner/repo</span><button data-copy="claude-garage plugin install owner/repo">Copy</button></div>
       </div>
       <div class="box trust rv" style="--rd:.08s">
         <div class="sh"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5.5c0 4.2-2.9 7.6-7 9.5-4.1-1.9-7-5.3-7-9.5V6z"/><path d="M9 12l2.2 2.2L15.5 10"/></svg></div>
-        <div><h3>You stay in charge.</h3><p>A plugin can never confirm a dangerous action. You do.</p></div>
+        <div><h3>You stay in charge.</h3><p>A plugin can never confirm a dangerous action. You do. <a href="/blog/plugin-confirm-rule/">How the rule works</a>, and the <a href="/docs/plugins/security/">plugin security model</a>.</p></div>
       </div>
     </div>
   </div>
@@ -198,14 +215,40 @@ import crops from '../generated/crops.json';
 <section class="s" id="keys">
   <div class="wrap">
     <div class="head">
-      <span class="eyebrow rv">Keys</span>
-      <h2 class="rv" style="--rd:.05s">Four habits. That is the whole manual.</h2>
+      <span class="eyebrow rv">Four habits. That is the whole manual.</span>
+      <h2 class="rv" style="--rd:.05s">The keys you use every day in claude-garage</h2>
+      <p class="lead rv" style="--rd:.1s">Press <span class="inl">?</span> in the wall for every key, or read the <a href="/docs/reference/keys/">full key reference</a>.</p>
     </div>
     <div class="kgrid">
-      <div class="kc rv"><div class="caps"><span class="cap">r</span><span class="cap">r</span></div><h3>Restart and resume</h3><p>Brings a session back and picks the conversation up where it stopped.</p></div>
-      <div class="kc rv" style="--rd:.07s"><div class="caps"><span class="cap">x</span><span class="cap">x</span></div><h3>Close a session</h3><p>Closes the chat and lets you merge or discard its worktree.</p></div>
-      <div class="kc rv" style="--rd:.14s"><div class="caps"><span class="cap">/</span></div><h3>Jump palette</h3><p>Fuzzy-jump to any session without leaving the keyboard.</p></div>
-      <div class="kc rv" style="--rd:.21s"><div class="caps"><span class="cap">s</span><span class="cap">S</span></div><h3>Send a line</h3><p><span class="inl">s</span> to one session, <span class="inl">S</span> to all of them at once.</p></div>
+      <div class="kc rv"><div class="caps"><span class="cap">r</span><span class="cap">r</span></div><h3><a href="/docs/guides/nothing-lost/">Restart and resume</a></h3><p>Brings a session back and picks the conversation up where it stopped.</p></div>
+      <div class="kc rv" style="--rd:.07s"><div class="caps"><span class="cap">x</span><span class="cap">x</span></div><h3><a href="/docs/guides/worktrees/#finish-a-worktree-session">Close a session</a></h3><p>Closes the chat and lets you merge or discard its worktree.</p></div>
+      <div class="kc rv" style="--rd:.14s"><div class="caps"><span class="cap">/</span></div><h3><a href="/docs/guides/plugins/#the-nine-built-in-plugins">Jump palette</a></h3><p>Fuzzy-jump to any session without leaving the keyboard.</p></div>
+      <div class="kc rv" style="--rd:.21s"><div class="caps"><span class="cap">s</span><span class="cap">S</span></div><h3><a href="/docs/guides/plugins/#the-nine-built-in-plugins">Send a line</a></h3><p><span class="inl">s</span> to one session, <span class="inl">S</span> to all of them at once.</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- ===== how it differs ===== -->
+<section class="s" id="differs">
+  <div class="wrap">
+    <div class="head">
+      <span class="eyebrow rv">How it differs</span>
+      <h2 class="rv" style="--rd:.05s">How claude-garage differs from other ways to run Claude Code sessions</h2>
+      <p class="lead rv" style="--rd:.1s">claude-garage runs Claude Code only, on tmux, and is built for the moment one session waits for you. Other tools cover more agents, more machines or a full desktop app. Each page says when the other option is the better pick. The author of claude-garage wrote them, and says so.</p>
+    </div>
+    <div class="cmp rv">
+      <a class="btn btn-dark sm" href="/compare/alternatives/">Best tools to run multiple Claude Code sessions</a>
+      <ul>
+        <li><a href="/compare/claude-garage-vs-herdr/">claude-garage vs herdr</a></li>
+        <li><a href="/compare/claude-garage-vs-cmux/">claude-garage vs cmux</a></li>
+        <li><a href="/compare/claude-garage-vs-claude-squad/">claude-garage vs Claude Squad</a></li>
+        <li><a href="/compare/claude-garage-vs-emdash/">claude-garage vs Emdash</a></li>
+        <li><a href="/compare/claude-garage-vs-claude-code-agent-view/">claude-garage vs Claude Code agent view</a></li>
+        <li><a href="/compare/many-terminal-tabs/">vs many terminal tabs</a></li>
+        <li><a href="/compare/tmux-alone/">vs tmux on its own</a></li>
+        <li><a href="/compare/ide-agent-panels/">vs IDE agent panels</a></li>
+        <li><a href="/compare/one-session-at-a-time/">vs one session at a time</a></li>
+      </ul>
     </div>
   </div>
 </section>
@@ -214,9 +257,9 @@ import crops from '../generated/crops.json';
 <section class="s" id="install">
   <div class="wrap">
     <div class="head">
-      <span class="eyebrow rv">Install</span>
-      <h2 class="rv" style="--rd:.05s">One line to your first wall.</h2>
-      <p class="lead rv" style="--rd:.1s">Try it with npx, or install the binary. Pick your shell.</p>
+      <span class="eyebrow rv">One line to your first wall.</span>
+      <h2 class="rv" style="--rd:.05s">Install claude-garage with npx or a shell installer</h2>
+      <p class="lead rv" style="--rd:.1s">Try it with npx, or install the binary. Pick your shell. Full steps, troubleshooting and uninstall are in the <a href="/docs/guides/install/">install guide</a>.</p>
     </div>
     <div class="inst rv">
       <div class="tabs" role="tablist" aria-label="Install method">
@@ -225,7 +268,7 @@ import crops from '../generated/crops.json';
         <button class="tab" role="tab" id="i2" aria-controls="p2" aria-selected="false" tabindex="-1">PowerShell</button>
       </div>
       <div class="panel" role="tabpanel" id="p0" aria-labelledby="i0">
-        <div class="l">Needs Node. Nothing to install first.</div>
+        <div class="l">Needs Node.js 20 or newer. Nothing else to install first.</div>
         <div class="cmd"><span>npx claude-garage</span><button data-copy="npx claude-garage">Copy</button></div>
       </div>
       <div class="panel" role="tabpanel" id="p1" aria-labelledby="i1" hidden>
@@ -238,13 +281,22 @@ import crops from '../generated/crops.json';
       </div>
       <div class="facts"><span class="fact">macOS and Linux</span><span class="fact">Windows in preview</span><span class="fact">MIT licensed</span></div>
     </div>
+    <div class="reqs rv">
+      <h3>Requirements</h3>
+      <ul>
+        <li><strong>tmux 3.2 or newer</strong> on macOS and Linux. Check with <span class="inl">tmux -V</span>. On macOS, claude-garage offers to run <span class="inl">brew install tmux</span> and asks first. Windows does not use tmux.</li>
+        <li><strong>Claude Code on your PATH.</strong> Check with <span class="inl">claude --version</span>. <a href="https://docs.claude.com/en/docs/claude-code">Claude Code install instructions</a>.</li>
+        <li><strong>Node.js 20 or newer</strong>, only for <span class="inl">npx</span>. The shell and PowerShell installers do not need Node.</li>
+      </ul>
+    </div>
   </div>
 </section>
 
 <!-- ===== closing ===== -->
 <section class="closing mesh" id="closing" aria-labelledby="close-h">
   <i class="b1"></i><i class="b2"></i><i class="b3"></i><i class="b4"></i><i class="b5"></i>
-  <h2 id="close-h" class="rv">Give your sessions a wall.</h2>
+  <span class="eyebrow rv">Give your sessions a wall.</span>
+  <h2 id="close-h" class="rv">Start claude-garage with one command</h2>
   <div class="cta rv" style="--rd:.08s">
     <button class="copybox" data-copy="npx claude-garage" aria-label="Copy command: npx claude-garage"><span><span class="p">$ </span>npx claude-garage</span><span class="c"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2.5"/><path d="M5 15V6.5A2.5 2.5 0 0 1 7.5 4H15"/></svg><span class="lbl">Copy</span></span></button>
     <a class="btn btn-line" href="https://github.com/adar2378/claude-garage" style="background:rgba(255,255,255,.55)">View on GitHub</a>
@@ -258,8 +310,8 @@ import crops from '../generated/crops.json';
 
 <footer>
   <a class="logo" href="#top" style="color:var(--ink)"><b data-logo aria-hidden="true">(0.0)</b>claude-garage</a>
-  <nav aria-label="Footer"><a href="https://github.com/adar2378/claude-garage">GitHub</a><a href="https://github.com/adar2378/claude-garage/releases">Releases</a><a href="/docs/">Docs</a><a href="/blog/">Blog</a><a href="/compare/">Compare</a><a href="/try/">Try it</a><a href="#plugins">Plugins</a><a href="#install">Install</a></nav>
-  <span>MIT licensed. macOS and Linux, Windows in preview.</span>
+  <nav aria-label="Footer"><a href="https://github.com/adar2378/claude-garage">GitHub</a><a href="https://github.com/adar2378/claude-garage/releases">Releases</a><a href="/docs/">Docs</a><a href="/blog/">Blog</a><a href="/compare/">Compare</a><a href="/try/">Try it</a><a href="/about/">About</a><a href="/docs/changelog/">Changelog</a><a href="#plugins">Plugins</a><a href="#install">Install</a></nav>
+  <span>claude-garage {version}. MIT licensed. macOS and Linux, Windows in preview.<br />Not affiliated with Anthropic.</span>
 </footer>
 
 <div class="pet" id="pet" role="button" tabindex="0" aria-label="The pit pet. Press to hear from it."><span class="pg" id="pg" aria-hidden="true">=-.-=</span><span class="ps" id="ps">zzz</span></div>
