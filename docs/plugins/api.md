@@ -44,7 +44,7 @@ Every action, event, pane and CLI run gets the same JSON. Keys are never missing
   "selection": {"session": "garage/main", "index": 0, "view": "wall"},
   "worktree": null,
   "event": null,
-  "ui": {"slots": {"strip.right": {"width": 38}}}
+  "ui": {"slots": {"strip.right": {"width": 38}}, "visible": true}
 }
 ```
 
@@ -60,6 +60,7 @@ Every action, event, pane and CLI run gets the same JSON. Keys are never missing
 | `worktree` | The focused session's git worktree: `{path, branch, repo_dir}`. |
 | `event` | Event runs only: `{name, at, data}`. See [events](events.md). |
 | `ui.slots` | Geometry the wall reported for slots (`width`, `max_cols`, `filler`). May be empty. |
+| `ui.visible` | `true` when a wall is in view: one reported itself visible within the last 45 seconds. A plugin that wants to alert the user (a sound, a banner) can skip the banner when this is `true`. Feature `ui.visible`. |
 
 Ignore keys you do not know. New keys may be added in v1.
 

@@ -191,6 +191,8 @@ pub struct Inner {
     timers: Mutex<HashMap<String, Vec<JoinHandle<()>>>>,
     logs: Mutex<HashMap<String, Arc<PluginLog>>>,
     ui_slots: Mutex<Value>,
+    /// Which walls are in view, for `ui.visible` in the run context.
+    visibility: Mutex<crate::api::visibility::Visibility>,
     /// Rate limit of `PUT /api/plugins/ui/slots`.
     slots_bucket: Mutex<Bucket>,
     /// Rate limit of `POST /api/plugins/ui/action`, per plugin.
@@ -245,6 +247,7 @@ impl PluginHost {
             timers: Mutex::default(),
             logs: Mutex::default(),
             ui_slots: Mutex::new(json!({})),
+            visibility: Mutex::default(),
             slots_bucket: Mutex::new(Bucket::new(std::time::Instant::now())),
             ui_action_buckets: Mutex::default(),
             notice_buckets: Mutex::default(),
@@ -683,6 +686,16 @@ impl PluginHost {
         }
     }
 
+    /// Share the daemon's visibility tracker, so runs can see whether a wall
+    /// is in view.
+    pub fn set_visibility(&self, visibility: crate::api::visibility::Visibility) {
+        *self.0.visibility.lock().unwrap() = visibility;
+    }
+
+    pub fn ui_visible(&self) -> bool {
+        self.0.visibility.lock().unwrap().any_visible()
+    }
+
     pub fn ui_slots(&self) -> Value {
         self.0.ui_slots.lock().unwrap().clone()
     }
@@ -742,7 +755,11 @@ impl PluginHost {
             version: &version,
             state_dir: &state_dir,
         };
-        context::build(self.0.lookup.as_ref(), &facts, req, &self.ui_slots()).await
+        let ui = context::UiFacts {
+            slots: self.ui_slots(),
+            visible: self.ui_visible(),
+        };
+        context::build(self.0.lookup.as_ref(), &facts, req, &ui).await
     }
 
     /// Queue a run for every active plugin hook listening to `name`.

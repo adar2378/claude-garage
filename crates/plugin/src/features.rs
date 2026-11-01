@@ -133,6 +133,7 @@ pub fn features() -> Value {
         "widgets.frame_x": true,
         "widgets.slot_geometry": true,
         "ui.notice": true,
+        "ui.visible": true,
         "cli.fallback": true,
         "panes.placements": PANE_PLACEMENTS,
         "sessions.input": true,

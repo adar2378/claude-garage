@@ -221,6 +221,7 @@
     "widgets.frame_x",
     "widgets.slot_geometry",
     "ui.notice",
+    "ui.visible",
     "cli.fallback",
     "panes.placements",
     "sessions.input",
