@@ -1,5 +1,5 @@
 //! Port of the route half of `daemon/src/notify.js`: `POST /api/ui/visibility`
-//! and the store behind the "is a UI in view?" rule (`os::notify` reads it).
+//! and the store behind the "is a UI in view?" rule (plugin runs read it as `ui.visible`).
 //!
 //! The TUI posts here periodically while it is in the foreground. A visible
 //! client exists when any entry has `visible` and was seen within `TTL`. Rides

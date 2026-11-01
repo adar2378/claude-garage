@@ -9,7 +9,6 @@
 
 pub mod linux;
 pub mod macos;
-pub mod notify;
 pub mod other;
 pub mod process;
 pub mod windows;
