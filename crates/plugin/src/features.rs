@@ -134,6 +134,8 @@ pub fn features() -> Value {
         "widgets.slot_geometry": true,
         "ui.notice": true,
         "ui.visible": true,
+        "ui.terminal": true,
+        "context.garage": true,
         "cli.fallback": true,
         "panes.placements": PANE_PLACEMENTS,
         "sessions.input": true,

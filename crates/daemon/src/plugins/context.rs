@@ -125,6 +125,8 @@ pub struct PluginFacts<'a> {
 pub struct UiFacts {
     pub slots: Value,
     pub visible: bool,
+    pub terminal: Option<String>,
+    pub garage: garage_protocol::api::ContextGarage,
 }
 
 pub async fn build(
@@ -152,7 +154,8 @@ pub async fn build(
         "selection": {"session": selection("session"), "index": selection("index"), "view": selection("view")},
         "worktree": worktree,
         "event": req.event,
-        "ui": {"slots": ui.slots, "visible": ui.visible},
+        "ui": {"slots": ui.slots, "visible": ui.visible, "terminal": ui.terminal},
+        "garage": ui.garage,
     })
 }
 
@@ -165,6 +168,15 @@ mod tests {
     impl SessionLookup for Fixed {
         async fn session(&self, _: &str) -> Option<SessionInfo> {
             self.0.clone()
+        }
+    }
+
+    fn garage() -> garage_protocol::api::ContextGarage {
+        garage_protocol::api::ContextGarage {
+            bin: Some("/usr/local/bin/claude-garage".into()),
+            port: 4747,
+            dir: "/home/u/.garage".into(),
+            tmux_socket: None,
         }
     }
 
@@ -197,6 +209,8 @@ mod tests {
             &UiFacts {
                 slots: json!({"strip.right": {"width": 38}}),
                 visible: true,
+                terminal: Some("ghostty".into()),
+                garage: garage(),
             },
         )
         .await;
@@ -217,6 +231,11 @@ mod tests {
         assert_eq!(ctx["worktree"]["branch"], "b");
         assert_eq!(ctx["ui"]["slots"]["strip.right"]["width"], 38);
         assert_eq!(ctx["ui"]["visible"], true);
+        assert_eq!(ctx["ui"]["terminal"], "ghostty");
+        assert_eq!(
+            ctx["garage"],
+            json!({"bin": "/usr/local/bin/claude-garage", "port": 4747, "dir": "/home/u/.garage", "tmux_socket": null})
+        );
         assert_eq!(ctx["plugin"]["state_dir"], "/data/p");
         assert_eq!(ctx["api_version"], 1);
     }
@@ -230,6 +249,8 @@ mod tests {
             &UiFacts {
                 slots: json!({}),
                 visible: false,
+                terminal: None,
+                garage: garage(),
             },
         )
         .await;
@@ -242,7 +263,10 @@ mod tests {
             ctx["selection"],
             json!({"session": null, "index": null, "view": null})
         );
-        assert_eq!(ctx["ui"], json!({"slots": {}, "visible": false}));
+        assert_eq!(
+            ctx["ui"],
+            json!({"slots": {}, "visible": false, "terminal": null})
+        );
         for k in ["worktree", "event"] {
             assert!(ctx.get(k).is_some_and(Value::is_null), "{k}");
         }
@@ -260,6 +284,8 @@ mod tests {
         let ui = UiFacts {
             slots: json!({}),
             visible: false,
+            terminal: None,
+            garage: garage(),
         };
         let ctx = build(&Fixed(None), &facts(), req, &ui).await;
         assert_eq!(ctx["focus"]["session"]["dir"], "/was");

@@ -93,6 +93,22 @@ pub struct GarageClient {
     agent: ureq::Agent,
 }
 
+/// The terminal this wall runs in, for plugins that bring it forward (the
+/// alerts banner): the macOS bundle id terminals export, else `TERM_PROGRAM`.
+/// `None` when neither is set or the value is not a plain name.
+pub fn terminal_from_env(get: impl Fn(&str) -> Option<String>) -> Option<String> {
+    let plain = |s: &String| {
+        !s.is_empty()
+            && s.len() <= 100
+            && s.chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_'))
+    };
+    ["__CFBundleIdentifier", "TERM_PROGRAM"]
+        .iter()
+        .filter_map(|k| get(k))
+        .find(plain)
+}
+
 impl GarageClient {
     pub fn new(base_url: Option<String>) -> GarageClient {
         GarageClient {
@@ -188,10 +204,11 @@ impl GarageClient {
     /// notifications stay suppressed while the TUI is visible (spec
     /// tui-triage "Off-screen escalation").
     pub fn post_visibility(&self, client_id: &str, visible: bool) -> Result<(), ApiError> {
-        self.post_json(
-            "/api/ui/visibility",
-            &json!({ "clientId": client_id, "visible": visible }),
-        )?;
+        let mut body = json!({ "clientId": client_id, "visible": visible });
+        if visible && let Some(t) = terminal_from_env(|k| std::env::var(k).ok()) {
+            body["terminal"] = json!(t);
+        }
+        self.post_json("/api/ui/visibility", &body)?;
         Ok(())
     }
 
@@ -707,5 +724,44 @@ mod tests {
     fn encode_component_escapes_separators() {
         assert_eq!(encode_component("garage/a/x"), "garage%2Fa%2Fx");
         assert_eq!(encode_component("plain-name_1.2~x"), "plain-name_1.2~x");
+    }
+}
+
+#[cfg(test)]
+mod terminal_tests {
+    use super::terminal_from_env;
+
+    fn env<'a>(pairs: &'a [(&'a str, &'a str)]) -> impl Fn(&str) -> Option<String> + 'a {
+        move |k| {
+            pairs
+                .iter()
+                .find(|(n, _)| *n == k)
+                .map(|(_, v)| (*v).to_owned())
+        }
+    }
+
+    #[test]
+    fn the_bundle_id_wins_then_term_program_and_junk_is_dropped() {
+        let both = [
+            ("__CFBundleIdentifier", "com.mitchellh.ghostty"),
+            ("TERM_PROGRAM", "ghostty"),
+        ];
+        assert_eq!(
+            terminal_from_env(env(&both)).as_deref(),
+            Some("com.mitchellh.ghostty")
+        );
+        assert_eq!(
+            terminal_from_env(env(&[("TERM_PROGRAM", "iTerm.app")])).as_deref(),
+            Some("iTerm.app")
+        );
+        assert_eq!(
+            terminal_from_env(env(&[
+                ("__CFBundleIdentifier", "a b;c"),
+                ("TERM_PROGRAM", "WezTerm")
+            ]))
+            .as_deref(),
+            Some("WezTerm")
+        );
+        assert_eq!(terminal_from_env(env(&[])), None);
     }
 }

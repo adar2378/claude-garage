@@ -110,6 +110,10 @@ pub struct RunContext {
     #[schemars(required, schema_with = "nullable::<ContextEvent>")]
     pub event: Option<ContextEvent>,
     pub ui: ContextUi,
+    /// How to run `claude-garage` again against this daemon.
+    #[serde(default)]
+    #[schemars(schema_with = "nullable::<ContextGarage>")]
+    pub garage: Option<ContextGarage>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -196,6 +200,28 @@ pub struct ContextUi {
     /// not say.
     #[serde(default)]
     pub visible: bool,
+    /// The terminal the wall runs in, as the wall reported it: a macOS bundle
+    /// id (`com.mitchellh.ghostty`) or a `TERM_PROGRAM` name (`ghostty`).
+    /// `null` until a wall has said.
+    #[serde(default)]
+    #[schemars(schema_with = "nullable::<String>")]
+    pub terminal: Option<String>,
+}
+
+/// How to run `claude-garage` again on this machine: what a plugin needs to
+/// build a command that talks to this daemon (for example a notification
+/// that runs `claude-garage alerts open ...` when clicked).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ContextGarage {
+    /// Absolute path of the `claude-garage` binary, when known.
+    #[schemars(required, schema_with = "nullable::<String>")]
+    pub bin: Option<String>,
+    pub port: u16,
+    /// `GARAGE_DIR`.
+    pub dir: String,
+    /// `GARAGE_TMUX_SOCKET`, when set.
+    #[schemars(required, schema_with = "nullable::<String>")]
+    pub tmux_socket: Option<String>,
 }
 
 // ---- events ----
@@ -374,6 +400,10 @@ pub struct Features {
     pub ui_notice: bool,
     #[serde(rename = "ui.visible", default)]
     pub ui_visible: bool,
+    #[serde(rename = "ui.terminal", default)]
+    pub ui_terminal: bool,
+    #[serde(rename = "context.garage", default)]
+    pub context_garage: bool,
     #[serde(rename = "cli.fallback")]
     pub cli_fallback: bool,
     #[serde(rename = "panes.placements")]

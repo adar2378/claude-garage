@@ -1000,6 +1000,18 @@
         },
         "ui": {
           "$ref": "#/definitions/ContextUi"
+        },
+        "garage": {
+          "description": "How to run `claude-garage` again against this daemon.",
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ContextGarage"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         }
       },
       "required": [
@@ -1227,10 +1239,54 @@
           "description": "Whether a wall is in view right now (it reported itself visible within\nthe last 45 seconds). `false` when none did, or from a daemon that does\nnot say.",
           "type": "boolean",
           "default": false
+        },
+        "terminal": {
+          "description": "The terminal the wall runs in, as the wall reported it: a macOS bundle\nid (`com.mitchellh.ghostty`) or a `TERM_PROGRAM` name (`ghostty`).\n`null` until a wall has said.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
         }
       },
       "required": [
         "slots"
+      ]
+    },
+    "ContextGarage": {
+      "description": "How to run `claude-garage` again on this machine: what a plugin needs to\nbuild a command that talks to this daemon (for example a notification\nthat runs `claude-garage alerts open ...` when clicked).",
+      "type": "object",
+      "properties": {
+        "bin": {
+          "description": "Absolute path of the `claude-garage` binary, when known.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "port": {
+          "type": "integer",
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0
+        },
+        "dir": {
+          "description": "`GARAGE_DIR`.",
+          "type": "string"
+        },
+        "tmux_socket": {
+          "description": "`GARAGE_TMUX_SOCKET`, when set.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "bin",
+        "port",
+        "dir",
+        "tmux_socket"
       ]
     },
     "EventName": {
@@ -1596,6 +1652,14 @@
           "type": "boolean"
         },
         "ui.visible": {
+          "type": "boolean",
+          "default": false
+        },
+        "ui.terminal": {
+          "type": "boolean",
+          "default": false
+        },
+        "context.garage": {
           "type": "boolean",
           "default": false
         },

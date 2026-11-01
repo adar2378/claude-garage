@@ -26,6 +26,17 @@ pub const TTL: Duration = Duration::from_secs(45);
 #[derive(Clone, Default)]
 pub struct Visibility {
     clients: Arc<Mutex<HashMap<String, (bool, Instant)>>>,
+    /// The terminal the last visible wall said it runs in.
+    terminal: Arc<Mutex<Option<String>>>,
+}
+
+/// A terminal name or bundle id as a wall may report it: short, printable,
+/// no spaces. Anything else is dropped (the value ends up in plugin contexts).
+pub fn valid_terminal(s: &str) -> bool {
+    !s.is_empty()
+        && s.len() <= 100
+        && s.chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_'))
 }
 
 impl Visibility {
@@ -38,6 +49,16 @@ impl Visibility {
         // Expired entries can never count again; dropping them is unobservable.
         clients.retain(|_, (_, seen)| now.saturating_duration_since(*seen) <= TTL);
         clients.insert(client_id.to_owned(), (visible, now));
+    }
+
+    pub fn set_terminal(&self, terminal: &str) {
+        if valid_terminal(terminal) {
+            *self.terminal.lock().unwrap() = Some(terminal.to_owned());
+        }
+    }
+
+    pub fn terminal(&self) -> Option<String> {
+        self.terminal.lock().unwrap().clone()
     }
 
     pub fn any_visible(&self) -> bool {
@@ -70,6 +91,9 @@ pub async fn post(State(state): State<AppState>, body: Bytes) -> Response {
         );
     };
     state.visibility.record(id, visible);
+    if let Some(t) = body.get("terminal").and_then(Value::as_str) {
+        state.visibility.set_terminal(t);
+    }
     Json(json!({"ok": true})).into_response()
 }
 
@@ -94,6 +118,18 @@ mod tests {
             !v.any_visible_at(t0 + Duration::from_secs(21)),
             "latest report wins"
         );
+    }
+
+    #[test]
+    fn the_terminal_is_kept_only_when_it_looks_like_a_name_or_bundle_id() {
+        let v = Visibility::default();
+        assert_eq!(v.terminal(), None);
+        v.set_terminal("com.mitchellh.ghostty");
+        assert_eq!(v.terminal().as_deref(), Some("com.mitchellh.ghostty"));
+        for bad in ["", "a b", "x;rm -rf", "é", &"a".repeat(101)] {
+            v.set_terminal(bad);
+        }
+        assert_eq!(v.terminal().as_deref(), Some("com.mitchellh.ghostty"));
     }
 
     #[test]

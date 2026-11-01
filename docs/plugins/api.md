@@ -44,7 +44,8 @@ Every action, event, pane and CLI run gets the same JSON. Keys are never missing
   "selection": {"session": "garage/main", "index": 0, "view": "wall"},
   "worktree": null,
   "event": null,
-  "ui": {"slots": {"strip.right": {"width": 38}}, "visible": true}
+  "ui": {"slots": {"strip.right": {"width": 38}}, "visible": true, "terminal": "ghostty"},
+  "garage": {"bin": "/usr/local/bin/claude-garage", "port": 4747, "dir": "/Users/me/.garage", "tmux_socket": null}
 }
 ```
 
@@ -61,6 +62,8 @@ Every action, event, pane and CLI run gets the same JSON. Keys are never missing
 | `event` | Event runs only: `{name, at, data}`. See [events](events.md). |
 | `ui.slots` | Geometry the wall reported for slots (`width`, `max_cols`, `filler`). May be empty. |
 | `ui.visible` | `true` when a wall is in view: one reported itself visible within the last 45 seconds. A plugin that wants to alert the user (a sound, a banner) can skip the banner when this is `true`. Feature `ui.visible`. |
+| `ui.terminal` | The terminal the wall runs in, as the wall reported it (it sends `__CFBundleIdentifier` when set, else `TERM_PROGRAM`): a bundle id such as `com.mitchellh.ghostty`, or a name such as `ghostty`. `null` until a wall has said. Only plain names (letters, digits, `.`, `-`, `_`) are kept. Feature `ui.terminal`. |
+| `garage` | How to run `claude-garage` against this daemon: `bin` (absolute path or `null`), `port`, `dir` (`GARAGE_DIR`), `tmux_socket` (`GARAGE_TMUX_SOCKET` or `null`). Use it to build a command that comes back to garage, for example a click handler. Quote every value if you pass them to a shell. Feature `context.garage`. |
 
 Ignore keys you do not know. New keys may be added in v1.
 

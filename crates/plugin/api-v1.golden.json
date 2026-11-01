@@ -222,6 +222,8 @@
     "widgets.slot_geometry",
     "ui.notice",
     "ui.visible",
+    "ui.terminal",
+    "context.garage",
     "cli.fallback",
     "panes.placements",
     "sessions.input",

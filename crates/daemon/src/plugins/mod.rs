@@ -193,6 +193,8 @@ pub struct Inner {
     ui_slots: Mutex<Value>,
     /// Which walls are in view, for `ui.visible` in the run context.
     visibility: Mutex<crate::api::visibility::Visibility>,
+    /// `context.garage`: how to run `claude-garage` against this daemon.
+    garage: garage_protocol::api::ContextGarage,
     /// Rate limit of `PUT /api/plugins/ui/slots`.
     slots_bucket: Mutex<Bucket>,
     /// Rate limit of `POST /api/plugins/ui/action`, per plugin.
@@ -248,6 +250,15 @@ impl PluginHost {
             logs: Mutex::default(),
             ui_slots: Mutex::new(json!({})),
             visibility: Mutex::default(),
+            garage: garage_protocol::api::ContextGarage {
+                bin: std::env::current_exe()
+                    .ok()
+                    .filter(|p| p.is_absolute())
+                    .map(|p| p.to_string_lossy().into_owned()),
+                port: config.port,
+                dir: config.garage_dir.to_string_lossy().into_owned(),
+                tmux_socket: config.tmux_socket.clone(),
+            },
             slots_bucket: Mutex::new(Bucket::new(std::time::Instant::now())),
             ui_action_buckets: Mutex::default(),
             notice_buckets: Mutex::default(),
@@ -692,6 +703,10 @@ impl PluginHost {
         *self.0.visibility.lock().unwrap() = visibility;
     }
 
+    pub fn ui_terminal(&self) -> Option<String> {
+        self.0.visibility.lock().unwrap().terminal()
+    }
+
     pub fn ui_visible(&self) -> bool {
         self.0.visibility.lock().unwrap().any_visible()
     }
@@ -758,6 +773,8 @@ impl PluginHost {
         let ui = context::UiFacts {
             slots: self.ui_slots(),
             visible: self.ui_visible(),
+            terminal: self.ui_terminal(),
+            garage: self.0.garage.clone(),
         };
         context::build(self.0.lookup.as_ref(), &facts, req, &ui).await
     }

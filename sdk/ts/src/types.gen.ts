@@ -389,6 +389,10 @@ export interface RunContext {
    */
   event: ContextEvent | null;
   ui: ContextUi;
+  /**
+   * How to run `claude-garage` again against this daemon.
+   */
+  garage?: ContextGarage | null;
 }
 export interface ContextPlugin {
   id: string;
@@ -469,6 +473,32 @@ export interface ContextUi {
    * not say.
    */
   visible?: boolean;
+  /**
+   * The terminal the wall runs in, as the wall reported it: a macOS bundle
+   * id (`com.mitchellh.ghostty`) or a `TERM_PROGRAM` name (`ghostty`).
+   * `null` until a wall has said.
+   */
+  terminal?: string | null;
+}
+/**
+ * How to run `claude-garage` again on this machine: what a plugin needs to
+ * build a command that talks to this daemon (for example a notification
+ * that runs `claude-garage alerts open ...` when clicked).
+ */
+export interface ContextGarage {
+  /**
+   * Absolute path of the `claude-garage` binary, when known.
+   */
+  bin: string | null;
+  port: number;
+  /**
+   * `GARAGE_DIR`.
+   */
+  dir: string;
+  /**
+   * `GARAGE_TMUX_SOCKET`, when set.
+   */
+  tmux_socket: string | null;
 }
 /**
  * The payload (`event.data`) of each event, by event name. `daemon.started`
@@ -580,6 +610,8 @@ export interface Features {
   "widgets.slot_geometry": boolean;
   "ui.notice": boolean;
   "ui.visible"?: boolean;
+  "ui.terminal"?: boolean;
+  "context.garage"?: boolean;
   "cli.fallback": boolean;
   "panes.placements": string[];
   "sessions.input": boolean;
