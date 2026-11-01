@@ -510,89 +510,126 @@ pub fn cli(
 
 // ---------------------------------------------------------- real player/notifier
 
-/// Argv candidates to play `wav`, in the order to try them.
-pub fn sound_commands(os: &str, wav: &Path) -> Vec<Vec<String>> {
-    let p = wav.to_string_lossy().into_owned();
-    match os {
-        "macos" => vec![vec!["afplay".into(), p]],
-        "linux" => vec![
-            vec!["paplay".into(), p.clone()],
-            vec!["aplay".into(), "-q".into(), p],
-        ],
-        "windows" => vec![powershell(&format!(
-            "(New-Object Media.SoundPlayer '{}').PlaySync()",
-            ps_quote(&p)
-        ))],
-        _ => Vec::new(),
+/// A program to run: its argv and the environment it gets on top of ours.
+///
+/// Anything untrusted (Claude's message, a path) travels in `env` or as a plain
+/// argument, never inside a script string: the scripts below are fixed text.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Cmd {
+    pub argv: Vec<String>,
+    pub env: Vec<(String, String)>,
+}
+
+impl Cmd {
+    fn new(argv: &[&str]) -> Cmd {
+        Cmd {
+            argv: argv.iter().map(|s| (*s).to_owned()).collect(),
+            env: Vec::new(),
+        }
+    }
+    fn with_env(mut self, key: &str, value: &str) -> Cmd {
+        self.env.push((key.to_owned(), value.to_owned()));
+        self
     }
 }
 
-/// Argv candidates to show a banner. `terminal_notifier` says it is installed.
-pub fn banner_commands(
-    os: &str,
-    terminal_notifier: bool,
-    title: &str,
-    body: &str,
-) -> Vec<Vec<String>> {
-    match os {
-        "macos" if terminal_notifier => vec![vec![
-            "terminal-notifier".into(),
-            "-title".into(),
-            title.into(),
-            "-message".into(),
-            body.into(),
-        ]],
-        "macos" => vec![vec![
-            "osascript".into(),
-            "-e".into(),
-            // JSON string syntax doubles as AppleScript string syntax.
-            format!(
-                "display notification {} with title {}",
-                serde_json::to_string(body).unwrap_or_default(),
-                serde_json::to_string(title).unwrap_or_default()
-            ),
-        ]],
-        "linux" => vec![vec![
-            "notify-send".into(),
-            "--app-name=claude-garage".into(),
-            "--".into(),
-            title.into(),
-            body.into(),
-        ]],
-        "windows" => vec![powershell(&toast_script(title, body))],
-        _ => Vec::new(),
-    }
-}
+const ENV_WAV: &str = "GARAGE_ALERT_WAV";
+const ENV_TITLE: &str = "GARAGE_ALERT_TITLE";
+const ENV_BODY: &str = "GARAGE_ALERT_BODY";
 
-fn ps_quote(s: &str) -> String {
-    s.replace('\'', "''")
-}
+/// Fixed PowerShell: the path comes from the environment.
+const SOUND_SCRIPT_WINDOWS: &str =
+    "(New-Object Media.SoundPlayer $env:GARAGE_ALERT_WAV).PlaySync()";
 
-fn toast_script(title: &str, body: &str) -> String {
-    format!(
-        "[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] > $null; \
+/// Fixed PowerShell: the toast text comes from the environment.
+const TOAST_SCRIPT_WINDOWS: &str = "[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] > $null; \
 $t = [Windows.UI.Notifications.ToastNotificationManager]::GetTemplateContent([Windows.UI.Notifications.ToastTemplateType]::ToastText02); \
 $n = $t.GetElementsByTagName('text'); \
-$n.Item(0).AppendChild($t.CreateTextNode('{}')) > $null; \
-$n.Item(1).AppendChild($t.CreateTextNode('{}')) > $null; \
-$app = '{{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}}\\WindowsPowerShell\\v1.0\\powershell.exe'; \
-[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier($app).Show([Windows.UI.Notifications.ToastNotification]::new($t))",
-        ps_quote(title),
-        ps_quote(body)
-    )
+$n.Item(0).AppendChild($t.CreateTextNode($env:GARAGE_ALERT_TITLE)) > $null; \
+$n.Item(1).AppendChild($t.CreateTextNode($env:GARAGE_ALERT_BODY)) > $null; \
+$app = '{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\\WindowsPowerShell\\v1.0\\powershell.exe'; \
+[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier($app).Show([Windows.UI.Notifications.ToastNotification]::new($t))";
+
+/// Fixed AppleScript: the text arrives as `run` arguments (item 2 and 3; item 1
+/// is a fixed word so that a title or body starting with `-` is never taken
+/// for an option by osascript).
+const NOTIFY_SCRIPT_MACOS: [&str; 3] = [
+    "on run argv",
+    "display notification (item 3 of argv) with title (item 2 of argv)",
+    "end run",
+];
+
+/// A value for `terminal-notifier -title/-message`: one that starts with `-`
+/// could be read as the next option, so it gets a leading space.
+fn dash_safe(s: &str) -> String {
+    if s.starts_with('-') {
+        format!(" {s}")
+    } else {
+        s.to_owned()
+    }
 }
 
-/// `powershell.exe` argv running `script` through `-EncodedCommand`, so no
-/// character of a title or a path changes what PowerShell parses.
-fn powershell(script: &str) -> Vec<String> {
+/// Programs to play `wav`, in the order to try them.
+pub fn sound_commands(os: &str, wav: &Path) -> Vec<Cmd> {
+    let p = wav.to_string_lossy().into_owned();
+    match os {
+        "macos" => vec![Cmd::new(&["afplay", &p])],
+        "linux" => vec![Cmd::new(&["paplay", &p]), Cmd::new(&["aplay", "-q", &p])],
+        "windows" => vec![powershell(SOUND_SCRIPT_WINDOWS).with_env(ENV_WAV, &p)],
+        _ => Vec::new(),
+    }
+}
+
+/// Programs to show a banner. `terminal_notifier` says it is installed.
+pub fn banner_commands(os: &str, terminal_notifier: bool, title: &str, body: &str) -> Vec<Cmd> {
+    match os {
+        "macos" if terminal_notifier => vec![Cmd::new(&[
+            "terminal-notifier",
+            "-title",
+            &dash_safe(title),
+            "-message",
+            &dash_safe(body),
+        ])],
+        "macos" => {
+            let mut argv = vec!["osascript".to_owned()];
+            for line in NOTIFY_SCRIPT_MACOS {
+                argv.extend(["-e".to_owned(), line.to_owned()]);
+            }
+            argv.extend(["alerts".to_owned(), title.to_owned(), body.to_owned()]);
+            vec![Cmd {
+                argv,
+                env: Vec::new(),
+            }]
+        }
+        "linux" => vec![Cmd::new(&[
+            "notify-send",
+            "--app-name=claude-garage",
+            "--",
+            title,
+            body,
+        ])],
+        "windows" => vec![
+            powershell(TOAST_SCRIPT_WINDOWS)
+                .with_env(ENV_TITLE, title)
+                .with_env(ENV_BODY, body),
+        ],
+        _ => Vec::new(),
+    }
+}
+
+/// `powershell.exe` running the fixed `script` through `-EncodedCommand`.
+fn powershell(script: &str) -> Cmd {
     let utf16: Vec<u8> = script.encode_utf16().flat_map(u16::to_le_bytes).collect();
-    vec![
-        "powershell.exe".into(),
-        "-NoProfile".into(),
-        "-NonInteractive".into(),
-        "-EncodedCommand".into(),
-        base64(&utf16),
-    ]
+    Cmd {
+        argv: vec![
+            "powershell.exe".into(),
+            "-NoProfile".into(),
+            "-NonInteractive".into(),
+            "-EncodedCommand".into(),
+            base64(&utf16),
+        ],
+        env: Vec::new(),
+    }
 }
 
 fn base64(bytes: &[u8]) -> String {
@@ -620,12 +657,13 @@ fn base64(bytes: &[u8]) -> String {
 
 /// Run `argv` to the end, killing it after [`PROGRAM_TIMEOUT`]. `false` when
 /// the program does not exist (so the next candidate is tried).
-fn run(argv: &[String]) -> bool {
-    let Some((program, args)) = argv.split_first() else {
+fn run(c: &Cmd) -> bool {
+    let Some((program, args)) = c.argv.split_first() else {
         return false;
     };
     let mut cmd = Command::new(program);
     cmd.args(args)
+        .envs(c.env.iter().map(|(k, v)| (k, v)))
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
@@ -666,8 +704,8 @@ pub struct SystemOut;
 
 impl Out for SystemOut {
     fn play(&self, wav: &Path) {
-        for argv in sound_commands(std::env::consts::OS, wav) {
-            if run(&argv) {
+        for c in sound_commands(std::env::consts::OS, wav) {
+            if run(&c) {
                 return;
             }
         }
@@ -676,8 +714,8 @@ impl Out for SystemOut {
     fn banner(&self, title: &str, body: &str) {
         let os = std::env::consts::OS;
         let tn = os == "macos" && on_path("terminal-notifier");
-        for argv in banner_commands(os, tn, title, body) {
-            if run(&argv) {
+        for c in banner_commands(os, tn, title, body) {
+            if run(&c) {
                 return;
             }
         }
@@ -1382,12 +1420,21 @@ mod tests {
 
     // ---- the real player and notifier: argv only, never run ----
 
+    fn argv(c: &[Cmd]) -> Vec<Vec<&str>> {
+        c.iter()
+            .map(|c| c.argv.iter().map(String::as_str).collect())
+            .collect()
+    }
+
     #[test]
     fn players_and_notifiers_per_os() {
         let wav = Path::new("/s/chime.wav");
-        assert_eq!(sound_commands("macos", wav), [["afplay", "/s/chime.wav"]]);
         assert_eq!(
-            sound_commands("linux", wav),
+            argv(&sound_commands("macos", wav)),
+            [["afplay", "/s/chime.wav"]]
+        );
+        assert_eq!(
+            argv(&sound_commands("linux", wav)),
             [
                 vec!["paplay", "/s/chime.wav"],
                 vec!["aplay", "-q", "/s/chime.wav"]
@@ -1395,17 +1442,11 @@ mod tests {
         );
         assert!(sound_commands("freebsd", wav).is_empty());
         assert_eq!(
-            banner_commands("macos", true, "t", "b"),
+            argv(&banner_commands("macos", true, "t", "b")),
             [["terminal-notifier", "-title", "t", "-message", "b"]]
         );
-        let osa = banner_commands("macos", false, "t \"x\"", "b");
-        assert_eq!(osa[0][0], "osascript");
         assert_eq!(
-            osa[0][2],
-            r#"display notification "b" with title "t \"x\"""#
-        );
-        assert_eq!(
-            banner_commands("linux", false, "-t", "b"),
+            argv(&banner_commands("linux", false, "-t", "b")),
             [vec![
                 "notify-send",
                 "--app-name=claude-garage",
@@ -1415,13 +1456,75 @@ mod tests {
             ]]
         );
         assert!(banner_commands("freebsd", false, "t", "b").is_empty());
+        // terminal-notifier must not read a leading dash as an option
+        let tn = &banner_commands("macos", true, "-evil", "--also")[0].argv;
+        assert_eq!((tn[2].as_str(), tn[4].as_str()), (" -evil", " --also"));
+    }
+
+    /// Text an attacker could put in a notification message: every quote
+    /// PowerShell and AppleScript know, escapes, newlines, a non-BMP char.
+    const HOSTILE: &str =
+        "x'\u{2018}\u{2019}\u{201A}\u{201B}\"`$(calc);\\\n\r\u{0}\u{1F600} -e do shell script";
+
+    #[test]
+    fn untrusted_text_never_enters_a_script() {
+        let plain = banner_commands("windows", false, "title", "body");
+        let evil = banner_commands("windows", false, HOSTILE, HOSTILE);
+        assert_eq!(
+            plain[0].argv, evil[0].argv,
+            "the script does not depend on the text"
+        );
+        assert!(evil[0].argv.iter().all(|a| !a.contains("calc")));
+        assert!(
+            evil[0]
+                .env
+                .contains(&(ENV_TITLE.to_owned(), HOSTILE.to_owned()))
+        );
+        assert!(
+            evil[0]
+                .env
+                .contains(&(ENV_BODY.to_owned(), HOSTILE.to_owned()))
+        );
+        assert!(
+            !TOAST_SCRIPT_WINDOWS.contains(HOSTILE)
+                && TOAST_SCRIPT_WINDOWS.contains("$env:GARAGE_ALERT_BODY")
+        );
+
+        // a path with every quote in it, too
+        let p = Path::new("C:\\o\u{2019}neil\\a'b.wav");
+        let (a, b) = (
+            &sound_commands("windows", p)[0],
+            &sound_commands("windows", Path::new("C:\\x.wav"))[0],
+        );
+        assert_eq!(a.argv, b.argv);
+        assert_eq!(
+            a.env,
+            [(ENV_WAV.to_owned(), p.to_string_lossy().into_owned())]
+        );
+
+        // osascript: the -e scripts are fixed; the text is only a trailing argument
+        let plain = &banner_commands("macos", false, "title", "body")[0].argv;
+        let evil = &banner_commands("macos", false, HOSTILE, HOSTILE)[0].argv;
+        let n = plain.len();
+        assert_eq!(plain[..n - 2], evil[..n - 2]);
+        assert_eq!(evil[n - 2..], [HOSTILE, HOSTILE]);
+        assert_eq!(
+            evil[n - 3],
+            "alerts",
+            "a fixed word precedes the text, so a leading dash is no option"
+        );
+        for (i, a) in evil.iter().enumerate() {
+            if evil[i.saturating_sub(1)] == "-e" {
+                assert!(!a.contains("calc"), "script line {a:?}");
+            }
+        }
     }
 
     #[test]
-    fn windows_scripts_go_through_encoded_command_and_quote_paths() {
-        let argv = &sound_commands("windows", Path::new(r"C:\Users\o'neil\c.wav"))[0];
+    fn windows_commands_use_encoded_command() {
+        let c = &sound_commands("windows", Path::new("C:\\x.wav"))[0];
         assert_eq!(
-            &argv[..4],
+            &c.argv[..4],
             [
                 "powershell.exe",
                 "-NoProfile",
@@ -1439,10 +1542,8 @@ mod tests {
             ),
             "YQBiAA=="
         );
-        assert_eq!(ps_quote("o'neil"), "o''neil");
-        assert!(toast_script("a'b", "c").contains("CreateTextNode('a''b')"));
         assert_eq!(
-            banner_commands("windows", false, "t", "b")[0][0],
+            banner_commands("windows", false, "t", "b")[0].argv[0],
             "powershell.exe"
         );
     }
