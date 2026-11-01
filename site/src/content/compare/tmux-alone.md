@@ -1,6 +1,8 @@
 ---
 title: "claude-garage vs tmux on its own for Claude Code sessions"
-description: "Compare claude-garage with plain tmux for Claude Code: what tmux gives you already, what claude-garage adds on top, and when plain tmux is better."
+description: "A tmux alternative with a wall on top: claude-garage vs plain tmux for Claude Code, what tmux gives you already and when plain tmux is better."
+altQuestion: "Looking for a tmux alternative?"
+altAnswer: "claude-garage is not a replacement for tmux. It runs on tmux and adds a wall, an amber needs-input signal and restore. It is an alternative to wiring that up yourself with scripts. If you already have a tmux setup you like, keep it."
 shortAnswer: "Plain tmux is enough if you are happy to script your own status checks and restore steps. Use claude-garage if you want that work done: it runs on tmux, marks the session waiting for your answer, jumps to it with one key, and restores conversations with claude --resume after a reboot."
 short: "claude-garage is built on tmux. See what it adds and what plain tmux already covers."
 order: 2

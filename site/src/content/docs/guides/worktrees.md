@@ -1,7 +1,8 @@
 ---
-title: Sessions in git worktrees
+title: "Claude Code with git worktrees"
 description: Give each Claude session its own git worktree and branch so parallel work never collides. Merge, discard or keep the branch when you close the session.
 sidebar:
+  label: Sessions in git worktrees
   order: 4
 ---
 

@@ -2,7 +2,7 @@
 import { getCollection, render } from 'astro:content';
 import Page from '../../layouts/Page.astro';
 import { ogAlt, ogCard } from '../../lib/og';
-import { AUTHOR, ID, PUBLISHER, SOFTWARE, WEBSITE, abs, breadcrumbs, dayOf, isoDate, longDate, ref } from '../../lib/site';
+import { AUTHOR, ID, PUBLISHER, SOFTWARE, WEBSITE, abs, breadcrumbs, dayOf, isoDate, longDate, ref, sharedNodes } from '../../lib/site';
 
 export async function getStaticPaths() {
   const posts = await getCollection('blog', (p) => import.meta.env.DEV || !p.data.draft);
@@ -15,8 +15,10 @@ const url = abs(`/blog/${post.id}/`);
 const jsonLd = {
   '@context': 'https://schema.org',
   '@graph': [
+    ...sharedNodes(),
     {
       '@type': 'BlogPosting',
+      '@id': `${url}#article`,
       headline: d.title,
       description: d.description,
       url,
@@ -43,7 +45,6 @@ void remarkPluginFrontmatter;
     <meta property="article:author" content={d.author} />
     {d.tags.map((t) => <meta property="article:tag" content={t} />)}
     {d.draft && <meta name="robots" content="noindex" />}
-    <link rel="alternate" type="application/rss+xml" title="claude-garage blog" href="/blog/rss.xml" />
   </Fragment>
   <p class="crumbs"><a href="/">Home</a> / <a href="/blog/">Blog</a></p>
   <h1>{d.title}</h1>

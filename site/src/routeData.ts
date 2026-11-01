@@ -1,5 +1,5 @@
 import { defineRouteMiddleware } from '@astrojs/starlight/route-data';
-import { AUTHOR, PUBLISHER, SOFTWARE, WEBSITE, abs, breadcrumbs } from './lib/site';
+import { AUTHOR, PUBLISHER, SOFTWARE, WEBSITE, abs, breadcrumbs, sharedNodes } from './lib/site';
 import { fileDates } from './lib/gitdates';
 import { ogAlt, ogCard } from './lib/og';
 
@@ -10,8 +10,8 @@ const SECTIONS: Record<string, string> = {
   plugins: 'Plugins',
 };
 
-// Adds per-page TechArticle + BreadcrumbList JSON-LD, the page's own OG card and, for preview builds, noindex.
-// Author, publisher, website and software are the entities defined on the landing page, referenced by @id.
+// Adds per-page TechArticle (CollectionPage for /docs/) + BreadcrumbList JSON-LD and the page's own OG card.
+// The full Organization and Person nodes go in every graph; website and software are referenced by @id.
 export const onRequest = defineRouteMiddleware((context) => {
   const { head, entry } = context.locals.starlightRoute;
   const path = context.url.pathname.endsWith('/') ? context.url.pathname : `${context.url.pathname}/`;
@@ -22,6 +22,8 @@ export const onRequest = defineRouteMiddleware((context) => {
 
   const file = (entry as { filePath?: string }).filePath ?? `src/content/${entry.id}.md`;
   const dates = fileDates(file);
+
+  const isDocsHome = entry.id === 'docs';
 
   // docs/guides/install -> Home > Docs > Guides > Install claude-garage
   const parts = entry.id.split('/').slice(1);
@@ -45,10 +47,11 @@ export const onRequest = defineRouteMiddleware((context) => {
   const jsonLd = {
     '@context': 'https://schema.org',
     '@graph': [
+    ...sharedNodes(),
       {
-        '@type': 'TechArticle',
-        '@id': `${url}#article`,
-        headline: entry.data.title,
+        '@type': isDocsHome ? 'CollectionPage' : 'TechArticle',
+        '@id': `${url}#${isDocsHome ? 'page' : 'article'}`,
+        ...(isDocsHome ? { name: entry.data.title } : { headline: entry.data.title }),
         description,
         url,
         mainEntityOfPage: url,

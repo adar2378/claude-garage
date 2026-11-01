@@ -26,6 +26,7 @@ Six are on after your first run. Four are off.
 
 More detail:
 
+- **alerts**: see [Know when Claude Code needs you](/docs/guides/alerts/) for the options. Press `p` and switch it off to silence it for good.
 - **usage-bar** takes its figures from the Claude Code statusline. Press `I` once to install it.
 - **closed-chats**: `H` opens "Recent chats".
 - **quick-send** needs `Enter` twice in its popup, so nothing is sent by accident. `S` skips sessions that wait for input. `s` on a waiting session asks for an extra `y` first, because your line would answer its prompt.

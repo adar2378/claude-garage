@@ -1,6 +1,6 @@
 ---
 title: "claude-garage vs herdr for running Claude Code sessions"
-description: "claude-garage vs herdr compared with sources: agents supported, session hosting, restore after reboot, needs-input signals, worktrees, plugins, platforms and license. Last checked 2026-11-01."
+description: "A herdr alternative for Claude Code only: hosting, restore after reboot, needs-input signals, worktrees and license, with sources. Checked 2026-11-01."
 short: "Both keep agent sessions alive and flag the one that needs you. herdr covers many agents and machines. claude-garage is narrower and sits on tmux."
 order: 1
 kind: tool
@@ -10,6 +10,8 @@ competitor:
 method: "Checked on 2026-11-01 against herdr 0.9.5 (stable, released 2026-10-14) and claude-garage 1.0.0-rc.1, using each project's own README and documentation, linked under Sources. Anything marked not documented was not in those sources."
 checked: "2026-11-01"
 otherLabel: "herdr"
+altQuestion: "Looking for a herdr alternative?"
+altAnswer: "claude-garage is a herdr alternative if you only run Claude Code and want plain tmux sessions plus one key to the session that waits for you. If you run other agents, work across machines or want a plugin marketplace, herdr covers more, so it is the better pick."
 shortAnswer: "Pick herdr if you run several kinds of agents, work across machines, or want a plugin marketplace. Pick claude-garage if you only run Claude Code and want tmux to own the sessions, one key to jump to the session waiting for you, and a merge, discard or keep choice when a worktree session ends."
 intro: "herdr and claude-garage solve the same core problem: several coding agents are running and you need to know which one is waiting for you, without losing them when a terminal closes. They differ in scope. herdr is a runtime for many agents. claude-garage is a wall for Claude Code only."
 who:

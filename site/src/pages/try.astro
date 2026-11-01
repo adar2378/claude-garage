@@ -6,7 +6,7 @@ import SiteHeader from '../components/SiteHeader.astro';
 import '../styles/try.css';
 import { LESSONS, GLOSSARY } from '../scripts/try-data.js';
 import { BINDINGS } from '../scripts/try-bindings.js';
-import { PUBLISHER, SOFTWARE, WEBSITE, breadcrumbs } from '../lib/site';
+import { PUBLISHER, SOFTWARE, WEBSITE, breadcrumbs, sharedNodes } from '../lib/site';
 
 const title = 'Try claude-garage in your browser';
 const description =
@@ -16,6 +16,7 @@ const url = new URL('/try/', site).href;
 const jsonLd = {
   '@context': 'https://schema.org',
   '@graph': [
+    ...sharedNodes(),
     {
       '@type': 'WebApplication',
       '@id': `${url}#app`,

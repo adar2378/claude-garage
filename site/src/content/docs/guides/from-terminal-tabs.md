@@ -1,7 +1,8 @@
 ---
-title: Coming from terminal tabs
+title: "From many terminal tabs to one Claude Code wall"
 description: Move from many terminal tabs of Claude Code to one claude-garage wall. See what changes, what stays the same, and how to switch over without losing work.
 sidebar:
+  label: Coming from terminal tabs
   order: 7
 ---
 

@@ -1,6 +1,8 @@
 ---
 title: "claude-garage vs many terminal tabs for Claude Code sessions"
-description: "Compare claude-garage with running Claude Code in many terminal tabs: waiting signals, session survival, setup cost and when plain tabs are enough."
+description: "An alternative to many terminal tabs: claude-garage vs Claude Code in tabs on waiting signals, session survival, setup cost and when tabs are enough."
+altQuestion: "Looking for a terminal tabs alternative?"
+altAnswer: "claude-garage is an alternative to terminal tabs when you lose track of which Claude Code session waits for you, or lose sessions when a window closes. With two or three sessions, plain tabs are enough and cost nothing to set up."
 shortAnswer: "Use plain tabs if you run one or two sessions and always know what each is doing. Use claude-garage if you run three or more sessions and lose track of which one is blocked on a question, or if you want sessions to survive a closed terminal or a reboot. The cost is a second set of keys."
 short: "One screen for every session, and a key that jumps to the one waiting for you."
 order: 1
