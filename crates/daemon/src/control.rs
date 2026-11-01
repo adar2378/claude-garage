@@ -417,6 +417,9 @@ mod tests {
     async fn two_control_clients_both_hear_and_the_session_outlives_the_first_to_leave() {
         let mut r = rig(true).await;
         settle(&mut r).await;
+        // The rig's poller (tasks[0]) also waits on the first link and could
+        // take its wake-up before this test sees it; it is not needed here.
+        r.tasks[0].abort();
         // A second client, as during a daemon restart overlap, with its own link.
         let link2 = Arc::new(ControlLink::default());
         let second = spawn((*r.backend).clone(), link2.clone());
@@ -436,8 +439,10 @@ mod tests {
             .create("garage/ws/both", r.tmux.dir(), "sleep", &["60".into()], &[])
             .await
             .unwrap();
+        // Generous: under a parallel test load tmux can take well over 500 ms
+        // to report the new session; the wait ends as soon as it does.
         let heard = |l: Arc<ControlLink>| async move {
-            tokio::time::timeout(Duration::from_millis(500), l.woken())
+            tokio::time::timeout(Duration::from_secs(5), l.woken())
                 .await
                 .is_ok()
         };
