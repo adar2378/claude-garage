@@ -34,6 +34,8 @@ pub const COALESCE: Duration = Duration::from_secs(2);
 pub const LEADER_STALE_MS: i64 = 15_000;
 /// A `working` mark older than this is forgotten (a session that never ended).
 const WORKING_KEEP_MS: i64 = 6 * 60 * 60 * 1000;
+/// A `done` this soon after `idle` still belongs to the turn that just ended.
+pub const IDLE_THEN_DONE_MS: i64 = 10_000;
 /// How long one player or notifier may run.
 const PROGRAM_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -108,6 +110,11 @@ struct State {
     /// Session id -> epoch ms it entered `working`.
     #[serde(default)]
     working: HashMap<String, i64>,
+    /// Session id -> (epoch ms it entered `working`, epoch ms it went idle).
+    /// The daemon's poller can see a turn end (idle) a moment before the Stop
+    /// hook says done, so a `done` right after `idle` still counts.
+    #[serde(default)]
+    ended: HashMap<String, (i64, i64)>,
     /// Alerts waiting for the leader.
     #[serde(default)]
     pending: Vec<Item>,
@@ -369,9 +376,27 @@ pub fn handle_event(
         let started = state.working.remove(id);
         let now = clock.now_ms();
         state.working.retain(|_, t| now - *t < WORKING_KEEP_MS);
+        state
+            .ended
+            .retain(|_, (_, idle)| now - *idle < WORKING_KEEP_MS);
+        let ended = state.ended.remove(id);
+        // When did the turn that this `done` ends start?
+        let turn_start = match from {
+            "working" => started,
+            "idle" => ended
+                .filter(|(_, idle)| (0..=IDLE_THEN_DONE_MS).contains(&(at - idle)))
+                .map(|(t, _)| t),
+            _ => None,
+        };
         let item = match to {
             "working" => {
                 state.working.insert(id.to_owned(), at);
+                None
+            }
+            "idle" => {
+                if let (Some(t), "working") = (started, from) {
+                    state.ended.insert(id.to_owned(), (t, at));
+                }
                 None
             }
             "needs-input" if settings.needs_input => Some(Item {
@@ -382,7 +407,7 @@ pub fn handle_event(
                 secs: None,
                 visible,
             }),
-            "done" if from == "working" && settings.done => started
+            "done" if settings.done => turn_start
                 .map(|t| at - t)
                 .filter(|ms| *ms >= MIN_WORKING_MS)
                 .map(|ms| Item {
@@ -1032,6 +1057,86 @@ mod tests {
         )
         .unwrap();
         assert_eq!(out.all().len(), before, "5 s since the last working: quiet");
+    }
+
+    #[test]
+    fn a_poller_idle_just_before_the_done_hook_still_alerts() {
+        let d = FakeDaemon::start();
+        // (seconds worked, seconds idle before done, chime expected)
+        for (worked, gap, chime) in [
+            (30, 1, true),
+            (30, 10, true),
+            (30, 15, false),
+            (5, 1, false),
+        ] {
+            let (dir, out, clock) = (
+                tmp(&format!("idle{worked}-{gap}")),
+                Rec::default(),
+                Fake::at(0),
+            );
+            let id = "garage/ws/fix";
+            let ev = |from: &str, to: &str, at: i64| ctx(id, from, to, at, false);
+            handle_event(&ev("idle", "working", 0), &api(&d), &dir, &out, &clock).unwrap();
+            let idle_at = worked * 1000;
+            handle_event(
+                &ev("working", "idle", idle_at),
+                &api(&d),
+                &dir,
+                &out,
+                &clock,
+            )
+            .unwrap();
+            assert!(out.all().is_empty(), "idle is quiet");
+            handle_event(
+                &ev("idle", "done", idle_at + gap * 1000),
+                &api(&d),
+                &dir,
+                &out,
+                &clock,
+            )
+            .unwrap();
+            assert_eq!(
+                out.all().contains(&"play chime-done.wav".to_string()),
+                chime,
+                "worked {worked}s, done {gap}s after idle: {:?}",
+                out.all()
+            );
+            // the mark is used up: a second done does not repeat it
+            let n = out.all().len();
+            handle_event(
+                &ev("idle", "done", idle_at + gap * 1000 + 500),
+                &api(&d),
+                &dir,
+                &out,
+                &clock,
+            )
+            .unwrap();
+            assert_eq!(out.all().len(), n);
+        }
+    }
+
+    #[test]
+    fn idle_then_working_again_or_needs_input_forgets_the_ended_turn() {
+        let (dir, d, out, clock) = (
+            tmp("idle-forget"),
+            FakeDaemon::start(),
+            Rec::default(),
+            Fake::at(0),
+        );
+        sessions(&d);
+        let id = "garage/ws/fix";
+        let ev = |from: &str, to: &str, at: i64| ctx(id, from, to, at, true);
+        handle_event(&ev("idle", "working", 0), &api(&d), &dir, &out, &clock).unwrap();
+        handle_event(&ev("working", "idle", 30_000), &api(&d), &dir, &out, &clock).unwrap();
+        handle_event(&ev("idle", "working", 31_000), &api(&d), &dir, &out, &clock).unwrap();
+        assert!(read_state(&dir).ended.is_empty());
+        let n = out.all().len();
+        handle_event(&ev("idle", "done", 32_000), &api(&d), &dir, &out, &clock).unwrap();
+        assert_eq!(
+            out.all().len(),
+            n,
+            "idle->done after a new working has no ended turn"
+        );
     }
 
     // ---- coalescing ----
