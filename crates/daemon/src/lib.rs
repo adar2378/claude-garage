@@ -287,15 +287,14 @@ mod tests {
     }
 
     /// The launcher's stale-daemon gate compares /api/health's version with
-    /// package.json's, so they must never drift.
+    /// its own, so they must come from the same place.
     #[tokio::test]
-    async fn health_reports_status_pid_and_the_package_json_version() {
+    async fn health_reports_status_pid_and_the_crate_version() {
         let (s, body) = call(&config(&[]), "GET", "/api/health", None).await;
         assert_eq!(s, StatusCode::OK);
         assert_eq!(body["status"], "ok");
         assert_eq!(body["pid"], std::process::id());
-        let pkg: Value = serde_json::from_str(include_str!("../../../package.json")).unwrap();
-        assert_eq!(body["version"], pkg["version"]);
+        assert_eq!(body["version"], env!("CARGO_PKG_VERSION"));
     }
 
     #[tokio::test]

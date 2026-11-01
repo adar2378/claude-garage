@@ -92,7 +92,12 @@ impl Daemon {
         let port = free_port();
         let socket = format!("gc-{}", root.file_name().unwrap().to_string_lossy());
         let cmd = std::env::var("GARAGE_DAEMON_CMD")
-            .unwrap_or_else(|_| "node daemon/src/index.js".to_string());
+            .unwrap_or_else(|_| {
+                // the Rust daemon built by `cargo build -p claude-garage`
+                let target = std::env::var("CARGO_TARGET_DIR")
+                    .unwrap_or_else(|_| repo_root().join("target").display().to_string());
+                format!("{target}/debug/claude-garage daemon")
+            });
         let path = format!(
             "{}:{}",
             bin.display(),
