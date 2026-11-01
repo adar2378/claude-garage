@@ -156,7 +156,7 @@ fn a_provider_sees_the_geometry_of_the_frame_that_was_drawn() {
         .clone()
         .expect("a 120-column strip has a filler");
     assert!(
-        filler.start > 0 && filler.end <= 120 && filler.start < filler.end,
+        filler.start == 0 && filler.end <= 120 && filler.start < filler.end,
         "{filler:?}"
     );
     assert_eq!(geometry.rail_width, 27);

@@ -24,7 +24,7 @@ overlay SHALL list `P`.
 
 ### Requirement: One-row sprites and derived mood
 The pet SHALL render as a single-row sprite inside the bottom strip's
-filler columns, never displacing workspace tabs, the notice, the usage
+filler columns, never displacing the notice, the usage
 chip, the blocked badge, or the keys-target chip; when the filler is
 narrower than the widest sprite the pet SHALL be hidden for that frame.
 Mood SHALL be computed from wall state only, never stored: daemon SSE
@@ -39,7 +39,7 @@ every mood; the alert sprite SHALL carry a `!` in amber.
 - **THEN** the pet shows its alert sprite with `!` for the duration and its celebrate sprite briefly once blocked count returns to zero
 
 #### Scenario: Narrow strip hides the pet
-- **WHEN** tabs plus right-side chips leave fewer filler columns than the current sprite needs
+- **WHEN** the notice plus right-side chips leave fewer filler columns than the current sprite needs
 - **THEN** no sprite renders and the strip is otherwise unchanged
 
 ### Requirement: Species-true one-row motion

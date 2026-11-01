@@ -1,6 +1,6 @@
 //! The single-line bottom strip (port of `tui/lib/ui/strip.dart` — spec
-//! tui-wall / tui-key-routing): workspace tabs `1-9` with amber needs-input
-//! dots, a transient notice slot, the total blocked badge, and the
+//! tui-wall / tui-key-routing): a filler (pet and other
+//! `strip.right` items), a transient notice slot, the total blocked badge, and the
 //! always-visible keys-target chip.
 //!
 //! The badge is a click target (spec tui-triage: "Pressing `A` (or clicking
@@ -12,7 +12,7 @@ use std::ops::Range;
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Paragraph, Widget};
 
@@ -91,7 +91,7 @@ pub struct StripLine {
     pub filler: Range<u16>,
 }
 
-/// Build the strip's line for `width` columns: tabs left, then a filler
+/// Build the strip's line for `width` columns: a filler
 /// (with a floated `strip.right` item such as a plugin's pet inserted into it,
 /// when there's room), then
 /// notice · badge · chip right-aligned.
@@ -101,19 +101,6 @@ pub fn strip_line(
     notice: Option<&str>,
     width: u16,
 ) -> StripLine {
-    let mut left: Vec<Span<'static>> = Vec::new();
-    for (i, group) in state.groups.iter().take(9).enumerate() {
-        let focused = state.focused_workspace.as_deref() == Some(group.name.as_str());
-        let mut style = Style::default().fg(if focused { colors::FG } else { colors::DIM });
-        if focused {
-            style = style.add_modifier(Modifier::BOLD);
-        }
-        left.push(Span::styled(format!(" {}:{}", i + 1, group.name), style));
-        if group.has_needs_input() {
-            left.push(Span::styled("●", Style::default().fg(colors::AMBER)));
-        }
-    }
-
     let blocked = state.blocked_count();
     let mut right: Vec<Span<'static>> = Vec::new();
     let mut badge_local: Option<Range<usize>> = None;
@@ -162,11 +149,10 @@ pub fn strip_line(
         chip_style,
     ));
 
-    let left_w: usize = left.iter().map(Span::width).sum();
     let right_w: usize = right.iter().map(Span::width).sum();
-    let filler = usize::from(width).saturating_sub(left_w + right_w);
+    let filler = usize::from(width).saturating_sub(right_w);
 
-    let mut spans = left;
+    let mut spans: Vec<Span<'static>> = Vec::new();
     // Filler items (the pit pet, and any a plugin adds): each is left-anchored
     // at its `x` within the filler, flanked by a blank gutter column, with its
     // caption beside it where there is room. An item that does not fit, or
@@ -203,8 +189,8 @@ pub fn strip_line(
             spans.push(Span::raw(" ".repeat(before)));
         }
         if let Some(target) = item.on_click.clone() {
-            let start = (left_w + x).min(usize::from(width)) as u16;
-            let end = (left_w + x + required).min(usize::from(width)) as u16;
+            let start = (*x).min(usize::from(width)) as u16;
+            let end = (*x + required).min(usize::from(width)) as u16;
             click_ranges.push((start..end, target));
         }
         spans.extend(item.text.iter().cloned());
@@ -217,7 +203,7 @@ pub fn strip_line(
         cursor = x + required;
     }
     spans.push(Span::raw(" ".repeat(filler - cursor - right_used)));
-    let right_start = left_w + filler;
+    let right_start = filler;
     spans.extend(right);
 
     StripLine {
@@ -230,8 +216,7 @@ pub fn strip_line(
             click_ranges.extend(laid.clicks(right_start + notice_w, usize::from(width)));
             click_ranges
         },
-        filler: left_w.min(usize::from(width)) as u16
-            ..(left_w + filler).min(usize::from(width)) as u16,
+        filler: 0..filler.min(usize::from(width)) as u16,
     }
 }
 
@@ -262,13 +247,14 @@ pub fn render_strip(
 
 #[cfg(test)]
 mod tests {
-    //! Strip content (port of `tui/test/strip_test.dart` semantics): tab
-    //! text with amber dots, the blocked badge and its click range, chip
+    //! Strip content (port of `tui/test/strip_test.dart` semantics): the
+    //! blocked badge and its click range, chip
     //! variants, the notice slot.
     use super::*;
     use crate::actions::{ActionId, ids};
     use crate::api::models::{SessionInfo, WorkspaceInfo};
     use crate::state::store::WallStore;
+    use ratatui::style::Modifier;
 
     /// A sprite-shaped filler item for the layout tests below (the shape the
     /// pit-pet plugin pushes: sprite, reserved bang column, caption).
@@ -363,12 +349,19 @@ mod tests {
     }
 
     #[test]
-    fn tabs_follow_salience_order_with_amber_dots() {
+    fn no_workspace_tabs_render_even_with_a_blocked_workspace() {
         let store = store();
         let s = strip_line(store.state(), &SlotRegistry::core(), None, 120);
         let text = s.line.to_string();
-        // beta is blocked → salience puts it first, with the dot.
-        assert!(text.starts_with(" 1:beta● 2:alpha"), "{text}");
+        assert!(
+            !text.contains("1:") && !text.contains("alpha") && !text.contains("beta"),
+            "{text}"
+        );
+        assert!(
+            text.starts_with("   "),
+            "left edge is plain filler: {text:?}"
+        );
+        assert_eq!(s.filler.start, 0, "the filler now starts at column 0");
     }
 
     #[test]
@@ -745,18 +738,14 @@ mod tests {
     }
 
     #[test]
-    fn pet_at_x_zero_still_leaves_a_gutter_after_the_tabs() {
+    fn pet_at_x_zero_still_leaves_a_gutter_before_the_sprite() {
         let store = store();
         let s = strip_line(store.state(), &with_pet(pet_render(0)), None, 200);
         let pet = pet_range(&s).expect("room at 200 cols");
         let text: Vec<char> = s.line.to_string().chars().collect();
         let start = usize::from(pet.start);
         assert_eq!(text[start - 1], ' ', "one blank column before the sprite");
-        assert_ne!(
-            text[start - 2],
-            ' ',
-            "…and the tab text sits right before that gutter"
-        );
+        assert_eq!(start, 1, "the gutter is the strip's first column");
     }
 
     #[test]
@@ -804,23 +793,17 @@ mod tests {
     }
 
     #[test]
-    fn pet_hidden_at_80_cols_with_six_workspaces_and_a_notice() {
-        let mut store = WallStore::new();
-        store.workspaces_fetched((1..=6).map(|i| ws(&format!("ws{i}"))).collect());
-        store.sessions_fetched(
-            (1..=6)
-                .map(|i| si(&format!("ws{i}"), "one", "working"))
-                .collect(),
-        );
+    fn pet_hidden_at_80_cols_with_a_long_notice() {
+        let store = store(); // one blocked session: the badge is shown too
         let s = strip_line(
             store.state(),
             &with_pet(pet_render(0)),
-            Some("a longish strip notice sits here"),
+            Some("a very long strip notice that takes most of the whole row"),
             80,
         );
         assert!(
             pet_range(&s).is_none(),
-            "six tabs + a notice leave no filler room at 80 cols"
+            "a long notice, badge and chip leave no filler room at 80 cols"
         );
         assert!(!s.line.to_string().contains("=o.o="));
     }
