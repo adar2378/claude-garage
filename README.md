@@ -236,7 +236,11 @@ with `tmux attach -t garage/<project>/<label>`.
 cargo build                                  # the one binary: target/debug/claude-garage
 cargo test -p garage-wall --lib --bins       # the TUI
 cargo test -p garage-protocol -p garage-host -p garage-daemon -p claude-garage
+cargo clippy --workspace --all-targets -- -D warnings
 ```
+
+There are no git hooks: run the two commands above before you push. The
+release workflow runs the same checks on every `v*` tag.
 
 Releases are built by [cargo-dist](https://github.com/axodotdev/cargo-dist)
 (`dist-workspace.toml`; `dist plan` shows what a tag would publish). The
