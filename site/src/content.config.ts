@@ -18,7 +18,7 @@ const blog = defineCollection({
     description: z.string(),
     date: z.coerce.date(),
     updated: z.coerce.date().optional(),
-    author: z.string().default('Saiful Islam'),
+    author: z.string().default('Saiful Islam Adar'),
     tags: z.array(z.string()).default([]),
     draft: z.boolean().default(false),
   }),

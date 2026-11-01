@@ -49,7 +49,7 @@ const jsonLd = {
 <Page title={title} description={description} jsonLd={jsonLd} active="compare">
   <p class="crumbs"><a href="/">Home</a> / <a href="/compare/">Compare</a></p>
   <h1>{title}</h1>
-  <p class="meta">By <a href="https://github.com/adar2378">Saiful Islam</a>, creator of claude-garage · Last checked <time datetime="2026-11-01">{longDate(checked)}</time></p>
+  <p class="meta">By <a href="/about/">Saiful Islam Adar</a>, creator of claude-garage · Last checked <time datetime="2026-11-01">{longDate(checked)}</time></p>
   <p class="meta"><strong>Disclosure:</strong> I made claude-garage, so read this page with that in mind. Checked on 2026-11-01 against each project's own README and documentation, linked from the matching comparison page. Product names are used only to refer to those products.</p>
   <p class="lead">To run several Claude Code sessions at once you need three things: a place where they keep running, a way to see which one is waiting for you, and isolation so they do not overwrite each other. Several tools cover this. This guide says what each is for, and when claude-garage is not the right choice.</p>
   <div class="note"><strong>Short answer.</strong> Running one to three sessions: Claude Code's own features or tmux are enough. Many Claude Code sessions in a terminal: claude-garage or Claude Squad. Several kinds of agents or machines: herdr. A macOS terminal with a browser pane: cmux. A desktop app from ticket to pull request: Emdash.</div>

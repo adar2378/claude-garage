@@ -10,6 +10,7 @@ export function lastmodFor(pathname: string): string | undefined {
   if (p === '/try') {
     return latest(['src/pages/try.astro', 'src/components/TrySim.astro', 'src/components/TryLessons.astro', 'src/scripts/try.js', 'src/scripts/try-data.js', 'src/styles/try.css']);
   }
+  if (p === '/about') return latest(['src/pages/about.astro']);
   if (p === '/blog') return latest(['src/pages/blog/index.astro', ...mds('src/content/blog')]);
   if (p === '/compare') return latest(['src/pages/compare/index.astro', ...mds('src/content/compare')]);
   const m = p.match(/^\/(blog|compare)\/([^/]+)$/);
