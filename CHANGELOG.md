@@ -1,5 +1,27 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- **Finished sessions you have not seen.** A session that finishes while you
+  look at another one gets a green bar and a green check in the rail, and its
+  workspace gets a green dot. They clear when you focus the session. A
+  finished session you have seen goes dim at once instead of after two
+  minutes.
+- **`a` reaches finished sessions.** It still jumps to the session that has
+  waited longest. When none waits, it jumps to the newest finished one you
+  have not seen.
+- **The footer names every alert.** When an alert plays, the footer shows
+  which session it is for, such as `alerts: ✓ web/claude-2 finished · a to
+  jump`, also when garage is in view and no banner shows.
+- **Fewer false "finished" chimes.** A finished chime now waits 8 seconds and
+  is dropped if the session went back to work. "Needs you" is not delayed.
+- **Rail.** Working sessions are dim, so only sessions that need you or
+  finished unseen stand out. Workspace names are bold, and a blank row
+  separates workspaces when the rail is tall enough.
+- Rows that start waiting or finish flash once when motion is on.
+
 ## 1.0.1 — one binary, plugins and alerts
 
 The first stable release. (The 1.0.0 tag stopped in CI before any binary
