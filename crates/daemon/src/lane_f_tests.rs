@@ -338,6 +338,40 @@ async fn patch_workspace_renames_live_sessions_registry_and_resume_metadata() {
 }
 
 #[tokio::test]
+async fn patch_workspace_rename_tells_listeners_the_old_name_left_and_the_new_one_came() {
+    let garage = tempfile::tempdir().unwrap();
+    let (st, _) = fake_state(garage.path());
+    st.registry.upsert_workspace("old", "/proj").await.unwrap();
+    let mut rx = st.bus.subscribe();
+    let (s, _) = call(
+        &st,
+        "PATCH",
+        "/api/workspaces/old",
+        Some(json!({"name": "new"})),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK);
+    assert_eq!(
+        rx.try_recv().unwrap(),
+        crate::bus::DaemonEvent::WorkspaceRemoved { name: "old".into() }
+    );
+    assert_eq!(
+        rx.try_recv().unwrap(),
+        crate::bus::DaemonEvent::WorkspaceAdded { name: "new".into() }
+    );
+    // A same-name patch changes nothing a listener could see.
+    let (s, _) = call(
+        &st,
+        "PATCH",
+        "/api/workspaces/new",
+        Some(json!({"name": "new"})),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK);
+    assert!(rx.try_recv().is_err());
+}
+
+#[tokio::test]
 async fn patch_workspace_reports_failed_session_renames_and_still_renames_the_registry() {
     let tmux = TestTmux::new();
     let garage = tempfile::tempdir().unwrap();

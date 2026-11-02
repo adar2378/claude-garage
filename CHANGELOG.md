@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- A project added from outside the wall (by an agent, a script or `claude-garage open`) now shows up at once, and one removed from outside disappears. A rename shows up at once too.
+
 ## 1.0.2 — know which session finished
 
 ### Changed

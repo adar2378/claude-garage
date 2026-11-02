@@ -29,6 +29,11 @@ pub(super) fn fetch_and_send(client: &GarageClient, tx: &EventSender) {
     }
 }
 
+/// Core SSE events that mean the workspace registry changed.
+fn is_workspace_event(name: &str) -> bool {
+    matches!(name, "workspace.added" | "workspace.removed")
+}
+
 /// Fetch the plugin listing and every plugin's widgets (startup, `plugins`
 /// frame, reconnect). The listing goes first: widget content of a plugin the
 /// listing does not call active is ignored.
@@ -244,6 +249,10 @@ pub(super) fn spawn_sse_task(
                     }
                 }
                 "sessions" => refetch(client),
+                // A project added or removed from outside the wall (an agent,
+                // a script, `claude-garage open`): the registry changed, so
+                // take both listings.
+                name if is_workspace_event(name) => fetch_and_send(client, &tx),
                 "session.closed" => {
                     if let Some(id) = user_closed_session_id(&event.data) {
                         let _ = tx.send(AppEvent::SessionClosed(id));
@@ -348,5 +357,20 @@ mod tests {
         // Once the content really arrived the same rev is news no more.
         revs.borrow_mut().fetched("bt", 3);
         assert!(!revs.borrow().should_fetch("bt", 3));
+    }
+
+    #[test]
+    fn registry_events_trigger_a_workspace_refetch() {
+        assert!(is_workspace_event("workspace.added"));
+        assert!(is_workspace_event("workspace.removed"));
+        for other in [
+            "sessions",
+            "status",
+            "session.closed",
+            "plugins",
+            "workspace",
+        ] {
+            assert!(!is_workspace_event(other), "{other}");
+        }
     }
 }

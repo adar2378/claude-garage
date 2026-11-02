@@ -166,6 +166,15 @@ pub async fn patch(
         }
         Err(e) => return internal(e.into()),
     };
+    if new != old {
+        // A rename is a remove plus an add to every listener.
+        state
+            .bus
+            .publish(crate::bus::DaemonEvent::WorkspaceRemoved { name: old.clone() });
+        state.bus.publish(crate::bus::DaemonEvent::WorkspaceAdded {
+            name: workspace.name.clone(),
+        });
+    }
     let mut out = Map::new();
     out.insert("name".into(), json!(workspace.name));
     if let Some(d) = &workspace.dir {
