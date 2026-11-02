@@ -33,21 +33,10 @@ export const PUBLISHER = ref(ID.org);
 export const WEBSITE = ref(ID.website);
 export const SOFTWARE = ref(ID.software);
 
-/** Version from the Cargo workspace, read at build time (the build runs from site/). */
+/** The version on npm (`latest`), written by scripts/version.mjs before every build. */
 export function appVersion(): string {
-  const toml = readFileSync(resolve(process.cwd(), '../Cargo.toml'), 'utf8');
-  const section = toml.match(/\[workspace\.package\]([\s\S]*?)(?:\n\[|$)/)?.[1] ?? '';
-  const v = section.match(/^\s*version\s*=\s*"([^"]+)"/m)?.[1];
-  if (!v) throw new Error('site: workspace version not found in ../Cargo.toml');
-  warnPrerelease(v);
-  return v;
-}
-
-let warned = false;
-function warnPrerelease(v: string) {
-  if (warned || NOINDEX || !/-/.test(v)) return;
-  warned = true;
-  console.warn(`\n[site] WARNING: softwareVersion is "${v}" (pre-release, from ../Cargo.toml) and SITE_NOINDEX is not set. Public JSON-LD would advertise a version that is not on npm. Bump Cargo.toml before a public deploy.\n`);
+  const file = resolve(process.cwd(), 'src/generated/version.json');
+  return JSON.parse(readFileSync(file, 'utf8')).version;
 }
 
 export const SOFTWARE_DESCRIPTION =
