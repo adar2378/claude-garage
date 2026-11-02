@@ -786,7 +786,10 @@ mod tests {
             assert!(ids.iter().any(|i| i == id), "{id} is missing from plugins/");
         }
         assert!(DEFAULT_ON.contains(&"usage-bar") && DEFAULT_ON.contains(&"pit-pet"));
-        assert!(DEFAULT_ON.contains(&"alerts"), "it replaces the core notification");
+        assert!(
+            DEFAULT_ON.contains(&"alerts"),
+            "it replaces the core notification"
+        );
         assert!(!DEFAULT_ON.contains(&"turn-markers"));
     }
 
