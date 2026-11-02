@@ -15,7 +15,7 @@ requires    = ["ui.visible"]
 [[events]]
 on           = "session.status_changed"
 command      = ["{plugin_dir}/bin/alerts", "status"]
-timeout_secs = 15
+timeout_secs = 40 # a run waits at most 10 s, then delivers once
 
 [[cli]]
 name         = "alerts"

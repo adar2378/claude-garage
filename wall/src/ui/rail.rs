@@ -279,15 +279,16 @@ pub fn family_label_provider(ctx: &SlotCtx) -> Vec<SlotItem> {
     )]
 }
 
-/// How long a row that just started waiting or finished unseen flashes
-/// (motion on only; it never repeats).
+/// How long a row that just started waiting for you flashes (motion on only;
+/// it never repeats). Only needs-input flashes: its chime is immediate. A
+/// finished row has the steady green marker instead.
 pub const FLASH_MS: i64 = 800;
 
-/// Whether the row of `s` is in its one flash: it needs you or is unseen, its
-/// status began under [`FLASH_MS`] ago, and motion is on.
-pub fn flashing(s: &WallSession, unseen: bool, now_ms: i64, motion: bool) -> bool {
+/// Whether the row of `s` is in its one flash: it needs you, its status began
+/// under [`FLASH_MS`] ago, and motion is on.
+pub fn flashing(s: &WallSession, now_ms: i64, motion: bool) -> bool {
     motion
-        && (s.needs_input() || (s.status == "done" && unseen))
+        && s.needs_input()
         && s.since
             .is_some_and(|since| (0..FLASH_MS).contains(&(now_ms - since)))
 }
@@ -383,7 +384,7 @@ fn session_row(
     if focused {
         label_style = label_style.add_modifier(Modifier::BOLD);
     }
-    if flashing(s, unseen, now_ms, fade_done) {
+    if flashing(s, now_ms, fade_done) {
         label_style = label_style.add_modifier(Modifier::REVERSED);
     }
     // A finished session the user has not seen carries a green `▎` in the
@@ -638,31 +639,25 @@ mod tests {
     }
 
     #[test]
-    fn a_row_flashes_once_for_under_a_second_and_only_with_motion() {
-        let store = store_with_unseen(); // fin finished at 1000
-        let label_mod = |now: i64, motion: bool| {
+    fn a_row_entering_needs_input_flashes_once_for_under_a_second_and_only_with_motion() {
+        let mut store = store_with(vec![
+            si("a", "first", "idle", None),
+            si("a", "ask", "working", Some(0)),
+        ]);
+        store.status_changed("garage/a/ask", "needs-input", Some(1000));
+        let reversed = |store: &WallStore, row: usize, now: i64, motion: bool| {
             let (lines, _) = rail_render(store.state(), &SlotRegistry::core(), now, motion);
-            lines[2].spans[2].style.add_modifier
-        };
-        assert!(label_mod(1200, true).contains(Modifier::REVERSED));
-        assert!(
-            !label_mod(1000 + FLASH_MS, true).contains(Modifier::REVERSED),
-            "over"
-        );
-        assert!(
-            !label_mod(1200, false).contains(Modifier::REVERSED),
-            "motion off"
-        );
-        // a seen row never flashes
-        let mut seen = store_with_unseen();
-        seen.focus_session("garage/a/fin");
-        let (lines, _) = rail_render(seen.state(), &SlotRegistry::core(), 1200, true);
-        assert!(
-            !lines[2].spans[2]
+            lines[row].spans[2]
                 .style
                 .add_modifier
                 .contains(Modifier::REVERSED)
-        );
+        };
+        assert!(reversed(&store, 1, 1200, true));
+        assert!(!reversed(&store, 1, 1000 + FLASH_MS, true), "over");
+        assert!(!reversed(&store, 1, 1200, false), "motion off");
+        // a finished unseen row has the steady marker and never flashes
+        let fin = store_with_unseen(); // finished at 1000
+        assert!(!reversed(&fin, 2, 1200, true));
     }
 
     #[test]

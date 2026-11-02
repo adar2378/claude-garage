@@ -2,7 +2,7 @@
   "banners_off": {
     "banner": null,
     "chime": "done",
-    "notice": "✓ app/fix finished · a to jump",
+    "notice": "✓ app · fix finished · a to jump",
     "open": null
   },
   "message_is_one_clean_line": {
@@ -11,7 +11,7 @@
       "line one line two"
     ],
     "chime": "needs-input",
-    "notice": "● app/fix needs you · a to jump",
+    "notice": "● app · fix needs you · a to jump",
     "open": {
       "session": "garage/app/fix"
     }
@@ -22,7 +22,16 @@
       "ok? · finished: b"
     ],
     "chime": "needs-input",
-    "notice": "● app/a needs you · ✓ app/b finished · a to jump",
+    "notice": "● app · a needs you · ✓ app · b finished · a to jump",
+    "open": "blocked"
+  },
+  "notice_uses_the_rail_name": {
+    "banner": [
+      "a needs you",
+      "Waiting for your input in app · finished: b"
+    ],
+    "chime": "needs-input",
+    "notice": "● app · fix login needs you · ✓ app · bump axios finished · a to jump",
     "open": "blocked"
   },
   "one_done": {
@@ -31,7 +40,7 @@
       "Done after 1m 35s in app"
     ],
     "chime": "done",
-    "notice": "✓ app/fix finished · a to jump",
+    "notice": "✓ app · fix finished · a to jump",
     "open": {
       "session": "garage/app/fix"
     }
@@ -42,7 +51,7 @@
       "Waiting for your input in app"
     ],
     "chime": "needs-input",
-    "notice": "● app/fix needs you · a to jump",
+    "notice": "● app · fix needs you · a to jump",
     "open": {
       "session": "garage/app/fix"
     }
@@ -53,7 +62,7 @@
       "Claude needs your permission to use Bash"
     ],
     "chime": "needs-input",
-    "notice": "● app/fix needs you · a to jump",
+    "notice": "● app · fix needs you · a to jump",
     "open": {
       "session": "garage/app/fix"
     }
@@ -64,7 +73,7 @@
       "Waiting for your input in app"
     ],
     "chime": null,
-    "notice": "● app/fix needs you · a to jump",
+    "notice": "● app · fix needs you · a to jump",
     "open": {
       "session": "garage/app/fix"
     }
@@ -75,7 +84,7 @@
       "a, b, c"
     ],
     "chime": "needs-input",
-    "notice": "● 3 need you: app/a, app/b, app/c · a to jump",
+    "notice": "● 3 need you: a (app), b (app), c (app) · a to jump",
     "open": "blocked"
   },
   "two_done": {
@@ -84,13 +93,22 @@
       "a, b"
     ],
     "chime": "done",
-    "notice": "✓ 2 finished: app/a, app/b · a to jump",
+    "notice": "✓ 2 finished: a (app), b (app) · a to jump",
+    "open": null
+  },
+  "two_titled_done": {
+    "banner": [
+      "2 sessions finished",
+      "a, b"
+    ],
+    "chime": "done",
+    "notice": "✓ 2 finished: fix login (app), bump axios (app) · a to jump",
     "open": null
   },
   "wall_visible": {
     "banner": null,
     "chime": "needs-input",
-    "notice": "● app/fix needs you · a to jump",
+    "notice": "● app · fix needs you · a to jump",
     "open": null
   }
 }

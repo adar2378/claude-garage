@@ -636,7 +636,7 @@ fn build(scene: Scene, w: u16, h: u16) -> ratatui::buffer::Buffer {
         // What the wall shows when the alerts plugin names a finished session
         // (the plugin_notice frame, prefixed with the plugin id).
         app.router.notices.show(
-            "alerts: ✓ api/claude-2 finished · a to jump".to_owned(),
+            "alerts: ✓ api · bump axios to 1.7 finished · a to jump".to_owned(),
             8000,
             NOW,
         );

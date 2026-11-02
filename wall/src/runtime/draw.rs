@@ -118,7 +118,7 @@ impl App {
             if state
                 .sessions
                 .iter()
-                .any(|s| crate::ui::rail::flashing(s, state.is_unseen(&s.id), now_ms, true))
+                .any(|s| crate::ui::rail::flashing(s, now_ms, true))
             {
                 self.motion.working_shown();
             }

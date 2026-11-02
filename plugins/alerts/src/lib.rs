@@ -10,10 +10,12 @@
 //!   kept in the plugin's storage (the event only carries the new state's
 //!   time).
 //! * Alerts within [`COALESCE`] of each other make one sound and one banner.
-//!   The first run to queue an alert becomes the "leader": it waits, then
-//!   delivers everything queued meanwhile. The others only queue and exit.
-//!   A leader that died leaves a stale mark ([`LEADER_STALE_MS`]) and the next
-//!   run takes over.
+//!   Every run that queues an alert is its item's owner: unless another run is
+//!   asleep, wakes before the item is due and serves the queue until after it
+//!   (the `wake` / `deadline` record in the state), it waits and delivers
+//!   everything ready itself. A run never sleeps past its own deadline
+//!   ([`LEADER_MAX_MS`]), and an item is due at most [`DONE_HOLD`] after it
+//!   arrives, so no item is left without a live run to deliver or drop it.
 //! * A `done` waits [`DONE_HOLD`] first: Claude Code ends a turn with a Stop
 //!   hook and often goes on at once (or a background task keeps it busy).
 //!   Any later status event for that session drops the held `done`, and the
@@ -46,11 +48,13 @@ pub const COALESCE: Duration = Duration::from_secs(2);
 pub const DONE_HOLD: Duration = Duration::from_secs(8);
 /// How long the wall shows the notice for an alert.
 const NOTICE_TTL_MS: u32 = 8_000;
-/// A leader stops waiting for held items after this long, well inside the
-/// event timeout; the next event picks up what is left.
-const LEADER_MAX_MS: i64 = 11_000;
-/// A queue mark older than this belongs to a leader that died.
-pub const LEADER_STALE_MS: i64 = 15_000;
+/// A run that leads delivery stops waiting for held items this long after it
+/// started. Every item queued while its record is live is due before that
+/// (`due <= arrival + DONE_HOLD`), so a run can always see its own item through.
+/// Worst case a run lives `LEADER_MAX_MS` + one delivery batch (a sessions
+/// lookup, a notice and a player, each bounded; normally well under a second),
+/// inside the manifest's `timeout_secs = 40`.
+const LEADER_MAX_MS: i64 = 10_000;
 /// A `working` mark older than this is forgotten (a session that never ended).
 const WORKING_KEEP_MS: i64 = 6 * 60 * 60 * 1000;
 /// A `done` this soon after `idle` still belongs to the turn that just ended.
@@ -129,6 +133,9 @@ pub struct Item {
     pub secs: Option<u64>,
     /// A wall was in view when it happened.
     pub visible: bool,
+    /// The session's title as the wall shows it, when the daemon has one.
+    #[serde(default)]
+    pub title: Option<String>,
 }
 
 /// An alert in the queue and the epoch ms it may be delivered.
@@ -153,13 +160,14 @@ struct State {
     /// Alerts waiting for the leader.
     #[serde(default)]
     pending: Vec<Queued>,
-    /// Epoch ms the current leader started waiting.
-    #[serde(default)]
-    leader_at: Option<i64>,
-    /// Epoch ms the leader plans to wake. A `needs-input` due before that
-    /// does not wait for it: its own run becomes a leader too.
+    /// When the run that last went to sleep for held items will wake, and the
+    /// time after which it stops serving the queue (epoch ms). A run that
+    /// queues an item due inside that window leaves it to that run; any other
+    /// (the run is delivering, asleep too long, or gone) delivers its own.
     #[serde(default)]
     wake: Option<i64>,
+    #[serde(default)]
+    deadline: Option<i64>,
 }
 
 fn id_parts(id: &str) -> (String, String) {
@@ -310,14 +318,19 @@ pub fn compose(items: &[Item], s: &Settings) -> Alert {
 /// (the wall's notice limit), the jump hint always last.
 fn notice_text(needs: &[&Item], done: &[&Item]) -> String {
     const HINT: &str = " · a to jump";
-    let full = |i: &&Item| format!("{}/{}", i.workspace, i.label);
+    // The name the rail shows (the title, else the label) and its workspace.
+    let name = |i: &&Item| i.title.clone().unwrap_or_else(|| i.label.clone());
     let part = |glyph: &str, one: &str, many: &str, items: &[&Item]| match items {
         [] => None,
-        [i] => Some(format!("{glyph} {} {one}", full(i))),
+        [i] => Some(format!("{glyph} {} · {} {one}", i.workspace, name(i))),
         _ => Some(format!(
             "{glyph} {} {many}: {}",
             items.len(),
-            items.iter().map(full).collect::<Vec<_>>().join(", ")
+            items
+                .iter()
+                .map(|i| format!("{} ({})", name(i), i.workspace))
+                .collect::<Vec<_>>()
+                .join(", ")
         )),
     };
     let parts: Vec<String> = [
@@ -502,6 +515,7 @@ pub fn handle_event(
                 message: None,
                 secs: None,
                 visible,
+                title: None,
             }),
             "done" if settings.done => turn_start
                 .map(|t| at - t)
@@ -514,6 +528,7 @@ pub fn handle_event(
                     message: None,
                     secs: Some((ms / 1000) as u64),
                     visible,
+                    title: None,
                 }),
             _ => None,
         };
@@ -531,60 +546,55 @@ pub fn handle_event(
         item.message = message_of(api, id);
     }
 
-    // Step 2: queue it; the first to queue waits for the others.
-    let leader = {
+    // Step 2: queue it. A live run that will wake in time serves it; if none
+    // will, this run delivers it (and whatever else is ready) itself.
+    let (own, deadline) = {
         let Some(_hold) = held(lock(dir))? else {
             return Ok(());
         };
         let mut state = read_state(dir);
         let now = clock.now_ms();
-        let live = state.leader_at.is_some_and(|t| now - t < LEADER_STALE_MS);
         let wait = match item.kind {
             Kind::NeedsInput => COALESCE,
             Kind::Done => DONE_HOLD,
         };
         let due = now + wait.as_millis() as i64;
+        // Served: the other run is asleep and wakes before this is due, and
+        // it keeps serving the queue until after this is due.
+        let served = matches!((state.wake, state.deadline),
+            (Some(w), Some(dl)) if now < dl && w <= due && due <= dl);
         state.pending.push(Queued { item, due });
-        let sooner = state.wake.is_some_and(|w| due < w);
-        if !live {
-            state.leader_at = Some(now);
-        }
         write_state_in(dir, STATE, &state)?;
-        if !live {
-            Some(false)
-        } else if sooner {
-            // The leader sleeps past this one: deliver it here, then leave
-            // the held items to that leader.
-            Some(true)
-        } else {
-            None
-        }
+        (!served, now + LEADER_MAX_MS)
     };
-    let Some(secondary) = leader else {
+    if !own {
         return Ok(());
-    };
+    }
 
-    // Step 3: the leader waits for what is due, delivers it, and goes on
-    // while held items remain (for a bounded time).
-    let started = clock.now_ms();
+    // Step 3: wait for what is due, deliver it, and go on while items due
+    // inside this run's deadline remain. The run never sleeps past it.
     loop {
         let wait_ms = {
             let _hold = lock(dir)?;
             let mut state = read_state(dir);
             let now = clock.now_ms();
-            let earliest = state.pending.iter().map(|q| q.due).min();
-            match earliest {
-                Some(t) if now - started <= LEADER_MAX_MS => {
-                    if !secondary {
-                        state.wake = Some(t);
-                        write_state_in(dir, STATE, &state)?;
-                    }
+            let next = state
+                .pending
+                .iter()
+                .map(|q| q.due)
+                .filter(|due| *due <= deadline)
+                .min();
+            match next {
+                Some(t) => {
+                    state.wake = Some(t);
+                    state.deadline = Some(deadline);
+                    write_state_in(dir, STATE, &state)?;
                     (t - now).max(0)
                 }
-                _ => {
-                    if !secondary {
-                        state.leader_at = None;
+                None => {
+                    if state.deadline == Some(deadline) {
                         state.wake = None;
+                        state.deadline = None;
                         write_state_in(dir, STATE, &state)?;
                     }
                     return Ok(());
@@ -597,6 +607,8 @@ pub fn handle_event(
         let items = {
             let _hold = lock(dir)?;
             let mut state = read_state(dir);
+            // Delivering, not asleep: a run that queues now must not count on us.
+            state.wake = None;
             let horizon = clock.now_ms() + COALESCE.as_millis() as i64;
             // Everything that needs you is ready; a `done` is ready when its
             // hold is over (or nearly: it joins a chime that is going anyway).
@@ -607,40 +619,44 @@ pub fn handle_event(
             write_state_in(dir, STATE, &state)?;
             ready.into_iter().map(|q| q.item).collect::<Vec<_>>()
         };
-        let items = still_done(items, api);
+        let items = refresh(items, api);
         let settings = Settings::load(dir);
         let alert = compose(&items, &settings);
         if let Some(text) = &alert.notice {
             let _ = api.notice(text, Some(NOTICE_TTL_MS));
         }
         deliver(&alert, dir, out, &Host::from_context(ctx), &settings);
-        if secondary {
-            return Ok(());
-        }
     }
 }
 
-/// Drop each `done` whose session the daemon no longer reports as `done`
-/// (Claude went on, or the session is gone). When the daemon cannot be asked
-/// the items stay: a late chime beats a lost one.
-fn still_done(items: Vec<Item>, api: &Api) -> Vec<Item> {
-    if !items.iter().any(|i| i.kind == Kind::Done) {
-        return items;
-    }
+/// Ask the daemon once about the items about to be delivered: drop each
+/// `done` whose session is no longer `done` (Claude went on, or the session is
+/// gone), and give the rest the title the wall shows. When the daemon cannot
+/// be asked the items stay as they are: a late chime beats a lost one.
+fn refresh(items: Vec<Item>, api: &Api) -> Vec<Item> {
     let Ok(sessions) = api.sessions() else {
         return items;
     };
     let Some(list) = sessions.as_array() else {
         return items;
     };
+    let entry = |id: &str| {
+        list.iter()
+            .find(|s| s.get("id").and_then(Value::as_str) == Some(id))
+    };
     items
         .into_iter()
         .filter(|i| {
             i.kind != Kind::Done
-                || list.iter().any(|s| {
-                    s.get("id").and_then(Value::as_str) == Some(i.id.as_str())
-                        && s.get("status").and_then(Value::as_str) == Some("done")
-                })
+                || entry(&i.id).and_then(|s| s.get("status").and_then(Value::as_str))
+                    == Some("done")
+        })
+        .map(|mut i| {
+            i.title = entry(&i.id)
+                .and_then(|s| s.get("title").and_then(Value::as_str))
+                .map(clean)
+                .filter(|t| !t.is_empty());
+            i
         })
         .collect()
 }
@@ -1417,7 +1433,7 @@ mod tests {
                 "play chime-done.wav"
             ]
         );
-        assert_eq!(notices(&d), ["✓ ws/fix finished · a to jump"]);
+        assert_eq!(notices(&d), ["✓ ws · fix finished · a to jump"]);
         assert!(read_state(&dir).pending.is_empty());
     }
 
@@ -1442,6 +1458,170 @@ mod tests {
         let (out, _clock) = finish_with(&dir, &d, Some(resume));
         assert!(out.all().is_empty(), "no chime: {:?}", out.all());
         assert!(notices(&d).is_empty(), "no notice: {:?}", notices(&d));
+    }
+
+    // ---- every queued item has a live owner ----
+
+    /// The daemon says all of `ids` are done.
+    fn all_done(d: &FakeDaemon, ids: &[&str]) {
+        let list: Vec<String> = ids
+            .iter()
+            .map(|id| format!(r#"{{"id":"{id}","status":"done","message":null}}"#))
+            .collect();
+        d.route(
+            "GET",
+            "/api/sessions",
+            200,
+            &format!("[{}]", list.join(",")),
+        );
+    }
+
+    fn start_work(d: &FakeDaemon, dir: &Path, ids: &[&str]) {
+        for id in ids {
+            handle_event(
+                &ctx(id, "idle", "working", 0, false),
+                &api(d),
+                dir,
+                &Rec::default(),
+                &Fake::at(0),
+            )
+            .unwrap();
+        }
+    }
+
+    fn finish(api: &Api, dir: &Path, id: &str, at: i64, out: &Rec) -> Fake {
+        let clock = Fake::at(at);
+        handle_event(
+            &ctx(id, "working", "done", at, false),
+            api,
+            dir,
+            out,
+            &clock,
+        )
+        .unwrap();
+        clock
+    }
+
+    fn total_slept(c: &Fake) -> Duration {
+        c.slept.borrow().iter().sum()
+    }
+
+    #[test]
+    fn dones_arriving_during_a_leaders_wait_are_each_delivered_once_and_none_is_left_behind() {
+        let d = FakeDaemon::start();
+        let ids = ["garage/ws/fix", "garage/ws/other", "garage/ws/third"];
+        all_done(&d, &ids);
+        let dir = tmp("own-a");
+        start_work(&d, &dir, &ids);
+        let (a, b, c) = (Rec::default(), Rec::default(), Rec::default());
+        let (d2, dir2) = (api(&d), dir.clone());
+        let outs = std::sync::Arc::new((b, c));
+        let outs2 = outs.clone();
+        let clock = Fake::at(30_000);
+        // B arrives 5 s into A's hold and C just under 8 s in: their holds end after A's.
+        *clock.during_wait.borrow_mut() = Some(Box::new(move || {
+            finish(&d2, &dir2, "garage/ws/other", 35_000, &outs2.0);
+            finish(&d2, &dir2, "garage/ws/third", 37_900, &outs2.1);
+        }));
+        handle_event(
+            &ctx(ids[0], "working", "done", 30_000, false),
+            &api(&d),
+            &dir,
+            &a,
+            &clock,
+        )
+        .unwrap();
+        let said: Vec<String> = [&a, &outs.0, &outs.1]
+            .iter()
+            .flat_map(|r| r.all())
+            .filter(|l| l.starts_with("banner "))
+            .collect();
+        for label in ["fix", "other", "third"] {
+            let n = said.iter().filter(|l| l.contains(label)).count();
+            assert_eq!(n, 1, "{label} announced {n} times: {said:?}");
+        }
+        assert!(
+            read_state(&dir).pending.is_empty(),
+            "nothing is left queued"
+        );
+    }
+
+    #[test]
+    fn a_needs_input_arriving_while_a_leader_is_delivering_is_not_left_to_it() {
+        let d = FakeDaemon::start();
+        sessions(&d);
+        let dir = tmp("own-b");
+        // A leader is live but not sleeping: it is playing a chime. Its
+        // record has no wake, and one held done waits behind it.
+        let held = json!({"kind": "done", "id": "garage/ws/old", "label": "old",
+            "workspace": "ws", "message": null, "secs": 40, "visible": false, "due": 43_000});
+        write_state_in(
+            &dir,
+            STATE,
+            &json!({"leader_at": 34_000, "deadline": 44_000, "pending": [held]}),
+        )
+        .unwrap();
+        let out = Rec::default();
+        let clock = Fake::at(35_000);
+        handle_event(
+            &ctx("garage/ws/fix", "working", "needs-input", 35_000, false),
+            &api(&d),
+            &dir,
+            &out,
+            &clock,
+        )
+        .unwrap();
+        assert!(
+            out.all()
+                .contains(&"play chime-needs-input.wav".to_string()),
+            "{:?}",
+            out.all()
+        );
+        assert_eq!(clock.slept.borrow()[0], COALESCE, "no wait on the leader");
+    }
+
+    #[test]
+    fn no_run_waits_past_its_own_deadline() {
+        let d = FakeDaemon::start();
+        let ids = ["garage/ws/fix", "garage/ws/third"];
+        all_done(&d, &ids);
+        let dir = tmp("own-c");
+        start_work(&d, &dir, &ids);
+        let late = Rec::default();
+        let (d2, dir2) = (api(&d), dir.clone());
+        let late_clock = std::sync::Arc::new(Mutex::new(Duration::ZERO));
+        let lc = late_clock.clone();
+        let late2 = std::sync::Arc::new(late);
+        let l2 = late2.clone();
+        let clock = Fake::at(30_000);
+        // D arrives 10 s in, when a leader that started at 30 s is about to
+        // stop; its own hold ends at 48 s.
+        *clock.during_wait.borrow_mut() = Some(Box::new(move || {
+            let c = finish(&d2, &dir2, "garage/ws/third", 40_000, &l2);
+            *lc.lock().unwrap() = total_slept(&c);
+        }));
+        let out = Rec::default();
+        handle_event(
+            &ctx(ids[0], "working", "done", 30_000, false),
+            &api(&d),
+            &dir,
+            &out,
+            &clock,
+        )
+        .unwrap();
+        let limit = Duration::from_millis(LEADER_MAX_MS as u64);
+        assert!(
+            total_slept(&clock) <= limit,
+            "leader slept {:?}",
+            total_slept(&clock)
+        );
+        assert!(*late_clock.lock().unwrap() <= limit);
+        assert!(
+            late2.all().iter().any(|l| l.contains("third")),
+            "{:?}",
+            late2.all()
+        );
+        assert!(read_state(&dir).pending.is_empty());
     }
 
     #[test]
@@ -1500,23 +1680,32 @@ mod tests {
         let heard = heard.lock().unwrap();
         let (slept, played) = &heard[0];
         assert_eq!(
-            *slept,
-            [COALESCE],
-            "needs-input waits the short window only"
+            slept[0], COALESCE,
+            "needs-input waits the short window only, then delivers"
         );
-        assert!(played.contains(&"play chime-needs-input.wav".to_string()));
+        let first = played.first().cloned().unwrap_or_default();
         assert!(
-            !played.iter().any(|l| l.contains("finished")),
-            "the held done is not in it: {played:?}"
+            first.contains("needs-input") || first.contains("needs you"),
+            "{played:?}"
         );
         assert!(
-            out.all().contains(&"play chime-done.wav".to_string()),
-            "the done still comes"
+            !played
+                .iter()
+                .any(|l| l.contains("need") && l.contains("finished")),
+            "the held done is not in the needs-input batch: {played:?}"
         );
+        // the done is still announced once, by whichever run reaches its hold
+        let dones = out
+            .all()
+            .iter()
+            .chain(played.iter())
+            .filter(|l| *l == "play chime-done.wav")
+            .count();
+        assert_eq!(dones, 1);
         let said = notices(&d);
         assert_eq!(said.len(), 2, "{said:?}");
-        assert!(said[0].starts_with("● ws/other needs you"), "{said:?}");
-        assert!(said[1].starts_with("✓ ws/fix finished"), "{said:?}");
+        assert!(said[0].starts_with("● ws · other needs you"), "{said:?}");
+        assert!(said[1].starts_with("✓ ws · fix finished"), "{said:?}");
     }
 
     #[test]
@@ -1734,7 +1923,7 @@ mod tests {
         );
         let s = read_state(&dir);
         assert!(
-            s.pending.is_empty() && s.leader_at.is_none(),
+            s.pending.is_empty() && s.wake.is_none(),
             "queue is empty again"
         );
     }
@@ -1750,8 +1939,10 @@ mod tests {
             message: None,
             secs: None,
             visible: false,
+            title: None,
         };
-        let mk = |tag: &str, leader_at: i64| {
+        // A leader asleep until `wake`, serving the queue until `deadline`.
+        let mk = |tag: &str, wake: i64, deadline: i64| {
             let dir = tmp(tag);
             write_state_in(
                 &dir,
@@ -1761,15 +1952,17 @@ mod tests {
                         item: queued.clone(),
                         due: 0,
                     }],
-                    leader_at: Some(leader_at),
+                    wake: Some(wake),
+                    deadline: Some(deadline),
                     ..Default::default()
                 },
             )
             .unwrap();
             dir
         };
-        // 1 s old: someone is waiting, so this run only queues.
-        let live = mk("live", 9_000);
+        // A run is asleep until 11 s and serves the queue to 19 s: this one
+        // (due at 12 s) only queues.
+        let live = mk("live", 11_000, 19_000);
         handle_event(
             &ctx("garage/ws/new", "idle", "needs-input", 10_000, false),
             &api(&d),
@@ -1780,8 +1973,8 @@ mod tests {
         .unwrap();
         assert!(out.all().is_empty());
         assert_eq!(read_state(&live).pending.len(), 2);
-        // 20 s old: the leader is gone; this run delivers both.
-        let dead = mk("dead", -10_000);
+        // That run's deadline is long past: this one delivers both.
+        let dead = mk("dead", -2_000, -1_000);
         handle_event(
             &ctx("garage/ws/new", "idle", "needs-input", 10_000, false),
             &api(&d),
@@ -1994,6 +2187,7 @@ mod tests {
             message: msg.map(Into::into),
             secs,
             visible,
+            title: None,
         }
     }
 
@@ -2001,6 +2195,10 @@ mod tests {
     fn compose_matches_the_golden_alerts() {
         let n = |l: &str, m: Option<&str>| item(Kind::NeedsInput, l, m, None, false);
         let f = |l: &str, s: u64| item(Kind::Done, l, None, Some(s), false);
+        let titled = |mut i: Item, title: &str| {
+            i.title = Some(title.into());
+            i
+        };
         let off = Settings {
             sound: false,
             ..Default::default()
@@ -2035,6 +2233,22 @@ mod tests {
             (
                 "wall_visible",
                 vec![item(Kind::NeedsInput, "fix", None, None, true)],
+                Settings::default(),
+            ),
+            (
+                "notice_uses_the_rail_name",
+                vec![
+                    titled(n("a", None), "fix login"),
+                    titled(f("b", 40), "bump axios"),
+                ],
+                Settings::default(),
+            ),
+            (
+                "two_titled_done",
+                vec![
+                    titled(f("a", 30), "fix login"),
+                    titled(f("b", 90), "bump axios"),
+                ],
                 Settings::default(),
             ),
             ("sound_off", vec![n("fix", None)], off),
@@ -2297,6 +2511,7 @@ mod tests {
             message: Some(evil.into()),
             secs: None,
             visible: false,
+            title: None,
         }];
         let alert = compose(&items, &Settings::default());
         assert!(alert.banner.as_ref().unwrap().1.contains("touch"));
