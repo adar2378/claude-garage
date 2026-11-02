@@ -5,13 +5,13 @@ version     = "0.1.0"
 api_version = 1
 platforms   = ["macos", "linux", "windows"]
 description = "A chime and a desktop banner when a session needs you or finishes a long turn"
-permissions = ["sessions.read", "ui.invoke", "ui.navigate"]
+permissions = ["sessions.read", "ui.invoke", "ui.navigate", "ui.notice"]
 requires    = ["ui.visible"]
 
 # One run per status change. Most runs only note the time a session started
 # working; a session that needs you, or that finished after 20 seconds of
 # work, waits 2 seconds for others to join it, then makes one sound and (when
-# no wall is in view) one banner. Options: `claude-garage alerts`.
+# no wall is in view) one banner. A "finished" waits 8 seconds and is dropped if the session went on. Every alert is also named in the wall footer. Options: `claude-garage alerts`.
 [[events]]
 on           = "session.status_changed"
 command      = ["{plugin_dir}/bin/alerts", "status"]

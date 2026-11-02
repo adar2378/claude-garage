@@ -2,6 +2,7 @@
   "banners_off": {
     "banner": null,
     "chime": "done",
+    "notice": "✓ app/fix finished · a to jump",
     "open": null
   },
   "message_is_one_clean_line": {
@@ -10,6 +11,7 @@
       "line one line two"
     ],
     "chime": "needs-input",
+    "notice": "● app/fix needs you · a to jump",
     "open": {
       "session": "garage/app/fix"
     }
@@ -20,6 +22,7 @@
       "ok? · finished: b"
     ],
     "chime": "needs-input",
+    "notice": "● app/a needs you · ✓ app/b finished · a to jump",
     "open": "blocked"
   },
   "one_done": {
@@ -28,6 +31,7 @@
       "Done after 1m 35s in app"
     ],
     "chime": "done",
+    "notice": "✓ app/fix finished · a to jump",
     "open": {
       "session": "garage/app/fix"
     }
@@ -38,6 +42,7 @@
       "Waiting for your input in app"
     ],
     "chime": "needs-input",
+    "notice": "● app/fix needs you · a to jump",
     "open": {
       "session": "garage/app/fix"
     }
@@ -48,6 +53,7 @@
       "Claude needs your permission to use Bash"
     ],
     "chime": "needs-input",
+    "notice": "● app/fix needs you · a to jump",
     "open": {
       "session": "garage/app/fix"
     }
@@ -58,6 +64,7 @@
       "Waiting for your input in app"
     ],
     "chime": null,
+    "notice": "● app/fix needs you · a to jump",
     "open": {
       "session": "garage/app/fix"
     }
@@ -68,6 +75,7 @@
       "a, b, c"
     ],
     "chime": "needs-input",
+    "notice": "● 3 need you: app/a, app/b, app/c · a to jump",
     "open": "blocked"
   },
   "two_done": {
@@ -76,11 +84,13 @@
       "a, b"
     ],
     "chime": "done",
+    "notice": "✓ 2 finished: app/a, app/b · a to jump",
     "open": null
   },
   "wall_visible": {
     "banner": null,
     "chime": "needs-input",
+    "notice": "● app/fix needs you · a to jump",
     "open": null
   }
 }

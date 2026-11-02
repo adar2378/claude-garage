@@ -14,6 +14,15 @@
 //!   delivers everything queued meanwhile. The others only queue and exit.
 //!   A leader that died leaves a stale mark ([`LEADER_STALE_MS`]) and the next
 //!   run takes over.
+//! * A `done` waits [`DONE_HOLD`] first: Claude Code ends a turn with a Stop
+//!   hook and often goes on at once (or a background task keeps it busy).
+//!   Any later status event for that session drops the held `done`, and the
+//!   daemon is asked once more at delivery: only a session still `done` is
+//!   announced. A `needs-input` never waits for a held `done`.
+//! * What is delivered is also sent to the wall as a notice (`ui.notice`), so
+//!   the footer names the session even when the wall is in view and no banner
+//!   is shown. The notice is built by [`compose`], from the same decision as
+//!   the chime.
 //!
 //! The sound and the banner go through [`Out`], and time through [`Clock`], so
 //! tests never play a sound, show a banner or wait.
@@ -32,6 +41,14 @@ use serde::{Deserialize, Serialize};
 pub const MIN_WORKING_MS: i64 = 20_000;
 /// Alerts this close together are one sound and one banner.
 pub const COALESCE: Duration = Duration::from_secs(2);
+/// A `done` waits this long before it is announced, to see whether Claude
+/// carries on. A `needs-input` waits only [`COALESCE`].
+pub const DONE_HOLD: Duration = Duration::from_secs(8);
+/// How long the wall shows the notice for an alert.
+const NOTICE_TTL_MS: u32 = 8_000;
+/// A leader stops waiting for held items after this long, well inside the
+/// event timeout; the next event picks up what is left.
+const LEADER_MAX_MS: i64 = 11_000;
 /// A queue mark older than this belongs to a leader that died.
 pub const LEADER_STALE_MS: i64 = 15_000;
 /// A `working` mark older than this is forgotten (a session that never ended).
@@ -114,6 +131,15 @@ pub struct Item {
     pub visible: bool,
 }
 
+/// An alert in the queue and the epoch ms it may be delivered.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct Queued {
+    #[serde(flatten)]
+    item: Item,
+    #[serde(default)]
+    due: i64,
+}
+
 #[derive(Debug, Default, Serialize, Deserialize)]
 struct State {
     /// Session id -> epoch ms it entered `working`.
@@ -126,10 +152,14 @@ struct State {
     ended: HashMap<String, (i64, i64)>,
     /// Alerts waiting for the leader.
     #[serde(default)]
-    pending: Vec<Item>,
+    pending: Vec<Queued>,
     /// Epoch ms the current leader started waiting.
     #[serde(default)]
     leader_at: Option<i64>,
+    /// Epoch ms the leader plans to wake. A `needs-input` due before that
+    /// does not wait for it: its own run becomes a leader too.
+    #[serde(default)]
+    wake: Option<i64>,
 }
 
 fn id_parts(id: &str) -> (String, String) {
@@ -174,6 +204,8 @@ pub struct Alert {
     pub banner: Option<(String, String)>,
     /// What a click on the banner jumps to.
     pub open: Option<Open>,
+    /// The line the wall shows in its footer, whether or not a banner is shown.
+    pub notice: Option<String>,
 }
 
 /// Where a clicked banner leads.
@@ -216,8 +248,10 @@ pub fn compose(items: &[Item], s: &Settings) -> Alert {
             chime: None,
             banner: None,
             open: None,
+            notice: None,
         };
     }
+    let notice = Some(notice_text(&needs, &done));
     let chime = s.sound.then_some(if needs.is_empty() {
         Chime::Done
     } else {
@@ -229,6 +263,7 @@ pub fn compose(items: &[Item], s: &Settings) -> Alert {
             chime,
             banner: None,
             open: None,
+            notice,
         };
     }
     let (mut title, mut body) = match needs.as_slice() {
@@ -267,7 +302,37 @@ pub fn compose(items: &[Item], s: &Settings) -> Alert {
         chime,
         banner: Some((title, body)),
         open,
+        notice,
     }
+}
+
+/// `● ws/a needs you · ✓ ws/b finished · a to jump`, at most 120 characters
+/// (the wall's notice limit), the jump hint always last.
+fn notice_text(needs: &[&Item], done: &[&Item]) -> String {
+    const HINT: &str = " · a to jump";
+    let full = |i: &&Item| format!("{}/{}", i.workspace, i.label);
+    let part = |glyph: &str, one: &str, many: &str, items: &[&Item]| match items {
+        [] => None,
+        [i] => Some(format!("{glyph} {} {one}", full(i))),
+        _ => Some(format!(
+            "{glyph} {} {many}: {}",
+            items.len(),
+            items.iter().map(full).collect::<Vec<_>>().join(", ")
+        )),
+    };
+    let parts: Vec<String> = [
+        part("●", "needs you", "need you", needs),
+        part("✓", "finished", "finished", done),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+    let mut body = clean(&parts.join(" · "));
+    let room = 120 - HINT.chars().count();
+    if body.chars().count() > room {
+        body = body.chars().take(room - 1).collect::<String>() + "…";
+    }
+    body + HINT
 }
 
 // ----------------------------------------------------------------- output
@@ -452,6 +517,10 @@ pub fn handle_event(
                 }),
             _ => None,
         };
+        // Any later event for this session ends a held `done`: Claude went on.
+        state
+            .pending
+            .retain(|q| !(q.item.id == id && q.item.kind == Kind::Done));
         write_state_in(dir, STATE, &state)?;
         item
     };
@@ -470,36 +539,110 @@ pub fn handle_event(
         let mut state = read_state(dir);
         let now = clock.now_ms();
         let live = state.leader_at.is_some_and(|t| now - t < LEADER_STALE_MS);
-        state.pending.push(item);
+        let wait = match item.kind {
+            Kind::NeedsInput => COALESCE,
+            Kind::Done => DONE_HOLD,
+        };
+        let due = now + wait.as_millis() as i64;
+        state.pending.push(Queued { item, due });
+        let sooner = state.wake.is_some_and(|w| due < w);
         if !live {
             state.leader_at = Some(now);
         }
         write_state_in(dir, STATE, &state)?;
-        !live
+        if !live {
+            Some(false)
+        } else if sooner {
+            // The leader sleeps past this one: deliver it here, then leave
+            // the held items to that leader.
+            Some(true)
+        } else {
+            None
+        }
     };
-    if !leader {
+    let Some(secondary) = leader else {
         return Ok(());
-    }
-
-    // Step 3: the leader waits, then delivers everything queued.
-    clock.sleep(COALESCE);
-    let items = {
-        let _hold = lock(dir)?;
-        let mut state = read_state(dir);
-        state.leader_at = None;
-        let items = std::mem::take(&mut state.pending);
-        write_state_in(dir, STATE, &state)?;
-        items
     };
-    let settings = Settings::load(dir);
-    deliver(
-        &compose(&items, &settings),
-        dir,
-        out,
-        &Host::from_context(ctx),
-        &settings,
-    );
-    Ok(())
+
+    // Step 3: the leader waits for what is due, delivers it, and goes on
+    // while held items remain (for a bounded time).
+    let started = clock.now_ms();
+    loop {
+        let wait_ms = {
+            let _hold = lock(dir)?;
+            let mut state = read_state(dir);
+            let now = clock.now_ms();
+            let earliest = state.pending.iter().map(|q| q.due).min();
+            match earliest {
+                Some(t) if now - started <= LEADER_MAX_MS => {
+                    if !secondary {
+                        state.wake = Some(t);
+                        write_state_in(dir, STATE, &state)?;
+                    }
+                    (t - now).max(0)
+                }
+                _ => {
+                    if !secondary {
+                        state.leader_at = None;
+                        state.wake = None;
+                        write_state_in(dir, STATE, &state)?;
+                    }
+                    return Ok(());
+                }
+            }
+        };
+        if wait_ms > 0 {
+            clock.sleep(Duration::from_millis(wait_ms as u64));
+        }
+        let items = {
+            let _hold = lock(dir)?;
+            let mut state = read_state(dir);
+            let horizon = clock.now_ms() + COALESCE.as_millis() as i64;
+            // Everything that needs you is ready; a `done` is ready when its
+            // hold is over (or nearly: it joins a chime that is going anyway).
+            let (ready, held): (Vec<Queued>, Vec<Queued>) = std::mem::take(&mut state.pending)
+                .into_iter()
+                .partition(|q| q.item.kind == Kind::NeedsInput || q.due <= horizon);
+            state.pending = held;
+            write_state_in(dir, STATE, &state)?;
+            ready.into_iter().map(|q| q.item).collect::<Vec<_>>()
+        };
+        let items = still_done(items, api);
+        let settings = Settings::load(dir);
+        let alert = compose(&items, &settings);
+        if let Some(text) = &alert.notice {
+            let _ = api.notice(text, Some(NOTICE_TTL_MS));
+        }
+        deliver(&alert, dir, out, &Host::from_context(ctx), &settings);
+        if secondary {
+            return Ok(());
+        }
+    }
+}
+
+/// Drop each `done` whose session the daemon no longer reports as `done`
+/// (Claude went on, or the session is gone). When the daemon cannot be asked
+/// the items stay: a late chime beats a lost one.
+fn still_done(items: Vec<Item>, api: &Api) -> Vec<Item> {
+    if !items.iter().any(|i| i.kind == Kind::Done) {
+        return items;
+    }
+    let Ok(sessions) = api.sessions() else {
+        return items;
+    };
+    let Some(list) = sessions.as_array() else {
+        return items;
+    };
+    items
+        .into_iter()
+        .filter(|i| {
+            i.kind != Kind::Done
+                || list.iter().any(|s| {
+                    s.get("id").and_then(Value::as_str) == Some(i.id.as_str())
+                        && s.get("status").and_then(Value::as_str) == Some("done")
+                })
+        })
+        .collect()
 }
 
 /// A lock another run holds past the wait means "skip", not "fail".
@@ -1074,6 +1217,19 @@ mod tests {
         );
     }
 
+    /// The daemon's list says `id` is `status` (plus the needs-input fixtures).
+    fn reports(d: &FakeDaemon, id: &str, status: &str) {
+        d.route(
+            "GET",
+            "/api/sessions",
+            200,
+            &format!(
+                r#"[{{"id":"{id}","status":"{status}","message":"Claude needs your permission to use Bash"}},
+                    {{"id":"garage/ws/other","status":"needs-input","message":null}}]"#
+            ),
+        );
+    }
+
     fn set(dir: &Path, f: impl FnOnce(&mut Settings)) {
         let mut s = Settings::load(dir);
         f(&mut s);
@@ -1208,6 +1364,153 @@ mod tests {
                 );
             }
         }
+    }
+
+    // ---- holding a done ----
+
+    const FIX: &str = "garage/ws/fix";
+
+    /// A long turn on `FIX` that ends in `done` at `t` ms, with `during` run
+    /// inside the hold. Returns what was played, the clock and the notices.
+    fn finish_with(
+        dir: &Path,
+        d: &FakeDaemon,
+        during: Option<Box<dyn FnOnce()>>,
+    ) -> (Rec, Fake) {
+        let (out, clock) = (Rec::default(), Fake::at(30_000));
+        handle_event(
+            &ctx(FIX, "idle", "working", 0, false),
+            &api(d),
+            dir,
+            &out,
+            &clock,
+        )
+        .unwrap();
+        *clock.during_wait.borrow_mut() = during;
+        handle_event(
+            &ctx(FIX, "working", "done", 30_000, false),
+            &api(d),
+            dir,
+            &out,
+            &clock,
+        )
+        .unwrap();
+        (out, clock)
+    }
+
+    fn notices(d: &FakeDaemon) -> Vec<String> {
+        d.bodies("POST", "/api/plugins/alerts/notice")
+            .iter()
+            .filter_map(|b| b["text"].as_str().map(str::to_owned))
+            .collect()
+    }
+
+    #[test]
+    fn a_done_is_held_and_announced_when_the_session_is_still_done() {
+        let d = FakeDaemon::start();
+        reports(&d, FIX, "done");
+        let dir = tmp("hold-ok");
+        let (out, clock) = finish_with(&dir, &d, None);
+        assert_eq!(*clock.slept.borrow(), [DONE_HOLD]);
+        let mut got = out.all();
+        got.sort();
+        assert_eq!(
+            got,
+            [
+                "banner fix finished | Done after 30s in ws",
+                "play chime-done.wav"
+            ]
+        );
+        assert_eq!(notices(&d), ["✓ ws/fix finished · a to jump"]);
+        assert!(read_state(&dir).pending.is_empty());
+    }
+
+    #[test]
+    fn a_session_that_resumes_during_the_hold_is_not_announced() {
+        let d = FakeDaemon::start();
+        reports(&d, FIX, "working");
+        let dir = tmp("hold-resume");
+        // the resume is a later status event for the same session
+        let (d2, dir2) = (api(&d), dir.clone());
+        let resume = Box::new(move || {
+            let (quiet, c) = (Rec::default(), Fake::at(31_000));
+            handle_event(
+                &ctx(FIX, "done", "working", 31_000, false),
+                &d2,
+                &dir2,
+                &quiet,
+                &c,
+            )
+            .unwrap();
+        });
+        let (out, _clock) = finish_with(&dir, &d, Some(resume));
+        assert!(out.all().is_empty(), "no chime: {:?}", out.all());
+        assert!(notices(&d).is_empty(), "no notice: {:?}", notices(&d));
+    }
+
+    #[test]
+    fn a_done_the_daemon_no_longer_reports_as_done_is_dropped_even_without_an_event() {
+        // e.g. the poller's `working` write raced the hold
+        let d = FakeDaemon::start();
+        reports(&d, FIX, "working");
+        let (out, _clock) = finish_with(&tmp("hold-api"), &d, None);
+        assert!(out.all().is_empty(), "{:?}", out.all());
+        assert!(notices(&d).is_empty());
+    }
+
+    #[test]
+    fn a_needs_input_is_not_delayed_by_a_held_done() {
+        let d = FakeDaemon::start();
+        reports(&d, FIX, "done");
+        let dir = tmp("hold-mix");
+        let hook_out = std::sync::Arc::new(Rec::default());
+        let (d2, dir2, h2) = (api(&d), dir.clone(), hook_out.clone());
+        let heard = std::sync::Arc::new(Mutex::new(Vec::new()));
+        let heard2 = heard.clone();
+        let out = Rec::default();
+        let clock = Fake::at(30_000);
+        handle_event(
+            &ctx(FIX, "idle", "working", 0, false),
+            &api(&d),
+            &dir,
+            &out,
+            &clock,
+        )
+        .unwrap();
+        *clock.during_wait.borrow_mut() = Some(Box::new(move || {
+            // one second into the hold another session needs you
+            let c = Fake::at(31_000);
+            handle_event(
+                &ctx("garage/ws/other", "working", "needs-input", 31_000, false),
+                &d2,
+                &dir2,
+                &*h2,
+                &c,
+            )
+            .unwrap();
+            heard2.lock().unwrap().push((c.slept.borrow().clone(), h2.all()));
+        }));
+        handle_event(
+            &ctx(FIX, "working", "done", 30_000, false),
+            &api(&d),
+            &dir,
+            &out,
+            &clock,
+        )
+        .unwrap();
+        let heard = heard.lock().unwrap();
+        let (slept, played) = &heard[0];
+        assert_eq!(*slept, [COALESCE], "needs-input waits the short window only");
+        assert!(played.contains(&"play chime-needs-input.wav".to_string()));
+        assert!(
+            !played.iter().any(|l| l.contains("finished")),
+            "the held done is not in it: {played:?}"
+        );
+        assert!(out.all().contains(&"play chime-done.wav".to_string()), "the done still comes");
+        let said = notices(&d);
+        assert_eq!(said.len(), 2, "{said:?}");
+        assert!(said[0].starts_with("● ws/other needs you"), "{said:?}");
+        assert!(said[1].starts_with("✓ ws/fix finished"), "{said:?}");
     }
 
     #[test]
@@ -1448,7 +1751,7 @@ mod tests {
                 &dir,
                 STATE,
                 &State {
-                    pending: vec![queued.clone()],
+                    pending: vec![Queued { item: queued.clone(), due: 0 }],
                     leader_at: Some(leader_at),
                     ..Default::default()
                 },
@@ -1492,6 +1795,8 @@ mod tests {
     fn each_option_suppresses_exactly_its_part() {
         let d = FakeDaemon::start();
         sessions(&d);
+        // by the time the held `done` is delivered, the session is still done
+        reports(&d, "garage/ws/fix", "done");
         let run = |tag: &str, f: &dyn Fn(&mut Settings)| {
             let (dir, out, clock) = (tmp(tag), Rec::default(), Fake::at(0));
             set(&dir, |s| f(s));
