@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.0.3 — projects added from outside show up
 
 - A project added from outside the wall (by an agent, a script or `claude-garage open`) now shows up at once, and one removed from outside disappears. A rename shows up at once too.
 
