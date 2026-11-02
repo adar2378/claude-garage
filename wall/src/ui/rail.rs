@@ -58,13 +58,54 @@ pub fn rail_lines_fading(
     rail_render(state, slots, now_ms, fade_done).0
 }
 
-/// The rail's lines plus the clickable slot items painted on them.
+/// The rail's lines plus the clickable slot items painted on them. No blank
+/// rows between workspaces (see [`rail_render_in`]).
 pub fn rail_render(
     state: &WallState,
     slots: &SlotRegistry,
     now_ms: i64,
     fade_done: bool,
 ) -> (Vec<Line<'static>>, RailExtras) {
+    rail_render_in(state, slots, now_ms, fade_done, None)
+}
+
+/// The rows the rail needs: every group's header rows, workspace row,
+/// sessions and extra rows.
+fn content_rows(state: &WallState, slots: &SlotRegistry) -> usize {
+    state
+        .groups
+        .iter()
+        .map(|g| {
+            header_items(state, slots, g).len()
+                + 1
+                + g.sessions.len()
+                + extra_row_items(state, slots, g).len()
+        })
+        .sum()
+}
+
+/// Whether a blank row goes between workspace groups: only when the rail is
+/// `height` rows tall and has room for every row plus all the gaps, so a gap
+/// never pushes a session out of view. `None` (height unknown) is no gaps.
+pub fn rail_gaps(state: &WallState, slots: &SlotRegistry, height: Option<u16>) -> bool {
+    let Some(height) = height else {
+        return false;
+    };
+    let groups = state.groups.len();
+    groups > 1 && content_rows(state, slots) + (groups - 1) <= usize::from(height)
+}
+
+/// [`rail_render`] for a rail `height` rows tall: workspace groups are
+/// separated by a blank row when [`rail_gaps`] says they fit. The click router
+/// asks [`crate::ui::hit_targets::rail_target_at_in`] with the same height.
+pub fn rail_render_in(
+    state: &WallState,
+    slots: &SlotRegistry,
+    now_ms: i64,
+    fade_done: bool,
+    height: Option<u16>,
+) -> (Vec<Line<'static>>, RailExtras) {
+    let gaps = rail_gaps(state, slots, height);
     let mut extras = RailExtras::default();
     let clicks = &mut extras.clicks;
     let gridded: HashSet<&str> = state
@@ -75,6 +116,9 @@ pub fn rail_render(
     let mut lines = Vec::new();
     for (i, group) in state.groups.iter().enumerate() {
         let focused_ws = state.focused_workspace.as_deref() == Some(group.name.as_str());
+        if gaps && i > 0 {
+            lines.push(Line::default());
+        }
         // Rows above the workspace row come from the `rail.header` slot;
         // `rail_target_at` counts them through the same call.
         for item in header_items(state, slots, group) {
@@ -248,8 +292,8 @@ pub fn flashing(s: &WallSession, unseen: bool, now_ms: i64, motion: bool) -> boo
             .is_some_and(|since| (0..FLASH_MS).contains(&(now_ms - since)))
 }
 
-/// A workspace header: the number, the name (bold and bright when focused,
-/// dim otherwise), an amber
+/// A workspace header: the number, the name (always bold, so a header never
+/// reads like a session row; bright when focused, dim otherwise), an amber
 /// `● N` when sessions wait for you and a green `●` when one has finished
 /// unseen.
 fn workspace_row(
@@ -258,10 +302,9 @@ fn workspace_row(
     focused: bool,
     unseen: bool,
 ) -> Line<'static> {
-    let mut name_style = Style::default().fg(if focused { colors::FG } else { colors::DIM });
-    if focused {
-        name_style = name_style.add_modifier(Modifier::BOLD);
-    }
+    let name_style = Style::default()
+        .fg(if focused { colors::FG } else { colors::DIM })
+        .add_modifier(Modifier::BOLD);
     let mut spans = vec![
         Span::styled(format!(" {} ", index + 1), Style::default().fg(colors::DIM)),
         Span::styled(group.name.clone(), name_style),
@@ -406,7 +449,7 @@ pub fn render_rail_fading(
         .border_style(Style::default().fg(colors::FAINT));
     let inner = block.inner(rect);
     block.render(rect, buf);
-    let (lines, extras) = rail_render(state, slots, now_ms, fade_done);
+    let (lines, extras) = rail_render_in(state, slots, now_ms, fade_done, Some(inner.height));
     Paragraph::new(lines).render(inner, buf);
     for (row, style) in extras.row_styles {
         if row < inner.height {
@@ -671,6 +714,35 @@ mod tests {
     }
 
     #[test]
+    fn workspace_names_are_bold_and_blank_rows_separate_groups_only_when_they_fit() {
+        let mut store = WallStore::new();
+        store.workspaces_fetched(vec![ws("alpha"), ws("beta")]);
+        store.sessions_fetched(vec![
+            si("alpha", "one", "idle", None),
+            si("beta", "two", "idle", None),
+        ]);
+        let slots = SlotRegistry::core();
+        let (plain, _) = rail_render(store.state(), &slots, 0, false);
+        assert_eq!(
+            texts(&plain),
+            [" 1 alpha", " ▸ ○ one", " 2 beta", "   ○ two"]
+        );
+        for (i, want) in [(0, colors::FG), (2, colors::DIM)] {
+            let name = &plain[i].spans[1];
+            assert_eq!(name.style.fg, Some(want));
+            assert!(name.style.add_modifier.contains(Modifier::BOLD));
+        }
+        // 4 rows + 1 gap = 5
+        let (roomy, _) = rail_render_in(store.state(), &slots, 0, false, Some(5));
+        assert_eq!(
+            texts(&roomy),
+            [" 1 alpha", " ▸ ○ one", "", " 2 beta", "   ○ two"]
+        );
+        let (tight, _) = rail_render_in(store.state(), &slots, 0, false, Some(4));
+        assert_eq!(texts(&tight), texts(&plain), "no room, no gap");
+    }
+
+    #[test]
     fn needs_input_stays_amber_when_not_focused() {
         let store = store_with(vec![
             si("a", "first", "idle", None),
@@ -748,7 +820,8 @@ mod tests {
                 Vec::new()
             }
         });
-        let rect = Rect::new(2, 1, 28, 10);
+        // exactly the five rows: no room for a blank row between groups
+        let rect = Rect::new(2, 1, 28, 5);
         let mut buf = Buffer::empty(Rect::new(0, 0, 40, 12));
         let regions = render_rail(&mut buf, rect, store.state(), &slots, 0);
         // rows: 0 alpha, 1 one, 2 [+], 3 beta, 4 two

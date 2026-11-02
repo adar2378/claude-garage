@@ -13,7 +13,7 @@ use crate::slots::{SlotClickRegion, SlotId, SlotRegistry};
 use crate::state::wall_state::{KeyLayer, OverlayKind, WallState};
 use crate::ui::grid_layout::grid_cell_rect;
 use crate::ui::layout::WallLayout;
-use crate::ui::rail::{extra_row_items, header_items};
+use crate::ui::rail::{extra_row_items, header_items, rail_gaps};
 use crate::ui::triage::triage_queue_rows;
 
 /// Tile slot index containing the grid-local point (`col`,`row`), or `None`
@@ -51,12 +51,31 @@ pub enum RailTarget {
 /// them out. `None` for a header or extra row (their clicks are slot
 /// regions), rows past the last group, or an empty rail.
 pub fn rail_target_at(state: &WallState, slots: &SlotRegistry, row: i32) -> Option<RailTarget> {
+    rail_target_at_in(state, slots, row, None)
+}
+
+/// [`rail_target_at`] for a rail `height` rows tall, where a blank row may
+/// separate workspace groups (see [`rail_gaps`]: the renderer and this ask the
+/// same question). The blank row has no target.
+pub fn rail_target_at_in(
+    state: &WallState,
+    slots: &SlotRegistry,
+    row: i32,
+    height: Option<u16>,
+) -> Option<RailTarget> {
     if row < 0 {
         return None;
     }
     let row = row as usize;
+    let gaps = rail_gaps(state, slots, height);
     let mut line = 0usize;
     for (g, group) in state.groups.iter().enumerate() {
+        if gaps && g > 0 {
+            if row == line {
+                return None;
+            }
+            line += 1;
+        }
         let header_rows = header_items(state, slots, group).len();
         if row < line + header_rows {
             return None;
@@ -282,7 +301,12 @@ pub fn action_at(
     // Rail click: header focuses the workspace, session row focuses the
     // session — never engages.
     if layout.rail.contains(point) {
-        return match rail_target_at(state, map.slots, i32::from(row - layout.rail.y))? {
+        return match rail_target_at_in(
+            state,
+            map.slots,
+            i32::from(row - layout.rail.y),
+            Some(layout.rail.height),
+        )? {
             RailTarget::Workspace(index) => {
                 Some((ids::WORKSPACE_FOCUS, ctx().with_index(Some(index))))
             }
@@ -467,6 +491,35 @@ mod tests {
             Some(RailTarget::Session("b1".to_owned()))
         );
         assert_eq!(target_for(&gs, 5), None);
+    }
+
+    #[test]
+    fn a_blank_row_between_groups_shifts_clicks_exactly_when_the_rail_draws_it() {
+        use crate::ui::rail::{rail_lines, rail_render_in};
+        let state = WallState {
+            groups: vec![
+                rail_group("alpha", vec![session("a1"), session("a2")]),
+                rail_group("beta", vec![session("b1")]),
+            ],
+            ..WallState::initial()
+        };
+        let slots = SlotRegistry::core();
+        // 5 rows + 1 gap fit in 6, not in 5.
+        let (lines, _) = rail_render_in(&state, &slots, 0, false, Some(6));
+        assert_eq!(lines.len(), 6);
+        assert!(lines[3].to_string().is_empty(), "the gap row");
+        let at = |row| rail_target_at_in(&state, &slots, row, Some(6));
+        assert_eq!(at(0), Some(RailTarget::Workspace(0)));
+        assert_eq!(at(2), Some(RailTarget::Session("a2".into())));
+        assert_eq!(at(3), None, "the blank row is not a target");
+        assert_eq!(at(4), Some(RailTarget::Workspace(1)));
+        assert_eq!(at(5), Some(RailTarget::Session("b1".into())));
+        assert_eq!(at(6), None);
+        // too short for the gap: rows are packed, as rail_lines draws them
+        assert_eq!(rail_lines(&state, &slots, 0).len(), 5);
+        let packed = |row| rail_target_at_in(&state, &slots, row, Some(5));
+        assert_eq!(packed(3), Some(RailTarget::Workspace(1)));
+        assert_eq!(packed(4), Some(RailTarget::Session("b1".into())));
     }
 
     #[test]
