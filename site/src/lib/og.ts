@@ -1,6 +1,6 @@
 // Where each page's social card lives. scripts/og-image.mjs writes the files; keep the naming in step with it.
 export const OG_DEFAULT = '/og-default.png';
-export const OG_DEFAULT_ALT = 'claude-garage: every Claude session, one calm wall. A terminal wall listing Claude Code sessions, with one waiting for your answer.';
+export const OG_DEFAULT_ALT = 'claude-garage: every Claude Code session, one calm wall. A terminal wall listing Claude Code sessions, with one waiting for your answer.';
 
 /** kind 'blog' | 'compare' with the entry id, or 'docs' with the docs entry id (already "docs/..."). */
 export function ogCard(kind: 'blog' | 'compare' | 'docs', id: string) {

@@ -13,8 +13,8 @@ const version = appVersion();
 <section class="hero" id="hero" aria-labelledby="h1">
   <canvas id="field" aria-hidden="true"></canvas>
   <p class="pill"><span class="dot" aria-hidden="true"></span>Amber means a session needs you</p>
-  <h1 id="h1"><span class="l">Every Claude Code session.</span> <span class="l">One <em>calm</em> wall.</span></h1>
-  <p class="sub">See who is busy and who needs you. Press <span class="inl">a</span> to answer. tmux keeps every session alive.</p>
+  <h1 id="h1"><span class="l">Stop <em>juggling</em></span> <span class="l">Claude Code sessions.</span></h1>
+  <p class="sub">One calm wall shows which one needs you. Jump to it with one key, and never lose a session when the terminal closes.</p>
   <div class="cta">
     <button class="copybox" data-copy="npx claude-garage"><span><span class="p" aria-hidden="true">$ </span>npx claude-garage</span><span class="c"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2.5"/><path d="M5 15V6.5A2.5 2.5 0 0 1 7.5 4H15"/></svg><span class="lbl">Copy</span></span></button>
     <a class="btn btn-line" href="https://github.com/adar2378/claude-garage" data-star><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true"><path d="M12 2.8l2.9 5.9 6.5.9-4.7 4.6 1.1 6.5L12 17.6l-5.8 3.1 1.1-6.5-4.7-4.6 6.5-.9z"/></svg><span>Star on GitHub</span><b class="sh-count" data-star-count hidden></b></a>
@@ -84,8 +84,8 @@ const version = appVersion();
           <article class="step" id="s2" role="tabpanel" aria-labelledby="t2" data-i="2">
             <div class="copy">
               <span class="chip"><span class="ic"><svg aria-hidden="true" focusable="false" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="12" cy="12" r="3.2" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="8"/></svg></span>Spot the amber one <span class="num">3 / 5</span></span>
-              <h3>The one waiting on you turns amber.</h3>
-              <p>When a tool call needs approval, that tile lights up, its folder gets a dot, and the bar says someone needs you. No tab hunting.</p>
+              <h3>Never miss a permission prompt.</h3>
+              <p>The waiting tile turns amber, a chime plays, and a desktop banner shows Claude's question, even when you are in another app. No tab hunting.</p>
               <a class="more" href="/docs/guides/many-sessions/#how-do-i-know-which-session-needs-me">How the amber signal works <span aria-hidden="true">&rarr;</span></a>
             </div>
             <div class="vis v-c">
@@ -114,7 +114,7 @@ const version = appVersion();
           <article class="step" id="s4" role="tabpanel" aria-labelledby="t4" data-i="4">
             <div class="copy">
               <span class="chip"><span class="ic"><svg aria-hidden="true" focusable="false" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M19.5 12a7.5 7.5 0 1 1-2.2-5.3M19.5 4.5v4h-4"/></svg></span>Nothing gets lost <span class="num">5 / 5</span></span>
-              <h3>tmux owns your sessions.</h3>
+              <h3>Close the terminal. Lose nothing.</h3>
               <p>Quit the wall and they keep running. Closed or crashed chats stay in the sidebar; press <kbd>r</kbd> <kbd>r</kbd> to restart and resume the conversation.</p>
               <a class="more" href="/docs/guides/nothing-lost/">Close and come back <span aria-hidden="true">&rarr;</span></a>
             </div>
@@ -297,7 +297,7 @@ const version = appVersion();
     <button class="copybox" data-copy="npx claude-garage"><span><span class="p" aria-hidden="true">$ </span>npx claude-garage</span><span class="c"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2.5"/><path d="M5 15V6.5A2.5 2.5 0 0 1 7.5 4H15"/></svg><span class="lbl">Copy</span></span></button>
     <a class="btn btn-line" href="https://github.com/adar2378/claude-garage" data-star><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true"><path d="M12 2.8l2.9 5.9 6.5.9-4.7 4.6 1.1 6.5L12 17.6l-5.8 3.1 1.1-6.5-4.7-4.6 6.5-.9z"/></svg><span>Star on GitHub</span><b class="sh-count" data-star-count hidden></b></a>
   </div>
-  <p class="honest rv" style="--rd:.12s">Solo, MIT, no telemetry. A star helps other Claude Code users find it.</p>
+  <p class="honest rv" style="--rd:.12s">Built by one developer. MIT, no telemetry. A star helps other Claude Code users find it.</p>
   <div class="peek rv" style="--rd:.16s">
     <div class="term"><div class="term-bar"><i></i><i></i><i></i><span>claude-garage</span></div>
       <img src={crops.peek.src} srcset={crops.peek.srcset} sizes="(min-width: 900px) 880px, calc(100vw - 80px)" width={crops.peek.w} height={crops.peek.h} alt="The claude-garage wall with one amber tile" loading="lazy" decoding="async" /></div>
