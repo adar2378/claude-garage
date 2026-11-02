@@ -978,6 +978,7 @@ name = "garage-plugin-alerts"
 version = "1.0.1"
 dependencies = [
  "garage-plugin-sdk",
+ "libc",
  "serde",
  "serde_json",
 ]

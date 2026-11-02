@@ -168,6 +168,36 @@ struct State {
     wake: Option<i64>,
     #[serde(default)]
     deadline: Option<i64>,
+    /// The process that wrote `wake` / `deadline`. A record whose owner is
+    /// gone is void.
+    #[serde(default)]
+    owner: Option<u32>,
+}
+
+impl State {
+    /// Another run is asleep on the queue: its record is unexpired and its
+    /// process still exists.
+    fn record_live(&self, now: i64) -> bool {
+        matches!(self.deadline, Some(dl) if now < dl) && self.owner.is_some_and(pid_alive)
+    }
+}
+
+/// Whether process `pid` exists. Where that cannot be asked (Windows) it is
+/// assumed, and the record's deadline bounds the mistake.
+fn pid_alive(pid: u32) -> bool {
+    if pid == std::process::id() {
+        return true;
+    }
+    #[cfg(unix)]
+    {
+        // SAFETY: signal 0 only checks that the process exists.
+        let r = unsafe { libc::kill(pid as libc::pid_t, 0) };
+        r == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+    }
+    #[cfg(not(unix))]
+    {
+        true
+    }
 }
 
 fn id_parts(id: &str) -> (String, String) {
@@ -314,38 +344,58 @@ pub fn compose(items: &[Item], s: &Settings) -> Alert {
     }
 }
 
-/// `● ws/a needs you · ✓ ws/b finished · a to jump`, at most 120 characters
-/// (the wall's notice limit), the jump hint always last.
+/// The longest notice the wall accepts.
+const NOTICE_MAX: usize = 120;
+
+/// `● ws · a needs you · ✓ ws · b finished · a to jump`, at most 120
+/// characters. When it is too long the session names get shorter (with `…`),
+/// and then plural lists are dropped to a count; the verbs and the hint are
+/// never cut.
 fn notice_text(needs: &[&Item], done: &[&Item]) -> String {
     const HINT: &str = " · a to jump";
-    // The name the rail shows (the title, else the label) and its workspace.
-    let name = |i: &&Item| i.title.clone().unwrap_or_else(|| i.label.clone());
-    let part = |glyph: &str, one: &str, many: &str, items: &[&Item]| match items {
-        [] => None,
-        [i] => Some(format!("{glyph} {} · {} {one}", i.workspace, name(i))),
-        _ => Some(format!(
-            "{glyph} {} {many}: {}",
-            items.len(),
-            items
-                .iter()
-                .map(|i| format!("{} ({})", name(i), i.workspace))
-                .collect::<Vec<_>>()
-                .join(", ")
-        )),
+    let build = |cap: usize, list: bool| -> String {
+        // The name the rail shows (the title, else the label).
+        let name = |i: &&Item| {
+            let n = clean(&i.title.clone().unwrap_or_else(|| i.label.clone()));
+            if n.chars().count() > cap {
+                n.chars().take(cap.saturating_sub(1)).collect::<String>() + "…"
+            } else {
+                n
+            }
+        };
+        let part = |glyph: &str, one: &str, many: &str, items: &[&Item]| match items {
+            [] => None,
+            [i] => Some(format!("{glyph} {} · {} {one}", i.workspace, name(i))),
+            _ if !list => Some(format!("{glyph} {} {many}", items.len())),
+            _ => Some(format!(
+                "{glyph} {} {many}: {}",
+                items.len(),
+                items
+                    .iter()
+                    .map(|i| format!("{} ({})", name(i), i.workspace))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )),
+        };
+        let parts: Vec<String> = [
+            part("●", "needs you", "need you", needs),
+            part("✓", "finished", "finished", done),
+        ]
+        .into_iter()
+        .flatten()
+        .collect();
+        parts.join(" · ") + HINT
     };
-    let parts: Vec<String> = [
-        part("●", "needs you", "need you", needs),
-        part("✓", "finished", "finished", done),
-    ]
-    .into_iter()
-    .flatten()
-    .collect();
-    let mut body = clean(&parts.join(" · "));
-    let room = 120 - HINT.chars().count();
-    if body.chars().count() > room {
-        body = body.chars().take(room - 1).collect::<String>() + "…";
+    let fits = |t: &String| t.chars().count() <= NOTICE_MAX;
+    for list in [true, false] {
+        for cap in [60, 40, 28, 20, 14, 10, 6] {
+            let t = build(cap, list);
+            if fits(&t) {
+                return t;
+            }
+        }
     }
-    body + HINT
+    build(6, false)
 }
 
 // ----------------------------------------------------------------- output
@@ -548,6 +598,7 @@ pub fn handle_event(
 
     // Step 2: queue it. A live run that will wake in time serves it; if none
     // will, this run delivers it (and whatever else is ready) itself.
+    let mine = (item.id.clone(), item.kind);
     let (own, deadline) = {
         let Some(_hold) = held(lock(dir))? else {
             return Ok(());
@@ -561,8 +612,9 @@ pub fn handle_event(
         let due = now + wait.as_millis() as i64;
         // Served: the other run is asleep and wakes before this is due, and
         // it keeps serving the queue until after this is due.
-        let served = matches!((state.wake, state.deadline),
-            (Some(w), Some(dl)) if now < dl && w <= due && due <= dl);
+        let served = state.record_live(now)
+            && matches!((state.wake, state.deadline),
+                (Some(w), Some(dl)) if w <= due && due <= dl);
         state.pending.push(Queued { item, due });
         write_state_in(dir, STATE, &state)?;
         (!served, now + LEADER_MAX_MS)
@@ -572,12 +624,24 @@ pub fn handle_event(
     }
 
     // Step 3: wait for what is due, deliver it, and go on while items due
-    // inside this run's deadline remain. The run never sleeps past it.
+    // inside this run's deadline remain. The run never sleeps past it. It
+    // serves other runs' items only while the record names it; a run that
+    // found a live record of another run (or lost its own to one) leaves as
+    // soon as its own item is out.
+    let me = std::process::id();
+    let mut claimed = None;
     loop {
         let wait_ms = {
             let _hold = lock(dir)?;
             let mut state = read_state(dir);
             let now = clock.now_ms();
+            let named = state.deadline == Some(deadline) && state.owner == Some(me);
+            let claimed =
+                *claimed.get_or_insert_with(|| !state.record_live(now) || state.owner == Some(me));
+            let gone = !state
+                .pending
+                .iter()
+                .any(|q| (&q.item.id, q.item.kind) == (&mine.0, mine.1));
             let next = state
                 .pending
                 .iter()
@@ -585,16 +649,20 @@ pub fn handle_event(
                 .filter(|due| *due <= deadline)
                 .min();
             match next {
-                Some(t) => {
-                    state.wake = Some(t);
-                    state.deadline = Some(deadline);
-                    write_state_in(dir, STATE, &state)?;
+                Some(t) if !gone || (claimed && named) => {
+                    if claimed {
+                        state.wake = Some(t);
+                        state.deadline = Some(deadline);
+                        state.owner = Some(me);
+                        write_state_in(dir, STATE, &state)?;
+                    }
                     (t - now).max(0)
                 }
-                None => {
-                    if state.deadline == Some(deadline) {
+                _ => {
+                    if named {
                         state.wake = None;
                         state.deadline = None;
+                        state.owner = None;
                         write_state_in(dir, STATE, &state)?;
                     }
                     return Ok(());
@@ -1462,6 +1530,93 @@ mod tests {
 
     // ---- every queued item has a live owner ----
 
+    /// A process that exists and is not this one (the test runner's parent).
+    fn other_live_pid() -> u32 {
+        #[cfg(unix)]
+        {
+            unsafe { libc::getppid() as u32 }
+        }
+        #[cfg(not(unix))]
+        {
+            1
+        }
+    }
+
+    /// A pid that belonged to a process that has ended.
+    #[cfg(unix)]
+    fn dead_pid() -> u32 {
+        let mut child = std::process::Command::new("true").spawn().unwrap();
+        let pid = child.id();
+        child.wait().unwrap();
+        pid
+    }
+
+    fn held_done_json(due: i64) -> Value {
+        json!({"kind": "done", "id": "garage/ws/old", "label": "old",
+            "workspace": "ws", "message": null, "secs": 40, "visible": false, "due": due})
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_record_whose_owner_is_gone_is_void() {
+        let d = FakeDaemon::start();
+        sessions(&d);
+        let dir = tmp("own-dead");
+        // unexpired, would cover this item, but its writer no longer exists
+        write_state_in(
+            &dir,
+            STATE,
+            &json!({"wake": 11_000, "deadline": 19_000, "owner": dead_pid(),
+                "pending": [held_done_json(18_000)]}),
+        )
+        .unwrap();
+        let out = Rec::default();
+        let clock = Fake::at(10_000);
+        handle_event(
+            &ctx("garage/ws/fix", "working", "needs-input", 10_000, false),
+            &api(&d),
+            &dir,
+            &out,
+            &clock,
+        )
+        .unwrap();
+        assert_eq!(clock.slept.borrow()[0], COALESCE);
+        assert!(
+            out.all()
+                .contains(&"play chime-needs-input.wav".to_string()),
+            "{:?}",
+            out.all()
+        );
+    }
+
+    #[test]
+    fn a_needs_input_run_does_not_linger_for_a_done_someone_else_holds() {
+        let d = FakeDaemon::start();
+        sessions(&d);
+        let dir = tmp("own-linger");
+        write_state_in(
+            &dir,
+            STATE,
+            &json!({"wake": 18_000, "deadline": 19_000, "owner": other_live_pid(),
+                "pending": [held_done_json(18_000)]}),
+        )
+        .unwrap();
+        let out = Rec::default();
+        let clock = Fake::at(10_000);
+        handle_event(
+            &ctx("garage/ws/fix", "working", "needs-input", 10_000, false),
+            &api(&d),
+            &dir,
+            &out,
+            &clock,
+        )
+        .unwrap();
+        assert_eq!(*clock.slept.borrow(), [COALESCE], "delivered, then left");
+        let s = read_state(&dir);
+        assert_eq!(s.pending.len(), 1, "the held done stays for its owner");
+        assert_eq!(s.owner, Some(other_live_pid()), "its record is untouched");
+    }
+
     /// The daemon says all of `ids` are done.
     fn all_done(d: &FakeDaemon, ids: &[&str]) {
         let list: Vec<String> = ids
@@ -1943,6 +2098,7 @@ mod tests {
         };
         // A leader asleep until `wake`, serving the queue until `deadline`.
         let mk = |tag: &str, wake: i64, deadline: i64| {
+            let owner = other_live_pid();
             let dir = tmp(tag);
             write_state_in(
                 &dir,
@@ -1954,6 +2110,7 @@ mod tests {
                     }],
                     wake: Some(wake),
                     deadline: Some(deadline),
+                    owner: Some(owner),
                     ..Default::default()
                 },
             )
@@ -2282,6 +2439,34 @@ mod tests {
         }
         let want: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
         assert_eq!(got, want);
+    }
+
+    #[test]
+    fn a_long_notice_shortens_the_names_and_keeps_the_verbs_and_the_hint() {
+        let mut one = item(Kind::NeedsInput, "fix", None, None, false);
+        one.title = Some("a very long session title that goes on and on and on and on and on and on and on and on".into());
+        let t = compose(&[one], &Settings::default()).notice.unwrap();
+        assert!(t.chars().count() <= NOTICE_MAX, "{t}");
+        assert!(t.starts_with("● app · a very long"), "{t}");
+        assert!(t.contains("…"), "{t}");
+        assert!(t.ends_with(" needs you · a to jump"), "{t}");
+        // a needs and a done, both long: both verbs survive
+        let mut n = item(Kind::NeedsInput, "a", None, None, false);
+        n.title = Some("x".repeat(90));
+        let mut f = item(Kind::Done, "b", None, Some(30), false);
+        f.title = Some("y".repeat(90));
+        let t = compose(&[n, f], &Settings::default()).notice.unwrap();
+        assert!(t.chars().count() <= NOTICE_MAX, "{t}");
+        assert!(
+            t.contains(" needs you · ✓ app · ") && t.contains(" finished · a to jump"),
+            "{t}"
+        );
+        // many sessions fall back to a count
+        let many: Vec<Item> = (0..12)
+            .map(|i| item(Kind::Done, &format!("session-{i}"), None, Some(30), false))
+            .collect();
+        let t = compose(&many, &Settings::default()).notice.unwrap();
+        assert_eq!(t, "✓ 12 finished · a to jump");
     }
 
     #[test]
