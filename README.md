@@ -97,7 +97,7 @@ Press `q` to quit. Your sessions keep running in the background.
 | `[` / `]` | previous / next session |
 | `Tab` | switch view |
 | `m` | maximize the focused session |
-| `a` | jump to the session waiting longest |
+| `a` | jump to the session waiting longest, then the newest finished one |
 | `A` | list every waiting session |
 
 **Typing into a session**

@@ -112,6 +112,17 @@ impl App {
         {
             self.motion.working_shown();
         }
+        // A row's one flash needs a redraw to end on time.
+        if layout.rail.width > 0 {
+            let state = self.store.state();
+            if state
+                .sessions
+                .iter()
+                .any(|s| crate::ui::rail::flashing(s, state.is_unseen(&s.id), now_ms, true))
+            {
+                self.motion.working_shown();
+            }
+        }
 
         if show_view_strip {
             let ranges = render_view_strip(buf, layout.view_strip, &views, &focused_view_name);

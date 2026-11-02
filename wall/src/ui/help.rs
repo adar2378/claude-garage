@@ -21,7 +21,10 @@ pub const BINDINGS: [(&str, &str); 27] = [
     ("Ctrl+G", "disengage (while engaged)"),
     ("m", "maximize / restore focused tile"),
     ("t", "open focused session in a new terminal window (macOS)"),
-    ("a", "jump to longest-waiting blocked session"),
+    (
+        "a",
+        "jump to the session waiting longest, then the newest finished one",
+    ),
     ("A", "triage queue"),
     ("b", "hide / show the sidebar (drag its edge to resize)"),
     ("< / >", "narrow / widen the sidebar"),

@@ -89,6 +89,31 @@ fn render_rail_dump(store: &WallStore, w: u16, h: u16) -> String {
     dump(&buf)
 }
 
+/// Focus, needs-input, finished-unseen (and its workspace dot), seen done,
+/// working and idle in one rail, with blank rows between the groups.
+#[test]
+fn rail_unseen_finished_against_focus_waiting_working_and_seen_done() {
+    let mut store = WallStore::new();
+    store.workspaces_fetched(vec![
+        ws("api", "/repos/api/api"),
+        ws("web", "/repos/web/web"),
+        ws("infra", "/repos/infra/infra"),
+    ]);
+    store.sessions_fetched(vec![
+        si("api", "focused", "working", Some(65_000)),
+        si("api", "fresh", "working", Some(50_000)),
+        si("api", "seen", "done", Some(40_000)),
+        si("api", "calm", "idle", None),
+        si("web", "stuck", "needs-input", Some(5_000)),
+        si("web", "busy", "working", Some(65_000)),
+        si("infra", "plan", "working", Some(65_000)),
+    ]);
+    store.focus_session("garage/api/focused");
+    store.status_changed("garage/api/fresh", "done", Some(120_000));
+    store.status_changed("garage/infra/plan", "done", Some(121_000));
+    insta::assert_snapshot!(render_rail_dump(&store, 30, 14));
+}
+
 #[test]
 fn rail_family_label_blocked_family_and_restorable_rows() {
     let mut store = WallStore::new();

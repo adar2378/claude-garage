@@ -2,7 +2,7 @@
 //! "State architecture": one WallState; every render is a pure function of it
 //! plus live terminal buffers). Mutation happens only in `store.rs`.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::api::models::{ContextInfo, SessionInfo, WorkspaceInfo};
 use crate::state::salience::WorkspaceGroup;
@@ -190,6 +190,12 @@ pub struct WallState {
     /// p25: the rail's visibility and width (`b`, `<`, `>`, divider drag),
     /// persisted in `wall.json`.
     pub rail: RailPrefs,
+    /// Sessions that finished (became `done`) while they were not the focused
+    /// session, and have not been focused since. Wall-side only: it is kept
+    /// by [`crate::state::store::WallStore`] on every state change, starts
+    /// empty (a session already `done` when the wall opens is not unseen),
+    /// and a session that leaves `done` is dropped.
+    pub unseen: HashSet<String>,
 }
 
 /// The rail's remembered layout choice.
@@ -252,7 +258,39 @@ impl WallState {
             focused_view: HashMap::new(),
             daemon_live: true,
             rail: RailPrefs::default(),
+            unseen: HashSet::new(),
         }
+    }
+
+    /// The session finished while the user was elsewhere and has not been
+    /// focused since.
+    pub fn is_unseen(&self, id: &str) -> bool {
+        self.unseen.contains(id)
+    }
+
+    /// Any session of `workspace` is finished and unseen.
+    pub fn has_unseen_in(&self, workspace: &str) -> bool {
+        self.sessions
+            .iter()
+            .any(|s| s.workspace == workspace && self.unseen.contains(&s.id))
+    }
+
+    /// The unseen set after moving from `self` to `next`: a session joins
+    /// when it turns `done` while not focused, and leaves when it is focused
+    /// or is no longer `done`.
+    pub fn unseen_after(&self, next: &WallState) -> HashSet<String> {
+        next.sessions
+            .iter()
+            .filter(|s| s.status == "done")
+            .filter(|s| next.focused_session_id.as_deref() != Some(s.id.as_str()))
+            .filter(|s| {
+                self.unseen.contains(&s.id)
+                    || self
+                        .session_by_id(Some(&s.id))
+                        .is_some_and(|before| before.status != "done")
+            })
+            .map(|s| s.id.clone())
+            .collect()
     }
 
     pub fn session_by_id(&self, id: Option<&str>) -> Option<&WallSession> {

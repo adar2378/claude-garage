@@ -646,3 +646,102 @@ fn restorable_session_ids_selects_only_restorable_sessions_of_the_workspace_in_o
     );
     assert!(restorable_session_ids(&store.state().sessions, "ghost").is_empty());
 }
+
+// ── unseen finished sessions ────────────────────────────────────────────
+
+fn two_workspaces_working() -> WallStore {
+    let mut store = WallStore::new();
+    store.workspaces_fetched(vec![ws("a"), ws("b")]);
+    store.sessions_fetched(vec![
+        si("a", "one"),
+        si("a", "two"),
+        si("b", "three"),
+        si("b", "four"),
+    ]);
+    store
+}
+
+#[test]
+fn a_session_that_finishes_while_not_focused_is_unseen_until_focused() {
+    let mut store = two_workspaces_working();
+    store.focus_session("garage/a/one");
+    store.status_changed("garage/a/two", "done", Some(2000));
+    store.status_changed("garage/b/three", "done", Some(3000));
+    assert!(store.state().is_unseen("garage/a/two"));
+    assert!(store.state().is_unseen("garage/b/three"), "any workspace");
+    assert!(store.state().has_unseen_in("b"));
+    // the focused one finishing in front of the user is seen
+    store.status_changed("garage/a/one", "done", Some(4000));
+    assert!(!store.state().is_unseen("garage/a/one"));
+    // focusing (here by switching workspace into it) clears the mark
+    store.focus_session("garage/b/three");
+    assert!(!store.state().is_unseen("garage/b/three"));
+    assert!(!store.state().has_unseen_in("b"));
+    assert!(
+        store.state().is_unseen("garage/a/two"),
+        "others keep theirs"
+    );
+}
+
+#[test]
+fn going_back_to_working_clears_unseen_and_a_fetched_done_is_not_unseen() {
+    let mut store = two_workspaces_working();
+    store.focus_session("garage/a/one");
+    store.status_changed("garage/a/two", "done", Some(2000));
+    store.status_changed("garage/a/two", "working", Some(2500));
+    assert!(store.state().unseen.is_empty());
+    // a done session the wall learns about at startup says nothing new
+    let mut fresh = WallStore::new();
+    fresh.workspaces_fetched(vec![ws("a")]);
+    fresh.sessions_fetched(vec![si("a", "one"), si_status("a", "old", "done", Some(5))]);
+    assert!(fresh.state().unseen.is_empty());
+    // but a refetch that finds it newly done is
+    fresh.sessions_fetched(vec![si("a", "one"), si("a", "old")]);
+    fresh.sessions_fetched(vec![si("a", "one"), si_status("a", "old", "done", Some(9))]);
+    assert!(fresh.state().is_unseen("garage/a/old"));
+}
+
+#[test]
+fn a_jumps_to_the_waiting_session_first_then_walks_the_newest_unseen_ones() {
+    let mut store = two_workspaces_working();
+    store.focus_session("garage/a/one");
+    store.status_changed("garage/a/two", "done", Some(2000));
+    store.status_changed("garage/b/three", "done", Some(3000));
+    store.status_changed("garage/b/four", "needs-input", Some(2500));
+    assert!(store.jump_to_longest_waiting());
+    assert_eq!(
+        store.state().focused_session_id.as_deref(),
+        Some("garage/b/four")
+    );
+    assert_eq!(
+        store.state().layer,
+        KeyLayer::Engaged,
+        "a waiting session is engaged"
+    );
+    store.disengage();
+    store.status_changed("garage/b/four", "working", Some(2600));
+    // nobody waits: newest unseen first (three at 3000), then two, then nothing
+    assert!(store.jump_to_longest_waiting());
+    assert_eq!(
+        store.state().focused_session_id.as_deref(),
+        Some("garage/b/three")
+    );
+    assert_eq!(
+        store.state().layer,
+        KeyLayer::Garage,
+        "a finished one is only focused"
+    );
+    assert!(store.jump_to_longest_waiting());
+    assert_eq!(
+        store.state().focused_session_id.as_deref(),
+        Some("garage/a/two")
+    );
+    assert!(
+        !store.jump_to_longest_waiting(),
+        "nothing left: what it did before"
+    );
+    assert_eq!(
+        store.state().focused_session_id.as_deref(),
+        Some("garage/a/two")
+    );
+}

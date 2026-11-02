@@ -19,7 +19,7 @@ use crate::slots::{self, ClickTarget, SlotClickRegion, SlotCtx, SlotId, SlotItem
 use crate::state::salience::WorkspaceGroup;
 use crate::state::wall_state::{WallSession, WallState};
 use crate::ui::theme::{
-    animated_glyph_for, colors, done_faded, elapsed_for, status_color, status_color_fading,
+    animated_glyph_for, colors, elapsed_for, status_color, status_color_fading,
 };
 
 /// A clickable slot item on one rail row: `cols` are rail-local columns.
@@ -104,12 +104,18 @@ pub fn rail_render(
             }
             lines.push(Line::from(item.text));
         }
-        lines.push(workspace_row(group, i, focused_ws));
+        lines.push(workspace_row(
+            group,
+            i,
+            focused_ws,
+            state.has_unseen_in(&group.name),
+        ));
         for s in &group.sessions {
             let mut line = session_row(
                 s,
                 focused_ws && gridded.contains(s.id.as_str()),
                 focused_ws && state.focused_session_id.as_deref() == Some(s.id.as_str()),
+                state.is_unseen(&s.id),
                 now_ms,
                 fade_done,
             );
@@ -229,7 +235,29 @@ pub fn family_label_provider(ctx: &SlotCtx) -> Vec<SlotItem> {
     )]
 }
 
-fn workspace_row(group: &WorkspaceGroup, index: usize, focused: bool) -> Line<'static> {
+/// How long a row that just started waiting or finished unseen flashes
+/// (motion on only; it never repeats).
+pub const FLASH_MS: i64 = 800;
+
+/// Whether the row of `s` is in its one flash: it needs you or is unseen, its
+/// status began under [`FLASH_MS`] ago, and motion is on.
+pub fn flashing(s: &WallSession, unseen: bool, now_ms: i64, motion: bool) -> bool {
+    motion
+        && (s.needs_input() || (s.status == "done" && unseen))
+        && s.since
+            .is_some_and(|since| (0..FLASH_MS).contains(&(now_ms - since)))
+}
+
+/// A workspace header: the number, the name (bold and bright when focused,
+/// dim otherwise), an amber
+/// `● N` when sessions wait for you and a green `●` when one has finished
+/// unseen.
+fn workspace_row(
+    group: &WorkspaceGroup,
+    index: usize,
+    focused: bool,
+    unseen: bool,
+) -> Line<'static> {
     let mut name_style = Style::default().fg(if focused { colors::FG } else { colors::DIM });
     if focused {
         name_style = name_style.add_modifier(Modifier::BOLD);
@@ -245,14 +273,22 @@ fn workspace_row(group: &WorkspaceGroup, index: usize, focused: bool) -> Line<'s
             Style::default().fg(colors::AMBER),
         ));
     }
+    if unseen {
+        spans.push(Span::styled(
+            if blocked > 0 { " ●" } else { "  ●" },
+            Style::default().fg(colors::GREEN),
+        ));
+    }
     Line::from(spans)
 }
 
 /// Rail label colour. Needs-input stays amber; the focused row is bright;
-/// otherwise by status: working and fresh `done` read FG (`done` steps to DIM
-/// when its 2-minute green fade ends), idle DIM, restorable FAINT. A row with
-/// no tile on the grid drops one step (FG to DIM, DIM to FAINT).
-fn label_color(s: &WallSession, gridded: bool, focused: bool, now_ms: i64) -> Color {
+/// otherwise by status: only a finished-unseen `done` reads FG (the one
+/// unfocused row besides amber that pulls the eye); working (its cyan glyph
+/// shows it is alive), a `done` the user has seen (DIM at once, no time fade:
+/// the unseen mark replaced it) and idle are DIM, restorable FAINT. A row with no tile on the grid drops one
+/// step (FG to DIM, DIM to FAINT).
+fn label_color(s: &WallSession, gridded: bool, focused: bool, unseen: bool) -> Color {
     if s.needs_input() {
         return colors::AMBER;
     }
@@ -260,8 +296,7 @@ fn label_color(s: &WallSession, gridded: bool, focused: bool, now_ms: i64) -> Co
         return colors::FG;
     }
     let base = match s.status.as_str() {
-        "working" => colors::FG,
-        "done" if !done_faded(s.since, now_ms) => colors::FG,
+        "done" if unseen => colors::FG,
         "restorable" => colors::FAINT,
         _ => colors::DIM,
     };
@@ -274,10 +309,22 @@ fn label_color(s: &WallSession, gridded: bool, focused: bool, now_ms: i64) -> Co
     }
 }
 
+/// The glyph colour. Like the tile's, except a `done` is green exactly while
+/// unseen and faint after.
+fn glyph_color(s: &WallSession, unseen: bool, now_ms: i64, fade_done: bool) -> Color {
+    match s.status.as_str() {
+        "done" if unseen => colors::GREEN,
+        "done" => colors::FAINT,
+        _ if fade_done => status_color_fading(&s.status, s.since, now_ms),
+        _ => status_color(&s.status, s.since, now_ms),
+    }
+}
+
 fn session_row(
     s: &WallSession,
     gridded: bool,
     focused: bool,
+    unseen: bool,
     now_ms: i64,
     fade_done: bool,
 ) -> Line<'static> {
@@ -287,21 +334,27 @@ fn session_row(
     // amber (amber stays exclusive to needs-input, whose label keeps its hue
     // and just gains bold). The marker column is always reserved so rows
     // never shift as focus moves.
-    let glyph_color = if fade_done {
-        status_color_fading(&s.status, s.since, now_ms)
-    } else {
-        status_color(&s.status, s.since, now_ms)
-    };
-    let label_color = label_color(s, gridded, focused, now_ms);
+    let glyph_color = glyph_color(s, unseen, now_ms, fade_done);
+    let label_color = label_color(s, gridded, focused, unseen);
     let mut label_style = Style::default().fg(label_color);
     if focused {
         label_style = label_style.add_modifier(Modifier::BOLD);
     }
+    if flashing(s, unseen, now_ms, fade_done) {
+        label_style = label_style.add_modifier(Modifier::REVERSED);
+    }
+    // A finished session the user has not seen carries a green `▎` in the
+    // same column (focus clears unseen, so the two never meet).
+    let marker_style = Style::default().fg(colors::FG).add_modifier(Modifier::BOLD);
+    let marker = if focused {
+        Span::styled(" ▸ ", marker_style)
+    } else if unseen {
+        Span::styled(" ▎ ", Style::default().fg(colors::GREEN))
+    } else {
+        Span::styled("   ", marker_style)
+    };
     let mut spans = vec![
-        Span::styled(
-            if focused { " ▸ " } else { "   " },
-            Style::default().fg(colors::FG).add_modifier(Modifier::BOLD),
-        ),
+        marker,
         Span::styled(
             format!("{} ", animated_glyph_for(&s.status, now_ms, fade_done)),
             Style::default().fg(glyph_color),
@@ -487,7 +540,7 @@ mod tests {
     }
 
     #[test]
-    fn working_row_is_cyan_glyph_with_bright_label_when_not_focused() {
+    fn working_row_is_cyan_glyph_with_dim_label_when_not_focused() {
         // Row 1 is focused (first session); row 2 is the unfocused working one.
         let store = store_with(vec![
             si("a", "first", "idle", None),
@@ -495,7 +548,7 @@ mod tests {
         ]);
         assert_eq!(
             row_colors(&store, "busy", 0, false),
-            (Some(colors::WORKING), Some(colors::FG))
+            (Some(colors::WORKING), Some(colors::DIM))
         );
     }
 
@@ -516,24 +569,105 @@ mod tests {
         );
     }
 
-    #[test]
-    fn fresh_done_label_is_bright_then_dim_after_the_fade() {
-        let store = store_with(vec![
+    /// A store where `fin` finished while `first` was the focused session.
+    fn store_with_unseen() -> WallStore {
+        let mut store = store_with(vec![
             si("a", "first", "idle", None),
-            si("a", "fin", "done", Some(0)),
+            si("a", "fin", "working", Some(0)),
         ]);
-        let (glyph, label) = row_colors(&store, "fin", 1000, false);
-        assert_eq!((glyph, label), (Some(colors::GREEN), Some(colors::FG)));
-        let (glyph, label) = row_colors(&store, "fin", DONE_FADE_MS + 1, false);
-        assert_eq!((glyph, label), (Some(colors::FAINT), Some(colors::DIM)));
-        // With the fade on the glyph is the RGB ramp; the label still flips
-        // when the ramp ends.
-        let (_, label) = row_colors(&store, "fin", DONE_FADE_MS, true);
-        assert_eq!(label, Some(colors::FG));
-        let (glyph, label) = row_colors(&store, "fin", DONE_FADE_MS + 1, true);
-        assert!(matches!(glyph, Some(Color::Rgb(..))));
-        assert_eq!(label, Some(colors::DIM));
-        assert!(done_faded(Some(0), DONE_FADE_MS + 1));
+        store.status_changed("garage/a/fin", "done", Some(1000));
+        store
+    }
+
+    #[test]
+    fn a_session_that_finishes_unseen_is_bright_with_a_green_marker_and_not_bold() {
+        let store = store_with_unseen();
+        let (lines, _) = rail_render(store.state(), &SlotRegistry::core(), 2000, false);
+        let line = &lines[2];
+        assert!(line.to_string().starts_with(" ▎ ✓ fin"), "{line}");
+        assert_eq!(line.spans[0].style.fg, Some(colors::GREEN));
+        assert_eq!(line.spans[1].style.fg, Some(colors::GREEN), "green check");
+        assert_eq!(line.spans[2].style.fg, Some(colors::FG), "bright label");
+        assert!(
+            !line.spans[2].style.add_modifier.contains(Modifier::BOLD),
+            "less than focus"
+        );
+    }
+
+    #[test]
+    fn a_row_flashes_once_for_under_a_second_and_only_with_motion() {
+        let store = store_with_unseen(); // fin finished at 1000
+        let label_mod = |now: i64, motion: bool| {
+            let (lines, _) = rail_render(store.state(), &SlotRegistry::core(), now, motion);
+            lines[2].spans[2].style.add_modifier
+        };
+        assert!(label_mod(1200, true).contains(Modifier::REVERSED));
+        assert!(
+            !label_mod(1000 + FLASH_MS, true).contains(Modifier::REVERSED),
+            "over"
+        );
+        assert!(
+            !label_mod(1200, false).contains(Modifier::REVERSED),
+            "motion off"
+        );
+        // a seen row never flashes
+        let mut seen = store_with_unseen();
+        seen.focus_session("garage/a/fin");
+        let (lines, _) = rail_render(seen.state(), &SlotRegistry::core(), 1200, true);
+        assert!(
+            !lines[2].spans[2]
+                .style
+                .add_modifier
+                .contains(Modifier::REVERSED)
+        );
+    }
+
+    #[test]
+    fn seen_done_is_dim_at_once_and_no_time_fade_applies() {
+        let mut store = store_with_unseen();
+        store.focus_session("garage/a/fin");
+        assert!(!store.state().is_unseen("garage/a/fin"));
+        store.focus_session("garage/a/first");
+        // seen, at any age: DIM label, faint glyph, no marker
+        for now in [2000, DONE_FADE_MS * 5] {
+            assert_eq!(
+                row_colors(&store, "fin", now, true),
+                (Some(colors::FAINT), Some(colors::DIM))
+            );
+        }
+        let (lines, _) = rail_render(store.state(), &SlotRegistry::core(), 2000, false);
+        assert!(lines[2].to_string().starts_with("   ✓"));
+    }
+
+    #[test]
+    fn a_unseen_row_without_a_tile_drops_one_step() {
+        let mut sessions = vec![si("a", "first", "idle", None)];
+        sessions.extend((2..=6).map(|i| si("a", &format!("s{i}"), "idle", None)));
+        sessions.push(si("a", "off", "working", Some(0)));
+        let mut store = store_with(sessions);
+        store.status_changed("garage/a/off", "done", Some(5));
+        assert!(store.state().is_unseen("garage/a/off"));
+        assert_eq!(
+            row_colors(&store, "off", 10, false),
+            (Some(colors::GREEN), Some(colors::DIM))
+        );
+    }
+
+    #[test]
+    fn the_workspace_row_gets_a_green_dot_for_unseen_and_keeps_the_amber_count() {
+        let mut store = store_with_unseen();
+        store.status_changed("garage/a/first", "needs-input", Some(0));
+        let rows = texts(&rail_lines(store.state(), &SlotRegistry::core(), 0));
+        assert_eq!(rows[0], " 1 a  ● 1 ●");
+        let line = &rail_lines(store.state(), &SlotRegistry::core(), 0)[0];
+        assert_eq!(line.spans[2].style.fg, Some(colors::AMBER));
+        assert_eq!(line.spans[3].style.fg, Some(colors::GREEN));
+        let quiet = texts(&rail_lines(
+            store_with_unseen().state(),
+            &SlotRegistry::core(),
+            0,
+        ));
+        assert_eq!(quiet[0], " 1 a  ●");
     }
 
     #[test]
@@ -559,8 +693,8 @@ mod tests {
         // header + 6 gridded rows, then the three overflow rows.
         assert_eq!(
             row_colors(&store, "off-work", 0, false),
-            (Some(colors::WORKING), Some(colors::DIM)),
-            "working: glyph cyan, label FG stepped to DIM"
+            (Some(colors::WORKING), Some(colors::FAINT)),
+            "working: glyph cyan, label DIM stepped to FAINT"
         );
         assert_eq!(
             row_colors(&store, "off-idle", 0, false),

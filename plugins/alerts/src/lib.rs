@@ -1372,11 +1372,7 @@ mod tests {
 
     /// A long turn on `FIX` that ends in `done` at `t` ms, with `during` run
     /// inside the hold. Returns what was played, the clock and the notices.
-    fn finish_with(
-        dir: &Path,
-        d: &FakeDaemon,
-        during: Option<Box<dyn FnOnce()>>,
-    ) -> (Rec, Fake) {
+    fn finish_with(dir: &Path, d: &FakeDaemon, during: Option<Box<dyn FnOnce()>>) -> (Rec, Fake) {
         let (out, clock) = (Rec::default(), Fake::at(30_000));
         handle_event(
             &ctx(FIX, "idle", "working", 0, false),
@@ -1488,7 +1484,10 @@ mod tests {
                 &c,
             )
             .unwrap();
-            heard2.lock().unwrap().push((c.slept.borrow().clone(), h2.all()));
+            heard2
+                .lock()
+                .unwrap()
+                .push((c.slept.borrow().clone(), h2.all()));
         }));
         handle_event(
             &ctx(FIX, "working", "done", 30_000, false),
@@ -1500,13 +1499,20 @@ mod tests {
         .unwrap();
         let heard = heard.lock().unwrap();
         let (slept, played) = &heard[0];
-        assert_eq!(*slept, [COALESCE], "needs-input waits the short window only");
+        assert_eq!(
+            *slept,
+            [COALESCE],
+            "needs-input waits the short window only"
+        );
         assert!(played.contains(&"play chime-needs-input.wav".to_string()));
         assert!(
             !played.iter().any(|l| l.contains("finished")),
             "the held done is not in it: {played:?}"
         );
-        assert!(out.all().contains(&"play chime-done.wav".to_string()), "the done still comes");
+        assert!(
+            out.all().contains(&"play chime-done.wav".to_string()),
+            "the done still comes"
+        );
         let said = notices(&d);
         assert_eq!(said.len(), 2, "{said:?}");
         assert!(said[0].starts_with("● ws/other needs you"), "{said:?}");
@@ -1751,7 +1757,10 @@ mod tests {
                 &dir,
                 STATE,
                 &State {
-                    pending: vec![Queued { item: queued.clone(), due: 0 }],
+                    pending: vec![Queued {
+                        item: queued.clone(),
+                        due: 0,
+                    }],
                     leader_at: Some(leader_at),
                     ..Default::default()
                 },

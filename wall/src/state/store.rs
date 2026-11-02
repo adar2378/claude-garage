@@ -8,7 +8,7 @@ use std::collections::HashMap;
 pub use crate::actions::GarageCommand;
 use crate::api::models::{SessionInfo, WorkspaceInfo};
 use crate::state::armed_action::ArmedAction;
-use crate::state::salience::jump_target;
+use crate::state::salience::{jump_target, unseen_target};
 use crate::state::views::{DEFAULT_VIEW, View, ViewsByWorkspace, derive_view_name, view_of};
 use crate::state::wall_state::{KeyLayer, OverlayKind, RailPrefs, WallSession, WallState};
 
@@ -110,7 +110,8 @@ impl WallStore {
         self.views_revision
     }
 
-    fn set(&mut self, next: WallState) {
+    fn set(&mut self, mut next: WallState) {
+        next.unseen = self.state.unseen_after(&next);
         self.state = next;
         self.version += 1;
         if let Some(cb) = self.on_change.as_mut() {
@@ -612,7 +613,8 @@ impl WallStore {
     // ── Triage ────────────────────────────────────────────────────────────
 
     /// The `a` jump (spec tui-triage): focus the longest-waiting needs-input
-    /// session across all workspaces — switching workspace, swapping the
+    /// session across all workspaces (and, when none, the newest unseen
+    /// finished one — see [`WallStore::jump_to_newest_unseen`]) — switching workspace, swapping the
     /// tile in if it was overflow — and land engaged. Returns false (state
     /// untouched) when nothing is blocked; the caller renders the strip
     /// notice.
@@ -621,13 +623,27 @@ impl WallStore {
             return false;
         }
         let Some(target_id) = jump_target(&self.state.sessions).map(|s| s.id.clone()) else {
-            return false;
+            return self.jump_to_newest_unseen();
         };
         let Some(mut focused) = focus_session_state(self.state.clone(), &target_id) else {
             return false;
         };
         // needs-input implies live, so the engage precondition holds.
         focused.layer = KeyLayer::Engaged;
+        self.set(focused);
+        true
+    }
+
+    /// With nobody waiting, `a` goes to the newest finished session the user
+    /// has not looked at. It only focuses (the session is not asking for
+    /// anything), which also clears its unseen mark.
+    fn jump_to_newest_unseen(&mut self) -> bool {
+        let Some(id) = unseen_target(&self.state).map(|s| s.id.clone()) else {
+            return false;
+        };
+        let Some(focused) = focus_session_state(self.state.clone(), &id) else {
+            return false;
+        };
         self.set(focused);
         true
     }

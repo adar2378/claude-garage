@@ -18,7 +18,7 @@
 //! semantics for a boolean key.
 
 use crate::api::models::WorkspaceInfo;
-use crate::state::wall_state::WallSession;
+use crate::state::wall_state::{WallSession, WallState};
 
 /// One rail group: a workspace (registered or synthesized) with its sessions
 /// in salience order.
@@ -203,6 +203,16 @@ pub fn jump_target(sessions: &[WallSession]) -> Option<&WallSession> {
         }
     }
     best
+}
+
+/// The `a` fallback: the newest finished session the user has not looked at,
+/// across all workspaces. A missing `since` counts as oldest.
+pub fn unseen_target(state: &WallState) -> Option<&WallSession> {
+    state
+        .sessions
+        .iter()
+        .filter(|s| s.status == "done" && state.is_unseen(&s.id))
+        .max_by_key(|s| s.since.unwrap_or(i64::MIN))
 }
 
 #[cfg(test)]

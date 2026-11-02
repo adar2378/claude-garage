@@ -33,6 +33,8 @@ enum Scene {
     Engaged,
     Calm,
     Plugins,
+    /// Review fixture for the unseen-finished rail (not a brand frame).
+    Unseen,
 }
 
 impl Scene {
@@ -42,10 +44,11 @@ impl Scene {
             Scene::Engaged => "wall-engaged",
             Scene::Calm => "wall-calm",
             Scene::Plugins => "wall-plugins",
+            Scene::Unseen => "wall-unseen",
         }
     }
     fn waiting(self) -> bool {
-        matches!(self, Scene::NeedsInput | Scene::Engaged)
+        matches!(self, Scene::NeedsInput | Scene::Engaged | Scene::Unseen)
     }
 }
 
@@ -89,6 +92,69 @@ fn session(
 }
 
 fn sessions(scene: Scene) -> Vec<SessionInfo> {
+    if scene == Scene::Unseen {
+        // `claude-2` (api) and infra's `claude-1` are `working` here; `build`
+        // moves them to `done` while another session has the focus, so the
+        // wall itself marks them unseen.
+        return vec![
+            session(
+                "api",
+                "claude-1",
+                "working",
+                90,
+                41,
+                "session middleware",
+                None,
+            ),
+            session(
+                "api",
+                "claude-2",
+                "working",
+                300,
+                23,
+                "bump axios to 1.7",
+                None,
+            ),
+            session("api", "claude-3", "done", 600, 30, "lint cleanup", None),
+            session("api", "claude-4", "idle", 900, 12, "notes", None),
+            session(
+                "api",
+                "claude-5",
+                "working",
+                40,
+                52,
+                "migrate fixtures",
+                None,
+            ),
+            session(
+                "web",
+                "claude-1",
+                "needs-input",
+                47,
+                68,
+                "fix checkout total rounding",
+                Some("Claude needs your permission to use Bash"),
+            ),
+            session(
+                "web",
+                "claude-2",
+                "working",
+                130,
+                35,
+                "pricing page copy",
+                None,
+            ),
+            session(
+                "infra",
+                "claude-1",
+                "working",
+                400,
+                12,
+                "terraform plan",
+                None,
+            ),
+        ];
+    }
     let web1 = if scene.waiting() {
         session(
             "web",
@@ -560,9 +626,21 @@ fn build(scene: Scene, w: u16, h: u16) -> ratatui::buffer::Buffer {
 
     let focus = match scene {
         Scene::NeedsInput | Scene::Engaged => id("web", "claude-1"),
-        Scene::Calm | Scene::Plugins => id("api", "claude-1"),
+        Scene::Calm | Scene::Plugins | Scene::Unseen => id("api", "claude-1"),
     };
     app.store.focus_session(&focus);
+    if scene == Scene::Unseen {
+        for done in [id("api", "claude-2"), id("infra", "claude-1")] {
+            app.store.status_changed(&done, "done", Some(NOW - 20_000));
+        }
+        // What the wall shows when the alerts plugin names a finished session
+        // (the plugin_notice frame, prefixed with the plugin id).
+        app.router.notices.show(
+            "alerts: ✓ api/claude-2 finished · a to jump".to_owned(),
+            8000,
+            NOW,
+        );
+    }
 
     let mut terminal = Terminal::new(TestBackend::new(w, h)).unwrap();
     let mut t = NOW;
@@ -642,5 +720,36 @@ fn render_brand_frames() {
             std::fs::write(out.join(&name), &svg).unwrap();
             println!("wrote {name} ({} bytes)", svg.len());
         }
+    }
+}
+
+/// Review renders of the unseen-finished rail: `RENDER_FRAMES=1 RENDER_OUT=<dir>`.
+#[test]
+fn render_unseen_frames() {
+    if std::env::var_os("RENDER_FRAMES").is_none() {
+        return;
+    }
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let out =
+        root.join(std::env::var_os("RENDER_OUT").unwrap_or_else(|| "docs/brand/renders".into()));
+    std::fs::create_dir_all(&out).unwrap();
+    let opts = Options::default();
+    for (w, h) in SIZES {
+        let buf = build(Scene::Unseen, w, h);
+        let name = format!("{}-{w}x{h}", Scene::Unseen.file());
+        std::fs::write(out.join(format!("{name}.svg")), to_svg(&buf, &opts)).unwrap();
+        // The rail and footer as plain text, for a quick look.
+        let text: String = (0..h)
+            .map(|y| {
+                (0..w)
+                    .map(|x| buf[(x, y)].symbol().to_owned())
+                    .collect::<String>()
+                    .trim_end()
+                    .to_owned()
+                    + "\n"
+            })
+            .collect();
+        std::fs::write(out.join(format!("{name}.txt")), text).unwrap();
+        println!("wrote {name}");
     }
 }
