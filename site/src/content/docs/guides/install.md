@@ -7,7 +7,7 @@ sidebar:
 
 To install claude-garage, run `npx claude-garage`. You need tmux 3.2 or newer (macOS and Linux), Claude Code on your `PATH`, and Node.js 20 or newer for `npx` only. The shell and PowerShell installers need no Node.
 
-Verified on claude-garage 1.0.0-rc.1: the commands, requirements and messages on this page were checked against that version's source on 2026-11-01. The Windows preview has not yet been run on real Windows.
+Verified on claude-garage 1.0.1: the commands, requirements and messages on this page were checked against that version's source on 2026-11-02. The Windows preview has not yet been run on real Windows.
 
 ## What do I need before I install claude-garage?
 
@@ -28,13 +28,6 @@ See [Platforms](/docs/platforms/) for how sessions run on each operating system.
 
    ```bash
    npx claude-garage
-   ```
-
-   <!-- REMOVE AT 1.0.0: delete this sentence and the next code block when 1.0.0 is released and `npx claude-garage` serves it. -->
-   While 1.0.0 is a release candidate, use the `next` tag:
-
-   ```bash
-   npx claude-garage@next
    ```
 
    Or use the shell installer (macOS and Linux):
@@ -120,7 +113,7 @@ The launcher could not run `claude --version`, so Claude Code is not installed o
 
 ### My tmux is older than 3.2
 
-claude-garage asks for tmux 3.2 or newer. It does not check the version at startup. It only checks that tmux exists. On older versions it skips two tmux control-mode options that need 3.2, so upgrade tmux instead of relying on it. Check with `tmux -V`, then upgrade with `brew upgrade tmux` or your package manager.
+claude-garage needs tmux 3.2 or newer and refuses to start on an older one. It prints `tmux 3.1c is too old — claude-garage needs tmux 3.2 or newer`, followed by the upgrade command: `brew upgrade tmux` on macOS, or your package manager on Linux. Check your version with `tmux -V`.
 
 ### `cannot bind 127.0.0.1:4747; is it taken?`
 

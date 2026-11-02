@@ -7,7 +7,7 @@ kind: tool
 competitor:
   name: "Claude Code"
   url: "https://code.claude.com/docs/en/agent-view.md"
-method: "Checked on 2026-11-01 against Claude Code's agent view documentation (research preview) and claude-garage 1.0.0-rc.1, using each project's own README and documentation, linked under Sources. Anything marked not documented was not in those sources."
+method: "Checked on 2026-11-01 against Claude Code's agent view documentation (research preview), and on 2026-11-02 against claude-garage 1.0.1, using each project's own README and documentation, linked under Sources. Anything marked not documented was not in those sources."
 checked: "2026-11-01"
 otherLabel: "Claude Code built-in"
 altQuestion: "Looking for an alternative to Claude Code's built-in features?"
@@ -27,12 +27,12 @@ sources:
   - { label: "claude-garage README and docs", url: "https://github.com/adar2378/claude-garage" }
 rows:
   - { topic: "What it is", garage: "A terminal wall: live tiles for Claude Code sessions per project.", other: "Features inside Claude Code: agent view (claude agents), background sessions (claude --bg), claude --worktree and claude --resume." }
-  - { topic: "Status", garage: "claude-garage 1.0.0-rc.1, from its source.", other: "The agent view page says agent view is a research preview, so the interface and shortcuts may change." }
+  - { topic: "Status", garage: "claude-garage 1.0.1, from its source.", other: "The agent view page says agent view is a research preview, so the interface and shortcuts may change." }
   - { topic: "Who hosts the sessions", garage: "tmux. Each session is a tmux session.", other: "A separate supervisor process runs background sessions without a terminal attached." }
   - { topic: "Sessions started in a normal terminal", garage: "You start sessions from the wall with `n` or `N`, and every one is shown as a tile.", other: "Interactive sessions in other terminals do not appear in agent view until you background them." }
   - { topic: "Close the terminal", garage: "Sessions keep running in tmux.", other: "Background sessions keep running when you close the shell or agent view." }
   - { topic: "Reboot or restart", garage: "A reboot ends the tmux sessions. Press `Enter` on a stopped tile to restore it with `claude --resume`, or `R` to restore every stopped session of the project.", other: "Restarting or shutting down stops running background sessions. Recent ones show as failed and restart from the saved conversation when you attach or reply." }
-  - { topic: "Which session needs me", garage: "The waiting session turns amber. Press `a` to jump to the session that has waited longest, or `A` to see the queue. claude-garage also rings the bell, shows the count in the terminal title and sends a desktop notification when hidden.", other: "A Needs input group with a yellow icon, a tab title count, and notifications for local background sessions while agent view is open." }
+  - { topic: "Which session needs me", garage: "The waiting session turns amber. Press `a` to jump to the session that has waited longest, or `A` to see the queue. claude-garage also rings the bell, shows the count in the terminal title, plays a chime, and shows a [desktop banner](/docs/guides/alerts/) when garage is not focused.", other: "A Needs input group with a yellow icon, a tab title count, and notifications for local background sessions while agent view is open." }
   - { topic: "Seeing a session", garage: "Every session is a live terminal tile that you can type into.", other: "Rows with a peek (Space) and attach (Enter). You attach to work in a session." }
   - { topic: "Git worktrees", garage: "Press `N` to start a session in a new git worktree. Closing the session offers merge, discard or keep.", other: "claude --worktree <name>. Background sessions move into a worktree under .claude/worktrees/ before editing, unless you turn that off." }
   - { topic: "Extending it", garage: "claude-garage plugins can be written in any language.", other: "Claude Code skills, hooks, MCP, subagents and plugins." }

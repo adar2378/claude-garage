@@ -85,7 +85,7 @@ I wanted a simple TUI to manage my Claude Code sessions across different project
 
 - tmux manual: [`respawn-pane`](https://man.openbsd.org/tmux.1#respawn-pane).
 - Claude Code docs: [CLI reference](https://code.claude.com/docs/en/cli-reference) (`--resume`).
-- claude-garage source: [`crates/daemon/src/backend/tmux.rs`](https://github.com/adar2378/claude-garage/blob/main/crates/daemon/src/backend/tmux.rs) for how the daemon drives tmux, and [`README.md`](https://github.com/adar2378/claude-garage/blob/main/README.md) for the layers and privacy notes. Facts checked against version 1.0.0-rc.1.
+- claude-garage source: [`crates/daemon/src/backend/tmux.rs`](https://github.com/adar2378/claude-garage/blob/main/crates/daemon/src/backend/tmux.rs) for how the daemon drives tmux, and [`README.md`](https://github.com/adar2378/claude-garage/blob/main/README.md) for the layers and privacy notes. Facts checked against version 1.0.1.
 
 ## Keep reading
 

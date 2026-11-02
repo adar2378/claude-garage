@@ -1,14 +1,12 @@
 ---
 title: "Introducing claude-garage 1.0: a terminal wall for Claude Code"
 description: "claude-garage 1.0 is a terminal wall for Claude Code, now one native Rust binary with plugins and a Windows preview. What it is, what changed, how to try it."
-date: 2026-11-01
+date: 2026-11-02
 tags: [release, rust, plugins]
-draft: true
+draft: false
 ---
 
 claude-garage is a terminal app that shows all of your Claude Code sessions on one screen and tells you which one is waiting for you. Version 1.0 is a rewrite as a single native binary written in Rust. This post says what it is, what changed, and what is still a preview.
-
-*Status: this post is a draft until 1.0.0 is released. The current build is the release candidate 1.0.0-rc.1, published to npm under the `next` tag.*
 
 ## What is claude-garage?
 
@@ -30,32 +28,35 @@ For a longer comparison with other ways of working, see [claude-garage vs many t
 
 ## What changed in 1.0?
 
-The biggest change is the shape of the program. In 0.6 there was a Node daemon and a Rust terminal wall. In the 1.0 release candidate, the daemon, the terminal wall and the `claude-garage` command are one Rust program. The [changelog](/docs/changelog/) states it plainly: there is no Node at runtime, and nothing else to download.
+The biggest change is the shape of the program. In 0.6 there was a Node daemon and a Rust terminal wall. In 1.0, the daemon, the terminal wall and the `claude-garage` command are one Rust program. The [changelog](/docs/changelog/) states it plainly: there is no Node at runtime, and nothing else to download.
 
-Other changes from the 1.0.0-rc.1 changelog:
+Other changes in 1.0 (the version on npm is 1.0.1, because the 1.0.0 tag stopped in CI before any binary was built):
 
 - **One binary, several installs.** Use `npx claude-garage`, or a shell or PowerShell installer from the GitHub release. Prebuilt binaries exist for macOS (Apple silicon and Intel), Linux (x64 and arm64) and Windows (x64).
 - **Automatic upgrade from 0.6.x.** The first `claude-garage` after the upgrade notices the old daemon, stops only that process, and starts the new one. No session is closed.
+- **Alerts.** A chime plays when a session needs you, and a softer one when a long turn finishes. When garage is not the focused window you also get a desktop banner with Claude's question. On macOS, clicking it jumps to that session. See the [alerts guide](/docs/guides/alerts/).
+- **A plugins overlay.** Press `p` to see every plugin and what it may do, and turn it on or off with Space.
+- **Status colours in the rail.** A working session shows a cyan spinner, and a fresh done session is green.
 - **Plugins ship inside the binary.** The built-in plugins are embedded, and each plugin's files are checked against the hashes of that build before every start. This guards against accidental damage. It is not a defence against someone who already runs code as you, and the changelog says so.
 
-The README gives the size: one 17 MB binary with the plugins inside it, about 6 MB of RAM and roughly 2% CPU.
+The README gives the size: one 18 MB binary with the plugins inside it, about 6 MB of RAM and roughly 2% CPU.
 
 ## Is claude-garage extensible?
 
-Yes, through plugins. A plugin is a folder with a `garage-plugin.toml` file and any program: a shell script, a Rust binary or a Node script. It can add a key, a button, a status widget, a panel, an event hook or a command line subcommand. Nine plugins are built in, such as a usage bar that shows your 5-hour and weekly usage, and a fuzzy jump palette.
+Yes, through plugins. A plugin is a folder with a `garage-plugin.toml` file and any program: a shell script, a Rust binary or a Node script. It can add a key, a button, a status widget, a panel, an event hook or a command line subcommand. Ten plugins are built in, such as a usage bar that shows your 5-hour and weekly usage, and a fuzzy jump palette.
 
 Plugins run as you and are not sandboxed. garage shows every command and permission before install. A plugin can ask to close a session but only you can confirm it. The post on [the plugin confirm rule](/blog/plugin-confirm-rule/) explains that design. To write one, follow [Build your first plugin](/docs/guides/first-plugin/).
 
 ## What about Windows?
 
-Windows x64 is a preview. It has a prebuilt binary and a PowerShell installer, but it has not been verified on real Windows yet. The changelog says that check is planned before 1.0.0. On Windows each session runs in a detached host process instead of tmux. Details are on the [Platforms page](/docs/platforms/).
+Windows x64 is a preview. It has a prebuilt binary and a PowerShell installer, but it has not been verified on real Windows yet. On Windows each session runs in a detached host process instead of tmux. Details are on the [Platforms page](/docs/platforms/).
 
 ## How do I try it?
 
 You need macOS or Linux, tmux 3.2 or newer, and Claude Code on your `PATH`. Then:
 
 ```bash
-npx claude-garage@next
+npx claude-garage
 ```
 
 Press `w` to add a project folder, `n` to start a session, `Enter` to type into it and `Ctrl+G` to get back to the wall. Press `?` for all keys. The [install guide](/docs/guides/install/) has the other install methods.
@@ -70,7 +71,7 @@ I wanted a simple TUI to manage my Claude Code sessions across different project
 
 ## Sources
 
-- [claude-garage README](https://github.com/adar2378/claude-garage#readme) and [changelog](/docs/changelog/), version 1.0.0-rc.1.
+- [claude-garage README](https://github.com/adar2378/claude-garage#readme) and [changelog](/docs/changelog/), version 1.0.1.
 - Claude Code docs: [CLI reference](https://code.claude.com/docs/en/cli-reference).
 
 ## Keep reading

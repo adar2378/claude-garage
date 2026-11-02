@@ -7,7 +7,7 @@ kind: tool
 competitor:
   name: "herdr"
   url: "https://herdr.dev"
-method: "Checked on 2026-11-01 against herdr 0.9.5 (stable, released 2026-10-14) and claude-garage 1.0.0-rc.1, using each project's own README and documentation, linked under Sources. Anything marked not documented was not in those sources."
+method: "Checked on 2026-11-01 against herdr 0.9.5 (stable, released 2026-10-14), and on 2026-11-02 against claude-garage 1.0.1, using each project's own README and documentation, linked under Sources. Anything marked not documented was not in those sources."
 checked: "2026-11-01"
 otherLabel: "herdr"
 altQuestion: "Looking for a herdr alternative?"
@@ -35,14 +35,14 @@ rows:
   - { topic: "Who hosts the sessions", garage: "tmux. Each session is a tmux session named garage/<project>/<label>.", other: "The herdr server owns the pane terminals. It is not tmux." }
   - { topic: "Close the terminal", garage: "Sessions keep running in tmux. Run claude-garage again to see them.", other: "Sessions keep running in the herdr server. Run herdr again to reattach." }
   - { topic: "After a reboot", garage: "claude-garage keeps a record of each session. Press `Enter` on a stopped tile to restore it with `claude --resume`, or `R` to restore every stopped session of the project.", other: "The layout returns and panes reopen as shells in their folders. Agents resume through installed integrations (for Claude Code, herdr integration install claude)." }
-  - { topic: "Which session needs me", garage: "The waiting session turns amber. Press `a` to jump to the session that has waited longest, or `A` to open a queue of all waiting sessions. claude-garage also rings the terminal bell, shows the waiting count in the terminal title and sends a desktop notification when the terminal is hidden.", other: "Panes are marked working, blocked, idle or done, from foreground processes, screen manifests and optional integrations. Sidebar marks and configurable sounds. Blocked is shown only when the screen matches a known approval prompt." }
+  - { topic: "Which session needs me", garage: "The waiting session turns amber. Press `a` to jump to the session that has waited longest, or `A` to open a queue of all waiting sessions. claude-garage also rings the terminal bell, shows the waiting count in the terminal title, plays a chime, and shows a [desktop banner](/docs/guides/alerts/) when garage is not the focused window.", other: "Panes are marked working, blocked, idle or done, from foreground processes, screen manifests and optional integrations. Sidebar marks and configurable sounds. Blocked is shown only when the screen matches a known approval prompt." }
   - { topic: "Git worktrees", garage: "Press `N` to start a session in a new git worktree on a garage/<label> branch. Closing the session offers merge, discard or keep, and a conflicted merge is aborted.", other: "herdr worktree create, list, open and remove, plus a key binding. Worktrees open as grouped workspaces. A merge flow is not documented." }
-  - { topic: "Plugins", garage: "garage-plugin.toml plus any program. Widgets, keys, panes, CLI commands and event hooks. Nine built in. Not sandboxed.", other: "herdr-plugin.toml plus any command. The CLI is the plugin API. A marketplace indexes GitHub repos tagged herdr-plugin. Not sandboxed." }
+  - { topic: "Plugins", garage: "garage-plugin.toml plus any program. Widgets, keys, panes, CLI commands and event hooks. Ten built in. Not sandboxed.", other: "herdr-plugin.toml plus any command. The CLI is the plugin API. A marketplace indexes GitHub repos tagged herdr-plugin. Not sandboxed." }
   - { topic: "Keyboard and mouse", garage: "Single keys control the wall. Press `Enter` to type into a tile and `Ctrl+G` to leave it. Mouse clicks also work.", other: "tmux-style prefix (default ctrl+b), with a mouse-native interface. Keys are configurable." }
   - { topic: "Several machines", garage: "claude-garage has no multi-machine view. You run it on the machine that hosts the sessions.", other: "Saved SSH machines appear in one window with a combined agent list." }
   - { topic: "Platforms", garage: "macOS and Linux (needs tmux 3.2 or newer). Windows x64 preview, not yet verified on real Windows.", other: "macOS, Linux and Windows (documented as beta)." }
   - { topic: "License and price", garage: "claude-garage is MIT licensed and free, with no account and no telemetry.", other: "herdr is Apache-2.0 licensed and free." }
-  - { topic: "Version checked", garage: "claude-garage 1.0.0-rc.1, from its source", other: "herdr 0.9.5, released 2026-10-14" }
+  - { topic: "Version checked", garage: "claude-garage 1.0.1, from its source", other: "herdr 0.9.5, released 2026-10-14" }
 notNeeded:
   - "You run Codex, Cursor, OpenCode or other agents next to Claude Code and want one tool for all of them."
   - "You manage agents on more than one machine and want them in one window."

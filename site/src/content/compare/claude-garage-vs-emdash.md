@@ -7,7 +7,7 @@ kind: tool
 competitor:
   name: "Emdash"
   url: "https://emdash.com"
-method: "Checked on 2026-11-01 against Emdash 1.2.10 (released 2026-10-30) and claude-garage 1.0.0-rc.1, using each project's own README and documentation, linked under Sources. Anything marked not documented was not in those sources."
+method: "Checked on 2026-11-01 against Emdash 1.2.10 (released 2026-10-30), and on 2026-11-02 against claude-garage 1.0.1, using each project's own README and documentation, linked under Sources. Anything marked not documented was not in those sources."
 checked: "2026-11-01"
 otherLabel: "Emdash"
 altQuestion: "Looking for an Emdash alternative?"
@@ -32,14 +32,14 @@ rows:
   - { topic: "Who hosts the sessions", garage: "tmux, on macOS and Linux.", other: "Not stated for the default. An optional tmux setting keeps processes alive when the app closes or a connection drops. Local Windows sessions do not use tmux." }
   - { topic: "Close the app or terminal", garage: "Sessions keep running in tmux.", other: "With tmux enabled, Emdash can reattach to running sessions. Without it, not documented." }
   - { topic: "After a reboot", garage: "Press `Enter` on a stopped tile to restore the session with `claude --resume`.", other: "tmux does not survive a reboot, per its docs. For agents with hook support, Emdash tracks resumable sessions." }
-  - { topic: "Which session needs me", garage: "The waiting session turns amber. Press `a` to jump to the session that has waited longest, or `A` for a queue. A desktop notification appears when the terminal is hidden.", other: "For agents with lifecycle hooks, Emdash installs hooks to track status and notifications. The exact interface is not documented in the pages we read." }
+  - { topic: "Which session needs me", garage: "The waiting session turns amber. Press `a` to jump to the session that has waited longest, or `A` for a queue. A chime plays, and a [desktop banner](/docs/guides/alerts/) appears when garage is not the focused window.", other: "For agents with lifecycle hooks, Emdash installs hooks to track status and notifications. The exact interface is not documented in the pages we read." }
   - { topic: "Git worktrees", garage: "Press `N` to start a session in a new git worktree. Closing it offers merge, discard or keep.", other: "Each task runs in its own worktree and branch. You review diffs, create pull requests, check CI and merge in the app." }
   - { topic: "Diff review and PRs", garage: "claude-garage has no built-in diff review or pull requests. You use git or your editor.", other: "Yes: diff view, pull requests, CI checks." }
   - { topic: "Issue trackers", garage: "claude-garage does not import issues.", other: "Send issues from Linear, GitHub, Jira, GitLab and others into an agent." }
   - { topic: "Remote machines", garage: "claude-garage has no remote-machine feature.", other: "SSH and SFTP remote projects." }
   - { topic: "Extending it", garage: "Plugins can be written in any language.", other: "A plugin system is not documented. A Library holds prompts, MCP servers and skills." }
   - { topic: "License and price", garage: "claude-garage is MIT licensed and free, with no account and no telemetry.", other: "Apache-2.0. Open source. Pricing is not documented in the pages we read. Telemetry is optional and can be turned off." }
-  - { topic: "Version checked", garage: "claude-garage 1.0.0-rc.1, from its source", other: "Emdash 1.2.10, released 2026-10-30" }
+  - { topic: "Version checked", garage: "claude-garage 1.0.1, from its source", other: "Emdash 1.2.10, released 2026-10-30" }
 notNeeded:
   - "You want to take a task from an issue to a merged pull request without leaving one app."
   - "You use Codex, Cursor or other agents as well as Claude Code."

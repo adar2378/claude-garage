@@ -39,7 +39,7 @@ whoever is waiting, and tmux keeping every session alive.
   terminal or reboot, and your sessions come back with their full
   conversation.
 
-It's small: one 17 MB binary (the plugins are inside it), about 6 MB of RAM and ~2% CPU.
+It's small: one 18 MB binary (the plugins are inside it), about 6 MB of RAM and ~2% CPU.
 
 ## Install
 

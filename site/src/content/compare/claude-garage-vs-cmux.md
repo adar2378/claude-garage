@@ -7,7 +7,7 @@ kind: tool
 competitor:
   name: "cmux"
   url: "https://cmux.com"
-method: "Checked on 2026-11-01 against cmux 0.65.2.2 (released 2026-10-27) and claude-garage 1.0.0-rc.1, using each project's own README and documentation, linked under Sources. Anything marked not documented was not in those sources."
+method: "Checked on 2026-11-01 against cmux 0.65.2.2 (released 2026-10-27), and on 2026-11-02 against claude-garage 1.0.1, using each project's own README and documentation, linked under Sources. Anything marked not documented was not in those sources."
 checked: "2026-11-01"
 otherLabel: "cmux"
 altQuestion: "Looking for a cmux alternative?"
@@ -33,13 +33,13 @@ rows:
   - { topic: "Who hosts the sessions", garage: "tmux.", other: "The app. The docs do not describe the terminal backend beyond being built on Ghostty." }
   - { topic: "After quitting the app", garage: "If you quit the wall or close the terminal, the sessions keep running in tmux.", other: "Layout and metadata come back on relaunch. Live processes are not checkpointed, so ordinary shells reopen fresh." }
   - { topic: "After a reboot", garage: "claude-garage keeps a record of each session. Press `Enter` on a stopped tile to restore it with `claude --resume`.", other: "Supported agent sessions can resume if hooks captured a resume token. Behaviour across a reboot is not documented." }
-  - { topic: "Which session needs me", garage: "The waiting session turns amber in its tile and in the rail. Press `a` to jump to the session that has waited longest, or `A` to open the queue. A desktop notification appears when the terminal is hidden.", other: "Panes get a ring and tabs light up. A notification panel lists unread items. Alerts come from cmux notify, terminal escape codes or Claude Code hooks you configure." }
+  - { topic: "Which session needs me", garage: "The waiting session turns amber in its tile and in the rail. Press `a` to jump to the session that has waited longest, or `A` to open the queue. A chime plays, and a [desktop banner](/docs/guides/alerts/) appears when garage is not the focused window. On macOS, clicking the banner jumps to that session.", other: "Panes get a ring and tabs light up. A notification panel lists unread items. Alerts come from cmux notify, terminal escape codes or Claude Code hooks you configure." }
   - { topic: "Git worktrees", garage: "Press `N` to start a session in a new git worktree. Closing the session offers merge, discard or keep.", other: "Not documented in the pages we read. The sidebar shows the git branch and linked PR." }
   - { topic: "Extending it", garage: "Plugins can be written in any language and add widgets, keys, panes and CLI commands.", other: "A CLI and socket API, plus custom commands in cmux.json. A plugin system is not documented." }
   - { topic: "Built-in browser", garage: "claude-garage has no browser pane.", other: "Yes. A scriptable browser pane sits next to the terminal." }
   - { topic: "Remote machines", garage: "claude-garage has no remote-machine feature. You run it where the sessions are.", other: "cmux ssh user@host opens a workspace for a remote machine." }
   - { topic: "License and price", garage: "claude-garage is MIT licensed and free, with no account and no telemetry.", other: "README says free and GPL-licensed. The LICENSE file applies GPL-3.0-or-later, with BUSL-1.1 for some server and web directories." }
-  - { topic: "Version checked", garage: "claude-garage 1.0.0-rc.1, from its source", other: "0.65.2.2, released 2026-10-27" }
+  - { topic: "Version checked", garage: "claude-garage 1.0.1, from its source", other: "0.65.2.2, released 2026-10-27" }
 notNeeded:
   - "You want a built-in browser pane next to the agent for web work."
   - "You are on macOS, happy to switch terminal apps, and want a native app."
@@ -53,7 +53,7 @@ faq:
   - q: "Does claude-garage work on Linux?"
     a: "Yes. It runs on Linux with tmux 3.2 or newer. cmux is a macOS app."
   - q: "Do both of them notify me when Claude needs input?"
-    a: "Yes, in different ways. cmux uses notification rings, a panel and notifications driven by its CLI, terminal escape codes or your Claude Code hooks. claude-garage uses an amber state, a jump key and a queue, and it can install status hooks for you with I."
+    a: "Yes, in different ways. cmux uses notification rings, a panel and notifications driven by its CLI, terminal escape codes or your Claude Code hooks. claude-garage uses an amber state, a jump key, a queue, a chime and a desktop banner, and it can install status hooks for you with I."
   - q: "How is cmux licensed?"
     a: "The cmux README calls it free and GPL-licensed. Its LICENSE file applies GPL-3.0-or-later to the project and BUSL-1.1 to a listed set of server and web directories. Read the file for the exact terms."
 ---

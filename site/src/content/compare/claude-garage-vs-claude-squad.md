@@ -7,7 +7,7 @@ kind: tool
 competitor:
   name: "Claude Squad"
   url: "https://github.com/smtg-ai/claude-squad"
-method: "Checked on 2026-11-01 against Claude Squad 1.0.20 (released 2026-08-20) and claude-garage 1.0.0-rc.1, using each project's own README and documentation, linked under Sources. Anything marked not documented was not in those sources."
+method: "Checked on 2026-11-01 against Claude Squad 1.0.20 (released 2026-08-20), and on 2026-11-02 against claude-garage 1.0.1, using each project's own README and documentation, linked under Sources. Anything marked not documented was not in those sources."
 checked: "2026-11-01"
 otherLabel: "Claude Squad"
 altQuestion: "Looking for a Claude Squad alternative?"
@@ -31,13 +31,13 @@ rows:
   - { topic: "Git worktrees", garage: "Press `N` to start a session in a new git worktree on a garage/<label> branch. Closing the session offers merge, discard or keep.", other: "Each task gets its own worktree and branch. s commits and pushes the branch. c commits and pauses the session. r resumes it." }
   - { topic: "Diff review", garage: "claude-garage has no built-in diff review. You use git or your editor in the worktree.", other: "A diff tab shows the changes before you apply them." }
   - { topic: "See many sessions at once", garage: "claude-garage shows a grid of up to six live tiles per view.", other: "One preview or diff at a time, next to a list of sessions." }
-  - { topic: "Which session needs me", garage: "The waiting session turns amber. Press `a` to jump to the session that has waited longest, or `A` for a queue. The bell and desktop notifications also fire.", other: "Not documented in the README or site we read." }
+  - { topic: "Which session needs me", garage: "The waiting session turns amber. Press `a` to jump to the session that has waited longest, or `A` for a queue. garage also rings the terminal bell, plays a chime, and shows a [desktop banner](/docs/guides/alerts/) when it is not the focused window.", other: "Not documented in the README or site we read." }
   - { topic: "After a reboot", garage: "claude-garage keeps a record of each session. Press `Enter` on a stopped tile to restore it with `claude --resume`, or `R` to restore every stopped session of the project.", other: "Not documented. The README describes pausing and resuming a session." }
   - { topic: "Auto-accept", garage: "claude-garage does not offer an auto-accept mode.", other: "An experimental --autoyes flag accepts prompts for every instance." }
   - { topic: "Extending it", garage: "Plugins can be written in any language and add widgets, keys, panes and CLI commands.", other: "A config file with program profiles. A plugin system is not documented." }
   - { topic: "Platforms", garage: "claude-garage runs on macOS and Linux, with a Windows x64 preview.", other: "Not documented in the README. It needs tmux and the GitHub CLI (gh)." }
   - { topic: "License and price", garage: "claude-garage is MIT licensed and free.", other: "Claude Squad is AGPL-3.0 licensed and free." }
-  - { topic: "Version checked", garage: "claude-garage 1.0.0-rc.1, from its source", other: "Claude Squad 1.0.20, released 2026-08-20" }
+  - { topic: "Version checked", garage: "claude-garage 1.0.1, from its source", other: "Claude Squad 1.0.20, released 2026-08-20" }
 notNeeded:
   - "You want a built-in diff view and a key to commit and push a branch."
   - "You run Codex, Gemini or Aider as well as Claude Code."

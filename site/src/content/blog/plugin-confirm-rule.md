@@ -58,7 +58,7 @@ I wanted claude-garage to stay very simple, with a flexible plugin architecture 
 
 ## Sources
 
-- claude-garage source: [`crates/plugin/src/core_actions.rs`](https://github.com/adar2378/claude-garage/blob/main/crates/plugin/src/core_actions.rs) (the dangerous action list). Facts checked against version 1.0.0-rc.1.
+- claude-garage source: [`crates/plugin/src/core_actions.rs`](https://github.com/adar2378/claude-garage/blob/main/crates/plugin/src/core_actions.rs) (the dangerous action list). Facts checked against version 1.0.1.
 - Docs: [actions](/docs/plugins/actions/), [permissions](/docs/plugins/permissions/) and [security](/docs/plugins/security/).
 
 ## Keep reading
