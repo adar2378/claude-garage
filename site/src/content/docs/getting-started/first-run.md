@@ -24,11 +24,11 @@ Press `q` to quit. Your sessions keep running in the background, because tmux ow
 |---|---|---|
 | `●` | needs input | Claude is waiting for your answer. Always sorted first. |
 | `◐` | working | Claude is running. |
-| `✓` | done | Finished since you last looked. |
+| `✓` | done | Finished. A green bar in the rail means you have not looked yet. |
 | `○` | idle | Waiting for your next request. |
 | `⟳` | restorable | The session stopped (after a reboot, say). Press `Enter` to bring it back. |
 
-Press `a` to jump to the session that has waited longest, from any project. Press `A` for the full queue.
+Press `a` to jump to the session that has waited longest, from any project. When nobody waits, `a` goes to the newest finished session you have not seen. Press `A` for the full queue.
 
 ## Next
 

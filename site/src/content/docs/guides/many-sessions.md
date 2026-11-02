@@ -36,7 +36,7 @@ Try it without installing: the [browser tutorial](/try/) simulates this exact wa
 
 Press `a` to go to the session that has waited the longest. It works from any project. garage changes project and view if it must, and then it **engages** the tile. Your next keystroke goes straight to Claude.
 
-For a permission prompt, this is two keys: `a`, then your answer. If no session waits, `a` shows a short notice and does nothing.
+For a permission prompt, this is two keys: `a`, then your answer. If no session waits, `a` goes to the newest finished session you have not seen. If there is none, it shows a short notice and does nothing.
 
 ## How do I see every waiting session?
 

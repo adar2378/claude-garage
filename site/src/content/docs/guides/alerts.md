@@ -17,12 +17,23 @@ The tile turns amber. Amber means one thing: Claude waits for your answer. The r
 
 The [run many sessions](/docs/guides/many-sessions/) guide covers both keys in detail.
 
+## How do I see which session finished?
+
+A session that finishes while you look at another one is marked as unseen until you focus it:
+
+- Its rail row gets a green bar and a green `✓`.
+- Its project gets a green dot in the rail, so you can see it from any project.
+- When no session waits for you, `a` jumps to the newest finished session you have not seen.
+
+A finished session you have already seen is dim. Working sessions are dim too, so only sessions that need you or finished unseen stand out.
+
 ## What does the alerts plugin do?
 
 `alerts` is one of the [built-in plugins](/docs/guides/plugins/). It is on by default. It makes:
 
 - A chime of two rising notes when a session needs you.
-- One soft note when a session finishes a turn that ran 20 seconds or more.
+- One soft note when a session finishes a turn that ran 20 seconds or more. It waits 8 seconds first and stays silent if Claude went back to work in that time.
+- A note in the wall's footer that names the session, such as `✓ api · fix login finished · a to jump`. It shows for every alert, also when garage is in view and no banner shows.
 - A desktop banner when garage is not the focused window, such as "fix needs you" with Claude's own message.
 
 Sessions that need you within two seconds of each other make one chime and one banner.
