@@ -1,6 +1,6 @@
 //! The left workspace rail (port of `tui/lib/ui/rail.dart` — spec tui-wall
 //! "Rail, strip, and salience ladder" + p8.3 "rail focus marker"):
-//! workspaces in salience order with their sessions — glyph, label, elapsed
+//! workspaces in rail order with their sessions — glyph, label, elapsed
 //! — amber rows exclusively for needs-input, per-workspace blocked counts,
 //! non-gridded sessions dimmed, and a reserved-column `▸` marker on the
 //! FOCUSED session's row. The marker column exists on every session row, so
@@ -652,9 +652,9 @@ mod tests {
                 .add_modifier
                 .contains(Modifier::REVERSED)
         };
-        assert!(reversed(&store, 1, 1200, true));
-        assert!(!reversed(&store, 1, 1000 + FLASH_MS, true), "over");
-        assert!(!reversed(&store, 1, 1200, false), "motion off");
+        assert!(reversed(&store, 2, 1200, true));
+        assert!(!reversed(&store, 2, 1000 + FLASH_MS, true), "over");
+        assert!(!reversed(&store, 2, 1200, false), "motion off");
         // a finished unseen row has the steady marker and never flashes
         let fin = store_with_unseen(); // finished at 1000
         assert!(!reversed(&fin, 2, 1200, true));

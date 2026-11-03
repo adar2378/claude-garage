@@ -77,7 +77,7 @@ fn p8_3_x_remove_transition_registry_only_removal_resurfaces_live_sessions_unreg
             .live()
     );
     // Registered groups keep registry order first; the synthesized group
-    // trails them (salience build_groups insertion order).
+    // trails them (build_groups insertion order).
     let names: Vec<&str> = store
         .state()
         .groups
@@ -270,7 +270,7 @@ fn jumps_to_the_longest_waiting_blocked_session_across_workspaces_and_lands_enga
 
 #[test]
 fn an_overflow_blocked_session_is_swapped_into_the_grid_by_the_jump() {
-    // 7 blocked sessions: salience keeps listing order, so the grid holds
+    // 7 blocked sessions: status keeps listing order, so the grid holds
     // s1..s6 and the oldest-waiting s7 is overflow until the jump.
     let sessions: Vec<SessionInfo> = (1..=7)
         .map(|i| si_status("a", &format!("s{i}"), "needs-input", Some(800 - i)))
@@ -397,7 +397,7 @@ fn p8_3_shift_x_maps_to_workspace_removal_an_effect_the_store_declines() {
 }
 
 #[test]
-fn digits_focus_workspaces_in_salience_order() {
+fn digits_focus_workspaces_in_rail_order_whatever_is_blocked() {
     let mut store = store_with(
         vec![ws("a"), ws("b")],
         vec![
@@ -405,14 +405,14 @@ fn digits_focus_workspaces_in_salience_order() {
             si_status("b", "blocked", "needs-input", Some(1000)),
         ],
     );
-    // b is blocked, so it holds rail position 1.
+    // b is blocked, but position 1 is still a.
     assert!(store.dispatch(GarageCommand::FocusWorkspace(0)));
-    assert_eq!(store.state().focused_workspace.as_deref(), Some("b"));
-    assert!(store.dispatch(GarageCommand::FocusWorkspace(1)));
     assert_eq!(store.state().focused_workspace.as_deref(), Some("a"));
+    assert!(store.dispatch(GarageCommand::FocusWorkspace(1)));
+    assert_eq!(store.state().focused_workspace.as_deref(), Some("b"));
     // Out-of-range digit: handled (consumed) but state unchanged.
     store.dispatch(GarageCommand::FocusWorkspace(8));
-    assert_eq!(store.state().focused_workspace.as_deref(), Some("a"));
+    assert_eq!(store.state().focused_workspace.as_deref(), Some("b"));
 }
 
 #[test]
@@ -445,13 +445,13 @@ fn state_commands_are_inert_outside_the_garage_layer() {
 // ── status events ───────────────────────────────────────────────────
 
 #[test]
-fn status_changed_reorders_salience_and_stamps_the_new_since() {
+fn status_changed_stamps_the_new_since_without_reordering_the_rail() {
     let mut store = store_with(
         vec![ws("a"), ws("b")],
         vec![si("a", "one"), si("b", "other")],
     );
     store.status_changed(&id("b", "other"), "needs-input", Some(4242));
-    assert_eq!(store.state().groups[0].name, "b");
+    assert_eq!(store.state().groups[0].name, "a");
     let s = store
         .state()
         .session_by_id(Some(&id("b", "other")))

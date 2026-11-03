@@ -211,8 +211,8 @@ fn p10_rail_ordering_and_blocked_count_are_view_independent() {
         .collect();
     assert_eq!(
         labels,
-        ["two", "three", "one"],
-        "salience partitions needs-input first regardless of view membership"
+        ["one", "two", "three"],
+        "status never reorders sessions, whatever their view"
     );
 }
 

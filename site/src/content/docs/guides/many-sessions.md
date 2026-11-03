@@ -26,7 +26,7 @@ Amber means one thing: Claude waits for your answer. garage uses amber for nothi
 - The project tab in the strip gets an amber dot.
 - The built-in `alerts` plugin plays a chime and, when no garage window is in view, shows a desktop banner. See [Know when Claude Code needs you](/docs/guides/alerts/).
 
-Waiting sessions are always sorted first in the rail.
+The rail never reorders itself. A waiting session shows in amber, with a count on its project, and keeps its place. So `1` to `9` always reach the same project. To change the order, press `Shift+Up` or `Shift+Down` on the focused project. garage saves the order.
 
 <img src="/renders/wall-needs-input.svg" width="1440" height="880" loading="lazy" decoding="async" alt="A sample claude-garage wall: a rail of projects on the left and session tiles on the right, with one tile outlined in amber and a status strip saying a session needs you.">
 
@@ -53,7 +53,7 @@ You can also click the waiting count in the strip.
 Projects that live in the same parent folder sit together in the rail. A faint label with the folder name sits above the group. For example `et-backend` and `et-admin` in `elite-traders/` get an `elite-traders` label.
 
 - If you also add the parent folder itself as a project, it leads the group.
-- If any project in a group has a waiting session, the whole group moves up. The blocked project comes first.
+- A waiting session does not move its group. The project shows an amber dot.
 - A project with no neighbor gets no label.
 - Project numbers `1` to `9` do not change. Label rows have no number and ignore clicks.
 

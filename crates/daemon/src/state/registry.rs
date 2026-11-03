@@ -203,6 +203,35 @@ impl Registry {
         })
     }
 
+    /// Reorders the registered workspaces (key order is the rail order): the
+    /// listed known names first, in the given order, then every unlisted
+    /// workspace in its existing relative order. Unknown and repeated names
+    /// are ignored. Returns the new list; the file is only rewritten when the
+    /// order actually changed.
+    pub async fn reorder_workspaces(&self, names: &[String]) -> std::io::Result<Vec<Workspace>> {
+        let _g = self.lock.lock().await;
+        let mut state = self.read();
+        let mut old = obj_of(&mut state, "workspaces");
+        let before: Vec<String> = old.keys().cloned().collect();
+        let mut next = Map::new();
+        for name in names {
+            if let Some(entry) = old.shift_remove(name) {
+                next.insert(name.clone(), entry);
+            }
+        }
+        next.extend(old);
+        let changed = next.keys().ne(before.iter());
+        let listed = next
+            .iter()
+            .filter_map(|(name, e)| e.as_object().map(|e| workspace_of_entry(name, e)))
+            .collect();
+        if changed {
+            state.insert("workspaces".into(), Value::Object(next));
+            self.write(&state)?;
+        }
+        Ok(listed)
+    }
+
     /// Moves the workspace key and rewrites every resume-metadata key that
     /// embeds the old name (`garage/<old>/<label>` -> `garage/<new>/<label>`,
     /// plus the meta's `workspace` field) in one atomic write. Trusts the
@@ -662,6 +691,35 @@ mod tests {
             raw["workspaces"]["b"]["registeredAt"].as_i64().unwrap() > 0,
             "the registration time is recorded"
         );
+    }
+
+    #[tokio::test]
+    async fn reorder_puts_listed_names_first_keeps_the_rest_in_order_and_ignores_unknowns() {
+        let s = Scratch::new();
+        let r = s.reg();
+        for n in ["a", "b", "c", "d"] {
+            r.upsert_workspace(n, &format!("/dir/{n}")).await.unwrap();
+        }
+        let order = |l: Vec<Workspace>| l.into_iter().map(|w| w.name).collect::<Vec<_>>();
+        let names = |v: &[&str]| v.iter().map(|n| n.to_string()).collect::<Vec<_>>();
+        let got = r
+            .reorder_workspaces(&names(&["c", "ghost", "a", "c"]))
+            .await
+            .unwrap();
+        assert_eq!(order(got), ["c", "a", "b", "d"]);
+        // Persisted: key order on disk, entries intact.
+        let keys: Vec<_> = s.raw()["workspaces"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .cloned()
+            .collect();
+        assert_eq!(keys, ["c", "a", "b", "d"]);
+        assert_eq!(s.raw()["workspaces"]["a"]["dir"], "/dir/a");
+        assert_eq!(order(r.list_workspaces().await), ["c", "a", "b", "d"]);
+        // An empty list changes nothing.
+        let got = r.reorder_workspaces(&[]).await.unwrap();
+        assert_eq!(order(got), ["c", "a", "b", "d"]);
     }
 
     #[tokio::test]

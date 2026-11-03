@@ -8,7 +8,7 @@ use std::collections::HashMap;
 pub use crate::actions::GarageCommand;
 use crate::api::models::{SessionInfo, WorkspaceInfo};
 use crate::state::armed_action::ArmedAction;
-use crate::state::salience::{jump_target, unseen_target};
+use crate::state::salience::{jump_target, move_workspace, unseen_target};
 use crate::state::views::{DEFAULT_VIEW, View, ViewsByWorkspace, derive_view_name, view_of};
 use crate::state::wall_state::{KeyLayer, OverlayKind, RailPrefs, WallSession, WallState};
 
@@ -283,7 +283,30 @@ impl WallStore {
 
     // ── Focus ─────────────────────────────────────────────────────────────
 
-    /// Focus the `index`-th group in salience order (the `1`–`9` bindings).
+    /// Move the focused workspace one step (`delta` -1 up, +1 down) and apply
+    /// the new order locally at once; focus stays on it (focus is by name).
+    /// Returns the registered-workspace order to send to the daemon, or
+    /// `None` (nothing moved: ends of the rail, synthesized or no focus).
+    pub fn move_focused_workspace(&mut self, delta: i32) -> Option<Vec<String>> {
+        if self.state.layer != KeyLayer::Garage {
+            return None;
+        }
+        let name = self.state.focused_workspace.clone()?;
+        let order = move_workspace(&self.state.groups, &name, delta)?;
+        let mut workspaces = self.state.workspaces.clone();
+        // Stable sort by position in the new order; unlisted entries keep
+        // their place after the listed ones.
+        workspaces.sort_by_key(|w| {
+            order
+                .iter()
+                .position(|n| *n == w.name)
+                .unwrap_or(usize::MAX)
+        });
+        self.workspaces_fetched(workspaces);
+        Some(order)
+    }
+
+    /// Focus the `index`-th group in rail order (the `1`–`9` bindings).
     pub fn focus_workspace(&mut self, index: usize) {
         let Some(group) = self.state.groups.get(index) else {
             return;
@@ -294,7 +317,7 @@ impl WallStore {
     }
 
     /// Focus a workspace by name (the add-workspace flow lands on the group
-    /// it just created — an index would race the salience reorder).
+    /// it just created — an index would race a refetch reorder).
     pub fn focus_workspace_named(&mut self, name: &str) {
         if self.state.group_by_name(Some(name)).is_none() {
             return;
@@ -473,7 +496,7 @@ impl WallStore {
     }
 
     /// The view-strip click target: focus `view_name` directly in the
-    /// focused workspace, landing on its first session in salience order
+    /// focused workspace, landing on its first session in listing order
     /// (same shape as [`WallStore::cycle_view`]'s destination, minus the
     /// cycling). A no-op outside the garage layer, with no focused
     /// workspace, or when the view doesn't currently exist (or is empty).
@@ -725,6 +748,7 @@ impl WallStore {
             | GarageCommand::RestoreAll
             | GarageCommand::Close
             | GarageCommand::WorkspaceRemove
+            | GarageCommand::MoveWorkspace(_)
             | GarageCommand::InstallStatusline
             | GarageCommand::OpenWindow
             | GarageCommand::RestartFocused

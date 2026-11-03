@@ -81,7 +81,7 @@ Press `q` to quit. Your sessions keep running in the background.
 
 | Glyph | State | Meaning |
 |---|---|---|
-| `●` | needs input | Claude is waiting for your answer. Always sorted first. |
+| `●` | needs input | Claude is waiting for your answer. Shown in amber; the rail order never changes. |
 | `◐` | working | Claude is running. |
 | `✓` | done | Finished since you last looked. |
 | `○` | idle | Waiting for your next request. |
@@ -120,6 +120,7 @@ Press `q` to quit. Your sessions keep running in the background.
 | `d` | move the session into its own view (press again to move it back) |
 | `D` | move the session to another view |
 | `w` | add a project |
+| `Shift+Up` / `Shift+Down` | move the focused project up or down the rail (the order is saved) |
 | `X X` | remove the project (sessions keep running) |
 | `X K` | remove the project and close its sessions |
 

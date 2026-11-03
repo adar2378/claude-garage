@@ -55,6 +55,7 @@ Workspace names and session labels SHALL match `^[a-z0-9-]+$`. A session id SHAL
 ### Requirement: Live event stream
 `GET /api/events` SHALL answer `200` with `Content-Type: text/event-stream`, write the comment line `: connected` first, then stream events until the client disconnects:
 - `event: status` with data `{"id":<session id>,"status":<state>,"since":<epoch ms|null>}` on every status transition;
+- `event: workspace.reordered` with data `{}` when the workspace order changes;
 - `event: sessions` with data `{}` whenever the set of live garage sessions or any pane title changes, and after a successful session restart;
 - the comment line `: keepalive` every 15 seconds.
 On shutdown the daemon SHALL end all open streams.
@@ -113,6 +114,7 @@ Session state SHALL be one of `idle`, `working`, `needs-input`, `done`. An unobs
 - `GET /api/workspaces` SHALL return `[{name, dir, branch}]`.
 - `PUT /api/workspaces` with `{name, dir}` SHALL register or update a workspace and answer `200 {name, dir}`; 400 for a bad name or a `dir` that is not a directory.
 - `PATCH /api/workspaces/<name>` with `{name:<new>}` SHALL rename the workspace, its live sessions and their resume metadata, answering `200 {name, dir, renamedSessions:[{from, to}], failedSessions?:[{id, error}]}`; 404 unknown, 400 bad name, 409 new name taken.
+- `PUT /api/workspace-order` with `{names:[<name>...]}` SHALL reorder the registry (the rail order): listed registered names first in the given order, then unlisted ones in their existing order, unknown names ignored. It SHALL answer `200 [{name, dir}]` in the new order, persist it, and emit `event: workspace.reordered` with data `{}`; 400 when `names` is not an array of strings.
 - `DELETE /api/workspaces/<name>` SHALL unregister it and answer 204, leaving sessions running; with `?sessions=kill` it SHALL also kill its live sessions and answer `200 {removed, killedSessions:[id], failedSessions?:[{id, error}]}`; 404 unknown.
 
 #### Scenario: Rename carries sessions

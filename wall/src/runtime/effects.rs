@@ -40,6 +40,9 @@ pub enum Effect {
     /// Confirmed `X`-`X` (registry-only) or `X` then `K` (`kill: true`,
     /// `?sessions=kill`).
     RemoveWorkspace { name: String, kill: bool },
+    /// `Shift+Up/Down`: `PUT /api/workspace-order {names}` after the wall
+    /// already moved the row locally; refetch either way.
+    ReorderWorkspaces { names: Vec<String> },
     /// The `w` overlay's validated submit: `PUT /api/workspaces {name, dir}`.
     AddWorkspace { name: String, dir: String },
     /// The `w` overlay's Ctrl+O: `POST /api/pick-directory` (native macOS
@@ -265,6 +268,13 @@ pub(super) fn run_effect(effect: Effect, tx: &EventSender, base_url: &str) {
                     Ok(body) => send_notice(&tx, kill_remove_notice(&name, body.as_ref()), 5000),
                     Err(e) => send_notice(&tx, failure_notice("remove failed", &e), 5000),
                 }
+                fetch_and_send(&client, &tx);
+            }
+            Effect::ReorderWorkspaces { names } => {
+                if let Err(e) = client.put_workspace_order(&names) {
+                    send_notice(&tx, failure_notice("reorder failed", &e), 5000);
+                }
+                // Reconcile with the daemon's truth, whatever happened.
                 fetch_and_send(&client, &tx);
             }
             Effect::AddWorkspace { name, dir } => match client.put_workspace(&name, &dir) {

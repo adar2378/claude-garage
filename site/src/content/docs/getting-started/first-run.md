@@ -22,7 +22,7 @@ Press `q` to quit. Your sessions keep running in the background, because tmux ow
 
 | Glyph | State | Meaning |
 |---|---|---|
-| `●` | needs input | Claude is waiting for your answer. Always sorted first. |
+| `●` | needs input | Claude is waiting for your answer. Shown in amber. |
 | `◐` | working | Claude is running. |
 | `✓` | done | Finished. A green bar in the rail means you have not looked yet. |
 | `○` | idle | Waiting for your next request. |

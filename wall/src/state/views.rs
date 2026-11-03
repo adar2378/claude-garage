@@ -49,7 +49,7 @@ pub type ViewsByWorkspace = HashMap<String, Vec<View>>;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ViewSummary {
     pub name: String,
-    /// Member session ids, in the same (salience) order as the `sessions`
+    /// Member session ids, in the same (listing) order as the `sessions`
     /// slice [`compute_views`] was given.
     pub session_ids: Vec<String>,
     pub needs_input_count: usize,
@@ -75,7 +75,7 @@ pub fn view_of(named: &[View], session_id: &str) -> String {
 /// here (pruning it out of `named` for good is [`prune_views`]'s job, run
 /// separately on load/refetch).
 ///
-/// `sessions` should already be in salience order (e.g. a
+/// `sessions` should already be in listing order (e.g. a
 /// `WorkspaceGroup::sessions` slice) — each summary's `session_ids`
 /// preserves that relative order, which is what the grid's per-view cap
 /// (store.rs) and the strip's rendering both rely on.

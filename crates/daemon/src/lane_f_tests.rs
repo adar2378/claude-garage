@@ -372,6 +372,62 @@ async fn patch_workspace_rename_tells_listeners_the_old_name_left_and_the_new_on
 }
 
 #[tokio::test]
+async fn put_workspace_order_reorders_persists_and_tells_listeners() {
+    let garage = tempfile::tempdir().unwrap();
+    let (st, _) = fake_state(garage.path());
+    for n in ["a", "b", "c"] {
+        st.registry.upsert_workspace(n, "/proj").await.unwrap();
+    }
+    let mut rx = st.bus.subscribe();
+    let (s, b) = call(
+        &st,
+        "PUT",
+        "/api/workspace-order",
+        Some(json!({"names": ["c", "a"]})),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK);
+    let got: Vec<_> = b
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|w| w["name"].clone())
+        .collect();
+    assert_eq!(got, [json!("c"), json!("a"), json!("b")]);
+    let listed = st.registry.list_workspaces().await;
+    assert_eq!(
+        listed.iter().map(|w| w.name.as_str()).collect::<Vec<_>>(),
+        ["c", "a", "b"]
+    );
+    assert_eq!(
+        rx.try_recv().unwrap(),
+        crate::bus::DaemonEvent::WorkspacesReordered
+    );
+}
+
+#[tokio::test]
+async fn put_workspace_order_rejects_a_bad_body_and_changes_nothing() {
+    let garage = tempfile::tempdir().unwrap();
+    let (st, _) = fake_state(garage.path());
+    st.registry.upsert_workspace("a", "/proj").await.unwrap();
+    st.registry.upsert_workspace("b", "/proj").await.unwrap();
+    let mut rx = st.bus.subscribe();
+    for body in [
+        None,
+        Some(json!({})),
+        Some(json!({"names": "b"})),
+        Some(json!({"names": ["b", 7]})),
+    ] {
+        let (s, b) = call(&st, "PUT", "/api/workspace-order", body).await;
+        assert_eq!(s, StatusCode::BAD_REQUEST);
+        assert!(b["error"].is_string());
+    }
+    assert!(rx.try_recv().is_err());
+    let listed = st.registry.list_workspaces().await;
+    assert_eq!(listed[0].name, "a");
+}
+
+#[tokio::test]
 async fn patch_workspace_reports_failed_session_renames_and_still_renames_the_registry() {
     let tmux = TestTmux::new();
     let garage = tempfile::tempdir().unwrap();

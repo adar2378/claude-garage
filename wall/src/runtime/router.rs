@@ -452,6 +452,11 @@ impl GarageRouter {
             GarageCommand::RestoreAll => self.restore_all(store, now_ms, effects),
             GarageCommand::Close => self.close_pressed(store, now_ms, effects),
             GarageCommand::WorkspaceRemove => self.remove_pressed(store, now_ms, effects),
+            GarageCommand::MoveWorkspace(delta) => {
+                if let Some(names) = store.move_focused_workspace(delta) {
+                    effects.push(Effect::ReorderWorkspaces { names });
+                }
+            }
             GarageCommand::InstallStatusline => self.install_pressed(effects),
             GarageCommand::OpenWindow => self.open_window_pressed(store, now_ms, effects),
             _ => {}

@@ -19,6 +19,7 @@ export const BINDINGS = [
   ["r d", "restart the daemon (sessions untouched)"],
   ["X X", "remove focused workspace (sessions keep running)"],
   ["X K", "remove focused workspace AND kill its sessions"],
+  ["Shift+↑↓", "move focused workspace up / down (persists)"],
   ["w", "add workspace"],
   ["d", "detach focused session to its own view, or rejoin main"],
   ["D", "move focused session to another view / new group"],

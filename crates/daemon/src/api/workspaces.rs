@@ -91,6 +91,46 @@ pub async fn put(State(state): State<AppState>, body: Bytes) -> Response {
     }
 }
 
+/// `PUT /api/workspace-order` `{names: [..]}`: reorders the registry, so the
+/// rail order persists. Listed known names lead in the given order, unlisted
+/// ones follow in their current order, unknown names are ignored. Answers the
+/// new `[{name, dir}]` list and tells listeners with `workspace.reordered`.
+/// (Not under `/api/workspaces/` so a workspace named `order` stays addressable.)
+pub async fn put_order(State(state): State<AppState>, body: Bytes) -> Response {
+    let body = match parse_body(&body) {
+        Ok(b) => b,
+        Err(r) => return *r,
+    };
+    let names: Option<Vec<String>> = body.get("names").and_then(Value::as_array).and_then(|a| {
+        a.iter()
+            .map(|v| v.as_str().map(str::to_owned))
+            .collect::<Option<Vec<_>>>()
+    });
+    let Some(names) = names else {
+        return error_response(StatusCode::BAD_REQUEST, "names must be an array of strings");
+    };
+    match state.registry.reorder_workspaces(&names).await {
+        Ok(list) => {
+            state
+                .bus
+                .publish(crate::bus::DaemonEvent::WorkspacesReordered);
+            let entries: Vec<Value> = list
+                .into_iter()
+                .map(|w| {
+                    let mut o = Map::new();
+                    o.insert("name".into(), json!(w.name));
+                    if let Some(d) = &w.dir {
+                        o.insert("dir".into(), json!(d));
+                    }
+                    Value::Object(o)
+                })
+                .collect();
+            Json(entries).into_response()
+        }
+        Err(e) => internal(e.into()),
+    }
+}
+
 /// How a JS template literal prints a body value: absent is `undefined`.
 pub(crate) fn js_display(v: Option<&Value>) -> String {
     match v {

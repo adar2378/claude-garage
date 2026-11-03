@@ -29,7 +29,7 @@ When a workspace has 2 or more views, a one-line view strip SHALL render above t
 - **THEN** a neutral frame wraps the grid; switching to a solo view shows no frame
 
 ### Requirement: Salience is never trapped by views
-Rail ordering, the strip badge, bell, and OSC title SHALL reflect blocked sessions regardless of which view they sit in. `a`-jump and triage-queue jumps SHALL switch workspace AND view as needed and land engaged. Focusing a session in a background view (rail click, jump) SHALL focus that session's view.
+The rail's blocked counts and amber colouring, the strip badge, bell, and OSC title SHALL reflect blocked sessions regardless of which view they sit in. `a`-jump and triage-queue jumps SHALL switch workspace AND view as needed and land engaged. Focusing a session in a background view (rail click, jump) SHALL focus that session's view.
 
 #### Scenario: a-jump crosses views
 - **WHEN** a session in a background view of another workspace goes needs-input and the user presses `a`

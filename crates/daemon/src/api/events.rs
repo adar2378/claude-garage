@@ -10,6 +10,7 @@
 //! payload a plugin event hook gets; `widgets` (`{plugin, rev}`), `plugins`
 //! (`{}`), `plugin_run_failed`, `plugin_notice`, `ui_action` (a plugin asks the
 //! TUI to run an action) and `pane` (a plugin pane opened or closed) serve the TUI.
+//! `workspace.reordered` (`{}`) is core-only: the rail order changed, refetch.
 
 use std::convert::Infallible;
 use std::time::Duration;
@@ -49,6 +50,9 @@ fn frame(event: &DaemonEvent) -> Event {
         DaemonEvent::WidgetsChanged { plugin, rev } => Event::default()
             .event("widgets")
             .data(json!({"plugin": plugin, "rev": rev}).to_string()),
+        DaemonEvent::WorkspacesReordered => {
+            Event::default().event("workspace.reordered").data("{}")
+        }
         DaemonEvent::PluginsChanged => Event::default().event("plugins").data("{}"),
         DaemonEvent::UiAction {
             plugin,

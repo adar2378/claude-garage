@@ -76,6 +76,9 @@ pub enum DaemonEvent {
     WorkspaceRemoved {
         name: String,
     },
+    /// The registry order changed (`PUT /api/workspace-order`). Core SSE
+    /// frame `workspace.reordered` only; not a plugin event.
+    WorkspacesReordered,
     /// A plugin action or event run failed (non-zero exit, timeout, spawn).
     PluginRunFailed {
         plugin: String,

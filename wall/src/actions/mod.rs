@@ -111,6 +111,9 @@ pub mod ids {
     pub const VIEW_CYCLE: ActionId = ActionId("view.cycle");
     pub const WORKSPACE_REMOVE: ActionId = ActionId("workspace.remove");
     pub const WORKSPACE_REMOVE_KILL: ActionId = ActionId("workspace.remove.kill");
+    /// `Shift+Up` / `Shift+Down`: move the focused workspace in the rail.
+    pub const WORKSPACE_MOVE_UP: ActionId = ActionId("workspace.move_up");
+    pub const WORKSPACE_MOVE_DOWN: ActionId = ActionId("workspace.move_down");
     pub const HOOKS_INSTALL: ActionId = ActionId("hooks.install");
     pub const APP_QUIT: ActionId = ActionId("app.quit");
     /// Click-reachable (and internal) ids with no key today.
@@ -159,6 +162,8 @@ pub mod ids {
         VIEW_CYCLE,
         WORKSPACE_REMOVE,
         WORKSPACE_REMOVE_KILL,
+        WORKSPACE_MOVE_UP,
+        WORKSPACE_MOVE_DOWN,
         HOOKS_INSTALL,
         APP_QUIT,
         SESSION_FOCUS,
@@ -220,6 +225,8 @@ pub const META: &[ActionMeta] = &[
     meta_row(ids::VIEW_CYCLE, false, true),
     meta_row(ids::WORKSPACE_REMOVE, true, true),
     meta_row(ids::WORKSPACE_REMOVE_KILL, true, true),
+    meta_row(ids::WORKSPACE_MOVE_UP, false, false),
+    meta_row(ids::WORKSPACE_MOVE_DOWN, false, false),
     meta_row(ids::HOOKS_INSTALL, true, true),
     meta_row(ids::APP_QUIT, false, false),
     meta_row(ids::SESSION_FOCUS, false, true),
@@ -406,6 +413,11 @@ pub enum GarageCommand {
     /// registry-only: live sessions keep running and reappear as an
     /// unregistered group), so the store always declines it.
     WorkspaceRemove,
+    /// `Shift+Up` (-1) / `Shift+Down` (+1): move the focused workspace one
+    /// step in the rail (spec tui-triage "Manual workspace reordering") — an
+    /// effect (`PUT /api/workspace-order`) after an optimistic local move, so
+    /// the store always declines it.
+    MoveWorkspace(i32),
     /// `d` (spec tui-views "Detach and rejoin"): move the focused session
     /// out of a multi-session view into its own solo view (focusing it), or
     /// — if it's already alone in its view — rejoin it to the default view.
@@ -473,6 +485,8 @@ pub fn command_for_action(id: ActionId, index: Option<usize>) -> Option<GarageCo
         ids::DAEMON_RESTART => C::RestartDaemon,
         ids::VIEW_CYCLE => C::CycleView,
         ids::WORKSPACE_REMOVE => C::WorkspaceRemove,
+        ids::WORKSPACE_MOVE_UP => C::MoveWorkspace(-1),
+        ids::WORKSPACE_MOVE_DOWN => C::MoveWorkspace(1),
         ids::HOOKS_INSTALL => C::InstallStatusline,
         ids::APP_QUIT => C::Quit,
         _ => return None,
@@ -578,6 +592,8 @@ mod tests {
             [
                 "overlay.open.plugins",
                 "session.engage",
+                "workspace.move_up",
+                "workspace.move_down",
                 "app.quit",
                 "rail.toggle",
                 "rail.narrow",

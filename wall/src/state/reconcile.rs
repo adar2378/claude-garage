@@ -163,7 +163,7 @@ pub(super) fn refocus_vacated_views(mut next: WallState) -> WallState {
 }
 
 /// Switch the focused workspace: rebuild the grid as the *focused view's*
-/// first [`WallState::GRID_CAP`] sessions in salience order (the workspace's
+/// first [`WallState::GRID_CAP`] sessions in listing order (the workspace's
 /// remembered `focused_view`, defaulting to [`DEFAULT_VIEW`] — see
 /// `WallState::focused_view_name`), focus the first tile. The per-view cap
 /// (spec tui-views "View partitioning": "the 6-tile cap and overflow rules
@@ -189,7 +189,7 @@ pub(super) fn with_focused_workspace(base: WallState, name: Option<&str>) -> Wal
 }
 
 /// Focus `session_id`, landing it in `(workspace, view)`: switching there
-/// first (a fresh salience-ordered grid, same rule as
+/// first (a fresh listing-ordered grid, same rule as
 /// [`with_focused_workspace`]) if that pair isn't already focused, then
 /// making sure `session_id` itself is gridded and focused via the
 /// append/LRU-swap-in rule. The one primitive behind plain session focus,

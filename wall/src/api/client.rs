@@ -313,6 +313,17 @@ impl GarageClient {
         Ok(())
     }
 
+    /// `PUT /api/workspace-order {names}` — persist the rail order.
+    pub fn put_workspace_order(&self, names: &[String]) -> Result<(), ApiError> {
+        read_json(
+            self.agent
+                .put(&format!("{}/api/workspace-order", self.base_url))
+                .header("Content-Type", "application/json")
+                .send(json!({ "names": names }).to_string()),
+        )?;
+        Ok(())
+    }
+
     /// `DELETE /api/workspaces/<name>` — registry-only removal by default
     /// (the TUI's `X`-`X` confirm must not touch tmux: live sessions keep
     /// running and reappear in the rail as an unregistered group after the

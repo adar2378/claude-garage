@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- **The rail no longer reorders itself.** A session that needs you used to
+  float its project, and its whole folder group, to the top, so the `1` to `9`
+  keys pointed at different projects from one minute to the next. Projects
+  and sessions now keep their place. A waiting session still shows in amber,
+  with the count on its project, in the strip total and through `a`.
+- **Reorder projects.** `Shift+Up` and `Shift+Down` move the focused project
+  up or down the rail. The order is saved and survives a restart. The head of
+  a folder group stays first in its group, and moving it moves the whole
+  group.
+
 ## 1.0.3 — projects added from outside show up
 
 - A project added from outside the wall (by an agent, a script or `claude-garage open`) now shows up at once, and one removed from outside disappears. A rename shows up at once too.

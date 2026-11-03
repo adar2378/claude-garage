@@ -167,6 +167,39 @@ fn x_x_confirm_is_registry_only_never_sessions_kill() {
 }
 
 #[test]
+fn shift_down_moves_the_focused_workspace_at_once_and_asks_the_daemon_to_persist_it() {
+    let mut store = store_with(vec![ws("a"), ws("b"), ws("c")], vec![si("a", "one")]);
+    let mut router = GarageRouter::default();
+    assert_eq!(
+        key_at(&mut router, &mut store, "shift+down", 1000),
+        vec![Effect::ReorderWorkspaces {
+            names: vec!["b".to_owned(), "a".to_owned(), "c".to_owned()],
+        }]
+    );
+    let names: Vec<&str> = store
+        .state()
+        .groups
+        .iter()
+        .map(|g| g.name.as_str())
+        .collect();
+    assert_eq!(names, ["b", "a", "c"]);
+    assert_eq!(store.state().focused_workspace.as_deref(), Some("a"));
+    assert_eq!(store.state().focused_session_id, Some(id("a", "one")));
+    // Digits follow the new order, and the top of the rail is a no-op.
+    assert_eq!(key_at(&mut router, &mut store, "shift+up", 1100).len(), 1);
+    assert_eq!(key_at(&mut router, &mut store, "shift+up", 1200), vec![]);
+}
+
+#[test]
+fn shift_arrows_do_nothing_for_a_synthesized_workspace() {
+    let mut store = store_with(vec![ws("a")], vec![si("a", "one"), si("stray", "s")]);
+    store.focus_workspace(1);
+    assert_eq!(store.state().focused_workspace.as_deref(), Some("stray"));
+    let mut router = GarageRouter::default();
+    assert_eq!(key_at(&mut router, &mut store, "shift+up", 1000), vec![]);
+}
+
+#[test]
 fn k_within_the_arm_window_confirms_the_kill_remove() {
     let mut store = store_with(vec![ws("proj")], vec![si("proj", "a"), si("proj", "b")]);
     let mut router = GarageRouter::default();
@@ -930,6 +963,31 @@ fn garage_key_string_normalizes_enter_and_passes_plain_chars() {
     assert_eq!(
         garage_key_string(&KeyEvent::new(KeyCode::Char('?'), KeyModifiers::SHIFT)).as_deref(),
         Some("?")
+    );
+}
+
+#[test]
+fn garage_key_string_names_shift_up_and_down_for_workspace_moves_only() {
+    let key = |code, mods| garage_key_string(&KeyEvent::new(code, mods));
+    assert_eq!(
+        key(KeyCode::Up, KeyModifiers::SHIFT).as_deref(),
+        Some("shift+up")
+    );
+    assert_eq!(
+        key(KeyCode::Down, KeyModifiers::SHIFT).as_deref(),
+        Some("shift+down")
+    );
+    assert_eq!(key(KeyCode::Up, KeyModifiers::NONE), None);
+    assert_eq!(
+        key(KeyCode::Down, KeyModifiers::SHIFT | KeyModifiers::CONTROL),
+        None
+    );
+    let resolved = Keymap::defaults()
+        .resolve(Layer::Garage, "shift+up")
+        .unwrap();
+    assert_eq!(
+        command_for_action(resolved.action, resolved.index),
+        Some(GarageCommand::MoveWorkspace(-1))
     );
 }
 

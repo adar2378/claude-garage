@@ -31,7 +31,10 @@ pub(super) fn fetch_and_send(client: &GarageClient, tx: &EventSender) {
 
 /// Core SSE events that mean the workspace registry changed.
 fn is_workspace_event(name: &str) -> bool {
-    matches!(name, "workspace.added" | "workspace.removed")
+    matches!(
+        name,
+        "workspace.added" | "workspace.removed" | "workspace.reordered"
+    )
 }
 
 /// Fetch the plugin listing and every plugin's widgets (startup, `plugins`
@@ -363,6 +366,7 @@ mod tests {
     fn registry_events_trigger_a_workspace_refetch() {
         assert!(is_workspace_event("workspace.added"));
         assert!(is_workspace_event("workspace.removed"));
+        assert!(is_workspace_event("workspace.reordered"));
         for other in [
             "sessions",
             "status",

@@ -3,12 +3,12 @@
 ## Purpose
 TBD - created by archiving change p8-nocterm-tui. Update Purpose after archive.
 ## Requirements
-### Requirement: Salience-first ordering
-Rail ordering SHALL be stable and salience-sorted over workspace families. A family is the set of workspaces whose directories share a parent folder (compared case-insensitively, trailing slash ignored); a workspace whose own directory is that parent folder is the family's head and belongs to it instead of to its own parent's family. A workspace with no known directory is its own family. Family members SHALL be adjacent in the rail, families ordered by their first member's registration (then discovery) order and members keeping that order within the family. A family containing a `needs-input` session SHALL sort before families without one, and within a family workspaces containing a `needs-input` session SHALL sort first, then the head, then the rest in order. Within a workspace `needs-input` sessions sort first. The rail SHALL show a per-workspace amber dot with the blocked count on each workspace row that contains a blocked session, and the strip SHALL show the total blocked count whenever it is non-zero (the strip carries no workspace tabs).
+### Requirement: Stable rail ordering
+Rail ordering SHALL never change because of session status, and is arranged over workspace families. A family is the set of workspaces whose directories share a parent folder (compared case-insensitively, trailing slash ignored); a workspace whose own directory is that parent folder is the family's head and belongs to it instead of to its own parent's family. A workspace with no known directory is its own family. Family members SHALL be adjacent in the rail, families ordered by their first member's registration (then discovery) order and members keeping that order within the family. The head SHALL lead its family, then the rest in order. Sessions SHALL keep the daemon's listing order within a workspace. A blocked session SHALL show only through amber colouring and counts; no workspace, family or session moves, so the `1`-`9` keys always target the same workspace. The rail SHALL show a per-workspace amber dot with the blocked count on each workspace row that contains a blocked session, and the strip SHALL show the total blocked count whenever it is non-zero (the strip carries no workspace tabs).
 
-#### Scenario: Blocked family bubbles up
+#### Scenario: Blocked workspace keeps its place
 - **WHEN** workspace B (rail position 2), a sibling of workspace C (position 3), gains a needs-input session while workspace A (position 1, a different folder) has none
-- **THEN** B renders first, C directly after it, then A, and other relative orders are unchanged
+- **THEN** the order stays A, B, C, B shows the amber dot with its blocked count, and the strip total counts it
 
 #### Scenario: Siblings are adjacent
 - **WHEN** the registry lists `et-mobile-app`, `mobile-apps`, `et-backend` where `et-mobile-app` and `et-backend` share a parent folder
@@ -22,9 +22,20 @@ Rail ordering SHALL be stable and salience-sorted over workspace families. A fam
 - **WHEN** the registry lists `cto-playground` at `.../devmonks/cto-playground`, `et-backend` and `et-admin` at `.../Development/devmonks/elite-traders/`, and `elite-traders` at `.../development/devmonks/elite-traders`
 - **THEN** `elite-traders` renders first in one family with `et-backend` and `et-admin`, labelled `elite-traders`, and not in `cto-playground`'s family
 
-#### Scenario: Blocked child leads the head
+#### Scenario: Blocked child does not lead the head
 - **WHEN** `et-admin` has a needs-input session and its head `elite-traders` has none
-- **THEN** `et-admin` renders first in the family, `elite-traders` directly after it, and the family label sits above `et-admin`
+- **THEN** `elite-traders` still renders first in the family with the family label above it, and `et-admin` keeps its position, shown amber
+
+### Requirement: Manual workspace reordering
+`Shift+Up` / `Shift+Down` in the garage layer SHALL move the focused workspace one step up or down the rail, and the order SHALL persist in the daemon registry across restarts. Within a family the workspace swaps with its adjacent member, but the head always stays first in its family; at the edge of its family (or alone in one) the workspace's whole family moves past the adjacent family, and moving the head moves its whole family. At either end of the rail the key is a no-op. Only registered workspaces move; a synthesized (unregistered) workspace is left alone. Focus SHALL stay on the moved workspace.
+
+#### Scenario: Move within a family
+- **WHEN** a family is `elite-traders` (head), `et-a`, `et-b` and `et-b` is focused and the user presses `Shift+Up`
+- **THEN** the family becomes `elite-traders`, `et-b`, `et-a` and `et-b` stays focused
+
+#### Scenario: Move past a family
+- **WHEN** `et-b` is the last member of its family, another family follows it, and the user presses `Shift+Down`
+- **THEN** the whole family moves below the next family
 
 ### Requirement: The `a` jump lands engaged
 Pressing `a` in the garage layer SHALL focus the longest-waiting `needs-input` session across all workspaces — switching workspace if needed, swapping the session into the grid if it was overflow — and SHALL immediately enter the `engaged` layer on that tile, so the next keystroke reaches the blocked agent. If no session is blocked, `a` SHALL be a no-op with a brief strip notice.

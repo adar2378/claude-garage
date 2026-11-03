@@ -16,7 +16,7 @@ pub mod worktrees;
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::Response;
-use axum::routing::{delete, get, patch, post};
+use axum::routing::{delete, get, patch, post, put};
 use axum::{Json, Router};
 use garage_protocol::Health;
 
@@ -50,6 +50,7 @@ pub fn routes() -> Router<AppState> {
             "/api/workspaces",
             get(workspaces::list).put(workspaces::put),
         )
+        .route("/api/workspace-order", put(workspaces::put_order))
         .route(
             "/api/workspaces/{name}",
             patch(workspaces::patch).delete(workspaces::delete),

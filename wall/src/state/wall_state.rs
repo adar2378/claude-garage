@@ -146,10 +146,10 @@ pub struct WallState {
     pub workspaces: Vec<WorkspaceInfo>,
     /// All sessions, as fetched (live + restorable).
     pub sessions: Vec<WallSession>,
-    /// Salience-ordered groups (see salience.rs). This IS the rail render
+    /// Rail-ordered groups (see salience.rs). This IS the rail render
     /// order and the order the `1`–`9` bindings index into.
     pub groups: Vec<WorkspaceGroup>,
-    /// Focused workspace by name — name, not index, so salience reorders
+    /// Focused workspace by name — name, not index, so a reorder
     /// never silently move the focus.
     pub focused_workspace: Option<String>,
     pub focused_session_id: Option<String>,
@@ -335,7 +335,7 @@ impl WallState {
             .unwrap_or(views::DEFAULT_VIEW)
     }
 
-    /// Salience-ordered session ids of `workspace`'s `view` — the input to
+    /// Listing-ordered session ids of `workspace`'s `view` — the input to
     /// the per-view grid cap/LRU machinery in store.rs. Empty when the
     /// workspace has no group, or when `view` currently has no members.
     pub(crate) fn view_session_ids(&self, workspace: &str, view: &str) -> Vec<String> {

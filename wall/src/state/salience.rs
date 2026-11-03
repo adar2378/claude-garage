@@ -1,27 +1,19 @@
-//! Salience ordering (port of `tui/lib/state/salience.dart` — spec
-//! tui-triage: "Salience-first ordering"):
-//!  - workspaces containing >=1 needs-input session sort before the rest,
-//!    stable otherwise (registration/discovery order preserved within each
-//!    bucket);
-//!  - within a workspace, needs-input sessions sort before the rest, stable
-//!    otherwise;
+//! Rail ordering (spec tui-triage: "Stable rail ordering"). Status never
+//! moves anything; attention shows through colour and counts, not position:
+//!  - workspaces keep registry order (synthesized groups after, in discovery
+//!    order); sessions keep the daemon's listing order;
 //!  - workspaces sharing a parent directory form a family: members stay
-//!    contiguous, a family floats if any member is blocked, blocked members
-//!    lead within it (spec tui-triage "Salience-first ordering"); a workspace
-//!    whose own dir is another's parent is the family's head and leads it
-//!    (after any blocked members), labelled by its own name;
+//!    contiguous and families are ordered by their first member; a workspace
+//!    whose own dir is another's parent is the family's head and leads it,
+//!    labelled by its own name;
 //!  - sessions whose workspace isn't registered still get a synthesized
 //!    group (registered: false) so nothing is invisible.
-//!
-//! groups.js leans on JS Array#sort being stable; like the Dart port, the
-//! two-bucket rank sort is implemented as a stable partition — identical
-//! semantics for a boolean key.
 
 use crate::api::models::WorkspaceInfo;
 use crate::state::wall_state::{WallSession, WallState};
 
 /// One rail group: a workspace (registered or synthesized) with its sessions
-/// in salience order.
+/// in listing order.
 #[derive(Clone, Debug)]
 pub struct WorkspaceGroup {
     pub name: String,
@@ -33,21 +25,11 @@ pub struct WorkspaceGroup {
     /// folder's), set on the first member of a family of >=2 workspaces; the
     /// rail draws it as a faint row above that member's header.
     pub family_label: Option<String>,
-}
-
-impl WorkspaceGroup {
-    pub fn has_needs_input(&self) -> bool {
-        self.sessions.iter().any(WallSession::needs_input)
-    }
-}
-
-/// Stable two-bucket sort: everything matching `first` in original order,
-/// then the rest in original order.
-fn stable_partition<T>(items: Vec<T>, first: impl Fn(&T) -> bool) -> Vec<T> {
-    let (hits, rest): (Vec<T>, Vec<T>) = items.into_iter().partition(|item| first(item));
-    let mut out = hits;
-    out.extend(rest);
-    out
+    /// Index of the arranged family this group belongs to (members share it
+    /// and are adjacent). Drives [`move_workspace`].
+    pub family: usize,
+    /// True for the family head (its own dir is the family's parent).
+    pub is_head: bool,
 }
 
 /// Family key: the group dir's parent, trailing slash stripped, lowercased
@@ -85,10 +67,9 @@ type Family = (Option<String>, Vec<(bool, WorkspaceGroup)>);
 /// families ordered by their first member, members in insertion order.
 /// A group whose own dir is another group's parent is a head: it joins its
 /// children's family instead of its parent's (no chaining: a head that is
-/// also a child stays the head of its own family). Blocked families float,
-/// blocked members lead within a family, then the head, and the first member
-/// of each family of >=2 gets `family_label` (the head's name, else the
-/// shared parent's).
+/// also a child stays the head of its own family). The head leads its family,
+/// and the first member of each family of >=2 gets `family_label` (the head's
+/// name, else the shared parent's).
 fn arrange_families(groups: Vec<WorkspaceGroup>) -> Vec<WorkspaceGroup> {
     let child_keys: Vec<Option<String>> = groups
         .iter()
@@ -112,13 +93,10 @@ fn arrange_families(groups: Vec<WorkspaceGroup>) -> Vec<WorkspaceGroup> {
             None => families.push((key, vec![(is_head, group)])),
         }
     }
-    let families = stable_partition(families, |(_, members)| {
-        members.iter().any(|(_, g)| g.has_needs_input())
-    });
     let mut out = Vec::new();
-    for (_, mut members) in families {
+    for (family, (_, mut members)) in families.into_iter().enumerate() {
         // stable: ties keep insertion order
-        members.sort_by_key(|(is_head, g)| (!g.has_needs_input(), !*is_head));
+        members.sort_by_key(|(is_head, _)| !*is_head);
         if members.len() >= 2 {
             let label = match members.iter().find(|(h, _)| *h) {
                 Some((_, head)) => own_basename(head.dir.as_deref()),
@@ -126,7 +104,11 @@ fn arrange_families(groups: Vec<WorkspaceGroup>) -> Vec<WorkspaceGroup> {
             };
             members[0].1.family_label = label;
         }
-        out.extend(members.into_iter().map(|(_, g)| g));
+        out.extend(members.into_iter().map(|(is_head, mut g)| {
+            g.family = family;
+            g.is_head = is_head;
+            g
+        }));
     }
     out
 }
@@ -160,13 +142,61 @@ pub fn build_groups(workspaces: &[WorkspaceInfo], sessions: &[WallSession]) -> V
                 .or_else(|| group_sessions.first().and_then(|s| s.dir.clone())),
             branch: ws.and_then(|w| w.branch.clone()),
             registered: ws.is_some(),
-            sessions: stable_partition(group_sessions, WallSession::needs_input),
+            sessions: group_sessions,
             family_label: None,
+            family: 0,
+            is_head: false,
             name,
         })
         .collect();
 
     arrange_families(groups)
+}
+
+/// The registered-workspace order after moving `name` one step (`delta` is
+/// negative for up, positive for down) in the rail as rendered, or `None`
+/// when nothing would change (unknown or synthesized workspace, or already
+/// at the end).
+///
+/// Within a family the workspace swaps with its adjacent member, but the head
+/// always stays first in its family. At the edge of its family (or alone in
+/// one), and for the head itself, the whole family moves past the adjacent
+/// family. Synthesized groups are not in the registry, so they are skipped
+/// both as the mover and as neighbours; the result lists registered names
+/// only, ready for `PUT /api/workspace-order`.
+pub fn move_workspace(groups: &[WorkspaceGroup], name: &str, delta: i32) -> Option<Vec<String>> {
+    // Blocks of adjacent registered groups sharing a family.
+    let mut blocks: Vec<Vec<&WorkspaceGroup>> = Vec::new();
+    for g in groups.iter().filter(|g| g.registered) {
+        match blocks.last_mut() {
+            Some(block) if block[0].family == g.family => block.push(g),
+            _ => blocks.push(vec![g]),
+        }
+    }
+    let (bi, mi) = blocks
+        .iter()
+        .enumerate()
+        .find_map(|(bi, block)| block.iter().position(|g| g.name == name).map(|mi| (bi, mi)))?;
+    let step = i64::from(delta.signum());
+    if step == 0 {
+        return None;
+    }
+    let before: Vec<&str> = blocks.iter().flatten().map(|g| g.name.as_str()).collect();
+    let block = &blocks[bi];
+    // The head is pinned to the first slot, so a member can't go above it.
+    let first_movable = i64::from(block[0].is_head);
+    let target = mi as i64 + step;
+    if !block[mi].is_head && target >= first_movable && target < block.len() as i64 {
+        blocks[bi].swap(mi, target as usize);
+    } else {
+        let other = bi as i64 + step;
+        if other < 0 || other >= blocks.len() as i64 {
+            return None;
+        }
+        blocks.swap(bi, other as usize);
+    }
+    let after: Vec<&str> = blocks.iter().flatten().map(|g| g.name.as_str()).collect();
+    (after != before).then(|| after.into_iter().map(str::to_owned).collect())
 }
 
 /// The `R` restore-all selection (spec tui-key-routing "p8.1 session
@@ -217,8 +247,8 @@ pub fn unseen_target(state: &WallState) -> Option<&WallSession> {
 
 #[cfg(test)]
 mod tests {
-    //! Port of `tui/test/salience_test.dart` — blocked-first at both levels,
-    //! stable otherwise, synthesized groups for unregistered workspaces.
+    //! Registration order, family arrangement and synthesized groups; a
+    //! blocked session never changes any order.
     use super::*;
 
     fn ws(name: &str) -> WorkspaceInfo {
@@ -265,32 +295,20 @@ mod tests {
     }
 
     #[test]
-    fn a_blocked_workspace_bubbles_above_earlier_ones_others_unchanged() {
+    fn a_blocked_workspace_does_not_move() {
         let groups = build_groups(
             &[ws("a"), ws("b"), ws("c")],
             &[
                 session("a", "s1"),
                 session_with("b", "s2", "needs-input", None),
-                session("c", "s3"),
+                session_with("c", "s3", "needs-input", None),
             ],
         );
-        assert_eq!(names(&groups), ["b", "a", "c"]);
+        assert_eq!(names(&groups), ["a", "b", "c"]);
     }
 
     #[test]
-    fn two_blocked_workspaces_keep_their_relative_order_stable_within_the_blocked_bucket() {
-        let groups = build_groups(
-            &[ws("a"), ws("b"), ws("c"), ws("d")],
-            &[
-                session_with("b", "s", "needs-input", None),
-                session_with("d", "s", "needs-input", None),
-            ],
-        );
-        assert_eq!(names(&groups), ["b", "d", "a", "c"]);
-    }
-
-    #[test]
-    fn within_a_workspace_needs_input_sessions_sort_first_stable_otherwise() {
+    fn sessions_keep_listing_order_whatever_their_status() {
         let groups = build_groups(
             &[ws("a")],
             &[
@@ -306,26 +324,7 @@ mod tests {
             .iter()
             .map(|s| s.label.as_str())
             .collect();
-        assert_eq!(labels, ["two", "four", "one", "three"]);
-    }
-
-    #[test]
-    fn unblocked_sessions_keep_listing_order_stable_within_the_unblocked_bucket() {
-        let groups = build_groups(
-            &[ws("a")],
-            &[
-                session_with("a", "one", "done", None),
-                session_with("a", "two", "idle", None),
-                session_with("a", "three", "working", None),
-            ],
-        );
-        assert_eq!(groups.len(), 1);
-        let labels: Vec<&str> = groups[0]
-            .sessions
-            .iter()
-            .map(|s| s.label.as_str())
-            .collect();
-        assert_eq!(labels, ["one", "two", "three"]);
+        assert_eq!(labels, ["one", "two", "three", "four"]);
     }
 
     #[test]
@@ -357,7 +356,6 @@ mod tests {
         assert_eq!(groups.len(), 1);
         assert_eq!(groups[0].name, "empty");
         assert!(groups[0].sessions.is_empty());
-        assert!(!groups[0].has_needs_input());
     }
 
     #[test]
@@ -508,7 +506,7 @@ mod tests {
     }
 
     #[test]
-    fn a_blocked_child_leads_an_unblocked_head_and_takes_the_label() {
+    fn a_blocked_child_does_not_lead_the_head_and_the_label_stays_on_the_head() {
         let groups = build_groups(
             &[
                 wsd("elite-traders", Some("/d/elite-traders")),
@@ -517,12 +515,12 @@ mod tests {
             ],
             &[session_with("et-b", "s", "needs-input", None)],
         );
-        assert_eq!(names(&groups), ["et-b", "elite-traders", "et-a"]);
+        assert_eq!(names(&groups), ["elite-traders", "et-a", "et-b"]);
         assert_eq!(labels(&groups), [Some("elite-traders"), None, None]);
     }
 
     #[test]
-    fn a_blocked_head_leads_among_blocked_members() {
+    fn blocked_members_keep_registration_order_and_the_head_still_leads() {
         let groups = build_groups(
             &[
                 wsd("et-a", Some("/d/elite-traders/et-a")),
@@ -530,8 +528,8 @@ mod tests {
                 wsd("et-b", Some("/d/elite-traders/et-b")),
             ],
             &[
+                session_with("et-b", "s", "needs-input", None),
                 session_with("et-a", "s", "needs-input", None),
-                session_with("elite-traders", "s", "needs-input", None),
             ],
         );
         assert_eq!(names(&groups), ["elite-traders", "et-a", "et-b"]);
@@ -587,7 +585,7 @@ mod tests {
     }
 
     #[test]
-    fn a_family_floats_when_one_member_is_blocked() {
+    fn a_blocked_family_member_does_not_float_its_family() {
         let groups = build_groups(
             &[
                 wsd("x", Some("/r/x")),
@@ -596,9 +594,8 @@ mod tests {
             ],
             &[session_with("f2", "s", "needs-input", None)],
         );
-        // blocked member leads its family, the family leads the rail
-        assert_eq!(names(&groups), ["f2", "f1", "x"]);
-        assert_eq!(labels(&groups), [Some("f"), None, None]);
+        assert_eq!(names(&groups), ["x", "f1", "f2"]);
+        assert_eq!(labels(&groups), [None, Some("f"), None]);
     }
 
     #[test]
@@ -612,6 +609,118 @@ mod tests {
         assert_eq!(names(&groups), ["f1", "stray", "x"]);
         assert_eq!(labels(&groups), [Some("f"), None, None]);
         assert!(!groups[1].registered);
+    }
+
+    // ── move_workspace ──────────────────────────────────────────────────
+
+    fn moved(
+        workspaces: &[WorkspaceInfo],
+        sessions: &[WallSession],
+        name: &str,
+        delta: i32,
+    ) -> Option<Vec<String>> {
+        move_workspace(&build_groups(workspaces, sessions), name, delta)
+    }
+
+    fn order(v: &[&str]) -> Option<Vec<String>> {
+        Some(v.iter().map(|s| (*s).to_owned()).collect())
+    }
+
+    fn elite() -> Vec<WorkspaceInfo> {
+        vec![
+            wsd("x", Some("/r/x")),
+            wsd("elite-traders", Some("/d/elite-traders")),
+            wsd("et-a", Some("/d/elite-traders/et-a")),
+            wsd("et-b", Some("/d/elite-traders/et-b")),
+            wsd("y", Some("/s/y")),
+        ]
+    }
+
+    #[test]
+    fn a_member_swaps_with_its_neighbour_inside_the_family() {
+        assert_eq!(
+            moved(&elite(), &[], "et-b", -1),
+            order(&["x", "elite-traders", "et-b", "et-a", "y"])
+        );
+        assert_eq!(
+            moved(&elite(), &[], "et-a", 1),
+            order(&["x", "elite-traders", "et-b", "et-a", "y"])
+        );
+    }
+
+    #[test]
+    fn the_head_stays_first_so_the_top_member_moves_its_family_instead() {
+        // et-a sits right under the head: up would pass the head, so the
+        // whole family moves above x.
+        assert_eq!(
+            moved(&elite(), &[], "et-a", -1),
+            order(&["elite-traders", "et-a", "et-b", "x", "y"])
+        );
+    }
+
+    #[test]
+    fn moving_the_head_moves_the_whole_family() {
+        assert_eq!(
+            moved(&elite(), &[], "elite-traders", 1),
+            order(&["x", "y", "elite-traders", "et-a", "et-b"])
+        );
+        assert_eq!(
+            moved(&elite(), &[], "elite-traders", -1),
+            order(&["elite-traders", "et-a", "et-b", "x", "y"])
+        );
+    }
+
+    #[test]
+    fn the_last_member_moves_its_family_past_the_next_one() {
+        assert_eq!(
+            moved(&elite(), &[], "et-b", 1),
+            order(&["x", "y", "elite-traders", "et-a", "et-b"])
+        );
+    }
+
+    #[test]
+    fn a_singleton_moves_past_a_whole_family() {
+        assert_eq!(
+            moved(&elite(), &[], "y", -1),
+            order(&["x", "y", "elite-traders", "et-a", "et-b"])
+        );
+    }
+
+    #[test]
+    fn the_ends_of_the_rail_are_a_no_op() {
+        assert_eq!(moved(&elite(), &[], "x", -1), None);
+        assert_eq!(moved(&elite(), &[], "y", 1), None);
+        assert_eq!(moved(&[ws("only")], &[], "only", 1), None);
+    }
+
+    #[test]
+    fn a_headless_family_swaps_freely_and_a_blocked_session_changes_nothing() {
+        let list = [
+            wsd("f1", Some("/p/f/f1")),
+            wsd("f2", Some("/p/f/f2")),
+            wsd("z", Some("/r/z")),
+        ];
+        let blocked = [session_with("f2", "s", "needs-input", None)];
+        assert_eq!(moved(&list, &blocked, "f2", -1), order(&["f2", "f1", "z"]));
+        assert_eq!(moved(&list, &[], "f1", -1), None);
+        assert_eq!(moved(&list, &[], "f2", 1), order(&["z", "f1", "f2"]));
+    }
+
+    #[test]
+    fn synthesized_and_unknown_workspaces_do_not_move_and_are_skipped_as_neighbours() {
+        let stray = session("stray", "s");
+        assert_eq!(
+            moved(
+                &[ws("a"), ws("b")],
+                std::slice::from_ref(&stray),
+                "stray",
+                -1
+            ),
+            None
+        );
+        assert_eq!(moved(&[ws("a")], &[], "ghost", -1), None);
+        // The synthesized group renders last; b still can't go down past it.
+        assert_eq!(moved(&[ws("a"), ws("b")], &[stray], "b", 1), None);
     }
 
     // ── jumpTarget ──────────────────────────────────────────────────────

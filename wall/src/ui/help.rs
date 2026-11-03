@@ -14,7 +14,7 @@ use crate::ui::theme::colors;
 /// The full binding legend (the Dart `_bindings` list, verbatim — the help
 /// overlay must list every p8.1–p8.4 key, plus the p16-restart `r` chords:
 /// spec restart "TUI chords" requires `?` to list all three).
-pub const BINDINGS: [(&str, &str); 27] = [
+pub const BINDINGS: [(&str, &str); 28] = [
     ("1-9", "focus workspace"),
     ("[ ]", "cycle focused tile"),
     ("Enter", "engage focused tile (restore it when restorable)"),
@@ -41,6 +41,7 @@ pub const BINDINGS: [(&str, &str); 27] = [
     ("r d", "restart the daemon (sessions untouched)"),
     ("X X", "remove focused workspace (sessions keep running)"),
     ("X K", "remove focused workspace AND kill its sessions"),
+    ("Shift+↑↓", "move focused workspace up / down (persists)"),
     ("w", "add workspace"),
     (
         "d",

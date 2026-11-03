@@ -37,7 +37,7 @@ pub fn tile_index_at(col: i32, row: i32, n: usize, width: i32, height: i32) -> O
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RailTarget {
     /// A workspace header row — the index is the position in the
-    /// salience-ordered groups list (the same index the `1`–`9` bindings
+    /// rail-ordered groups list (the same index the `1`–`9` bindings
     /// use).
     Workspace(usize),
     /// A session row.
@@ -352,6 +352,8 @@ mod tests {
             registered: true,
             sessions,
             family_label: None,
+            family: 0,
+            is_head: false,
         }
     }
 

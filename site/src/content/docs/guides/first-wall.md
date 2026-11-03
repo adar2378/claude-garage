@@ -27,7 +27,7 @@ Session glyphs:
 
 | Glyph | State | Meaning |
 |---|---|---|
-| `●` | needs input | Claude waits for your answer. Amber. Sorted first. |
+| `●` | needs input | Claude waits for your answer. Amber. |
 | `◐` | working | Claude is running. |
 | `✓` | done | Claude finished since you last looked. Green. |
 | `○` | idle | Waiting for your next request. |
@@ -43,6 +43,7 @@ Session glyphs:
 | `Tab` | Cycle the views of the project |
 | `b` | Hide or show the rail |
 | `<` and `>` | Make the rail narrower or wider |
+| `Shift+Up` and `Shift+Down` | Move the focused project up or down the rail. The order is saved. |
 
 You can also use the mouse. Click a rail row to focus it. Click a tile to type into it.
 

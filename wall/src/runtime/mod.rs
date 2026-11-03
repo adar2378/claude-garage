@@ -260,6 +260,23 @@ pub fn garage_key_string(key: &KeyEvent) -> Option<String> {
         // focused workspace's views — the wave-1b reservation this fills in
         // (the keymap binds `"\t"` to `view.cycle`).
         KeyCode::Tab => Some("\t".to_owned()),
+        // Shift+Up / Shift+Down reorder workspaces (plain arrows stay unbound
+        // here). Ctrl/Alt combinations are still consumed silently.
+        KeyCode::Up | KeyCode::Down
+            if key.modifiers.contains(KeyModifiers::SHIFT)
+                && !key
+                    .modifiers
+                    .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
+        {
+            Some(
+                if key.code == KeyCode::Up {
+                    "shift+up"
+                } else {
+                    "shift+down"
+                }
+                .to_owned(),
+            )
+        }
         KeyCode::Char(c)
             if !key
                 .modifiers
