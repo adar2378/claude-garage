@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.1.2 — markdown links open
 
 ### Fixed
 
