@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.1.0 — the rail stays put
+## 1.1.1 — the rail stays put
 
 ### Changed
 
