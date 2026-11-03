@@ -13,6 +13,8 @@
   up or down the rail. The order is saved and survives a restart. The head of
   a folder group stays first in its group, and moving it moves the whole
   group.
+- **Renaming a project keeps its place.** It used to move to the end of the
+  rail.
 
 ## 1.0.3 — projects added from outside show up
 

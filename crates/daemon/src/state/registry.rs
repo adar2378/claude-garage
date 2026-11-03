@@ -244,8 +244,8 @@ impl Registry {
     ) -> std::io::Result<Option<Workspace>> {
         let _g = self.lock.lock().await;
         let mut state = self.read();
-        let mut workspaces = obj_of(&mut state, "workspaces");
-        let Some(entry) = workspaces.shift_remove(old) else {
+        let current = obj_of(&mut state, "workspaces");
+        let Some(entry) = current.get(old).cloned() else {
             return Ok(None);
         };
         let renamed = entry
@@ -256,7 +256,16 @@ impl Registry {
                 dir: None,
                 registered_at: None,
             });
-        workspaces.insert(new.into(), entry);
+        // Rebuild in place so the renamed workspace keeps its rail position
+        // (key order is the rail order). An existing `new` entry is replaced.
+        let mut workspaces = Map::new();
+        for (name, e) in current {
+            if name == old {
+                workspaces.insert(new.into(), entry.clone());
+            } else if name != new {
+                workspaces.insert(name, e);
+            }
+        }
         let old_prefix = format!("{GARAGE_PREFIX}{old}/");
         let new_prefix = format!("{GARAGE_PREFIX}{new}/");
         let mut next = Map::new();
@@ -921,6 +930,13 @@ mod tests {
         assert_eq!(raw["sessions"]["garage/new/one"]["workspace"], "new");
         assert!(raw["sessions"].get("garage/old/one").is_none());
         assert_eq!(raw["sessions"]["garage/other/two"]["workspace"], "other");
+        let keys: Vec<_> = raw["workspaces"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .cloned()
+            .collect();
+        assert_eq!(keys, ["new", "other"], "a rename keeps the rail position");
     }
 
     #[tokio::test]
