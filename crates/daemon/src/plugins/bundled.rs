@@ -753,6 +753,9 @@ mod tests {
 
     #[test]
     fn the_compiled_allowlist_never_lists_the_hello_fixture() {
+        // Checks ALLOWLIST itself, not `is_trusted`: other tests in this
+        // process add `hello` to the test-only trust list, so `is_trusted`
+        // would depend on test order.
         assert!(ALLOWLIST.iter().all(|(id, _)| *id != "hello"));
         let hello = std::fs::read(
             Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -760,7 +763,8 @@ mod tests {
                 .join(MANIFEST_FILE),
         )
         .unwrap();
-        assert!(!is_trusted("hello", &sha256_hex(&hello)));
+        let sha = sha256_hex(&hello);
+        assert!(ALLOWLIST.iter().all(|(_, s)| *s != sha));
     }
 
     /// Every first-party plugin in the checkout is on the compiled allowlist
