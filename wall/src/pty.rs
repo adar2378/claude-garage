@@ -29,6 +29,7 @@ use std::time::{Duration, Instant};
 use portable_pty::{Child, CommandBuilder, MasterPty, PtySize, native_pty_system};
 
 use crate::attach::Target;
+use crate::input::osc8::{TileParser, new_parser};
 
 fn other(e: impl std::fmt::Display) -> std::io::Error {
     std::io::Error::other(e.to_string())
@@ -47,7 +48,7 @@ pub struct TileClient {
     /// What this client attached with; tmux calls made on its behalf
     /// (list-clients, detach) use the target's tmux flags.
     target: Target,
-    parser: Arc<Mutex<vt100::Parser>>,
+    parser: Arc<Mutex<TileParser>>,
     /// `Some` until teardown; dropping the master closes the PTY, so it must
     /// outlive the detach. `None` for a host link.
     master: Option<Box<dyn MasterPty + Send>>,
@@ -110,7 +111,7 @@ impl TileClient {
         let child_pid = child.process_id();
         drop(pair.slave);
 
-        let parser = Arc::new(Mutex::new(vt100::Parser::new(rows, cols, scrollback)));
+        let parser = Arc::new(Mutex::new(new_parser(rows, cols, scrollback)));
         let mut reader = pair.master.try_clone_reader().map_err(other)?;
         let writer = pair.master.take_writer().map_err(other)?;
         {
@@ -162,7 +163,7 @@ impl TileClient {
     ) -> std::io::Result<TileClient> {
         let stream = garage_host::proto::connect_attach(addr, token, cols, rows)?;
         let mut reader = stream.try_clone()?;
-        let parser = Arc::new(Mutex::new(vt100::Parser::new(rows, cols, scrollback)));
+        let parser = Arc::new(Mutex::new(new_parser(rows, cols, scrollback)));
         let exited = Arc::new(AtomicBool::new(false));
         {
             let parser = parser.clone();
@@ -202,7 +203,7 @@ impl TileClient {
     /// detached so dropping it never shells out. For the dev-only frame
     /// renderer (`runtime/tests/render_frames.rs`).
     #[cfg(test)]
-    pub(crate) fn screen_only(session: &str, parser: vt100::Parser) -> TileClient {
+    pub(crate) fn screen_only(session: &str, parser: TileParser) -> TileClient {
         let (rows, cols) = parser.screen().size();
         TileClient {
             session: session.to_owned(),
@@ -222,7 +223,7 @@ impl TileClient {
         &self.session
     }
 
-    pub fn parser(&self) -> &Arc<Mutex<vt100::Parser>> {
+    pub fn parser(&self) -> &Arc<Mutex<TileParser>> {
         &self.parser
     }
 
@@ -253,11 +254,9 @@ impl TileClient {
                 pixel_height: 0,
             });
         }
-        self.parser
-            .lock()
-            .unwrap()
-            .screen_mut()
-            .set_size(rows, cols);
+        let mut parser = self.parser.lock().unwrap();
+        parser.screen_mut().set_size(rows, cols);
+        parser.callbacks_mut().clear();
     }
 
     /// Non-blocking exit poll for the reattach loop (spec tui-wall "Tile PTY

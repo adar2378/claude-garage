@@ -196,6 +196,16 @@ impl App {
         hit_targets::tile_at(self.layout.as_ref()?, self.store.state(), col, row)
     }
 
+    /// The link under cell `(col, row)` of tile `id` (tile-inner
+    /// coordinates): an OSC 8 link first (Claude Code's markdown links show
+    /// only their text), else a plain-text URL on the row.
+    pub(super) fn link_under(&self, id: &str, col: u16, row: u16) -> Option<String> {
+        self.registry.link_at(id, row, col).or_else(|| {
+            let line = self.registry.row_text(id, row)?;
+            url_at(&line, usize::from(col))
+        })
+    }
+
     /// True when the click raised a quit.
     pub(super) fn handle_click(&mut self, col: u16, row: u16) -> bool {
         let Some(layout) = self.layout.clone() else {
@@ -217,8 +227,7 @@ impl App {
                 height: rect.height.saturating_sub(2),
             };
             if inner.contains((col, row).into())
-                && let Some(line) = self.registry.row_text(&id, row - inner.y)
-                && let Some(url) = url_at(&line, usize::from(col - inner.x))
+                && let Some(url) = self.link_under(&id, col - inner.x, row - inner.y)
             {
                 // A click like any other: it cancels a pending
                 // plugin arm before it does its own thing.

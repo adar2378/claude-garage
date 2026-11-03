@@ -125,3 +125,18 @@ While a p8.3 `X` remove arm is active on a registered workspace, `K` SHALL confi
 - **WHEN** the user confirms with `X`-`X` instead of `K`
 - **THEN** the DELETE carries no query parameters and every live session keeps running (p8.3 behavior unchanged)
 
+### Requirement: Click opens links
+
+A left click on a URL in a tile's grid text SHALL open it in the system browser instead of engaging the tile, because the wall's mouse capture hides clicks from the outer terminal. The wall SHALL recognise two kinds of link: a plain-text `http(s)://` URL on the clicked row, and an OSC 8 hyperlink (`ESC ] 8 ; params ; URI ST` around the link text, as Claude Code writes markdown links), whose URI is not on screen. When both apply, the OSC 8 URI SHALL win. Only `http` and `https` URIs SHALL be opened; control characters SHALL be stripped from an OSC 8 URI and one over 2048 bytes SHALL be ignored. An OSC 8 link SHALL resolve only while the cells it was recorded on still show the same text, so scrolled or overwritten text never opens a stale URL. A scrolled-back (frozen) tile has no link data and SHALL fall back to the plain-text scan. The daemon SHALL ensure the tmux server's `terminal-features` include `xterm*:hyperlinks` (once, alongside `xterm*:extkeys`) so tmux forwards OSC 8 to the wall's attach clients.
+
+#### Scenario: Click on markdown link text
+- **WHEN** a tile shows the text `the docs` written inside an OSC 8 link to `https://example.com/a` and the user clicks any cell of that text
+- **THEN** `https://example.com/a` is opened and the tile is not engaged
+
+#### Scenario: Link text has scrolled away
+- **WHEN** the cells that held OSC 8 link text now show different text
+- **THEN** clicking them does not open that link
+
+#### Scenario: Unsafe scheme
+- **WHEN** an OSC 8 link points to a `file:` or `javascript:` URI
+- **THEN** clicking its text opens nothing

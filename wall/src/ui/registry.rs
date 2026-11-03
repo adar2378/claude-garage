@@ -351,6 +351,22 @@ impl TileRegistry {
         }
     }
 
+    /// The OSC 8 link (markdown link text) under cell `(row, col)` of a LIVE
+    /// tile. `None` for a frozen scrollback view: its snapshot comes from
+    /// `capture-pane`, which carries no link data, so the caller falls back
+    /// to scanning the row text.
+    pub fn link_at(&self, id: &str, row: u16, col: u16) -> Option<String> {
+        let entry = self.entries.get(id)?;
+        if entry.frozen.is_some() {
+            return None;
+        }
+        let Slot::Attached(client) = &entry.slot else {
+            return None;
+        };
+        let parser = client.parser().lock().unwrap();
+        parser.callbacks().link_at(parser.screen(), row, col)
+    }
+
     /// The spec the tile's current attach used (for scrollback queries).
     pub fn spec(&self, id: &str) -> Option<&Target> {
         self.entries.get(id).and_then(|e| e.spec.as_ref())

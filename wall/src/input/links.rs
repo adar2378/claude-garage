@@ -82,6 +82,29 @@ pub fn url_at(line: &str, col: usize) -> Option<String> {
     Some(url.to_owned())
 }
 
+/// Longest URI accepted from an OSC 8 link.
+const MAX_LINK_LEN: usize = 2048;
+
+/// A URI from an OSC 8 sequence, made safe to hand to the OS opener: control
+/// characters stripped, length capped, and only `http(s)://` with something
+/// after it accepted (the same policy as [`url_at`]; `file:`, `javascript:`
+/// and friends are never opened).
+pub fn sanitize_link(uri: &str) -> Option<String> {
+    let url: String = uri.chars().filter(|c| !c.is_control()).collect();
+    let url = url.trim();
+    if url.len() > MAX_LINK_LEN || url.chars().any(char::is_whitespace) {
+        return None;
+    }
+    let lower = url.to_ascii_lowercase();
+    let rest = lower
+        .strip_prefix("https://")
+        .or_else(|| lower.strip_prefix("http://"))?;
+    if rest.is_empty() {
+        return None;
+    }
+    Some(url.to_owned())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -128,6 +151,26 @@ mod tests {
         let line = "url=https://x.dev";
         assert_eq!(url_at(line, 1), None);
         assert_eq!(url_at(line, 6).as_deref(), Some("https://x.dev"));
+    }
+
+    #[test]
+    fn osc8_uris_are_sanitised() {
+        assert_eq!(
+            sanitize_link("https://x.dev/a\x1b\x07b").as_deref(),
+            Some("https://x.dev/ab")
+        );
+        assert_eq!(
+            sanitize_link("HTTP://x.dev").as_deref(),
+            Some("HTTP://x.dev")
+        );
+        assert_eq!(sanitize_link("file:///etc/hosts"), None);
+        assert_eq!(sanitize_link("javascript:alert(1)"), None);
+        assert_eq!(sanitize_link("https://"), None);
+        assert_eq!(sanitize_link("https://x.dev/a b"), None);
+        assert_eq!(
+            sanitize_link(&format!("https://x.dev/{}", "a".repeat(3000))),
+            None
+        );
     }
 
     #[test]

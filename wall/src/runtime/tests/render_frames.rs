@@ -579,8 +579,14 @@ fn body_inner(ws: &str, label: &str, waiting: bool, cols: usize) -> (Vec<Vec<Seg
 
 /// The tile's screen: body from the top (older lines scroll off), the input
 /// box pinned to the bottom, all with absolute cursor moves so nothing wraps.
-fn screen(ws: &str, label: &str, waiting: bool, cols: u16, rows: u16) -> vt100::Parser {
-    let mut parser = vt100::Parser::new(rows, cols, 0);
+fn screen(
+    ws: &str,
+    label: &str,
+    waiting: bool,
+    cols: u16,
+    rows: u16,
+) -> crate::input::osc8::TileParser {
+    let mut parser = crate::input::osc8::new_parser(rows, cols, 0);
     let (mut body, footer) = body_for(ws, label, waiting, usize::from(cols));
     let avail = usize::from(rows).saturating_sub(footer.len());
     if body.len() > avail {

@@ -357,3 +357,37 @@ fn the_loop_wakes_for_animation_only_when_an_animated_item_is_visible() {
         }
     );
 }
+
+#[test]
+fn a_click_on_osc8_link_text_resolves_its_url_and_plain_urls_still_work() {
+    // `handle_click` hands the link to the real OS opener, so this checks the
+    // resolver it calls: the OSC 8 URL wins over what the row text says, and
+    // a bare URL on the row still resolves.
+    let mut app = two_workspaces();
+    let id = "garage/a/one";
+    app.registry.sync(&[id.to_owned()]);
+    let mut parser = crate::input::osc8::new_parser(5, 60, 0);
+    parser.process(
+        b"see \x1b]8;;https://example.com/real\x07the docs\x1b]8;;\x07 now\r\n\
+          or https://plain.dev/x here\r\n\
+          bad \x1b]8;;file:///etc/passwd\x07local\x1b]8;;\x07",
+    );
+    let client = crate::pty::TileClient::screen_only(id, parser);
+    app.registry.seat_for_render(id, client);
+
+    for col in 4..12 {
+        assert_eq!(
+            app.link_under(id, col, 0).as_deref(),
+            Some("https://example.com/real"),
+            "col {col}"
+        );
+    }
+    assert_eq!(app.link_under(id, 2, 0), None);
+    assert_eq!(app.link_under(id, 13, 0), None);
+    assert_eq!(
+        app.link_under(id, 8, 1).as_deref(),
+        Some("https://plain.dev/x")
+    );
+    // A non-web scheme is not a link, with or without OSC 8.
+    assert_eq!(app.link_under(id, 5, 2), None);
+}

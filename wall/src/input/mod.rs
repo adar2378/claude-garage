@@ -4,5 +4,6 @@
 pub mod clipboard;
 pub mod encode;
 pub mod links;
+pub mod osc8;
 pub mod paste;
 pub mod selection;

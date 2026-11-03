@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- **Links that show as text now open on click inside the wall.** Claude Code
+  writes markdown links as a label with the address hidden behind it, and
+  clicking the label did nothing; only addresses printed in full worked.
+  The wall now keeps the hidden address and opens it. Only `http` and `https`
+  links open.
+
 ## 1.1.1 — the rail stays put
 
 ### Changed

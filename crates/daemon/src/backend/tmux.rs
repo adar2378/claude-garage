@@ -172,6 +172,11 @@ impl TmuxBackend {
     /// exits, so call this at boot and after every create. Idempotent:
     /// `set -as terminal-features` appends, so `xterm*:extkeys` is added only
     /// when missing. No server (or ancient tmux) is silently ignored.
+    ///
+    /// Also adds `xterm*:hyperlinks`: tmux (3.4+) forwards a pane's OSC 8
+    /// links (Claude Code's markdown links) only to clients whose terminal
+    /// has that feature, and the wall attaches as plain `xterm-256color`.
+    /// Older tmux ignores the unknown feature name.
     pub async fn ensure_extended_keys(&self) {
         let _ = self.ensure_extended_keys_inner().await;
     }
@@ -189,6 +194,15 @@ impl TmuxBackend {
         if !has_extkeys_feature(&shown) {
             self.run_args(&["set-option", "-as", "terminal-features", "xterm*:extkeys"])
                 .await?;
+        }
+        if !has_hyperlinks_feature(&shown) {
+            self.run_args(&[
+                "set-option",
+                "-as",
+                "terminal-features",
+                "xterm*:hyperlinks",
+            ])
+            .await?;
         }
         Ok(())
     }
@@ -329,9 +343,18 @@ fn is_no_server(message: &str) -> bool {
 
 /// The JS `/xterm\*?[^\n]*extkeys/` test, line by line.
 fn has_extkeys_feature(shown: &str) -> bool {
+    has_xterm_feature(shown, "extkeys")
+}
+
+/// Same test for `hyperlinks`.
+fn has_hyperlinks_feature(shown: &str) -> bool {
+    has_xterm_feature(shown, "hyperlinks")
+}
+
+fn has_xterm_feature(shown: &str, feature: &str) -> bool {
     shown.lines().any(|l| {
         l.find("xterm")
-            .is_some_and(|i| l[i + 5..].contains("extkeys"))
+            .is_some_and(|i| l[i + 5..].contains(feature))
     })
 }
 
@@ -752,6 +775,24 @@ mod tests {
         assert!(!has_extkeys_feature("extkeys only\nxterm on another line"));
     }
 
+    #[test]
+    fn hyperlinks_detection_is_per_feature() {
+        assert!(has_hyperlinks_feature(
+            "terminal-features[0] xterm*:extkeys\nterminal-features[1] xterm*:hyperlinks"
+        ));
+        assert!(has_hyperlinks_feature("xterm-256color:hyperlinks"));
+        // Each feature's check ignores the other.
+        assert!(!has_hyperlinks_feature(
+            "terminal-features[0] xterm*:extkeys"
+        ));
+        assert!(!has_extkeys_feature(
+            "terminal-features[0] xterm*:hyperlinks"
+        ));
+        assert!(!has_hyperlinks_feature(
+            "hyperlinks only\nxterm on another line"
+        ));
+    }
+
     // ---- real tmux, isolated socket (TestTmux) ----
 
     fn sleeper() -> Vec<String> {
@@ -823,6 +864,7 @@ mod tests {
             .unwrap();
         let feats = t.tmux(&["show-options", "-s", "terminal-features"]);
         assert_eq!(feats.matches("extkeys").count(), 1, "{feats}");
+        assert_eq!(feats.matches("hyperlinks").count(), 1, "{feats}");
     }
 
     #[tokio::test]
