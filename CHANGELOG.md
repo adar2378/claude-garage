@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.1.0 — the rail stays put
 
 ### Changed
 
