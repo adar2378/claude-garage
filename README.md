@@ -16,7 +16,7 @@ If garage saves you some tab-juggling, a ⭐ on this repo helps other Claude Cod
 
 </div>
 
-https://github.com/user-attachments/assets/5c545e4b-508e-4754-9b7a-df73c589e323
+https://github.com/user-attachments/assets/e60b53dd-dc52-47b5-9df5-eebbb543ea81
 
 ## Why
 
