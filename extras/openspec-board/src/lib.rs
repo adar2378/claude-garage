@@ -13,7 +13,7 @@ mod manifest_tests {
     //! The manifest is checked against what group 1 may declare: a pane, its
     //! action and a build step, only `ui.panes`, nothing else. (`claude-garage
     //! plugin schema` takes no argument; `plugin link` validates the manifest
-    //! too, and is the by-hand check in the README.)
+    //! too, and is the by-hand check.)
 
     fn manifest() -> toml::Table {
         include_str!("../garage-plugin.toml").parse().unwrap()

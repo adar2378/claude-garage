@@ -298,6 +298,12 @@ mod tests {
     }
 
     #[test]
+    fn an_empty_file_is_an_empty_config_without_a_warning() {
+        let cfg = parse("");
+        assert!(cfg.workspaces.is_empty() && cfg.warnings.is_empty());
+    }
+
+    #[test]
     fn a_full_table_is_read() {
         let cfg = parse(
             r#"

@@ -213,9 +213,9 @@ fn longest(values: impl Iterator<Item = usize>, min: usize, max: usize) -> usize
     values.max().unwrap_or(0).clamp(min, max)
 }
 
-/// The pane as lines, at most `cols` wide. `age_secs` is how long ago the
+/// The pane as lines, at most `cols` wide; the table is windowed to `rows`. `age_secs` is how long ago the
 /// model was collected (`None` before the first pass); it goes in the title.
-pub fn render(state: &PaneState, age_secs: Option<u64>, cols: usize) -> Vec<String> {
+pub fn render(state: &PaneState, age_secs: Option<u64>, cols: usize, rows: usize) -> Vec<String> {
     let cols = cols.max(40);
     let inner = cols - 4; // "│ " ... " │"
     let mut body: Vec<String> = vec![];
@@ -256,7 +256,7 @@ pub fn render(state: &PaneState, age_secs: Option<u64>, cols: usize) -> Vec<Stri
             if w.rows.is_empty() {
                 body.push(format!("no OpenSpec changes in {}", strip_hostile(&w.name)));
             } else {
-                table(&mut body, w, state, inner);
+                table(&mut body, w, state, inner, rows);
             }
         }
     }
@@ -274,7 +274,16 @@ fn fit_title(title: &str, width: usize) -> String {
     format!("{t}{}", "─".repeat(width - t.chars().count()))
 }
 
-fn table(body: &mut Vec<String>, w: &WorkspaceView, state: &PaneState, inner: usize) {
+fn table(body: &mut Vec<String>, w: &WorkspaceView, state: &PaneState, inner: usize, rows: usize) {
+    // Rows that fit: the screen less borders, footer, header, warnings and the
+    // detail block. The window follows the selection.
+    let reserved = 4 + w.warnings.len() + if state.detail { 15 } else { 0 };
+    let window = rows.saturating_sub(reserved).max(3);
+    let first = if state.selected < window {
+        0
+    } else {
+        state.selected + 1 - window
+    };
     let name_w = longest(w.rows.iter().map(|r| r.name.chars().count()), 6, 28);
     let repo_w = longest(w.rows.iter().map(|r| r.repo.chars().count()), 4, 14);
     let where_w = longest(
@@ -302,7 +311,7 @@ fn table(body: &mut Vec<String>, w: &WorkspaceView, state: &PaneState, inner: us
         right("TASKS", tasks_w),
         "NEXT OPEN"
     ));
-    for (i, r) in w.rows.iter().enumerate() {
+    for (i, r) in w.rows.iter().enumerate().skip(first).take(window) {
         let mark = if i == state.selected { "▸" } else { " " };
         body.push(format!(
             "{mark} {} {} {} {} {} {}",
@@ -399,11 +408,12 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
             state.set_snapshot(s);
             collected = Some(Instant::now());
         }
-        let cols = terminal::size().map_or(100, |(c, _)| c as usize);
+        let (cols, rows) = terminal::size().map_or((100, 30), |(c, r)| (c as usize, r as usize));
         draw(&render(
             &state,
             collected.map(|t| t.elapsed().as_secs()),
             cols,
+            rows,
         ))?;
         if event::poll(Duration::from_millis(250))?
             && let Event::Key(k) = event::read()?
@@ -469,7 +479,7 @@ mod tests {
     #[test]
     fn snapshot_empty_workspace() {
         let s = state_with(vec![view("kowboy", vec![], &[])]);
-        let text = render(&s, Some(4), 60).join("\n");
+        let text = render(&s, Some(4), 60, 40).join("\n");
         let expected = "\
 ┌ openspec-board · kowboy · updated 4s ago ────────────────┐
 │ no OpenSpec changes in kowboy                            │
@@ -502,7 +512,7 @@ mod tests {
             ],
             &[],
         )]);
-        let text = render(&s, Some(130), 78).join("\n");
+        let text = render(&s, Some(130), 78, 40).join("\n");
         let expected = "\
 ┌ openspec-board · kowboy · updated 2m ago ──────────────────────────────────┐
 │   CHANGES    STATE    REPO WHERE TASKS NEXT OPEN                           │
@@ -520,25 +530,54 @@ mod tests {
             vec![],
             &[
                 "~/code/kowboy/gone is not a git repo",
-                "workspace.kowboy.comments.review is not a valid regex (x); pattern off",
+                "workspace.kowboy.comments.review is not a valid regex; pattern off",
             ],
         )]);
-        let lines = render(&s, None, 60);
-        assert!(
-            lines[0].starts_with("┌ openspec-board · kowboy · loading…"),
-            "{}",
-            lines[0]
-        );
-        assert!(lines[1].contains("! ~/code/kowboy/gone is not a git repo"));
-        assert!(lines[2].contains("! workspace.kowboy.comments.review"));
-        assert!(lines[3].contains("no OpenSpec changes in kowboy"));
+        let expected = "\
+┌ openspec-board · kowboy · loading… ──────────────────────┐
+│ ! ~/code/kowboy/gone is not a git repo                   │
+│ ! workspace.kowboy.comments.review is not a valid regex… │
+│ no OpenSpec changes in kowboy                            │
+│ j/k move  c detail  r refresh  Tab workspace  Esc close  │
+└──────────────────────────────────────────────────────────┘";
+        assert_eq!(render(&s, None, 60, 40).join("\n"), expected);
         // A daemon that did not answer is shown, not hidden.
         s.set_snapshot(Snapshot {
             workspaces: vec![],
             error: Some("daemon did not answer: x".into()),
         });
-        let text = render(&s, Some(1), 60).join("\n");
+        let text = render(&s, Some(1), 60, 40).join("\n");
         assert!(text.contains("! daemon did not answer: x"));
+    }
+
+    #[test]
+    fn a_long_table_is_windowed_to_the_screen_and_follows_the_selection() {
+        let rows: Vec<Row> = (0..30)
+            .map(|i| {
+                row(
+                    &format!("change-{i:02}"),
+                    "api",
+                    State::Proposal,
+                    0,
+                    1,
+                    None,
+                )
+            })
+            .collect();
+        let mut s = state_with(vec![view("w", rows, &[])]);
+        let lines = render(&s, Some(0), 70, 12);
+        assert!(lines.len() <= 12, "{}", lines.len());
+        assert!(lines.join("\n").contains("change-00"));
+        for _ in 0..20 {
+            s.on_key(key(KeyCode::Char('j')));
+        }
+        let lines = render(&s, Some(0), 70, 12);
+        assert!(lines.len() <= 12);
+        let text = lines.join("\n");
+        assert!(text.contains("▸ change-20"), "{text}");
+        assert!(!text.contains("change-00"));
+        // The footer is always there.
+        assert!(text.contains("Esc close"));
     }
 
     #[test]
@@ -558,7 +597,7 @@ mod tests {
             &[],
         )]);
         for cols in [40, 60, 100] {
-            let lines = render(&s, Some(0), cols);
+            let lines = render(&s, Some(0), cols, 40);
             assert!(
                 lines.iter().all(|l| l.chars().count() == cols.max(40)),
                 "{lines:#?}"
@@ -586,14 +625,14 @@ mod tests {
         assert_eq!(s.selected, 0);
         assert!(!s.detail);
         s.on_key(key(KeyCode::Char('c')));
-        let text = render(&s, Some(0), 70).join("\n");
+        let text = render(&s, Some(0), 70, 40).join("\n");
         assert!(
             text.contains("a: 2 open") && text.contains("[ ] 1.3 c"),
             "{text}"
         );
         s.on_key(key(KeyCode::Char('j')));
         assert!(
-            render(&s, Some(0), 70)
+            render(&s, Some(0), 70, 40)
                 .join("\n")
                 .contains("b: no open tasks")
         );
@@ -619,7 +658,7 @@ mod tests {
         s.on_key(key(KeyCode::Tab));
         assert_eq!(s.current().unwrap().name, "one");
         // The title shows which workspace of how many.
-        assert!(render(&s, Some(0), 60)[0].contains("one (1/2)"));
+        assert!(render(&s, Some(0), 60, 40)[0].contains("one (1/2)"));
         // j/k on an empty workspace do nothing.
         s.on_key(key(KeyCode::Tab));
         s.on_key(key(KeyCode::Char('j')));

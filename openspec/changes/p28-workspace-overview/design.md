@@ -26,7 +26,7 @@ The status strip (right side) while the pane is closed: `board 3` in the `needs_
 
 Legend: `●` needs the human now, `◆` PR waiting, `✗` failed check, `◐` working session, `✓` all checks passed. "head" means the verdict or check names the PR's current head commit; "STALE" means it names an older one.
 
-`claude-garage tasks` prints the same rows as plain text (one block per workspace, `--json` for scripts, `--workspace <name>`, `--local` to skip fetch and GitHub, even with `--refresh`).
+`claude-garage tasks` prints the same rows as plain text (one block per workspace, `--json` for scripts, `--workspace <name>`, `--local` to skip fetch and GitHub).
 
 ## Who runs what, and what each part reads
 
@@ -163,7 +163,7 @@ A stale verdict or check is displayed `STALE` and never raises an item by itself
 
 **The suggested key `o`.** The wall's default garage-layer keys are taken: `1`-`9`, `[`, `]`, `a`, `A`, `n`, `N`, `m`, `R`, `x`, `w`, `X`, `K`, `d`, `D`, `p`, `r`, `I`, `t`, `b`, `<`, `>`, `?`, `q`, Tab, Enter and Shift+Up/Down (from `Keymap::defaults` in `wall/src/keymap.rs`). First-party plugins suggest `H` (closed-chats), `/` (jump-palette), `P` (pit-pet), `s` and `S` (quick-send). `o` is free. A manifest suggestion never overrides a bound key; users can rebind with `plugin bind`.
 
-**12. The `tasks` command.** `[[cli]] name = "tasks"` (not a reserved core word; plugin CLI names only need to be unique). **`needs_daemon = false`**: the command must work with the daemon down. It tries `GET /api/sessions` and `GET /api/workspaces` with a short timeout and uses the answer only if there is one; otherwise it falls back to local-only data (workspaces from the config, no sessions) and says so. Flags: `--workspace`, `--json`, `--local` (skip fetch and GitHub, even with `--refresh`), `--all`, `--refresh`, `--print-config-path`. Without `--refresh` it uses the cache for GitHub data and runs no fetch.
+**12. The `tasks` command.** `[[cli]] name = "tasks"` (not a reserved core word; plugin CLI names only need to be unique). **`needs_daemon = false`**: the command must work with the daemon down. It tries `GET /api/sessions` and `GET /api/workspaces` with a short timeout and uses the answer only if there is one; otherwise it falls back to local-only data (workspaces from the config, no sessions) and says so. Flags: `--workspace`, `--json`, `--local` (skip fetch and GitHub), `--all`, `--refresh`, `--print-config-path`. Without `--refresh` it uses the cache for GitHub data and runs no fetch.
 
 **13. Privacy.** Everything is computed on the machine. The only network traffic is `git fetch` to the repo's own `origin` (already how the repo works; it talks only to the user's own remote) and `gh api` calls to github.com made by the user's own `gh` login, only for workspaces with `github = true`. No telemetry. The plugin is not sandboxed (plugin API rule); its README names every command it runs: `git` (fetch, rev-parse, ls-tree, show, for-each-ref, symbolic-ref, remote get-url), `gh api` GET, and `open`/`xdg-open`. Tokens are never read or stored by the plugin; `gh` holds them. **`cache/` stores private PR titles, branch names and comment bodies on disk** (mode `0700`); the README says to delete it before sharing a home directory or a backup.
 
