@@ -1,99 +1,95 @@
-# Tasks: p28-workspace-overview
+# Tasks: p28-workspace-overview (the `openspec-board` plugin)
 
-Each numbered group ships alone and is testable alone. Groups 1 to 7 are the owner's first priority: a read-only peek at one workspace's OpenSpec changes and PR status.
+Each numbered group ships alone and is testable alone. Group 1 is the only core change and lands first. Groups 2 to 6 are the owner's first priority: a read-only peek pane of one workspace's OpenSpec changes and PR status. Everything from group 2 on is plugin code in `plugins/openspec-board/` and uses only plugin API v1.
 
-## 1. Crate and parsers (`crates/overview`)
+## 1. Core change C1: first-party plugins that ship separately (separate commit, lands first)
 
-- [ ] 1.1 New library crate `garage-overview` (no UI, no tokio): types for change, task progress, PR, check, review, waiting item
-- [ ] 1.2 `tasks.md` parser: checkbox counts, next open task, code fences ignored; tests copied from the `examples/openspec-progress` cases
-- [ ] 1.3 State rule (`proposal`/`building`/`complete`) with unit tests for 0/0, 0/n, k/n, n/n
-- [ ] 1.4 Verify: `cargo test -p garage-overview`
+- [ ] 1.1 `crates/daemon/build.rs`: replace the single `FIXTURE` constant by a list `NOT_EMBEDDED = ["hello", "openspec-board"]`, used by both the embed step and the allowlist step
+- [ ] 1.2 Tests in `crates/daemon/src/plugins/`: the allowlist and the payload contain no entry for a listed id and every other first-party folder is still present; `plugins::bundled` does not seed or auto-grant `openspec-board`
+- [ ] 1.3 Check `crates/daemon/src/plugins/first_party.rs` and the `plugins/*` workspace glob: a manifest-only or crate-based folder not on the list is still picked up, a listed one is not
+- [ ] 1.4 Verify: `cargo test -p garage-daemon` and `cargo test -p garage-daemon --features embed-plugins --lib -- plugins::bundled`
 
-## 2. Declaring repos (`overview.toml`)
+## 2. Plugin skeleton and parsers (`plugins/openspec-board`)
 
-- [ ] 2.1 Parse `~/.garage/overview.toml` (honour `GARAGE_DIR`), `~` expansion, defaults, warnings for bad paths and regexes
-- [ ] 2.2 Default discovery: workspace dir plus direct child git repos with `openspec/`
-- [ ] 2.3 Tests on temp dirs: no file, empty file, bad TOML, bad path, bad regex, scan of children
-- [ ] 2.4 Verify: `cargo test -p garage-overview config`
+- [ ] 2.1 Folder, `garage-plugin.toml` (permissions `sessions.read`, `ui.widgets`, `ui.panes`, `ui.invoke`, `ui.navigate`; pane, action, widget, events, `[[cli]] tasks`), crate on `garage-plugin-sdk`, `[package.metadata.dist] dist = false`; `plugin schema` validation passes; no dangerous permission
+- [ ] 2.2 `tasks.md` parser: checkbox counts, next open task, code fences ignored; tests copied from the `examples/openspec-progress` cases
+- [ ] 2.3 State rule (`proposal`/`building`/`complete`) with unit tests for 0/0, 0/n, k/n, n/n
+- [ ] 2.4 Verify: `cargo test -p garage-plugin-openspec-board` and `claude-garage plugin link plugins/openspec-board` loads it
 
-## 3. Local changes collector
+## 3. Config and local collector
 
-- [ ] 3.1 List changes per repo from the working tree (skip `archive`), read `tasks.md`, build rows
-- [ ] 3.2 mtime cache so unchanged files are not re-read; no writes anywhere
-- [ ] 3.3 Test: a temp repo with three changes in each state yields the expected rows; a read-only directory still works
-- [ ] 3.4 Verify: `cargo test -p garage-overview local`
+- [ ] 3.1 Read `config.toml` from `GARAGE_PLUGIN_STATE_DIR` on every run; the plugin never writes it; `cache/` is the only written place (atomic writes, `StateLock` around read-change-write)
+- [ ] 3.2 Workspace names and dirs from `GET /api/workspaces`; default discovery: workspace dir plus direct child git repos with `openspec/`; warnings for bad paths, bad TOML and bad regexes
+- [ ] 3.3 List changes per repo from the working tree (skip `archive`), read `tasks.md`/`proposal.md`, build rows; mtime cache; no writes in repos
+- [ ] 3.4 Tests on temp dirs: no config, empty, bad TOML, bad path, bad regex, scan of children, three changes in each state, a read-only repo directory
+- [ ] 3.5 Verify: `cargo test -p garage-plugin-openspec-board config local`
 
-## 4. Remote-branch changes
+## 4. Peek pane, local changes (owner priority 1)
 
-- [ ] 4.1 `git fetch --prune origin` runner (prompts off, 30 s timeout, failure recorded, 5 min throttle, manual force)
-- [ ] 4.2 Branch candidate list (`for-each-ref`, glob filter, 30-day default), tree-id skip against the default branch
-- [ ] 4.3 Read `tasks.md` and `proposal.md` with `git ls-tree` and `git show` only; cache by tree id
-- [ ] 4.4 Merge sources into one row with `where` and a disagreement mark
-- [ ] 4.5 Test with a bare origin and a clone: a branch holds a change the clone lacks; assert it is listed and that `git status --porcelain`, `HEAD` and the files are unchanged
-- [ ] 4.6 Test fetch failure (origin removed) still lists already-fetched refs
-- [ ] 4.7 Verify: `cargo test -p garage-overview remote`
+- [ ] 4.1 `ui` entry: overlay pane drawing the CHANGES table for the focused workspace (state, repo, where, `done/total`, next open task); `j`/`k`, `c`, `r`, `Tab`, `Esc`/`q`; background thread so drawing never blocks
+- [ ] 4.2 Starting workspace from the run context's `focus.workspace`, else the first; empty-workspace and warnings rows
+- [ ] 4.3 Render-to-buffer snapshot tests: empty workspace, building plus proposal, warnings
+- [ ] 4.4 Verify: `cargo test -p garage-plugin-openspec-board pane`, then by hand with `claude-garage plugin link` against a real workspace and `plugin bind openspec-board:board o`
 
-## 5. GitHub pull requests (`gh api`)
+## 5. Remote-branch changes
 
-- [ ] 5.1 `gh` runner: GET only, `-i` for headers, 15 s timeout, ETag cache under `~/.garage/cache/overview/`, `304` handling
-- [ ] 5.2 Rate-limit accounting: backoff below 200, stop at 0 until reset; statuses `off`, `unauth`, `offline`, `ratelimited`
-- [ ] 5.3 Open and recently merged PRs; link to changes by title, branch, token; task from the title
-- [ ] 5.4 Comment scan with configurable `ci` and `review` regexes, newest match, current-vs-stale by head sha prefix; optional native check runs
-- [ ] 5.5 Tests with a fake `gh` on `PATH`: canned pages, ETags and `304`, rate-limit headers, unauthenticated, timeout; assert no non-GET call
-- [ ] 5.6 Verify: `cargo test -p garage-overview github`
+- [ ] 5.1 `git fetch --prune origin` runner (prompts off, 30 s timeout, failure recorded, 5 min throttle, manual force, only while the pane is open)
+- [ ] 5.2 Branch candidate list (`for-each-ref`, glob filter, 30-day default), tree-id skip against the default branch
+- [ ] 5.3 Read `tasks.md` and `proposal.md` with `git ls-tree` and `git show` only; cache by tree id
+- [ ] 5.4 Merge sources into one row with `where` and a disagreement mark; show it in the pane
+- [ ] 5.5 Test with a bare origin and a clone: a branch holds a change the clone lacks; assert it is listed and that `git status --porcelain`, `HEAD` and the files are unchanged
+- [ ] 5.6 Test fetch failure (origin removed) still lists already-fetched refs
+- [ ] 5.7 Verify: `cargo test -p garage-plugin-openspec-board remote`
 
-## 6. Daemon endpoint (needed by the overlay)
+## 6. GitHub pull requests (`gh api`)
 
-- [ ] 6.1 `crates/daemon/src/api/overview.rs`: `GET /api/overview[?workspace]`, answers from cache, never blocks on `git`/`gh`
-- [ ] 6.2 Consumer tracking and the refresh loop (5 s local, 60 s GitHub, 5 min fetch); idle means nothing runs
-- [ ] 6.3 `POST /api/overview/refresh` and `event: overview`
-- [ ] 6.4 Contract tests in `tests/contract/`: route shape, 404, offline GitHub, origin guard on POST, event after refresh
-- [ ] 6.5 Verify: `cargo test -p garage-daemon` and `npm run test:contract`
+- [ ] 6.1 `gh` runner: GET only, `-i` for headers, 15 s timeout, ETag cache in `cache/`, `304` handling; first-use line for a workspace with `github = true`
+- [ ] 6.2 Rate-limit accounting: backoff below 200, stop at 0 until reset; statuses `gh off`, `gh not logged in` (naming `gh auth login`), `gh offline`, `rate limited until <time>`; documented that `GH_TOKEN` in the user's shell is not visible
+- [ ] 6.3 Open and recently merged PRs; link to changes by title, branch, token; task from the title
+- [ ] 6.4 Comment scan with configurable `ci` and `review` regexes, newest match, current-vs-stale by head sha prefix; optional native check runs
+- [ ] 6.5 Pane: PR rows under each change, check and review marks, status chip in the title
+- [ ] 6.6 Tests with a fake `gh` on `PATH`: canned pages, ETags and `304`, rate-limit headers, unauthenticated, timeout; assert no non-GET call
+- [ ] 6.7 Verify: `cargo test -p garage-plugin-openspec-board github`
 
-## 7. Peek view (owner priority 1)
+## 7. Waiting on you, sessions, jump and open PR
 
-- [ ] 7.1 `claude-garage tasks` in `crates/cli` with `--workspace`, `--json`, `--local`, `--all`; daemon first, in-process local fallback; reserve the word in the plugin CLI checker and `docs/plugins/cli.md`
-- [ ] 7.2 Wall overlay `wall/src/ui/overview.rs` (changes, tasks, next open task, PRs with CI and review, current/stale marks); opens on the chosen key, `j`/`k`, `r`, `Esc`, `Tab`, `c`
-- [ ] 7.3 Confirm the key is free in `keymap.rs` and `help.rs`; add it to the `?` help
-- [ ] 7.4 insta snapshots: empty workspace, building plus proposal, PR with current and stale verdicts, offline chip
-- [ ] 7.5 Verify: `cargo test -p garage-wall --lib --bins`, `cargo test -p claude-garage`, then by hand against a real workspace
+- [ ] 7.1 Waiting list builder: approve-proposal, owner-review (`owner_needed`), failed-check, needs-input; stale results never raise an item
+- [ ] 7.2 Link sessions from `GET /api/sessions` (label, branch token, PR head branch, dir), one change per session; status glyph and count on change rows; waiting block at the top of the pane with the count in the title
+- [ ] 7.3 `Enter`: `POST /api/plugins/ui/action` `session.focus` then exit; with no session open the PR. `p`: spawn `open` or `xdg-open` and stay open
+- [ ] 7.4 Tests: each waiting kind, stale suppression, merged-PR clearing, unlinked needs-input session, label link, worktree-branch link, first-rule-wins; jump and open-PR against the SDK fake daemon
+- [ ] 7.5 Verify: `cargo test -p garage-plugin-openspec-board waiting link jump`
 
-## 8. Waiting on you
+## 8. Status-strip widget
 
-- [ ] 8.1 Waiting list builder: approve-proposal, owner-review (`owner_needed`), failed-check, needs-input; stale results never raise an item
-- [ ] 8.2 Show the list at the top of the overlay and in `tasks` output; count in the overlay title
-- [ ] 8.3 Unit tests for each kind, stale suppression, merged-PR clearing, unlinked needs-input session
-- [ ] 8.4 Verify: `cargo test -p garage-overview waiting`
+- [ ] 8.1 `tick` entry: read sessions and the last cached model, push the `waiting` widget (`ttl_secs = 300`), amber only when above zero, click opens `openspec-board:board`; always exit 0
+- [ ] 8.2 Hooks: `session.status_changed`, `daemon.started`, 60 s timer; optional `background_secs >= 300` refresh from the timer, off by default
+- [ ] 8.3 Tests: count with needs-input sessions and cached items, zero state, `daemon.started` redraw, no `git` or `gh` run when `background_secs` is unset
+- [ ] 8.4 Verify: `cargo test -p garage-plugin-openspec-board tick`, then by hand: make a session need input and watch the strip
 
-## 9. Sessions linked to changes
+## 9. The `tasks` command
 
-- [ ] 9.1 Link rules (label, branch token, PR head branch) over the daemon's session list, one change per session
-- [ ] 9.2 Session status glyph and count on change rows
-- [ ] 9.3 `Enter` in the overlay focuses the session through the existing jump action (workspace and view); `p` opens the PR
-- [ ] 9.4 Tests: label link, worktree-branch link, first-rule-wins, no link; overlay jump test with a fake wall state
-- [ ] 9.5 Verify: `cargo test -p garage-overview link` and `cargo test -p garage-wall --lib`
+- [ ] 9.1 `cli` entry with `--workspace`, `--json`, `--local`, `--all`, `--refresh`, `--print-config-path`; `needs_daemon = true`, local fallback with a note
+- [ ] 9.2 Tests: text block, JSON only on stdout, daemon down, unknown workspace
+- [ ] 9.3 Verify: `cargo test -p garage-plugin-openspec-board cli`
 
-## 10. Rail hint (optional, small)
+## 10. Release pipeline (shipped and updated on its own)
 
-- [ ] 10.1 A waiting count next to the workspace in the rail, only when above zero and amber only for human-needed items
-- [ ] 10.2 Snapshot test; drop the task if the rail is too busy
+- [ ] 10.1 Manifest `[release]` (`tag = "openspec-board-v{version}"`, `checksums`, four assets) and `[[build]]` fallback; `plugin schema` validation
+- [ ] 10.2 CI workflow on tag `openspec-board-v*`: build macOS and Linux (aarch64, x86_64), attach the assets and the checksums file
+- [ ] 10.3 Dry run on a prerelease tag; then `plugin install adar2378/claude-garage/plugins/openspec-board` on a clean `GARAGE_DIR` and `plugin update`
+- [ ] 10.4 Verify: the install preview lists the permissions and commands and the plugin is not in the `claude-garage` archive
 
-## 11. Site and web readers
+## 11. Docs and privacy
 
-- [ ] 11.1 Document the endpoint and model in `docs/` and the plugin API doc (additive fields only)
-- [ ] 11.2 Confirm the CORS/origin behaviour matches `GARAGE_UI_ORIGINS` for `GET`; note what the site must set
-- [ ] 11.3 Verify: contract test reads the endpoint with and without an `Origin` header
+- [ ] 11.1 `plugins/openspec-board/README.md`: install, `config.toml` reference with pattern examples, keys, `tasks`, every command the plugin runs, the `gh auth login` note
+- [ ] 11.2 `docs/plugins/README.md`: add `openspec-board` to the examples line, marked opt-in and not bundled
+- [ ] 11.3 README Privacy: add "the optional openspec-board plugin runs `git fetch` to your own remotes and, for workspaces that opt in, `gh`; nothing else leaves the machine"
+- [ ] 11.4 `LATER.md`: follow-ups (per-repo committed config, label-based approval, notifications, Windows)
+- [ ] 11.5 Verify: `npx -y @fission-ai/openspec@1.4.1 validate p28-workspace-overview --strict`, `cargo clippy --workspace --all-targets -- -D warnings`
 
-## 12. Refresh polish
+## 12. Core change C2 (optional, only if the owner answers yes to question 8)
 
-- [ ] 12.1 `r` in the overlay and `claude-garage tasks --refresh` both call the refresh route
-- [ ] 12.2 Status chip text: `gh off`, `gh not logged in`, `gh offline 9m`, `rate limited until 14:05`, `fetch failed 12m ago`
-- [ ] 12.3 First-use line for a workspace with `github = true` explaining that `gh api` runs against github.com
-- [ ] 12.4 Verify: unit tests for chip text; manual run with the network off
-
-## 13. Docs and privacy
-
-- [ ] 13.1 `docs/overview.md`: `overview.toml` reference with the pattern examples, key, CLI, API model
-- [ ] 13.2 README: add the key to the Keys table and extend Privacy ("`git fetch` to your own remotes, and `gh` for workspaces that opt in; nothing else leaves the machine")
-- [ ] 13.3 `LATER.md`: note follow-ups (per-repo committed config, label-based approval, notifications)
-- [ ] 13.4 Verify: `npx -y @fission-ai/openspec@1.4.1 validate p28-workspace-overview --strict`, `cargo clippy --workspace --all-targets -- -D warnings`
+- [ ] 12.1 A generic plugin-owned read route (`PUT` and `GET /api/plugins/{id}/data`, one JSON document per plugin, size limit, existing origin guard) in the daemon, documented as an additive v1 feature with a feature flag
+- [ ] 12.2 Contract tests in `tests/contract/` and a `docs/plugins/api.md` entry
+- [ ] 12.3 The plugin publishes its model there on each refresh
+- [ ] 12.4 Verify: `cargo test -p garage-daemon` and `npm run test:contract`
