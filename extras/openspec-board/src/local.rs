@@ -86,8 +86,9 @@ pub(crate) fn git(repo: &Path, args: &[&str]) -> Option<String> {
 }
 
 /// The default branch as a full ref name. `origin/HEAD` when it is set and
-/// resolves; otherwise the first of `refs/heads/main`, `refs/heads/master`,
-/// `refs/remotes/origin/main`, `refs/remotes/origin/master` that exists, so a
+/// resolves; otherwise the first of `refs/remotes/origin/main`,
+/// `refs/remotes/origin/master`, `refs/heads/main`, `refs/heads/master` that
+/// exists (the fetched branch first: a local one may be behind), so a
 /// clone without `origin/HEAD` still finds it.
 pub fn default_branch(repo: &Path) -> Option<String> {
     if let Some(head) = git(repo, &["symbolic-ref", "-q", "refs/remotes/origin/HEAD"]) {
@@ -98,10 +99,10 @@ pub fn default_branch(repo: &Path) -> Option<String> {
         }
     }
     [
-        "refs/heads/main",
-        "refs/heads/master",
         "refs/remotes/origin/main",
         "refs/remotes/origin/master",
+        "refs/heads/main",
+        "refs/heads/master",
     ]
     .into_iter()
     .find(|b| git(repo, &["rev-parse", "--verify", "-q", b]).is_some())

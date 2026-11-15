@@ -509,31 +509,33 @@ mod tests {
     }
 
     #[test]
-    fn without_origin_head_the_default_branch_is_found_from_the_local_main() {
+    fn without_origin_head_the_fetched_main_is_the_default_even_when_local_main_is_behind() {
         let d = tempfile::tempdir().unwrap();
         let clone = clone_without_origin_head(d.path());
-        assert_eq!(default_branch(&clone).as_deref(), Some("refs/heads/main"));
-        let mut remote = Remote::new();
-        let rows = remote.collect_repo(&clone, &[], now());
-        // `feat/other` has the default branch's changes tree: skipped unread.
-        assert_eq!(remote.shows, 0, "{rows:?}");
-        assert!(rows.is_empty());
-    }
-
-    #[test]
-    fn without_origin_head_or_a_local_main_the_remote_main_is_the_default() {
-        let d = tempfile::tempdir().unwrap();
-        let clone = clone_without_origin_head(d.path());
-        git_in(&clone, &["checkout", "-q", "--detach"]);
-        git_in(&clone, &["branch", "-q", "-D", "main"]);
+        // Local `main` falls behind the fetched `origin/main`.
+        git_in(&clone, &["reset", "-q", "--hard", "HEAD~1"]);
         assert_eq!(
             default_branch(&clone).as_deref(),
             Some("refs/remotes/origin/main")
         );
         let mut remote = Remote::new();
         let rows = remote.collect_repo(&clone, &[], now());
+        // `feat/other` has the default branch's changes tree: skipped unread,
+        // and `origin/main` itself is not listed as a branch with changes.
         assert_eq!(remote.shows, 0, "{rows:?}");
-        assert!(rows.is_empty());
+        assert!(rows.is_empty(), "{rows:?}");
+    }
+
+    #[test]
+    fn without_origin_head_or_a_remote_main_the_local_main_is_the_default() {
+        let d = tempfile::tempdir().unwrap();
+        let clone = clone_without_origin_head(d.path());
+        git_in(&clone, &["update-ref", "-d", "refs/remotes/origin/main"]);
+        assert_eq!(default_branch(&clone).as_deref(), Some("refs/heads/main"));
+        let mut remote = Remote::new();
+        let rows = remote.collect_repo(&clone, &[], now());
+        assert_eq!(remote.shows, 0, "{rows:?}");
+        assert!(rows.is_empty(), "{rows:?}");
     }
 
     #[test]

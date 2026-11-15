@@ -31,6 +31,8 @@ pub const LOW_WATER: u64 = 200;
 pub const MERGED_DAYS: i64 = 14;
 /// Comment pages read per PR, from the newest backwards.
 const MAX_COMMENT_PAGES: u32 = 5;
+/// Pages walked forward to find the last one.
+const MAX_PAGES: u32 = 20;
 /// The only environment the child sees: `gh` works through its stored login.
 const KEEP_ENV: [&str; 7] = ["PATH", "HOME", "USER", "LANG", "TERM", "TMPDIR", "SHELL"];
 /// Output of one call is read up to this size.
@@ -264,7 +266,6 @@ impl Status {
 #[derive(Debug, Default, Serialize, Deserialize)]
 struct Entry {
     etag: Option<String>,
-    link: Option<String>,
     body: String,
 }
 
@@ -273,8 +274,6 @@ struct Entry {
 #[derive(Debug, Clone)]
 struct Body {
     text: String,
-    /// The `Link` header (pagination).
-    link: Option<String>,
 }
 
 /// One file of a PR.
@@ -508,12 +507,7 @@ impl Github {
     /// the cached one (or `None`) whenever GitHub cannot be reached.
     fn request(&mut self, endpoint: &str) -> Option<Body> {
         let cached = self.cached(endpoint);
-        let serve = |c: Option<Entry>| {
-            c.map(|e| Body {
-                text: e.body,
-                link: e.link,
-            })
-        };
+        let serve = |c: Option<Entry>| c.map(|e| Body { text: e.body });
         if let Some(until) = self.rate.blocked_until(self.now_unix) {
             self.status = Status::RateLimited { until };
             return serve(cached);
@@ -534,7 +528,6 @@ impl Github {
                         self.status = Status::Ok;
                         let entry = Entry {
                             etag: header(&headers, "etag").map(str::to_owned),
-                            link: header(&headers, "link").map(str::to_owned),
                             body,
                         };
                         self.store(endpoint, &entry);
@@ -581,10 +574,7 @@ impl Github {
     fn fail(&mut self, status: Status, cached: Option<Entry>) -> Option<Body> {
         self.status = status;
         self.pass_failed = true;
-        cached.map(|e| Body {
-            text: e.body,
-            link: e.link,
-        })
+        cached.map(|e| Body { text: e.body })
     }
 
     fn json(&mut self, endpoint: &str) -> Option<Value> {
@@ -686,7 +676,10 @@ impl Github {
         if native && patterns.ci.is_none() {
             found.ci = self.native_ci(slug, pr);
         }
-        if self.status == Status::Ok {
+        // Check runs finishing does not move `updated_at`: a native result
+        // that is not final is read again next pass.
+        let settled = !(native && patterns.ci.is_none()) || found.ci.is_some();
+        if self.status == Status::Ok && settled {
             self.comments.insert(key, found.clone());
         }
         found
@@ -696,26 +689,35 @@ impl Github {
     /// newest match of each pattern.
     fn scan_pr_comments(&mut self, slug: &str, pr: &PrData, patterns: &Patterns) -> Checks {
         let base = format!("repos/{slug}/issues/{}/comments?per_page=100", pr.number);
-        let Some(first) = self.request(&base) else {
+        // The page count is found by walking forward while pages are full
+        // (a 304 costs nothing), not from a cached `Link` header that goes
+        // stale when a page is added.
+        let mut pages: Vec<String> = vec![];
+        for page in 1..=MAX_PAGES {
+            let endpoint = if page == 1 {
+                base.clone()
+            } else {
+                format!("{base}&page={page}")
+            };
+            let Some(body) = self.request(&endpoint) else {
+                break;
+            };
+            let full = serde_json::from_str::<Vec<Value>>(&body.text).is_ok_and(|l| l.len() >= 100);
+            pages.push(body.text);
+            if !full {
+                break;
+            }
+        }
+        if pages.is_empty() {
             return Checks::default();
-        };
-        let last = first
-            .link
-            .as_deref()
-            .and_then(last_page)
-            .unwrap_or(1)
-            .max(1);
+        }
+        let last = pages.len() as u32;
         let mut newest_first: Vec<String> = vec![];
         let mut page = last;
         let stop_at = last.saturating_sub(MAX_COMMENT_PAGES - 1).max(1);
         loop {
-            let body = if page == 1 {
-                Some(first.clone())
-            } else {
-                self.request(&format!("{base}&page={page}"))
-            };
-            let Some(body) = body else { break };
-            let list: Vec<Value> = serde_json::from_str(&body.text).unwrap_or_default();
+            let list: Vec<Value> =
+                serde_json::from_str(&pages[page as usize - 1]).unwrap_or_default();
             newest_first.extend(
                 list.iter()
                     .rev()
@@ -729,7 +731,6 @@ impl Github {
             }
             page -= 1;
         }
-        scan_comments(&newest_first, patterns, &pr.head_sha)
     }
 
     fn native_ci(&mut self, slug: &str, pr: &PrData) -> Option<CiResult> {
@@ -762,18 +763,6 @@ impl Github {
             current: true,
         })
     }
-}
-
-/// The page number of `rel="last"` in a `Link` header.
-fn last_page(link: &str) -> Option<u32> {
-    link.split(',')
-        .find(|p| p.contains("rel=\"last\""))
-        .and_then(|p| {
-            let url = p.split('<').nth(1)?.split('>').next()?;
-            url.split(['?', '&'])
-                .find_map(|kv| kv.strip_prefix("page="))
-                .and_then(|n| n.parse().ok())
-        })
 }
 
 fn pr_of(v: &Value, merged: bool) -> Option<PrData> {
@@ -1187,13 +1176,11 @@ mod tests {
         let state = tempfile::tempdir().unwrap();
         let fake = FakeGh::new();
         let base = "repos/o/r/issues/5/comments?per_page=100";
-        let link = "Link: <https://api.github.com/repositories/1/issues/5/comments?per_page=100&page=2>; rel=\"next\", <https://api.github.com/repositories/1/issues/5/comments?per_page=100&page=2>; rel=\"last\"\r\n";
-        fake.ok(
-            base,
-            "\"p1\"",
-            link,
-            r#"[{"body":"Claude CI (full): FAIL aaa1111"}]"#,
-        );
+        // Page 1 is full (100 comments, the CI one the oldest), page 2 has
+        // the newest comment: the walk finds page 2 without any `Link`.
+        let mut page1 = vec![r#"{"body":"Claude CI (full): FAIL aaa1111"}"#.to_owned()];
+        page1.extend((1..100).map(|_| r#"{"body":"noise"}"#.to_owned()));
+        fake.ok(base, "\"p1\"", "", &format!("[{}]", page1.join(",")));
         fake.ok(
             &format!("{base}&page=2"),
             "\"p2\"",
@@ -1236,6 +1223,32 @@ mod tests {
         .unwrap();
         let ci = g.native_ci("o/r", &pr).unwrap();
         assert_eq!((ci.status.as_str(), ci.current), ("FAIL", true));
+    }
+
+    #[test]
+    fn pending_native_checks_are_read_again_and_not_remembered() {
+        let state = tempfile::tempdir().unwrap();
+        let fake = FakeGh::new();
+        let ep = "repos/o/r/commits/9c8d7e6aa/check-runs?per_page=100";
+        fake.ok(ep, "\"x\"", "", r#"{"check_runs":[{"conclusion":null}]}"#);
+        let mut g = github(&fake, state.path());
+        let pr = pr_of(
+            &serde_json::from_str(&pr_json(5, "t", "b", "9c8d7e6aa")).unwrap(),
+            false,
+        )
+        .unwrap();
+        let none = Patterns::default();
+        assert_eq!(g.pr_checks("o/r", &pr, &none, true).ci, None);
+        // The runs finish; the PR's updated_at did not move.
+        fake.ok(
+            ep,
+            "\"y\"",
+            "",
+            r#"{"check_runs":[{"conclusion":"success"}]}"#,
+        );
+        g.begin_pass(Instant::now(), 1_000_000);
+        let ci = g.pr_checks("o/r", &pr, &none, true).ci.unwrap();
+        assert_eq!(ci.status, "PASS");
     }
 
     #[test]
