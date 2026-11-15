@@ -15,6 +15,8 @@ use garage_plugin_sdk::{Api, Context, strip_hostile};
 
 use crate::config::{self, Config};
 use crate::fetch;
+use crate::github::{self, Github, Status};
+use crate::linking::{self, LinkedPr};
 use crate::local::{Collector, Row};
 use crate::remote::{self, Remote};
 
@@ -29,6 +31,15 @@ pub struct WorkspaceView {
     pub warnings: Vec<String>,
     /// `fetch failed 12m ago` when the last fetch of a repo failed.
     pub fetch_note: Option<String>,
+    /// Linked pull requests (GitHub on for the workspace), under their change.
+    pub prs: Vec<LinkedPr>,
+    /// The GitHub status chip for the title: `gh off`, `gh offline 9m`, ...
+    pub gh_chip: Option<String>,
+    /// Plain information lines (the first-use line for `gh`).
+    pub notes: Vec<String>,
+    /// A `review` pattern is configured: a PR without a verdict for its head
+    /// reads `review pending`.
+    pub review_tracked: bool,
 }
 
 /// Whether a pass may run `git fetch`.
@@ -58,6 +69,7 @@ pub fn snapshot(
     home: Option<&Path>,
     collector: &mut Collector,
     remote: &mut Remote,
+    gh: &mut Github,
     mode: FetchMode,
 ) -> Snapshot {
     let cfg = config::load(state_dir);
@@ -70,13 +82,35 @@ pub fn snapshot(
             };
         }
     };
-    let workspaces = list
+    let found: Vec<(&str, &str)> = list
         .as_array()
         .into_iter()
         .flatten()
         .filter_map(|w| Some((w["name"].as_str()?, w["dir"].as_str()?)))
+        .collect();
+    // One GitHub pass for all workspaces, only when one of them opted in and
+    // the interval has passed (or the user pressed `r`); never while the
+    // first, cache-only snapshot is drawn.
+    let now = Instant::now();
+    let now_unix = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| i64::try_from(d.as_secs()).unwrap_or(0));
+    let wants_github = found.iter().any(|(name, _)| cfg.workspace(name).github);
+    let poll = wants_github && mode != FetchMode::Never && gh.due(mode == FetchMode::Force, now);
+    if poll {
+        gh.begin_pass(now, now_unix);
+    }
+    let workspaces = found
+        .into_iter()
         .map(|(name, dir)| {
-            workspace_view(name, Path::new(dir), &cfg, home, collector, remote, mode)
+            workspace_view(
+                name,
+                Path::new(dir),
+                &cfg,
+                home,
+                (collector, remote, gh),
+                (mode, poll),
+            )
         })
         .collect();
     Snapshot {
@@ -90,9 +124,8 @@ fn workspace_view(
     dir: &Path,
     cfg: &Config,
     home: Option<&Path>,
-    collector: &mut Collector,
-    remote: &mut Remote,
-    mode: FetchMode,
+    (collector, remote, gh): (&mut Collector, &mut Remote, &mut Github),
+    (mode, poll): (FetchMode, bool),
 ) -> WorkspaceView {
     let wcfg = cfg.workspace(name);
     let (repos, mut warnings) = config::resolve_repos(dir, &wcfg, home);
@@ -125,9 +158,49 @@ fn workspace_view(
         local.extend(collector.collect_repo(repo));
         remote_rows.extend(remote.collect_repo(repo, &wcfg.branches, now_unix));
     }
+    let rows = remote::merge(local, remote_rows);
+    let (mut prs, mut notes) = (vec![], vec![]);
+    let gh_chip = if wcfg.github {
+        notes.push(
+            "gh: this workspace has github = true, so `gh api` (GET only) runs against github.com"
+                .to_owned(),
+        );
+        for repo in &repos {
+            let folder = repo_folder(repo);
+            let Some(slug) = github::repo_slug(repo) else {
+                warnings.push(format!("{folder} has no github.com origin: no PR data"));
+                continue;
+            };
+            let names: Vec<String> = rows
+                .iter()
+                .filter(|r| r.repo == folder)
+                .map(|r| r.name.clone())
+                .collect();
+            if poll {
+                gh.read_repo(&slug, &names, &wcfg.patterns, wcfg.checks);
+            }
+            if let Some(data) = gh.data.get(&slug) {
+                prs.extend(linking::link_all(
+                    &folder,
+                    &slug,
+                    data,
+                    &names,
+                    wcfg.patterns.task.as_deref(),
+                ));
+            }
+        }
+        warnings.extend(gh.status.warning());
+        Some(if gh.status == Status::Off {
+            "gh …".to_owned()
+        } else {
+            gh.status.chip(now)
+        })
+    } else {
+        Some("gh off".to_owned())
+    };
     WorkspaceView {
         name: name.to_owned(),
-        rows: remote::merge(local, remote_rows),
+        rows,
         warnings,
         fetch_note: failed.map(|at| {
             format!(
@@ -135,7 +208,17 @@ fn workspace_view(
                 age(now.saturating_duration_since(at).as_secs())
             )
         }),
+        prs,
+        gh_chip,
+        notes,
+        review_tracked: wcfg.patterns.review.is_some(),
     }
+}
+
+fn repo_folder(repo: &Path) -> String {
+    repo.file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| repo.display().to_string())
 }
 
 /// What a key asks the loop to do.
@@ -280,7 +363,10 @@ pub fn render(state: &PaneState, age_secs: Option<u64>, cols: usize, rows: usize
     let fetch = ws
         .and_then(|w| w.fetch_note.as_deref())
         .map_or(String::new(), |n| format!(" · {}", strip_hostile(n)));
-    let title = format!(" openspec-board · {name}{tabs} · {updated}{fetch} ");
+    let chip = ws
+        .and_then(|w| w.gh_chip.as_deref())
+        .map_or(String::new(), |c| format!(" · {}", strip_hostile(c)));
+    let title = format!(" openspec-board · {name}{tabs} · {updated}{fetch}{chip} ");
 
     if let Some(e) = &state.snapshot.error {
         body.push(format!("! {}", strip_hostile(e)));
@@ -297,6 +383,9 @@ pub fn render(state: &PaneState, age_secs: Option<u64>, cols: usize, rows: usize
         Some(w) => {
             for warn in &w.warnings {
                 body.push(format!("! {}", strip_hostile(warn)));
+            }
+            for note in &w.notes {
+                body.push(format!("i {}", strip_hostile(note)));
             }
             if w.rows.is_empty() {
                 body.push(format!("no OpenSpec changes in {}", strip_hostile(&w.name)));
@@ -319,6 +408,66 @@ fn fit_title(title: &str, width: usize) -> String {
     format!("{t}{}", "─".repeat(width - t.chars().count()))
 }
 
+/// The pull requests linked to a change row.
+fn prs_of<'a>(w: &'a WorkspaceView, r: &'a Row) -> impl Iterator<Item = &'a LinkedPr> {
+    w.prs
+        .iter()
+        .filter(move |l| l.change == r.name && l.repo == r.repo)
+}
+
+fn short(sha: &str) -> &str {
+    sha.get(..7).unwrap_or(sha)
+}
+
+/// One PR under its change: `✗ [1.3] web#88 title · CI FAIL e4f5a6b (head) ·
+/// review PASS 5b6c7d8 (STALE: head is 77aa11c) · review pending`.
+fn pr_line(l: &LinkedPr, review_tracked: bool) -> String {
+    let (pr, c) = (&l.pr, &l.pr.checks);
+    let mark = match c.ci.as_ref() {
+        Some(ci) if ci.current && ci.status == "FAIL" => "✗",
+        Some(ci) if ci.current && ci.status == "PASS" => "✓",
+        _ => "◆",
+    };
+    let mut line = format!("{mark} ");
+    if let Some(t) = &l.task {
+        line.push_str(&format!("[{t}] "));
+    }
+    line.push_str(&format!("{}#{}", strip_hostile(&l.repo), pr.number));
+    if pr.draft {
+        line.push_str(" draft");
+    }
+    if pr.merged {
+        line.push_str(" merged");
+    }
+    line.push_str(&format!(" {}", strip_hostile(&pr.title)));
+    if let Some(ci) = &c.ci {
+        let which = if ci.current {
+            "head".to_owned()
+        } else {
+            format!("STALE: head is {}", short(&pr.head_sha))
+        };
+        line.push_str(&format!(" · CI {} {} ({which})", ci.status, short(&ci.sha)));
+    }
+    let mut pending = review_tracked && c.review.is_none();
+    if let Some(r) = &c.review {
+        if r.current {
+            line.push_str(&format!(" · review {} {} (head)", r.verdict, short(&r.sha)));
+        } else {
+            pending = true;
+            line.push_str(&format!(
+                " · review {} {} (STALE: head is {})",
+                r.verdict,
+                short(&r.sha),
+                short(&pr.head_sha)
+            ));
+        }
+    }
+    if pending && !pr.merged {
+        line.push_str(" · review pending");
+    }
+    line
+}
+
 /// `6/10`, with `≠` after it when the sources of the change disagree.
 fn tasks_cell(r: &Row) -> String {
     format!(
@@ -332,13 +481,15 @@ fn tasks_cell(r: &Row) -> String {
 fn table(body: &mut Vec<String>, w: &WorkspaceView, state: &PaneState, inner: usize, rows: usize) {
     // Rows that fit: the screen less borders, footer, header, warnings and the
     // detail block. The window follows the selection.
-    let reserved = 4 + w.warnings.len() + if state.detail { 15 } else { 0 };
-    let window = rows.saturating_sub(reserved).max(3);
-    let first = if state.selected < window {
-        0
-    } else {
-        state.selected + 1 - window
-    };
+    let reserved = 4 + w.warnings.len() + w.notes.len() + if state.detail { 15 } else { 0 };
+    let budget = rows.saturating_sub(reserved).max(3);
+    // Each change takes one line plus one per linked PR; the window starts
+    // late enough for the selected change to be inside it.
+    let lines_of = |i: usize| 1 + prs_of(w, &w.rows[i]).count();
+    let mut first = 0;
+    while first < state.selected && (first..=state.selected).map(lines_of).sum::<usize>() > budget {
+        first += 1;
+    }
     let name_w = longest(w.rows.iter().map(|r| r.name.chars().count()), 6, 28);
     let repo_w = longest(w.rows.iter().map(|r| r.repo.chars().count()), 4, 14);
     let where_w = longest(
@@ -360,7 +511,12 @@ fn table(body: &mut Vec<String>, w: &WorkspaceView, state: &PaneState, inner: us
         right("TASKS", tasks_w),
         "NEXT OPEN"
     ));
-    for (i, r) in w.rows.iter().enumerate().skip(first).take(window) {
+    let mut used_lines = 0;
+    for (i, r) in w.rows.iter().enumerate().skip(first) {
+        if used_lines + lines_of(i) > budget && used_lines > 0 {
+            break;
+        }
+        used_lines += lines_of(i);
         let mark = if i == state.selected { "▸" } else { " " };
         body.push(format!(
             "{mark} {} {} {} {} {} {}",
@@ -371,6 +527,11 @@ fn table(body: &mut Vec<String>, w: &WorkspaceView, state: &PaneState, inner: us
             right(&tasks_cell(r), tasks_w),
             fit(&strip_hostile(r.next.as_deref().unwrap_or("-")), next_w).trim_end(),
         ));
+        let linked: Vec<&LinkedPr> = prs_of(w, r).collect();
+        for (k, l) in linked.iter().enumerate() {
+            let branch = if k + 1 == linked.len() { "└" } else { "├" };
+            body.push(format!("  {branch} {}", pr_line(l, w.review_tracked)));
+        }
     }
     if state.detail
         && let Some(r) = w.rows.get(state.selected)
@@ -404,6 +565,7 @@ pub fn spawn_worker(
     let (force_tx, force_rx) = mpsc::channel::<()>();
     std::thread::spawn(move || {
         let (mut collector, mut remote) = (Collector::new(), Remote::new());
+        let mut gh = Github::new("gh", state_dir.clone());
         let mut mode = FetchMode::IfDue;
         let mut first = true;
         loop {
@@ -415,6 +577,7 @@ pub fn spawn_worker(
                     home.as_deref(),
                     &mut collector,
                     &mut remote,
+                    &mut gh,
                     FetchMode::Never,
                 );
                 if tx.send(snap).is_err() {
@@ -428,6 +591,7 @@ pub fn spawn_worker(
                 home.as_deref(),
                 &mut collector,
                 &mut remote,
+                &mut gh,
                 mode,
             );
             if tx.send(snap).is_err() {
@@ -539,6 +703,7 @@ mod tests {
             rows,
             warnings: warnings.iter().map(|w| w.to_string()).collect(),
             fetch_note: None,
+            ..WorkspaceView::default()
         }
     }
 
@@ -810,6 +975,7 @@ mod tests {
             Some(home.path()),
             &mut Collector::new(),
             &mut Remote::new(),
+            &mut Github::new("/nonexistent/gh", state.path().to_path_buf()),
             FetchMode::Never,
         );
         assert_eq!(snap.error, None);
@@ -839,6 +1005,7 @@ mod tests {
             None,
             &mut Collector::new(),
             &mut Remote::new(),
+            &mut Github::new("/nonexistent/gh", state.path().to_path_buf()),
             FetchMode::Never,
         );
         assert!(snap.workspaces.is_empty());
@@ -854,5 +1021,214 @@ mod tests {
         rx.recv_timeout(Duration::from_secs(5)).unwrap();
         force.send(()).unwrap();
         rx.recv_timeout(Duration::from_secs(5)).unwrap();
+    }
+
+    use crate::fakegh::FakeGh;
+    use crate::github::{Checks, CiResult, PrData, PrFile, ReviewResult};
+
+    /// A workspace `kowboy` with one repo `api` holding the change
+    /// `search-ui`, a github.com `origin`, and the config text given.
+    fn github_fixture(config: &str) -> (tempfile::TempDir, tempfile::TempDir, FakeDaemon) {
+        let home = tempfile::tempdir().unwrap();
+        let ws = home.path().join("kowboy");
+        let api_repo = ws.join("api");
+        std::fs::create_dir_all(api_repo.join("openspec/changes/search-ui")).unwrap();
+        std::fs::write(
+            api_repo.join("openspec/changes/search-ui/tasks.md"),
+            "- [x] 1.1 a\n- [ ] 1.3 debounce\n",
+        )
+        .unwrap();
+        let git = |args: &[&str]| {
+            assert!(
+                std::process::Command::new("git")
+                    .arg("-C")
+                    .arg(&api_repo)
+                    .args(args)
+                    .output()
+                    .unwrap()
+                    .status
+                    .success()
+            );
+        };
+        git(&["init", "-q", "-b", "main"]);
+        git(&["remote", "add", "origin", "https://github.com/o/r.git"]);
+        let state = tempfile::tempdir().unwrap();
+        std::fs::write(state.path().join("config.toml"), config).unwrap();
+        let dir = ws.to_string_lossy().into_owned();
+        let fake = FakeDaemon::start(move |req| match req.path.as_str() {
+            "/api/workspaces" => (200, format!(r#"[{{"name":"kowboy","dir":{dir:?}}}]"#)),
+            _ => (404, "{}".into()),
+        });
+        (home, state, fake)
+    }
+
+    fn pass(home: &Path, state: &Path, fake: &FakeDaemon, gh: &mut Github) -> WorkspaceView {
+        let snap = snapshot(
+            &fake.api("openspec-board"),
+            state,
+            Some(home),
+            &mut Collector::new(),
+            &mut Remote::new(),
+            gh,
+            FetchMode::IfDue,
+        );
+        snap.workspaces.into_iter().next().unwrap()
+    }
+
+    #[test]
+    fn github_off_runs_no_gh_at_all_and_the_status_reads_gh_off() {
+        let (home, state, fake) = github_fixture("");
+        let gh = FakeGh::new();
+        let mut g = Github::new(gh.program(), state.path().to_path_buf());
+        let w = pass(home.path(), state.path(), &fake, &mut g);
+        assert!(gh.log().is_empty(), "{:?}", gh.log());
+        assert_eq!(w.gh_chip.as_deref(), Some("gh off"));
+        assert!(w.prs.is_empty());
+        let mut s = PaneState::new(None);
+        s.set_snapshot(Snapshot {
+            workspaces: vec![w],
+            error: None,
+        });
+        let text = render(&s, Some(1), 100, 20).join("\n");
+        assert!(text.contains("· gh off"), "{text}");
+        assert!(!state.path().join("cache").exists());
+    }
+
+    const OPEN: &str = "repos/o/r/pulls?state=open&per_page=100";
+    const CLOSED: &str = "repos/o/r/pulls?state=closed&sort=updated&direction=desc&per_page=100";
+    const CONFIG: &str = "[workspace.kowboy]\ngithub = true\nfetch = false\n\
+        [workspace.kowboy.comments]\n\
+        ci = 'Claude CI \\((?P<mode>\\w+)\\): (?P<status>PASS|FAIL) (?P<sha>[0-9a-f]{7,40})'\n\
+        review = 'Claude review: (?P<verdict>[A-Za-z _-]+?) (?P<sha>[0-9a-f]{7,40})'\n";
+
+    #[test]
+    fn a_pass_with_github_on_shows_the_linked_pr_with_its_marks_and_only_gets() {
+        let (home, state, fake) = github_fixture(CONFIG);
+        let gh = FakeGh::new();
+        gh.ok(
+            OPEN,
+            "\"a\"",
+            "X-Ratelimit-Remaining: 4000\r\n",
+            r#"[{"number":88,"html_url":"https://github.com/o/r/pull/88","title":"[search-ui 1.3] debounce","draft":false,"updated_at":"2026-11-01T00:00:00Z","head":{"ref":"claude/x","sha":"e4f5a6b1234"}}]"#,
+        );
+        gh.ok(CLOSED, "\"b\"", "", "[]");
+        gh.ok("repos/o/r/pulls/88/files?per_page=100", "\"c\"", "", "[]");
+        gh.ok(
+            "repos/o/r/issues/88/comments?per_page=100",
+            "\"d\"",
+            "",
+            r#"[{"body":"Claude CI (full): FAIL e4f5a6b"},{"body":"Claude review: PASS 5b6c7d8"}]"#,
+        );
+        let mut g = Github::new(gh.program(), state.path().to_path_buf());
+        let w = pass(home.path(), state.path(), &fake, &mut g);
+        assert_eq!(w.prs.len(), 1);
+        assert_eq!(w.prs[0].task.as_deref(), Some("1.3"));
+        let mut s = PaneState::new(None);
+        s.set_snapshot(Snapshot {
+            workspaces: vec![w],
+            error: None,
+        });
+        let text = render(&s, Some(1), 150, 30).join("\n");
+        assert!(text.contains("· gh ok"), "{text}");
+        assert!(
+            text.contains(
+                "└ ✗ [1.3] api#88 [search-ui 1.3] debounce · CI FAIL e4f5a6b (head) · \
+                 review PASS 5b6c7d8 (STALE: head is e4f5a6b) · review pending"
+            ),
+            "{text}"
+        );
+        // Every call was a GET.
+        assert!(gh.log().len() >= 4);
+        assert!(
+            gh.log()
+                .iter()
+                .all(|l| l.starts_with("api -i --method GET "))
+        );
+        // The cache holds private text: mode 0700.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let m = std::fs::metadata(state.path().join("cache")).unwrap();
+            assert_eq!(m.permissions().mode() & 0o777, 0o700);
+        }
+    }
+
+    #[test]
+    fn a_missing_gh_is_a_warning_row_and_the_changes_are_still_listed() {
+        let (home, state, fake) = github_fixture(CONFIG);
+        let mut g = Github::new("/nonexistent/gh", state.path().to_path_buf());
+        let w = pass(home.path(), state.path(), &fake, &mut g);
+        assert_eq!(w.rows.len(), 1);
+        assert!(
+            w.warnings.iter().any(|x| x.contains("gh was not found")),
+            "{:?}",
+            w.warnings
+        );
+        assert_eq!(w.gh_chip.as_deref(), Some("gh off"));
+    }
+
+    #[test]
+    fn pr_rows_show_draft_merged_and_a_current_review_and_a_windowed_table_keeps_the_selection() {
+        let pr = |n: u64, draft: bool, merged: bool, checks: Checks| LinkedPr {
+            repo: "api".into(),
+            slug: "o/r".into(),
+            change: "search-ui".into(),
+            task: None,
+            pr: PrData {
+                number: n,
+                url: String::new(),
+                title: "t".into(),
+                draft,
+                head_ref: String::new(),
+                head_sha: "9c8d7e6aa".into(),
+                updated_at: String::new(),
+                merged,
+                files: vec![PrFile {
+                    path: "x".into(),
+                    status: "added".into(),
+                }],
+                checks,
+            },
+        };
+        let ok = Checks {
+            ci: Some(CiResult {
+                status: "PASS".into(),
+                sha: "9c8d7e6".into(),
+                mode: None,
+                current: true,
+            }),
+            review: Some(ReviewResult {
+                verdict: "APPROVED".into(),
+                sha: "9c8d7e6".into(),
+                current: true,
+            }),
+            owner_needed: false,
+        };
+        let mut v = view(
+            "kowboy",
+            vec![row(
+                "search-ui",
+                "api",
+                State::Building,
+                1,
+                2,
+                Some("1.3 a"),
+            )],
+            &[],
+        );
+        v.review_tracked = true;
+        v.prs = vec![
+            pr(1, true, false, ok.clone()),
+            pr(2, false, true, Checks::default()),
+        ];
+        let text = render(&state_with(vec![v]), Some(1), 120, 20).join("\n");
+        assert!(
+            text.contains(
+                "├ ✓ api#1 draft t · CI PASS 9c8d7e6 (head) · review APPROVED 9c8d7e6 (head)"
+            ),
+            "{text}"
+        );
+        assert!(text.contains("└ ◆ api#2 merged t"), "{text}");
+        assert!(!text.contains("api#2 merged t · review pending"), "{text}");
     }
 }

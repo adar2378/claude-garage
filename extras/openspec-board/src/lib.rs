@@ -1,10 +1,14 @@
 //! `openspec-board`: a read-only overlay of the OpenSpec changes of a garage
-//! workspace. This group has the local changes only: parsers, config, the
-//! local collector and the pane. Everything that decides something is a plain
+//! workspace: parsers, config, the local and remote-branch collectors, the
+//! GitHub reader (`gh api`, GET only), PR linking and the pane. Everything that decides something is a plain
 //! function, tested without a daemon or a terminal.
 
 pub mod config;
+#[cfg(test)]
+mod fakegh;
 pub mod fetch;
+pub mod github;
+pub mod linking;
 pub mod local;
 pub mod pane;
 pub mod parser;

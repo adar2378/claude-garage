@@ -85,19 +85,28 @@ pub(crate) fn git(repo: &Path, args: &[&str]) -> Option<String> {
         .then(|| String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
-/// `refs/remotes/origin/main` -> `origin/main`; else the first of `main`,
-/// `master`, `origin/main`, `origin/master` that exists.
+/// The default branch as a full ref name. `origin/HEAD` when it is set and
+/// resolves; otherwise the first of `refs/remotes/origin/main`,
+/// `refs/remotes/origin/master`, `refs/heads/main`, `refs/heads/master` that
+/// exists (the fetched branch first: a local one may be behind), so a
+/// clone without `origin/HEAD` still finds it.
 pub fn default_branch(repo: &Path) -> Option<String> {
-    if let Some(head) = git(repo, &["symbolic-ref", "-q", "refs/remotes/origin/HEAD"])
-        && let Some(short) = head.trim().strip_prefix("refs/remotes/")
-        && git(repo, &["rev-parse", "--verify", "-q", short]).is_some()
-    {
-        return Some(short.to_owned());
+    if let Some(head) = git(repo, &["symbolic-ref", "-q", "refs/remotes/origin/HEAD"]) {
+        let full = head.trim();
+        if full.starts_with("refs/") && git(repo, &["rev-parse", "--verify", "-q", full]).is_some()
+        {
+            return Some(full.to_owned());
+        }
     }
-    ["main", "master", "origin/main", "origin/master"]
-        .into_iter()
-        .find(|b| git(repo, &["rev-parse", "--verify", "-q", b]).is_some())
-        .map(str::to_owned)
+    [
+        "refs/remotes/origin/main",
+        "refs/remotes/origin/master",
+        "refs/heads/main",
+        "refs/heads/master",
+    ]
+    .into_iter()
+    .find(|b| git(repo, &["rev-parse", "--verify", "-q", b]).is_some())
+    .map(str::to_owned)
 }
 
 /// `2026-11-02-old` -> `old`.

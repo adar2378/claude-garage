@@ -23,13 +23,13 @@ Each numbered group ships alone and is testable alone. There is no core change. 
 
 ## 3. GitHub pull requests (`gh api`)
 
-- [ ] 3.1 `gh` runner: GET only, `-i`, 15 s timeout, ETag cache in `cache/`; parse the **status line** (`200`, `304`, `401`, `403`, ...) and never the exit code, because `gh api` exits 1 on HTTP 304; treat a missing status line as "never reached GitHub"; parse headers on every response; first-use line for a workspace with `github = true`; `github` is off by default
-- [ ] 3.2 Rate-limit accounting from `X-Ratelimit-Remaining` and `X-Ratelimit-Reset` (also on a 304): backoff below 200, stop at 0 until reset; statuses `gh off`, `gh not logged in` (naming `gh auth login`), `gh offline`, `rate limited until <time>`
-- [ ] 3.3 Open and recently merged PRs; per-PR changed files (re-read when the head moves); link a PR to a change when the change name appears anywhere in the head branch, title or diff paths (diff path wins, then longest name); task number from the title pattern
-- [ ] 3.4 Comment scan with configurable `ci` and `review` regexes, newest match, current-vs-stale by head sha prefix; `owner_needed` matched against the whole body of the newest review comment; optional native check runs
-- [ ] 3.5 Pane: PR rows under each change, check and review marks, status chip in the title
-- [ ] 3.6 Tests with a fake `gh` on `PATH`: canned pages, ETags, `304` served with exit status 1, rate-limit headers, unauthenticated, timeout; branch `claude/anything` and title `docs(openspec): propose <change>` link; a short name does not beat a longer matching one; `Owner approval: yes` on its own line is found; assert no non-GET call and no call at all when `github` is off
-- [ ] 3.7 Verify, one command per area: `cargo test --manifest-path extras/openspec-board/Cargo.toml github::`, `cargo test --manifest-path extras/openspec-board/Cargo.toml linking::`
+- [x] 3.1 `gh` runner: GET only, `-i`, 15 s timeout, ETag cache in `cache/`; parse the **status line** (`200`, `304`, `401`, `403`, ...) and never the exit code, because `gh api` exits 1 on HTTP 304; treat a missing status line as "never reached GitHub"; parse headers on every response; first-use line for a workspace with `github = true`; `github` is off by default
+- [x] 3.2 Rate-limit accounting from `X-Ratelimit-Remaining` and `X-Ratelimit-Reset` (also on a 304): backoff below 200, stop at 0 until reset; statuses `gh off`, `gh not logged in` (naming `gh auth login`), `gh offline`, `rate limited until <time>`
+- [x] 3.3 Open and recently merged PRs; per-PR changed files (re-read when the head moves); link a PR to a change when the change name appears anywhere in the head branch, title or diff paths (diff path wins, then longest name); task number from the title pattern
+- [x] 3.4 Comment scan with configurable `ci` and `review` regexes, newest match, current-vs-stale by head sha prefix; `owner_needed` matched against the whole body of the newest review comment; optional native check runs
+- [x] 3.5 Pane: PR rows under each change, check and review marks, status chip in the title
+- [x] 3.6 Tests with a fake `gh` on `PATH`: canned pages, ETags, `304` served with exit status 1, rate-limit headers, unauthenticated, timeout; branch `claude/anything` and title `docs(openspec): propose <change>` link; a short name does not beat a longer matching one; `Owner approval: yes` on its own line is found; assert no non-GET call and no call at all when `github` is off
+- [x] 3.7 Verify, one command per area: `cargo test --manifest-path extras/openspec-board/Cargo.toml github::`, `cargo test --manifest-path extras/openspec-board/Cargo.toml linking::`
 
 ## 4. Waiting on you, sessions, jump and open PR
 

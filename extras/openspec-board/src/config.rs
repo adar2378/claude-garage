@@ -25,6 +25,8 @@ struct RawWorkspace {
     repos: Option<Vec<String>>,
     #[serde(default)]
     github: bool,
+    #[serde(default)]
+    checks: bool,
     #[serde(default = "yes")]
     fetch: bool,
     #[serde(default)]
@@ -67,6 +69,8 @@ pub struct WorkspaceConfig {
     /// As written; `~` is expanded when the repos are resolved.
     pub repos: Option<Vec<String>>,
     pub github: bool,
+    /// Use the head commit's native check runs when no `ci` pattern is set.
+    pub checks: bool,
     pub fetch: bool,
     pub branches: Vec<String>,
     pub patterns: Patterns,
@@ -77,6 +81,7 @@ impl Default for WorkspaceConfig {
         WorkspaceConfig {
             repos: None,
             github: false,
+            checks: false,
             fetch: true,
             branches: vec![],
             patterns: Patterns {
@@ -162,6 +167,7 @@ pub fn parse(text: &str) -> Config {
             WorkspaceConfig {
                 repos: w.repos,
                 github: w.github,
+                checks: w.checks,
                 fetch: w.fetch,
                 branches: w.branches,
                 patterns,
