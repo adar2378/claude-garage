@@ -1,0 +1,26 @@
+#:schema https://raw.githubusercontent.com/adar2378/claude-garage/main/schemas/garage-plugin.schema.json
+id          = "openspec-board"
+name        = "OpenSpec board"
+version     = "0.1.0"
+api_version = 1
+platforms   = ["macos", "linux"]
+description = "Overlay of OpenSpec changes per workspace"
+permissions = ["ui.panes"]
+
+[[build]]
+command = ["cargo", "build", "--release"]
+
+[[panes]]
+id        = "board"
+title     = "OpenSpec board"
+placement = "overlay"
+command   = ["{plugin_dir}/target/release/openspec-board", "ui"]
+
+# `o` is only a suggestion: it never overrides a key that is already bound.
+# Rebind with: claude-garage plugin bind openspec-board:board <key>
+[[actions]]
+id          = "board"
+title       = "OpenSpec board"
+contexts    = ["global"]
+pane        = "board"
+default_key = "o"

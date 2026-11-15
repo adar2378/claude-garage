@@ -4,17 +4,17 @@ Each numbered group ships alone and is testable alone. There is no core change. 
 
 ## 1. Peek pane, local changes (owner priority 1)
 
-- [ ] 1.1 Folder `extras/openspec-board/`: `Cargo.toml` (own `[workspace]`, `version = "0.1.0"`, SDK path dependency like `examples/openspec-progress`), `Cargo.lock`, `garage-plugin.toml` with `permissions = ["ui.panes"]`, `[[build]]` (`cargo build --release`), the `board` pane and the `board` action (`default_key = "o"`), commands pointing at `{plugin_dir}/target/release/openspec-board`; no `{bin}`, no `[release]`, no widget, no event, no CLI, no other permission yet
-- [ ] 1.2 `tasks.md` parser (checkbox counts, next open task, code fences ignored; cases copied from `examples/openspec-progress`) and the state rule (`proposal`/`building`/`complete`; 0/0, 0/n, k/n, n/n)
-- [ ] 1.3 Config: read `config.toml` from `GARAGE_PLUGIN_STATE_DIR` on every run, never write it; `cache/` (mode 0700, files 0600) is the only written place (atomic writes, `StateLock`); workspace names and dirs from `GET /api/workspaces`; default discovery (workspace dir plus direct child git repos with `openspec/`); warnings for bad paths, bad TOML and bad regexes
-- [ ] 1.4 Local collector: list changes per repo from the working tree (skip `archive`, skip names found in the default branch's `archive/`), read `tasks.md`/`proposal.md`, build rows; mtime cache; no writes in repos
-- [ ] 1.5 `ui` entry: overlay pane drawing the CHANGES table for the focused workspace (state, repo, where, `done/total`, next open task); `j`/`k`, `c`, `r`, `Tab`, `Esc`/`q`; background thread so drawing never blocks; starting workspace from `focus.workspace`, else the first; empty-workspace and warnings rows
-- [ ] 1.6 Tests on temp fixtures: no config, empty, bad TOML, bad path, bad regex, scan of children, three changes in each state, a read-only repo directory, an archived name skipped; render-to-buffer snapshots (empty workspace, building plus proposal, warnings)
-- [ ] 1.7 Verify, one command per area: `cargo test --manifest-path extras/openspec-board/Cargo.toml parser::`, `cargo test --manifest-path extras/openspec-board/Cargo.toml config::`, `cargo test --manifest-path extras/openspec-board/Cargo.toml local::`, `cargo test --manifest-path extras/openspec-board/Cargo.toml pane::`; `claude-garage plugin schema extras/openspec-board/garage-plugin.toml` passes; by hand `claude-garage plugin link extras/openspec-board` then `plugin bind openspec-board:board o`
+- [x] 1.1 Folder `extras/openspec-board/`: `Cargo.toml` (own `[workspace]`, `version = "0.1.0"`, SDK path dependency like `examples/openspec-progress`), `Cargo.lock`, `garage-plugin.toml` with `permissions = ["ui.panes"]`, `[[build]]` (`cargo build --release`), the `board` pane and the `board` action (`default_key = "o"`), commands pointing at `{plugin_dir}/target/release/openspec-board`; no `{bin}`, no `[release]`, no widget, no event, no CLI, no other permission yet
+- [x] 1.2 `tasks.md` parser (checkbox counts, next open task, code fences ignored; cases copied from `examples/openspec-progress`) and the state rule (`proposal`/`building`/`complete`; 0/0, 0/n, k/n, n/n)
+- [x] 1.3 Config: read `config.toml` from `GARAGE_PLUGIN_STATE_DIR` on every run, never write it; `cache/` (mode 0700, files 0600) is the only written place (atomic writes, `StateLock`); workspace names and dirs from `GET /api/workspaces`; default discovery (workspace dir plus direct child git repos with `openspec/`); warnings for bad paths, bad TOML and bad regexes
+- [x] 1.4 Local collector: list changes per repo from the working tree (skip `archive`, skip names found in the default branch's `archive/`), read `tasks.md`/`proposal.md`, build rows; mtime cache; no writes in repos
+- [x] 1.5 `ui` entry: overlay pane drawing the CHANGES table for the focused workspace (state, repo, where, `done/total`, next open task); `j`/`k`, `c`, `r`, `Tab`, `Esc`/`q`; background thread so drawing never blocks; starting workspace from `focus.workspace`, else the first; empty-workspace and warnings rows
+- [x] 1.6 Tests on temp fixtures: no config, empty, bad TOML, bad path, bad regex, scan of children, three changes in each state, a read-only repo directory, an archived name skipped; render-to-buffer snapshots (empty workspace, building plus proposal, warnings)
+- [x] 1.7 Verify, one command per area: `cargo test --manifest-path extras/openspec-board/Cargo.toml parser::`, `cargo test --manifest-path extras/openspec-board/Cargo.toml config::`, `cargo test --manifest-path extras/openspec-board/Cargo.toml local::`, `cargo test --manifest-path extras/openspec-board/Cargo.toml pane::`; `cargo test --manifest-path extras/openspec-board/Cargo.toml manifest_tests` passes (`plugin schema` takes no argument, so the manifest is checked by a test and by `plugin link`); by hand `cargo build --release --manifest-path extras/openspec-board/Cargo.toml` (`plugin link` does not build; `plugin dev` does), then `claude-garage plugin link extras/openspec-board` and `plugin bind openspec-board:board o`
 
 ## 2. Remote-branch changes
 
-- [ ] 2.1 Fetch runner: `git fetch --prune --no-auto-gc --no-auto-maintenance --no-write-fetch-head origin`, stdin null, `GIT_TERMINAL_PROMPT=0`, `GIT_SSH_COMMAND='ssh -o BatchMode=yes'`, 30 s timeout, failure recorded, 5 min throttle, manual force with `r`; runs only while the pane is open (or `r`); no fetch from any other consumer
+- [ ] 2.1 Fetch runner: `git fetch --prune --no-auto-gc --no-auto-maintenance --no-write-fetch-head origin`, stdin null, `GIT_TERMINAL_PROMPT=0`, `GIT_SSH_COMMAND='ssh -o BatchMode=yes'`, 30 s timeout, failure recorded, 5 min throttle, manual force with `r`; runs only while the pane is open (or on `r`, or an explicit `tasks --refresh`); no fetch from any other consumer
 - [ ] 2.2 Branch candidate list (`for-each-ref`, glob filter, 30-day default), tree-id skip against the default branch (`symbolic-ref`, then `main`, `master`)
 - [ ] 2.3 Read `tasks.md` and `proposal.md` with `git ls-tree` and `git show` only; cache by tree id
 - [ ] 2.4 Merge sources into one row with `where` and a disagreement mark; show it in the pane
@@ -43,7 +43,7 @@ Each numbered group ships alone and is testable alone. There is no core change. 
 ## 5. Status-strip widget
 
 - [ ] 5.1 Manifest: add `ui.widgets`, `requires = ["slots:strip.right"]`, the `waiting` widget, and the hooks `session.status_changed`, `daemon.started` and a 60 s `timer`, all running `tick` (nothing earlier)
-- [ ] 5.2 `tick`: read `GET /api/sessions` and the last cached model only (no `git`, no `gh`, no repo files); push the widget with `ttl_secs = 300`; `needs_input` token only while a session waits on input, `warn` for proposals and failed CI, dim at zero; `~` and a tooltip when the cached model is older than 15 minutes; click opens `openspec-board:board`; always exit 0
+- [ ] 5.2 `tick`: read `GET /api/sessions` and the last cached model only (no `git`, no `gh`, no repo files); push the widget with `ttl_secs = 300`; `needs_input` token only while a session waits on input, `warn` for proposals and failed CI, dim at zero; `~` when the cached model is older than 15 minutes (no tooltip: the age is in the pane title); click opens `openspec-board:board`; always exit 0
 - [ ] 5.3 The pane writes the model to `cache/` after each refresh (atomic, `StateLock`)
 - [ ] 5.4 Tests: count with needs-input sessions and cached items, colour choice for each case, stale mark, zero state, `daemon.started` redraw, no `git` or `gh` process and no repo read during a tick
 - [ ] 5.5 Verify: `cargo test --manifest-path extras/openspec-board/Cargo.toml tick::`, then by hand: make a session need input and watch the strip
@@ -51,7 +51,7 @@ Each numbered group ships alone and is testable alone. There is no core change. 
 ## 6. The `tasks` command
 
 - [ ] 6.1 Manifest: add `[[cli]] name = "tasks"` with `needs_daemon = false` (nothing earlier)
-- [ ] 6.2 `cli` entry with `--workspace`, `--json`, `--local`, `--all`, `--refresh`, `--print-config-path`; call the daemon API with a short timeout and use it only if it answers, else local data with a note; no fetch and no `gh` without `--refresh`
+- [ ] 6.2 `cli` entry with `--workspace`, `--json`, `--local` (skip fetch and GitHub), `--all`, `--refresh`, `--print-config-path`; call the daemon API with a short timeout and use it only if it answers, else local data with a note; no fetch and no `gh` without `--refresh`
 - [ ] 6.3 Tests: text block, JSON only on stdout, daemon down (no daemon needed, exit 0), unknown workspace, no network use without `--refresh`
 - [ ] 6.4 Verify: `cargo test --manifest-path extras/openspec-board/Cargo.toml cli::`
 
