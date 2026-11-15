@@ -94,7 +94,7 @@ fn changes_tree(repo: &Path, rev: &str) -> Option<String> {
             "rev-parse",
             "--verify",
             "-q",
-            &format!("{rev}:openspec/changes"),
+            &format!("refs/remotes/{rev}:openspec/changes"),
         ],
     )?;
     Some(id.trim().to_owned()).filter(|s| !s.is_empty())
@@ -183,7 +183,7 @@ impl Remote {
                 "-r",
                 "-z",
                 "--name-only",
-                branch,
+                &format!("refs/remotes/{branch}"),
                 "openspec/changes/",
             ],
         ) else {
@@ -228,7 +228,7 @@ impl Remote {
     }
 
     fn show_tasks(&mut self, repo: &Path, branch: &str, name: &str) -> Tasks {
-        let spec = format!("{branch}:openspec/changes/{name}/tasks.md");
+        let spec = format!("refs/remotes/{branch}:openspec/changes/{name}/tasks.md");
         let small = git(repo, &["cat-file", "-s", &spec])
             .and_then(|s| s.trim().parse::<u64>().ok())
             .is_some_and(|n| n <= MAX_FILE_BYTES);
@@ -407,6 +407,15 @@ mod tests {
                 ("openspec/changes/billing-v2/proposal.md", "## Why\n"),
             ],
         );
+        // A tag on the pushed branch, and a local-only tag that
+        // `fetch.pruneTags` would delete: the fetch must touch neither.
+        git_in(&d.path().join("seed"), &["tag", "v1"]);
+        git_in(
+            &d.path().join("seed"),
+            &["push", "-q", origin.to_str().unwrap(), "v1"],
+        );
+        git_in(&clone, &["tag", "mylocal"]);
+        git_in(&clone, &["config", "fetch.pruneTags", "true"]);
         // A file the user is editing: the refresh must not disturb it.
         write(&clone, "README", "edited\n");
         write(&clone, "scratch.txt", "untracked\n");
@@ -434,6 +443,7 @@ mod tests {
         );
         assert!(!clone.join("openspec").exists(), "nothing was checked out");
         assert!(!clone.join(".git/FETCH_HEAD").exists());
+        assert_eq!(git_in(&clone, &["tag", "--list"]).trim(), "mylocal");
     }
 
     #[test]

@@ -367,7 +367,7 @@ fn table(body: &mut Vec<String>, w: &WorkspaceView, state: &PaneState, inner: us
             fit(&strip_hostile(&r.name), name_w),
             fit(r.state.as_str(), state_w),
             fit(&strip_hostile(&r.repo), repo_w),
-            fit(&r.places.join(" + "), where_w),
+            fit(&strip_hostile(&r.places.join(" + ")), where_w),
             right(&tasks_cell(r), tasks_w),
             fit(&strip_hostile(r.next.as_deref().unwrap_or("-")), next_w).trim_end(),
         ));

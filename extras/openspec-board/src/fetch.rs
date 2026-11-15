@@ -16,13 +16,16 @@ pub const THROTTLE: Duration = Duration::from_secs(5 * 60);
 pub const TIMEOUT: Duration = Duration::from_secs(30);
 
 /// The arguments after `git -C <repo>`.
-pub const ARGS: [&str; 6] = [
+pub const ARGS: [&str; 9] = [
     "fetch",
     "--prune",
+    "--no-tags",
+    "--recurse-submodules=no",
     "--no-auto-gc",
     "--no-auto-maintenance",
     "--no-write-fetch-head",
     "origin",
+    "+refs/heads/*:refs/remotes/origin/*",
 ];
 pub const SSH_COMMAND: &str = "ssh -o BatchMode=yes";
 
@@ -137,7 +140,7 @@ mod tests {
             d.path(),
             &format!(
                 "{{ echo \"args=$*\"; echo \"prompt=$GIT_TERMINAL_PROMPT\"; \
-                 echo \"ssh=$GIT_SSH_COMMAND\"; echo \"stdin=$(cat | wc -c)\"; }} > {}",
+                 echo \"ssh=$GIT_SSH_COMMAND\"; echo \"stdin=$(cat | wc -c | tr -d ' ')\"; }} > {}",
                 log.display()
             ),
         );
@@ -145,8 +148,62 @@ mod tests {
         let text = std::fs::read_to_string(&log).unwrap();
         assert_eq!(
             text,
-            "args=-C /some/repo fetch --prune --no-auto-gc --no-auto-maintenance \
-             --no-write-fetch-head origin\nprompt=0\nssh=ssh -o BatchMode=yes\nstdin=0\n"
+            "args=-C /some/repo fetch --prune --no-tags --recurse-submodules=no \
+             --no-auto-gc --no-auto-maintenance --no-write-fetch-head origin \
+             +refs/heads/*:refs/remotes/origin/*\nprompt=0\nssh=ssh -o BatchMode=yes\nstdin=0\n"
+        );
+    }
+
+    #[test]
+    fn the_fetch_creates_and_deletes_no_tag_even_with_prune_tags() {
+        let d = tempfile::tempdir().unwrap();
+        let (origin, clone, seed) = (
+            d.path().join("o.git"),
+            d.path().join("c"),
+            d.path().join("s"),
+        );
+        std::fs::create_dir_all(&seed).unwrap();
+        git_ok(&seed, &["init", "-q", "-b", "main"]);
+        git_ok(&seed, &["config", "user.email", "t@t"]);
+        git_ok(&seed, &["config", "user.name", "t"]);
+        git_ok(&seed, &["commit", "-q", "--allow-empty", "-m", "a"]);
+        assert!(
+            Command::new("git")
+                .args(["clone", "-q", "--bare"])
+                .arg(&seed)
+                .arg(&origin)
+                .status()
+                .unwrap()
+                .success()
+        );
+        assert!(
+            Command::new("git")
+                .args(["clone", "-q"])
+                .arg(&origin)
+                .arg(&clone)
+                .status()
+                .unwrap()
+                .success()
+        );
+        // A new commit with a tag on a pushed branch.
+        git_ok(&seed, &["checkout", "-q", "-b", "feat/x"]);
+        git_ok(&seed, &["commit", "-q", "--allow-empty", "-m", "b"]);
+        git_ok(&seed, &["tag", "v1"]);
+        git_ok(
+            &seed,
+            &["push", "-q", origin.to_str().unwrap(), "feat/x", "v1"],
+        );
+        git_ok(&clone, &["tag", "mylocal"]);
+        git_ok(&clone, &["config", "fetch.pruneTags", "true"]);
+        run_with(Path::new("git"), &clone, TIMEOUT).unwrap();
+        let tags = crate::local::git(&clone, &["tag", "--list"]).unwrap();
+        assert_eq!(tags.trim(), "mylocal");
+        assert!(
+            crate::local::git(
+                &clone,
+                &["rev-parse", "--verify", "-q", "refs/remotes/origin/feat/x"]
+            )
+            .is_some()
         );
     }
 
