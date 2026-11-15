@@ -14,7 +14,9 @@ use crossterm::{cursor, execute, queue, style, terminal};
 use garage_plugin_sdk::{Api, Context, strip_hostile};
 
 use crate::config::{self, Config};
+use crate::fetch;
 use crate::local::{Collector, Row};
+use crate::remote::{self, Remote};
 
 /// How often the worker looks at the files again.
 pub const REFRESH_EVERY: Duration = Duration::from_secs(5);
@@ -25,6 +27,19 @@ pub struct WorkspaceView {
     pub name: String,
     pub rows: Vec<Row>,
     pub warnings: Vec<String>,
+    /// `fetch failed 12m ago` when the last fetch of a repo failed.
+    pub fetch_note: Option<String>,
+}
+
+/// Whether a pass may run `git fetch`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FetchMode {
+    /// Read the refs as they are.
+    Never,
+    /// Fetch the repos whose throttle has passed.
+    IfDue,
+    /// Fetch every repo now (the user pressed `r`).
+    Force,
 }
 
 /// What one collection pass found.
@@ -42,6 +57,8 @@ pub fn snapshot(
     state_dir: &Path,
     home: Option<&Path>,
     collector: &mut Collector,
+    remote: &mut Remote,
+    mode: FetchMode,
 ) -> Snapshot {
     let cfg = config::load(state_dir);
     let list = match api.workspaces() {
@@ -58,7 +75,9 @@ pub fn snapshot(
         .into_iter()
         .flatten()
         .filter_map(|w| Some((w["name"].as_str()?, w["dir"].as_str()?)))
-        .map(|(name, dir)| workspace_view(name, Path::new(dir), &cfg, home, collector))
+        .map(|(name, dir)| {
+            workspace_view(name, Path::new(dir), &cfg, home, collector, remote, mode)
+        })
         .collect();
     Snapshot {
         workspaces,
@@ -72,6 +91,8 @@ fn workspace_view(
     cfg: &Config,
     home: Option<&Path>,
     collector: &mut Collector,
+    remote: &mut Remote,
+    mode: FetchMode,
 ) -> WorkspaceView {
     let wcfg = cfg.workspace(name);
     let (repos, mut warnings) = config::resolve_repos(dir, &wcfg, home);
@@ -82,17 +103,38 @@ fn workspace_view(
             .cloned()
             .unwrap_or_default(),
     );
-    let mut rows: Vec<Row> = repos
-        .iter()
-        .flat_map(|r| collector.collect_repo(r))
-        .collect();
-    rows.sort_by(|a, b| {
-        (a.name.as_str(), a.repo.as_str()).cmp(&(b.name.as_str(), b.repo.as_str()))
-    });
+    let now = Instant::now();
+    let now_unix = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| i64::try_from(d.as_secs()).unwrap_or(0));
+    let (mut local, mut remote_rows) = (vec![], vec![]);
+    let mut failed: Option<Instant> = None;
+    for repo in &repos {
+        if wcfg.fetch && mode != FetchMode::Never {
+            let _ = remote.fetch.fetch(
+                Path::new("git"),
+                repo,
+                mode == FetchMode::Force,
+                now,
+                fetch::TIMEOUT,
+            );
+        }
+        if let Some(at) = remote.fetch.failed_at(repo) {
+            failed = Some(failed.map_or(at, |f| f.min(at)));
+        }
+        local.extend(collector.collect_repo(repo));
+        remote_rows.extend(remote.collect_repo(repo, &wcfg.branches, now_unix));
+    }
     WorkspaceView {
         name: name.to_owned(),
-        rows,
+        rows: remote::merge(local, remote_rows),
         warnings,
+        fetch_note: failed.map(|at| {
+            format!(
+                "fetch failed {} ago",
+                age(now.saturating_duration_since(at).as_secs())
+            )
+        }),
     }
 }
 
@@ -235,7 +277,10 @@ pub fn render(state: &PaneState, age_secs: Option<u64>, cols: usize, rows: usize
     } else {
         String::new()
     };
-    let title = format!(" openspec-board · {name}{tabs} · {updated} ");
+    let fetch = ws
+        .and_then(|w| w.fetch_note.as_deref())
+        .map_or(String::new(), |n| format!(" · {}", strip_hostile(n)));
+    let title = format!(" openspec-board · {name}{tabs} · {updated}{fetch} ");
 
     if let Some(e) = &state.snapshot.error {
         body.push(format!("! {}", strip_hostile(e)));
@@ -274,6 +319,16 @@ fn fit_title(title: &str, width: usize) -> String {
     format!("{t}{}", "─".repeat(width - t.chars().count()))
 }
 
+/// `6/10`, with `≠` after it when the sources of the change disagree.
+fn tasks_cell(r: &Row) -> String {
+    format!(
+        "{}/{}{}",
+        r.done,
+        r.total,
+        if r.disagree { "≠" } else { "" }
+    )
+}
+
 fn table(body: &mut Vec<String>, w: &WorkspaceView, state: &PaneState, inner: usize, rows: usize) {
     // Rows that fit: the screen less borders, footer, header, warnings and the
     // detail block. The window follows the selection.
@@ -289,15 +344,9 @@ fn table(body: &mut Vec<String>, w: &WorkspaceView, state: &PaneState, inner: us
     let where_w = longest(
         w.rows.iter().map(|r| r.places.join(" + ").chars().count()),
         5,
-        20,
+        34,
     );
-    let tasks_w = longest(
-        w.rows
-            .iter()
-            .map(|r| format!("{}/{}", r.done, r.total).len()),
-        5,
-        9,
-    );
+    let tasks_w = longest(w.rows.iter().map(|r| tasks_cell(r).chars().count()), 5, 9);
     let state_w = 8;
     // "▸ " + name + state + repo + where + tasks + next, one space between.
     let used = 2 + name_w + 1 + state_w + 1 + repo_w + 1 + where_w + 1 + tasks_w + 1;
@@ -319,7 +368,7 @@ fn table(body: &mut Vec<String>, w: &WorkspaceView, state: &PaneState, inner: us
             fit(r.state.as_str(), state_w),
             fit(&strip_hostile(&r.repo), repo_w),
             fit(&r.places.join(" + "), where_w),
-            right(&format!("{}/{}", r.done, r.total), tasks_w),
+            right(&tasks_cell(r), tasks_w),
             fit(&strip_hostile(r.next.as_deref().unwrap_or("-")), next_w).trim_end(),
         ));
     }
@@ -327,6 +376,9 @@ fn table(body: &mut Vec<String>, w: &WorkspaceView, state: &PaneState, inner: us
         && let Some(r) = w.rows.get(state.selected)
     {
         body.push(String::new());
+        if r.disagree {
+            body.push("sources differ: the most advanced one is shown".to_owned());
+        }
         if r.open.is_empty() {
             body.push(format!("{}: no open tasks", strip_hostile(&r.name)));
         } else {
@@ -351,16 +403,41 @@ pub fn spawn_worker(
     let (tx, rx) = mpsc::channel();
     let (force_tx, force_rx) = mpsc::channel::<()>();
     std::thread::spawn(move || {
-        let mut collector = Collector::new();
+        let (mut collector, mut remote) = (Collector::new(), Remote::new());
+        let mut mode = FetchMode::IfDue;
+        let mut first = true;
         loop {
-            let snap = snapshot(&api, &state_dir, home.as_deref(), &mut collector);
+            // Show what is already known before a fetch can take its time.
+            if first || mode == FetchMode::Force {
+                let snap = snapshot(
+                    &api,
+                    &state_dir,
+                    home.as_deref(),
+                    &mut collector,
+                    &mut remote,
+                    FetchMode::Never,
+                );
+                if tx.send(snap).is_err() {
+                    return;
+                }
+            }
+            first = false;
+            let snap = snapshot(
+                &api,
+                &state_dir,
+                home.as_deref(),
+                &mut collector,
+                &mut remote,
+                mode,
+            );
             if tx.send(snap).is_err() {
                 return;
             }
-            match force_rx.recv_timeout(REFRESH_EVERY) {
-                Ok(()) | Err(RecvTimeoutError::Timeout) => {}
+            mode = match force_rx.recv_timeout(REFRESH_EVERY) {
+                Ok(()) => FetchMode::Force,
+                Err(RecvTimeoutError::Timeout) => FetchMode::IfDue,
                 Err(RecvTimeoutError::Disconnected) => return,
-            }
+            };
         }
     });
     (rx, force_tx)
@@ -452,6 +529,7 @@ mod tests {
             total,
             next: next.map(str::to_owned),
             open: next.map(|n| vec![n.to_owned()]).unwrap_or_default(),
+            disagree: false,
         }
     }
 
@@ -460,6 +538,7 @@ mod tests {
             name: name.into(),
             rows,
             warnings: warnings.iter().map(|w| w.to_string()).collect(),
+            fetch_note: None,
         }
     }
 
@@ -685,6 +764,19 @@ mod tests {
     }
 
     #[test]
+    fn a_remote_row_shows_its_branch_the_differing_mark_and_the_fetch_note() {
+        let mut r = row("x", "api", State::Building, 6, 10, Some("2.1 c"));
+        r.places = vec!["local".into(), "origin/feat/x".into()];
+        r.disagree = true;
+        let mut v = view("kowboy", vec![r], &[]);
+        v.fetch_note = Some("fetch failed 12m ago".into());
+        let text = render(&state_with(vec![v]), Some(3), 110, 20).join("\n");
+        assert!(text.contains("local + origin/feat/x"), "{text}");
+        assert!(text.contains("6/10≠"), "{text}");
+        assert!(text.contains("fetch failed 12m ago"), "{text}");
+    }
+
+    #[test]
     fn age_is_short() {
         assert_eq!([age(4), age(120), age(7300)], ["4s", "2m", "2h"]);
     }
@@ -717,6 +809,8 @@ mod tests {
             state.path(),
             Some(home.path()),
             &mut Collector::new(),
+            &mut Remote::new(),
+            FetchMode::Never,
         );
         assert_eq!(snap.error, None);
         let w = &snap.workspaces[0];
@@ -739,7 +833,14 @@ mod tests {
     fn a_daemon_that_does_not_answer_is_an_error_row_not_a_panic() {
         let state = tempfile::tempdir().unwrap();
         let api = Api::new("http://127.0.0.1:1", "openspec-board", "tok");
-        let snap = snapshot(&api, state.path(), None, &mut Collector::new());
+        let snap = snapshot(
+            &api,
+            state.path(),
+            None,
+            &mut Collector::new(),
+            &mut Remote::new(),
+            FetchMode::Never,
+        );
         assert!(snap.workspaces.is_empty());
         assert!(snap.error.unwrap().starts_with("daemon did not answer"));
     }
