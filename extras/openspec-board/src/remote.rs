@@ -41,7 +41,8 @@ pub fn glob_match(pattern: &str, text: &str) -> bool {
 
 /// The remote-tracking branches worth reading, as `origin/<name>`, newest
 /// first: matching `globs` when given, else with a commit in the last
-/// [`RECENT_DAYS`]. `origin/HEAD` and the default branch are left out.
+/// [`RECENT_DAYS`]. `origin/HEAD` and the default branch (a full ref name) are
+/// left out.
 pub fn candidates(
     repo: &Path,
     globs: &[String],
@@ -69,7 +70,7 @@ pub fn candidates(
         let Some(branch) = short.strip_prefix("origin/") else {
             continue;
         };
-        if branch == "HEAD" || Some(short) == default {
+        if branch == "HEAD" || Some(full) == default {
             continue;
         }
         let ts: i64 = ts.parse().unwrap_or(0);
@@ -86,7 +87,7 @@ pub fn candidates(
     found.into_iter().take(MAX_BRANCHES).map(|f| f.1).collect()
 }
 
-/// The tree id of `openspec/changes` at `rev`, if it has one.
+/// The tree id of `openspec/changes` at the full ref name `rev`, if it has one.
 fn changes_tree(repo: &Path, rev: &str) -> Option<String> {
     let id = git(
         repo,
@@ -94,7 +95,7 @@ fn changes_tree(repo: &Path, rev: &str) -> Option<String> {
             "rev-parse",
             "--verify",
             "-q",
-            &format!("refs/remotes/{rev}:openspec/changes"),
+            &format!("{rev}:openspec/changes"),
         ],
     )?;
     Some(id.trim().to_owned()).filter(|s| !s.is_empty())
@@ -139,7 +140,7 @@ impl Remote {
         let mut rows = vec![];
         let mut touched: BTreeSet<String> = BTreeSet::new();
         for branch in candidates(repo, globs, now_unix, default.as_deref()) {
-            let Some(tree) = changes_tree(repo, &branch) else {
+            let Some(tree) = changes_tree(repo, &format!("refs/remotes/{branch}")) else {
                 continue;
             };
             if Some(&tree) == default_tree.as_ref() {
@@ -481,6 +482,60 @@ mod tests {
         assert_eq!(remote.shows, 2);
     }
 
+    /// A clone whose `main` holds the change `same`, whose branch
+    /// `feat/other` shares that changes tree, and which has no `origin/HEAD`.
+    fn clone_without_origin_head(root: &Path) -> PathBuf {
+        let (origin, clone) = origin_and_clone(root);
+        let seed = root.join("seed");
+        write(&seed, "openspec/changes/same/tasks.md", "- [ ] 1.1 a\n");
+        git_in(&seed, &["add", "."]);
+        git_in(&seed, &["commit", "-q", "-m", "change"]);
+        git_in(&seed, &["push", "-q", origin.to_str().unwrap(), "main"]);
+        push_branch(root, &origin, "feat/other", &[("src.txt", "x\n")]);
+        git_in(&clone, &["fetch", "-q", "origin"]);
+        git_in(&clone, &["merge", "-q", "--ff-only", "origin/main"]);
+        git_in(&clone, &["remote", "set-head", "origin", "-d"]);
+        assert!(
+            Command::new("git")
+                .arg("-C")
+                .arg(&clone)
+                .args(["symbolic-ref", "-q", "refs/remotes/origin/HEAD"])
+                .output()
+                .unwrap()
+                .stdout
+                .is_empty()
+        );
+        clone
+    }
+
+    #[test]
+    fn without_origin_head_the_default_branch_is_found_from_the_local_main() {
+        let d = tempfile::tempdir().unwrap();
+        let clone = clone_without_origin_head(d.path());
+        assert_eq!(default_branch(&clone).as_deref(), Some("refs/heads/main"));
+        let mut remote = Remote::new();
+        let rows = remote.collect_repo(&clone, &[], now());
+        // `feat/other` has the default branch's changes tree: skipped unread.
+        assert_eq!(remote.shows, 0, "{rows:?}");
+        assert!(rows.is_empty());
+    }
+
+    #[test]
+    fn without_origin_head_or_a_local_main_the_remote_main_is_the_default() {
+        let d = tempfile::tempdir().unwrap();
+        let clone = clone_without_origin_head(d.path());
+        git_in(&clone, &["checkout", "-q", "--detach"]);
+        git_in(&clone, &["branch", "-q", "-D", "main"]);
+        assert_eq!(
+            default_branch(&clone).as_deref(),
+            Some("refs/remotes/origin/main")
+        );
+        let mut remote = Remote::new();
+        let rows = remote.collect_repo(&clone, &[], now());
+        assert_eq!(remote.shows, 0, "{rows:?}");
+        assert!(rows.is_empty());
+    }
+
     #[test]
     fn a_name_archived_on_the_default_branch_is_skipped_on_stale_branches() {
         let d = tempfile::tempdir().unwrap();
@@ -588,19 +643,29 @@ mod tests {
         push_branch(d.path(), &origin, "feat/a", &[("a", "1")]);
         push_branch(d.path(), &origin, "fix/b", &[("b", "1")]);
         fetch_now(&clone).unwrap();
-        let all = candidates(&clone, &[], now(), Some("origin/main"));
+        let all = candidates(&clone, &[], now(), Some("refs/remotes/origin/main"));
         assert_eq!(all.len(), 2);
         assert!(all.iter().all(|b| b != "origin/HEAD" && b != "origin/main"));
         assert_eq!(
-            candidates(&clone, &["feat/*".into()], now(), Some("origin/main")),
+            candidates(
+                &clone,
+                &["feat/*".into()],
+                now(),
+                Some("refs/remotes/origin/main")
+            ),
             ["origin/feat/a"]
         );
         // Everything is older than 30 days a year from now; a glob list is
         // not subject to the age filter.
         let later = now() + 365 * 86_400;
-        assert!(candidates(&clone, &[], later, Some("origin/main")).is_empty());
+        assert!(candidates(&clone, &[], later, Some("refs/remotes/origin/main")).is_empty());
         assert_eq!(
-            candidates(&clone, &["fix/*".into()], later, Some("origin/main")),
+            candidates(
+                &clone,
+                &["fix/*".into()],
+                later,
+                Some("refs/remotes/origin/main")
+            ),
             ["origin/fix/b"]
         );
         assert!(glob_match("feat/*", "feat/a/b") && !glob_match("feat/*", "fix/a"));
