@@ -14,12 +14,12 @@ Each numbered group ships alone and is testable alone. There is no core change. 
 
 ## 2. Remote-branch changes
 
-- [ ] 2.1 Fetch runner: `git fetch --prune --no-auto-gc --no-auto-maintenance --no-write-fetch-head origin`, stdin null, `GIT_TERMINAL_PROMPT=0`, `GIT_SSH_COMMAND='ssh -o BatchMode=yes'`, 30 s timeout, failure recorded, 5 min throttle, manual force with `r`; runs only while the pane is open (or on `r`, or an explicit `tasks --refresh`); no fetch from any other consumer
-- [ ] 2.2 Branch candidate list (`for-each-ref`, glob filter, 30-day default), tree-id skip against the default branch (`symbolic-ref`, then `main`, `master`)
-- [ ] 2.3 Read `tasks.md` and `proposal.md` with `git ls-tree` and `git show` only; cache by tree id
-- [ ] 2.4 Merge sources into one row with `where` and a disagreement mark; show it in the pane
-- [ ] 2.5 Tests with a bare origin and a clone made in the test: a branch holds a change the clone lacks; assert it is listed and that `git status --porcelain`, `HEAD`, the files and every ref outside `refs/remotes` are unchanged and no `FETCH_HEAD` exists; fetch failure (origin removed) still lists already-fetched refs; an archived name on the default branch is skipped; assert the fetch command line and environment
-- [ ] 2.6 Verify, one command per area: `cargo test --manifest-path extras/openspec-board/Cargo.toml remote::`, `cargo test --manifest-path extras/openspec-board/Cargo.toml fetch::`
+- [x] 2.1 Fetch runner: `git fetch --prune --no-auto-gc --no-auto-maintenance --no-write-fetch-head origin`, stdin null, `GIT_TERMINAL_PROMPT=0`, `GIT_SSH_COMMAND='ssh -o BatchMode=yes'`, 30 s timeout, failure recorded, 5 min throttle, manual force with `r`; runs only while the pane is open (or on `r`, or an explicit `tasks --refresh`); no fetch from any other consumer
+- [x] 2.2 Branch candidate list (`for-each-ref`, glob filter, 30-day default), tree-id skip against the default branch (`symbolic-ref`, then `main`, `master`)
+- [x] 2.3 Read `tasks.md` and `proposal.md` with `git ls-tree` and `git show` only; cache by tree id
+- [x] 2.4 Merge sources into one row with `where` and a disagreement mark; show it in the pane
+- [x] 2.5 Tests with a bare origin and a clone made in the test: a branch holds a change the clone lacks; assert it is listed and that `git status --porcelain`, `HEAD`, the files and every ref outside `refs/remotes` are unchanged and no `FETCH_HEAD` exists; fetch failure (origin removed) still lists already-fetched refs; an archived name on the default branch is skipped; assert the fetch command line and environment
+- [x] 2.6 Verify, one command per area: `cargo test --manifest-path extras/openspec-board/Cargo.toml remote::`, `cargo test --manifest-path extras/openspec-board/Cargo.toml fetch::`
 
 ## 3. GitHub pull requests (`gh api`)
 

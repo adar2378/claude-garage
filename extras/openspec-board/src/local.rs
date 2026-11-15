@@ -23,7 +23,8 @@ pub struct Row {
     pub name: String,
     /// The repo folder's name.
     pub repo: String,
-    /// Where it lives: `local` for the working tree (later: remote branches).
+    /// Where it lives: `local` for the working tree, `origin/<branch>` for each
+    /// remote branch that holds it.
     pub places: Vec<String>,
     pub state: State,
     pub done: usize,
@@ -31,6 +32,8 @@ pub struct Row {
     pub next: Option<String>,
     /// Every unchecked task, for the detail view.
     pub open: Vec<String>,
+    /// The sources of this change disagree on its task counts.
+    pub disagree: bool,
 }
 
 fn dir_not_link(p: &Path) -> bool {
@@ -66,7 +69,7 @@ fn stamp_of(path: &Path) -> Option<(SystemTime, u64)> {
         .then(|| Some((meta.modified().ok()?, meta.len())))?
 }
 
-fn git(repo: &Path, args: &[&str]) -> Option<String> {
+pub(crate) fn git(repo: &Path, args: &[&str]) -> Option<String> {
     let out = Command::new("git")
         .arg("-C")
         .arg(repo)
@@ -182,6 +185,7 @@ impl Collector {
                 total: c.tasks.total,
                 next: c.tasks.next.as_ref().map(|n| n.label()),
                 open: c.tasks.open,
+                disagree: false,
             });
         }
         rows.sort_by(|a, b| a.name.cmp(&b.name));

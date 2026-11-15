@@ -4,9 +4,11 @@
 //! function, tested without a daemon or a terminal.
 
 pub mod config;
+pub mod fetch;
 pub mod local;
 pub mod pane;
 pub mod parser;
+pub mod remote;
 
 #[cfg(test)]
 mod manifest_tests {
